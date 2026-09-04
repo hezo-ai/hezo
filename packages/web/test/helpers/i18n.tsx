@@ -1,17 +1,23 @@
+import { TooltipProvider } from '@hezo/ui';
 import type { ReactNode } from 'react';
 import { I18nProvider } from '../../src/lib/i18n';
 
 /**
- * Wrap a tree in the message-catalog context.
+ * Wrap a tree in the contexts the app shell always supplies.
  *
- * `renderApp` already provides this, so it is only for specs that render a
- * component directly with a bare `render()`. Shared UI primitives resolve their
- * label defaults through `t()` (ConfirmDialog's cancel, DialogContent's and
- * InPlaceForm's close, BackLink's label), so any tree containing one needs the
- * provider the app shell always supplies - without it `useI18n` throws.
+ * `renderApp` already provides these, so this is only for specs that render a
+ * component directly with a bare `render()`. Two of them are needed by anything
+ * drawn from the shared primitives: the message catalog, because the app's
+ * wrappers resolve their label defaults through `t()`, and the tooltip provider,
+ * which owns the delay grouping and which `main.tsx` mounts once at the root.
+ * Without either, the tree throws rather than degrading.
  *
  * The default locale is English, so assertions on English copy are unaffected.
  */
 export function withI18n(ui: ReactNode) {
-	return <I18nProvider>{ui}</I18nProvider>;
+	return (
+		<I18nProvider>
+			<TooltipProvider>{ui}</TooltipProvider>
+		</I18nProvider>
+	);
 }

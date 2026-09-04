@@ -10,6 +10,7 @@ import {
 } from '../hooks/use-update-check';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
+import { UpdateConfirmDescription } from './update-confirm-description';
 import { UpdateRestartOverlay } from './update-restart-overlay';
 
 /** Release tags are plain `MAJOR.MINOR.PATCH` (no `v` prefix) — only those have a GitHub tag page. */
@@ -61,18 +62,11 @@ export function VersionDisplay() {
 	const downloading = canApply && !staged && !errored;
 
 	const confirmDescription = (
-		<>
-			Hezo will shut down and restart on <span className="font-medium">{latest}</span>. In-flight
-			agent runs are paused and resume automatically.
-			{!update.autoUnlock && (
-				<>
-					{' '}
-					<span className="font-medium text-text-1">
-						You'll need your 12-word master key to unlock Hezo again once it restarts.
-					</span>
-				</>
-			)}
-		</>
+		<UpdateConfirmDescription
+			version={latest}
+			runsInFlight={update.runsInFlight}
+			autoUnlock={update.autoUnlock}
+		/>
 	);
 
 	return (

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
+import { touchMinHeightClassName } from './density.js';
 
-interface FilterPillsProps<T extends string> {
+export interface FilterPillsProps<T extends string> {
 	options: { value: T; label: string; count?: number; badge?: ReactNode }[];
 	value: T;
 	onChange: (value: T) => void;
@@ -19,6 +20,7 @@ interface FilterPillsProps<T extends string> {
 	 * element resolve by stylesheet order, not by the order they are written in.
 	 */
 	tone?: 'default' | 'plain';
+	/** Appended to the track, like every other primitive's - not a replacement. */
 	className?: string;
 }
 
@@ -31,7 +33,7 @@ export function FilterPills<T extends string>({
 	stretch,
 	label,
 	tone = 'default',
-	className = 'mb-3.5',
+	className = '',
 }: FilterPillsProps<T>) {
 	return (
 		// `min-w-0` is load-bearing: a fieldset defaults to
@@ -49,7 +51,7 @@ export function FilterPills<T extends string>({
 						type="button"
 						aria-pressed={active}
 						onClick={() => onChange(opt.value)}
-						className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[12.5px] font-medium transition-colors ${
+						className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[12.5px] font-medium transition-colors ${touchMinHeightClassName} ${
 							stretch ? 'flex-1 justify-center px-1' : ''
 						} ${active ? 'bg-inverse text-inverse-fg' : 'text-text-2 hover:text-text-1'}`}
 					>

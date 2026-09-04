@@ -7,7 +7,7 @@ import { LocaleEditor } from './locale-editor';
 
 /**
  * The locale control on the **pre-auth surfaces only**: the onboarding wizard
- * and the logged-out gates (master-key setup, post-restart unlock, password
+ * and the logged-out gates (master-key setup, locked-instance unlock, password
  * login). Those screens carry no navigation, so without a control here an
  * operator who cannot read the UI would have nowhere to go.
  *

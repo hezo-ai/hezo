@@ -13,7 +13,7 @@ import {
 import { moveItem, useSortableRail } from '../hooks/use-sortable-rail';
 import { useI18n } from '../lib/i18n';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
-import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
+import { Avatar, getInitials } from './ui/avatar';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
 import { Tooltip } from './ui/tooltip';
 
@@ -120,11 +120,7 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 											isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 										}`}
 									>
-										<Avatar
-											initials={getInitials(p.name)}
-											color={avatarColorFromString(p.name)}
-											imageUrl={p.icon_url}
-										/>
+										<Avatar initials={getInitials(p.name)} imageUrl={p.icon_url} />
 										<CountOverlayBadge
 											count={inboxCounts[p.slug] ?? 0}
 											testId={`project-rail-inbox-badge-${p.slug}`}

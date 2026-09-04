@@ -6,9 +6,10 @@ section: Deployment
 
 # One-click deploy
 
-The fastest way to get a public, always-on Hezo running is to let your VPS
-provider provision it for you. You paste one snippet when you create the server,
-wait a couple of minutes, and open a working HTTPS URL - then finish the short
+The fastest way to get a public Hezo host running is to let your VPS provider
+provision it for you. The host stays reachable, but agent execution pauses whenever
+Hezo is locked. You paste one snippet when
+you create the server, wait a couple of minutes, and open a working HTTPS URL - then finish the short
 [first-run setup](/docs/getting-started/first-run) in your browser.
 
 This works on any provider that runs Ubuntu and accepts **cloud-init user data**,
@@ -118,10 +119,11 @@ read them before you paste if you'd like to see exactly what runs.
 By default the deploy keeps everything on the server's own disk: the embedded database
 and asset files both live under `/var/lib/hezo`. That's a fine place to start - but you
 can just as well point Hezo at a **managed Postgres** for the database and an
-**S3-compatible bucket** for assets, so your provider handles database backups and
-storage durability and the server itself holds little worth losing. Each one is a single
-URL setting, and you can adopt either independently - managed database with local
-assets, or the other way around.
+**S3-compatible bucket** for assets. Your provider then handles database backups and
+asset-storage durability. Managed backends do not make the server disposable:
+`/var/lib/hezo` still holds workspaces and keys, so back up or snapshot that directory
+too. Each backend is a single URL setting, and you can adopt either independently -
+managed database with local assets, or the other way around.
 
 ### 1. Provision the database
 
@@ -178,6 +180,9 @@ sudo $EDITOR /etc/hezo/hezo.config.cjs
 #   assetStorage: { url: 's3://ACCESS_KEY:SECRET@endpoint/bucket' },
 sudo systemctl restart hezo
 ```
+
+After the restart, unlock Hezo from the browser gate unless that startup received
+one-shot `--master-key` or `HEZO_MASTER_KEY` input.
 
 > **Already have data on the server?** Adding these settings points Hezo at the new
 > backends but does not move existing rows or files. Move them first with
@@ -253,21 +258,23 @@ certificate for that name instead.
 
 ## After it's up
 
-- **The master key locks the *instance*.** After a restart, Hezo comes up **locked**
-  until you provide the twelve words again on the browser gate - that locked-on-restart
-  behaviour is by design, and unlocking from the browser is the secure way to bring it
-  back up. (In-app **update** restarts are the exception: the unlock key is handed to
-  the new process in memory, so an update doesn't re-lock.) **Don't save your master key
-  to a file on the server** (an env file, the systemd unit, anywhere on disk): it's the
+- **The master key locks the *instance*.** A new Hezo process starts **locked** by
+  default. A supervised in-app update hands the key to the new process in memory, so
+  **Install & restart** returns unlocked. A reboot, crash, or direct service restart
+  comes up locked unless that invocation deliberately receives the one-shot
+  `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock from the browser
+  gate. **Don't save your master key to a file on the server** (an env file, the
+  systemd unit, anywhere on disk): it's the
   one secret Hezo keeps in memory only, and a copy sitting next to the encrypted data
   lets anyone who can read the disk decrypt everything. See
   [First-run setup](/docs/getting-started/first-run) and
   [Master key & encryption](/docs/security/master-key).
-- **Backups.** Everything lives in `/var/lib/hezo` - back that one directory up. See
-  [Backup & recovery](/docs/deployment/backup-and-recovery). With
+- **Backups.** Back up `/var/lib/hezo`, `/etc/hezo/hezo.config.cjs`, referenced files
+  such as `/etc/hezo/db-ca.crt`, and the systemd unit or other startup settings that
+  load the config. See [Backup & recovery](/docs/deployment/backup-and-recovery). With
   [managed data hosting](#using-managed-data-hosting) your provider covers database
-  backups and asset durability, but `/var/lib/hezo` still holds workspaces and keys -
-  keep backing it up.
+  backups and asset durability, but those host files still carry workspaces, keys,
+  backend credentials, and launch settings.
 - **Updates** work as usual: a superuser clicks **Install & restart** in the web app.
   See [Self-hosting → Updating](/docs/deployment/self-hosting#updating).
 
@@ -279,6 +286,12 @@ standalone:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh | sudo bash
 ```
+
+It is safe to run again on a server it already provisioned. A config file you edited
+yourself is kept exactly as it is. If that file no longer loads, the installer stops
+before changing anything and tells you so, rather than replacing your settings; check
+it with `hezo config validate --config /etc/hezo/hezo.config.cjs`, then run the
+installer again.
 
 For the fully manual path - your own systemd unit, reverse proxy, and firewall rules,
 step by step - see [Self-hosting](/docs/deployment/self-hosting) and

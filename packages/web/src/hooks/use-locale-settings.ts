@@ -17,7 +17,7 @@ import { queryKeys } from '../lib/query-keys';
  *
  * **Why an unauthorized save is not simply an error.** The locale control is
  * permanently available in the header, including on the pre-auth gates. In two
- * of those states - an initialized instance that is locked after a restart, and
+ * of those states - an initialized instance in the locked state, and
  * the password login screen - there is no session to authorize a global write
  * with. Rather than showing a button that cannot work, an unauthorized save
  * still applies the choice to this browser (the provider's render hint) and

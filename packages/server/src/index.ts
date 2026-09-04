@@ -2,7 +2,14 @@ import { existsSync } from 'node:fs';
 import { AuthType, WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
-import { resolveConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
+import {
+	resolveConfig,
+	runBackup,
+	runConfigValidation,
+	runRestore,
+	runUninstall,
+	runVersion,
+} from './cli';
 import { detectRemovedEnvVars, formatRemovedEnvWarning } from './config/removed-env';
 import { setRuntimeConfig } from './config/runtime';
 import type { HezoConfig } from './config/types';
@@ -98,8 +105,13 @@ interface WsConnectionData extends WsData {
 	_token?: string;
 }
 
-// `hezo --version` / `hezo version` prints the version and exits before any
-// server startup.
+// Config validation and version output both exit before any server startup.
+try {
+	if (runConfigValidation()) process.exit(0);
+} catch (err) {
+	console.error(`\n${err instanceof Error ? err.message : String(err)}\n`);
+	process.exit(1);
+}
 if (runVersion()) {
 	process.exit(0);
 }

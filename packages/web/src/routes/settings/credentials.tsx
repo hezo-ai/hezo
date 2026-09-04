@@ -257,7 +257,7 @@ function InstanceCredentialsPage() {
 								onChange={(e) => setName(e.target.value)}
 								required
 								disabled={!!editing}
-								className="flex-1"
+								wrapperClassName="flex-1"
 							/>
 							<Input
 								placeholder={editing ? 'New value (leave blank to keep)' : 'Value'}
@@ -265,7 +265,7 @@ function InstanceCredentialsPage() {
 								value={value}
 								onChange={(e) => setValue(e.target.value)}
 								required={!editing}
-								className="flex-1"
+								wrapperClassName="flex-1"
 							/>
 						</div>
 						<Input

@@ -95,7 +95,7 @@ test('the inline edit panel renders without a translation context', () => {
 // would put the app's translation layer back inside the package.
 test('the theme menu renders without a translation context', async () => {
 	render(
-		<ThemeProvider>
+		<ThemeProvider storageKey="ui-spec-theme">
 			<ThemeSwitcher />
 		</ThemeProvider>,
 	);
@@ -105,7 +105,7 @@ test('the theme menu renders without a translation context', async () => {
 
 test('the theme menu takes the words it is given', () => {
 	render(
-		<ThemeProvider>
+		<ThemeProvider storageKey="ui-spec-theme">
 			<ThemeSwitcher
 				label="Thema"
 				optionLabels={{ system: 'System', light: 'Hell', dark: 'Dunkel' }}
@@ -114,4 +114,17 @@ test('the theme menu takes the words it is given', () => {
 	);
 
 	expect(screen.getByRole('button', { name: 'Thema' })).toBeTruthy();
+});
+
+test('the theme provider refuses to guess a storage key', () => {
+	// A default key here would be a name every consumer silently shares, and an
+	// app whose pre-paint script read a different one would flash on every load.
+	expect(() =>
+		render(
+			// @ts-expect-error - the prop is required; this is the untyped caller's path.
+			<ThemeProvider>
+				<span />
+			</ThemeProvider>,
+		),
+	).toThrow(/storageKey/);
 });

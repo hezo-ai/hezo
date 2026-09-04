@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { MarkdownProse } from '../src/components/markdown-prose';
+import { withI18n } from './helpers/i18n';
 import { getTestContext, hoverUntil, renderApp } from './helpers/render';
 import { seedAsset, seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
@@ -20,15 +21,17 @@ import { seedAsset, seedComment, seedProject, seedTask, seedWorkspace } from './
 test('a review highlight activates on click, Enter, and Space, and shows the active style', async () => {
 	const onClick = vi.fn();
 	const { getByTestId } = render(
-		<QueryClientProvider client={new QueryClient()}>
-			<MarkdownProse
-				reviewAnnotations={[{ id: 'r1', quote: 'load-bearing clause', occurrence: 0 }]}
-				onReviewHighlightClick={onClick}
-				activeReviewId="r1"
-			>
-				The contract has a load-bearing clause we must keep.
-			</MarkdownProse>
-		</QueryClientProvider>,
+		withI18n(
+			<QueryClientProvider client={new QueryClient()}>
+				<MarkdownProse
+					reviewAnnotations={[{ id: 'r1', quote: 'load-bearing clause', occurrence: 0 }]}
+					onReviewHighlightClick={onClick}
+					activeReviewId="r1"
+				>
+					The contract has a load-bearing clause we must keep.
+				</MarkdownProse>
+			</QueryClientProvider>,
+		),
 	);
 
 	const mark = getByTestId('review-highlight');
@@ -53,15 +56,17 @@ test('a review highlight activates on click, Enter, and Space, and shows the act
 
 test('an inactive review highlight renders the idle style', () => {
 	const { getByTestId } = render(
-		<QueryClientProvider client={new QueryClient()}>
-			<MarkdownProse
-				reviewAnnotations={[{ id: 'r1', quote: 'quoted words', occurrence: 0 }]}
-				onReviewHighlightClick={() => {}}
-				activeReviewId={null}
-			>
-				Some quoted words here.
-			</MarkdownProse>
-		</QueryClientProvider>,
+		withI18n(
+			<QueryClientProvider client={new QueryClient()}>
+				<MarkdownProse
+					reviewAnnotations={[{ id: 'r1', quote: 'quoted words', occurrence: 0 }]}
+					onReviewHighlightClick={() => {}}
+					activeReviewId={null}
+				>
+					Some quoted words here.
+				</MarkdownProse>
+			</QueryClientProvider>,
+		),
 	);
 	expect(getByTestId('review-highlight').className).not.toContain('ring-2');
 });
@@ -116,18 +121,29 @@ test('hovering a KB-doc mention shows its size (B, KB, and MB forms) and relativ
 		) ?? null;
 	const shows = (pattern: RegExp) => () => pattern.test(document.body.textContent ?? '');
 
+	// Leaving a trigger opens a grace area towards its tooltip, so the pointer can
+	// travel into the panel without it closing, and one provider covers every
+	// tooltip - which is what makes the delay grouping work. Dismissing rather than
+	// only unhovering tears that area down, so the next mention is free to open;
+	// in a browser the pointer leaving the area does the same thing, but every
+	// rectangle here measures zero, so there is no outside to move to.
+	const dismiss = async (name: string) => {
+		await user.unhover(links.find((l) => l.textContent?.includes(name)) as HTMLElement);
+		await user.keyboard('{Escape}');
+	};
+
 	// Tooltip content renders in a portal on hover: "<size> · updated <relative>".
 	await hoverUntil(user, linkFor('tiny-notes.md'), shows(/10 B · updated /), {
 		label: 'the tiny-notes.md mention',
 	});
 	// Freshly seeded → the relative formatter lands in the seconds bucket.
 	expect(document.body.textContent).toMatch(/10 B · updated (now|\d+ seconds? ago)/);
-	await user.unhover(links.find((l) => l.textContent?.includes('tiny-notes.md')) as HTMLElement);
+	await dismiss('tiny-notes.md');
 
 	await hoverUntil(user, linkFor('medium-notes.md'), shows(/2\.0 KB · updated /), {
 		label: 'the medium-notes.md mention',
 	});
-	await user.unhover(links.find((l) => l.textContent?.includes('medium-notes.md')) as HTMLElement);
+	await dismiss('medium-notes.md');
 
 	await hoverUntil(user, linkFor('large-notes.md'), shows(/1\.5 MB · updated /), {
 		label: 'the large-notes.md mention',

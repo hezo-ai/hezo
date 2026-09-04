@@ -88,9 +88,12 @@ directly.
 
 Hezo authenticates every session with your **admin password**, so a public deployment is
 no longer open by default. Access is gated by that password on every request; the master
-key's job is separate - it unlocks the instance's encryption, and you provide it from the
-browser gate after each restart. **Don't store the master key on the server** to skip the
-unlock; keeping it in memory only is what protects the vault if the host is compromised.
+key's job is separate. A new Hezo process starts **locked** by default. A supervised
+in-app update hands the key to the new process in memory. A reboot, crash, or direct
+service restart comes up locked unless that invocation deliberately receives the one-shot
+`--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock from the browser gate.
+**Don't store the master key on the server** to skip the unlock; keeping it in memory only
+is what protects the vault if the host is compromised.
 
 - **Set a strong admin password** and, if you upgraded an existing instance, change the
   default (`password`) in **Settings → Users & access** before exposing it. See

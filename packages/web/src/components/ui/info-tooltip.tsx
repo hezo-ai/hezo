@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { InfoTooltip } from '@hezo/ui';
+export { InfoTooltip, type InfoTooltipProps } from '@hezo/ui';

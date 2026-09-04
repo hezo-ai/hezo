@@ -139,6 +139,12 @@ test('setup → password → provider, then restart → unlock → password logi
 	// Phase A — unset: the pre-active vault setup screen at mobile viewport.
 	await expect(page.getByTestId('master-key-setup')).toBeVisible();
 	await page.getByRole('button', { name: /generate master key/i }).click();
+	await expect(page.getByText('Encrypts your secrets and unlocks Hezo.')).toBeVisible();
+	await expect(
+		page.getByText(
+			/Keep this key handy so you can unlock Hezo in your browser.*New Hezo processes start locked by default.*supervised in-app update.*replacement process in memory.*reboot, crash, or direct service restart needs a browser unlock.*one-shot --master-key or HEZO_MASTER_KEY input/i,
+		),
+	).toBeVisible();
 	const words = page.getByTestId('mnemonic-word');
 	await expect(words).toHaveCount(12);
 	// The words are masked (password-style) by default — reveal them first.

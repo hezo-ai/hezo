@@ -120,5 +120,5 @@ If you keep the data directory somewhere else (`--data-dir`), share that path in
 
 - [Installation](/docs/getting-started/installation) - prerequisites and getting the binary
 - [Self-hosting](/docs/deployment/self-hosting) - networking, firewall and updates
-- [Configuration reference](/docs/deployment/configuration) - every flag and environment variable
+- [Configuration reference](/docs/deployment/configuration) - config-file settings and flags
 - [Container isolation](/docs/security/container-isolation) - what the sandbox protects

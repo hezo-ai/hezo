@@ -113,7 +113,7 @@ export function ConnectorMethodsDialog({
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
 							placeholder="Search methods"
-							className="pl-8"
+							wrapperClassName="pl-8"
 							data-testid="connector-methods-search"
 						/>
 					</div>

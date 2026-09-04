@@ -19,6 +19,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { authenticateWithMnemonic } from '../lib/auth';
 import { copyToClipboard } from '../lib/clipboard';
+import { useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { GateLocaleSwitcher } from './locale/locale-switcher';
@@ -82,6 +83,7 @@ interface MasterKeyFormProps {
 }
 
 export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFormProps) {
+	const { t } = useI18n();
 	const [key, setKey] = useState('');
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [error, setError] = useState('');
@@ -255,10 +257,9 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 							<KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
 							<span>
 								<span className="font-semibold text-text-1">
-									Encrypts everything, unlocks every restart.
+									{t('setup.masterKey.lifecycleTitle')}
 								</span>{' '}
-								This key protects all data in your instance and brings it back online after each
-								restart.
+								{t('setup.masterKey.lifecycleDescription')}
 							</span>
 						</div>
 						<div className="flex gap-2.5 items-start">
@@ -345,7 +346,8 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 						</label>
 						<PasswordInput
 							id="mnemonic-entry"
-							revealLabel="key"
+							showLabel="Show key"
+							hideLabel="Hide key"
 							className="font-mono"
 							value={key}
 							onChange={(e) => setKey(e.target.value)}
@@ -412,7 +414,7 @@ interface MasterKeyGateProps {
 	state: MasterKeyState;
 }
 
-/** Full-page vault screen: master-key setup (unset) or unlock-on-restart (locked). */
+/** Full-page vault screen: master-key setup (unset) or unlock gate (locked). */
 export function MasterKeyGate({ state }: MasterKeyGateProps) {
 	return (
 		<VaultShell>

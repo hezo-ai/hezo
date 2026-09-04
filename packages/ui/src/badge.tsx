@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 /** The semantic tones the design system defines. */
-type Tone =
+export type Tone =
 	| 'neutral'
 	| 'accent'
 	| 'success'
@@ -67,7 +67,7 @@ function resolveTone(color: BadgeColor): Tone {
 	return (aliasToTone as Record<string, Tone>)[color] ?? (color as Tone);
 }
 
-interface BadgeProps {
+export interface BadgeProps {
 	color?: BadgeColor;
 	/** tint (default) · solid · dot (dot + label) · outline. */
 	variant?: 'tint' | 'solid' | 'dot' | 'outline';

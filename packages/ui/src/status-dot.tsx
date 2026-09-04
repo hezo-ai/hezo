@@ -14,7 +14,7 @@ const glowMap = {
 	disabled: 'ring-border-strong/30',
 } as const;
 
-interface StatusDotProps {
+export interface StatusDotProps {
 	status: keyof typeof statusMap;
 	pulse?: boolean;
 	/**

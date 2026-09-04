@@ -49,6 +49,7 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--disable-telemetry` | telemetry on | Turn off the anonymous daily usage report (aggregate counts only - no names, content, or costs). On by default (config: `telemetry.enabled`) |
 | `--telemetry-endpoint <url>` | `https://hezo.ai/api/telemetry` | Where the daily usage report is sent; point at your own collector to keep data in-house (config: `telemetry.endpoint`) |
 | `--version` | - | Print the Hezo version and exit (also `hezo version`) |
+| `config validate --config <path>` | - | Load and validate a CommonJS config without starting Hezo |
 
 ## Master Key
 

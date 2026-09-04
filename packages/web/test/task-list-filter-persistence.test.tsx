@@ -48,7 +48,7 @@ test('filter selections persist for the same project across navigation away and 
 	await user.click(statusBtn);
 	const clear = await findByRole('button', { name: 'Clear selection' });
 	await user.click(clear);
-	const doneOption = await findByRole('button', { name: 'Done' });
+	const doneOption = await findByRole('menuitemcheckbox', { name: 'Done' });
 	await user.click(doneOption);
 	await user.click(statusBtn);
 
@@ -125,7 +125,7 @@ test('one project does not inherit another project filters', async () => {
 	const statusBtn = await findByTestId('task-filter-status');
 	await user.click(statusBtn);
 	await user.click(await findByRole('button', { name: 'Clear selection' }));
-	await user.click(await findByRole('button', { name: 'Done' }));
+	await user.click(await findByRole('menuitemcheckbox', { name: 'Done' }));
 	await user.click(statusBtn);
 
 	await waitFor(

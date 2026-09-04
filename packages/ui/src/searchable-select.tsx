@@ -1,6 +1,7 @@
 import * as Popover from '@radix-ui/react-popover';
 import { Check, ChevronDown, Loader2, Search } from 'lucide-react';
 import { Fragment, type ReactNode, useMemo, useState } from 'react';
+import { touchMinHeightClassName } from './density.js';
 
 export interface SearchableSelectOption {
 	value: string;
@@ -16,7 +17,7 @@ export interface SearchableSelectOption {
 	separatorBefore?: boolean;
 }
 
-interface SearchableSelectProps {
+export interface SearchableSelectProps {
 	options: SearchableSelectOption[];
 	value: string | null;
 	onChange: (value: string) => void;
@@ -122,12 +123,12 @@ export function SearchableSelect({
 					<button
 						type="button"
 						data-testid={testId}
-						className={`flex items-center justify-between gap-2 min-w-[160px] rounded-md border border-border bg-surface px-2.5 py-1.5 text-[13px] text-text-1 outline-none hover:border-border-strong focus:border-border-strong disabled:opacity-50 cursor-pointer ${className}`}
+						className={`flex items-center justify-between gap-2 min-w-[160px] rounded-md border border-border bg-surface px-2.5 py-1.5 text-[13px] text-text-1 outline-none hover:border-border-strong focus:border-border-strong disabled:opacity-50 cursor-pointer ${touchMinHeightClassName} ${className}`}
 					>
 						<span className={`truncate ${selected ? '' : 'text-text-2'}`}>
 							{selected ? selected.label : placeholder}
 						</span>
-						<ChevronDown className="w-3.5 h-3.5 text-text-3 shrink-0" />
+						<ChevronDown className="w-3.5 h-3.5 text-text-3 shrink-0" aria-hidden />
 					</button>
 				)}
 			</Popover.Trigger>
@@ -149,13 +150,17 @@ export function SearchableSelect({
 								placeholder={searchPlaceholder}
 								aria-label={searchPlaceholder}
 								data-testid={testId ? `${testId}-search` : undefined}
-								className="w-full bg-transparent text-[13px] text-text-1 outline-none placeholder:text-text-3"
+								className={`w-full bg-transparent text-[13px] text-text-1 outline-none placeholder:text-text-3 ${touchMinHeightClassName}`}
 							/>
 						</div>
 					)}
-					<div className="max-h-64 overflow-y-auto">
+					{/* A listbox, so the choices are announced as choices and the current
+					    one as chosen - the rendered tick says so only to whoever sees it. */}
+					<div className="max-h-64 overflow-y-auto" role="listbox">
 						{filtered.length === 0 && !loading && (
-							<div className="px-2.5 py-2 text-[13px] text-text-2">{emptyLabel}</div>
+							<div role="status" className="px-2.5 py-2 text-[13px] text-text-2">
+								{emptyLabel}
+							</div>
 						)}
 						{filtered.map((opt, i) => {
 							const active = opt.value === value;
@@ -166,15 +171,21 @@ export function SearchableSelect({
 									{opt.separatorBefore && i > 0 && <div className="mx-1.5 my-1 h-px bg-border" />}
 									<button
 										type="button"
+										role="option"
+										aria-selected={active}
 										onClick={() => handleSelect(opt.value)}
 										data-testid={testId ? `${testId}-option-${opt.value}` : undefined}
-										className={`flex w-full items-start gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors cursor-pointer ${
+										// `items-start` seats a two-line row's tick on its first line; under
+										// touch the row is taller than its text, so a one-line row centres
+										// instead of sitting at the top of its 44px.
+										className={`flex w-full items-start gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors cursor-pointer in-data-[density=touch]:items-center ${touchMinHeightClassName} ${
 											active
 												? 'text-text-1 bg-surface-2'
 												: 'text-text-2 hover:text-text-1 hover:bg-surface-3'
 										}`}
 									>
 										<Check
+											aria-hidden
 											className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${active ? 'text-info' : 'text-transparent'}`}
 										/>
 										<span className="min-w-0 flex-1">
@@ -190,7 +201,10 @@ export function SearchableSelect({
 							);
 						})}
 						{loading && (
-							<div className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-text-2">
+							<div
+								role="status"
+								className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-text-2"
+							>
 								<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-text-3" />
 								{loadingLabel}
 							</div>

@@ -1,5 +1,5 @@
 import { Button, HelpDialog } from '@hezo/ui';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
 import { expect, test } from 'vitest';
 
@@ -38,7 +38,11 @@ test('the help dialog forwards the close label it is given', async () => {
 		</HelpDialog>,
 	);
 
-	screen.getByRole('button', { name: 'Help' }).click();
+	// Through `act`, so the open state settles before the assertion rather than
+	// after it, which is what the bare `.click()` was warning about.
+	await act(async () => {
+		screen.getByRole('button', { name: 'Help' }).click();
+	});
 
 	expect((await screen.findByTestId('dialog-close')).getAttribute('aria-label')).toBe('Sluiten');
 });

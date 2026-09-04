@@ -66,9 +66,10 @@ second, externally-verifiable mechanism is needed rather than reusing it.
 
 ### The load-bearing consequence: identity and session must be separable in time
 
-A hosted tenant **boots locked on every restart**. The supervisor unlock handoff
-(`lib/unlock-handoff.ts`) survives only an *update* restart, by design; reboot,
-crash and `systemctl restart` all come up locked.
+A new hosted Hezo process **starts locked by default**. The supervisor unlock handoff
+(`lib/unlock-handoff.ts`) carries the key in memory through an *update* restart. A reboot,
+crash, or `systemctl restart` comes up locked unless that invocation deliberately
+receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input.
 
 And a locked instance cannot mint a session at all:
 
@@ -80,11 +81,13 @@ And a locked instance cannot mint a session at all:
 - The web gate calls `api.clearToken()` on mount for any non-unlocked state
   (`packages/web/src/routes/__root.tsx:186`).
 
-So a one-shot "verify the token, return a session" route cannot work: on the
-common path there is nothing to sign with, and a 60-second token cannot wait for
-a human to fetch twelve words. **H3 is therefore specified as a two-phase
-exchange** — see below. This is not a refinement; without it a hosted tenant has
-no way in after any reboot.
+So a one-shot "verify the token, return a session" route cannot work when a new
+process is locked by default: there is nothing to sign with, and a 60-second token
+cannot wait for a human to fetch twelve words. A supervised in-app update hands the
+key to the new process in memory; a deliberate one-shot `--master-key` or
+`HEZO_MASTER_KEY` invocation supplies it at launch. After a reboot, crash, or direct
+service restart without either input, **H3's two-phase exchange** provides the deferred
+browser-unlock path - see below.
 
 ### H1 — SSO token builder in `@hezo/shared`
 
@@ -291,8 +294,9 @@ with the token they return with.
   step leaves the stepper too, rather than showing as a completed step that never
   happened.
 - **Signing out goes to `sso.logoutUrl`** after clearing the local session. It
-  ends a session; it does not re-lock the instance, which still needs a restart
-  exactly as it always has.
+  ends a session; it does not re-lock the instance. A reboot, crash, or direct service
+  restart starts a new locked process unless that invocation deliberately receives the
+  one-shot `--master-key` or `HEZO_MASTER_KEY` input.
 - **A token arriving before setup is early, not failed.** The control plane sends
   a new signup straight to a brand-new instance, which has no account to be
   anybody yet and refuses the token. Treating that as a failure strands every new
@@ -626,6 +630,12 @@ The cloud side adopts this by bumping its vendored submodule to a release
 containing it; until then it keeps its own small kit, which already looks right
 because the two `@theme` surfaces agree token for token.
 
+**Density is set once, not per control.** The dashboard sizes every control at
+44px and had kept its own kit for that alone; it now sets `data-density="touch"`
+on `<html>` and every stacked primitive - the buttons `ConfirmDialog` renders on
+its behalf included - takes the 44px floor, while the isolated controls carry a
+44px target in every density. `density.ts` in the package is the contract.
+
 ---
 
 ## Already satisfied upstream — do not build these
@@ -705,7 +715,7 @@ not.** A hosted tenant confirms its own updates exactly like a self-hoster: the
 banner appears, the superuser presses "Install & restart", and nothing installs
 itself.
 
-The shipped defaults are already that behaviour — `config/types.ts:361` is
+The shipped defaults are already that behaviour - `config/types.ts` sets
 `updates: { disabled: false, autoInstall: false }`. So **hosted writes no
 `updates` block at all**, H5 hides nothing, and this repo grows no hosted branch
 in the update path.

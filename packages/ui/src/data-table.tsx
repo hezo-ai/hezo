@@ -1,5 +1,6 @@
 import { ArrowDown } from 'lucide-react';
 import { Fragment, type ReactNode, useCallback } from 'react';
+import { touchCellHeightClassName, touchMinHeightClassName } from './density.js';
 
 export interface Column<T> {
 	key: string;
@@ -27,7 +28,7 @@ export interface DataTableSort {
 	label: (header: string) => string;
 }
 
-interface DataTableProps<T> {
+export interface DataTableProps<T> {
 	columns: Column<T>[];
 	data: T[];
 	rowKey: (row: T) => string;
@@ -62,9 +63,9 @@ interface DataTableProps<T> {
 	hideHeaderOnMobile?: boolean;
 }
 
-// One entry per legal sub-task level (MAX_SUB_TASK_DEPTH), so every level reads
-// as distinct from its parent rather than two sharing one indent. Anything
-// deeper than the cap clamps to the last entry instead of losing its indent.
+// One entry per nesting level a caller can report, so every level reads as
+// distinct from its parent rather than two sharing one indent. Anything deeper
+// than the last entry clamps to it instead of losing its indent.
 const depthIndentClass: Record<number, string> = {
 	1: 'pl-5 sm:pl-6',
 	2: 'pl-9 sm:pl-10',
@@ -86,9 +87,9 @@ export function DataTable<T>({
 	sort,
 	hideHeaderOnMobile,
 }: DataTableProps<T>) {
-	// Ref callback fires when the focused row mounts (which can be after the first
-	// render, once data resolves) — scroll it into view then, mirroring the
-	// connectors list's focus behavior.
+	// Ref callback fires when the focused row mounts, which can be after the first
+	// render once the data resolves - scroll it into view then, rather than on a
+	// render that does not yet have the row.
 	const focusRef = useCallback((el: HTMLTableRowElement | null) => {
 		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}, []);
@@ -120,7 +121,7 @@ export function DataTable<T>({
 											onClick={() => sort.onSort(sortKey)}
 											aria-label={sort.label(col.header)}
 											data-testid={`data-table-sort-${sortKey}`}
-											className={`inline-flex w-full cursor-pointer items-center gap-1 px-2 py-2 transition-colors hover:bg-surface-2 hover:text-text-1 ${
+											className={`inline-flex w-full cursor-pointer items-center gap-1 px-2 py-2 transition-colors hover:bg-surface-2 hover:text-text-1 ${touchMinHeightClassName} ${
 												col.alignRight ? 'justify-end' : ''
 											} ${sorted ? 'font-semibold' : ''}`}
 										>
@@ -152,12 +153,29 @@ export function DataTable<T>({
 						const isFocused = domId != null && domId === focusedRowId;
 						return (
 							<Fragment key={id}>
+								{/* A clickable row is reachable by key as well as by pointer: the
+								    row is the whole interaction, so leaving it mouse-only puts the
+								    table's only action out of reach. */}
 								<tr
 									id={domId}
 									ref={isFocused ? focusRef : undefined}
 									data-depth={depth > 0 ? depth : undefined}
 									onClick={onRowClick ? () => onRowClick(row) : undefined}
-									className={`${onRowClick ? 'cursor-pointer hover:bg-surface-2' : ''} ${
+									onKeyDown={
+										onRowClick
+											? (e) => {
+													if (e.key !== 'Enter' && e.key !== ' ') return;
+													if (e.target !== e.currentTarget) return;
+													e.preventDefault();
+													onRowClick(row);
+												}
+											: undefined
+									}
+									// Focusable and activatable, but still a row: an explicit
+									// `role` here would replace the one the table gives it, and a
+									// table whose rows are buttons is no longer navigable as a table.
+									tabIndex={onRowClick ? 0 : undefined}
+									className={`${onRowClick ? 'cursor-pointer hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring' : ''} ${
 										isFocused ? 'bg-info-soft' : ''
 									} ${rowClassName?.(row) ?? ''}`.trim()}
 								>
@@ -169,7 +187,9 @@ export function DataTable<T>({
 										return (
 											<td
 												key={col.key}
-												className={`px-2 py-2.5 ${cellBorder} text-[13px] align-middle ${
+												// The floor rides the cells: a `<tr>` cannot carry it, and a cell
+												// ignores `min-height`. Only a clickable row is a target.
+												className={`${onRowClick ? `${touchCellHeightClassName} ` : ''}px-2 py-2.5 ${cellBorder} text-[13px] align-middle ${
 													col.alignRight ? 'text-right ' : ''
 												}${col.hideOnMobile ? 'hidden md:table-cell ' : ''}${
 													indent ? `${indent} ` : ''

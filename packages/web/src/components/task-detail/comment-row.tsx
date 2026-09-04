@@ -22,7 +22,7 @@ import {
 	jumpToComment,
 } from '../comment-renderers';
 import { ActorBadge } from '../ui/actor-badge';
-import { Avatar, avatarColorFromString } from '../ui/avatar';
+import { Avatar } from '../ui/avatar';
 
 /**
  * Copies a comment's markdown body to the clipboard, swapping its icon to a
@@ -185,7 +185,6 @@ export function CommentRow({
 					<Avatar
 						initials={authorName.slice(0, 2)}
 						size="sm"
-						color={avatarColorFromString(authorName)}
 						imageUrl={
 							c.author_icon_url ??
 							agentAvatarUrl({ slug: authorAgentSlug, avatar_spec: c.author_avatar_spec })
@@ -193,12 +192,7 @@ export function CommentRow({
 					/>
 				</AgentRef>
 			) : (
-				<Avatar
-					initials={authorName.slice(0, 2)}
-					size="sm"
-					color={avatarColorFromString(authorName)}
-					imageUrl={c.author_icon_url}
-				/>
+				<Avatar initials={authorName.slice(0, 2)} size="sm" imageUrl={c.author_icon_url} />
 			)}
 			<div className="flex-1 min-w-0 rounded-md border border-border bg-surface overflow-hidden">
 				<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-3">

@@ -1,13 +1,19 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { type InputHTMLAttributes, useState } from 'react';
+import { hitAreaClassName, touchMinHeightClassName } from './density.js';
 
-interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
+export interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
 	/**
-	 * Noun used in the toggle's aria-label ("Show {revealLabel}" / "Hide {revealLabel}").
-	 * Defaults to "password". Set a collision-free noun (e.g. "key") when a nearby
-	 * `getByLabelText` query would otherwise match the toggle as well as the field.
+	 * The reveal control's name while the field is masked.
+	 *
+	 * **A whole string, never a noun to build a sentence from.** Assembling one
+	 * bakes English word order into every language, and a translator handed only
+	 * the noun cannot fix it. Set a name that no nearby `getByLabelText` query
+	 * would also match the field by.
 	 */
-	revealLabel?: string;
+	showLabel?: string;
+	/** The reveal control's name while the field is visible. */
+	hideLabel?: string;
 }
 
 /**
@@ -17,24 +23,33 @@ interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>,
  */
 export function PasswordInput({
 	className = '',
-	revealLabel = 'password',
+	showLabel = 'Show password',
+	hideLabel = 'Hide password',
 	...props
 }: PasswordInputProps) {
 	const [visible, setVisible] = useState(false);
 	return (
 		<div className="relative">
+			{/* `type` after the spread, deliberately: the prop type forbids one, but a
+			    caller spreading a wider object gets past that and would otherwise be
+			    able to unmask the field. */}
 			<input
-				type={visible ? 'text' : 'password'}
-				className={`w-full rounded-md border border-border bg-surface px-3 py-2 pr-10 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent ${className}`}
+				className={`w-full rounded-md border border-border bg-surface px-3 py-2 pr-10 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent ${touchMinHeightClassName} ${className}`}
 				{...props}
+				type={visible ? 'text' : 'password'}
 			/>
 			<button
 				type="button"
 				onClick={() => setVisible((v) => !v)}
-				aria-label={`${visible ? 'Hide' : 'Show'} ${revealLabel}`}
-				className="absolute inset-y-0 right-0 flex items-center px-3 text-text-3 hover:text-text-1"
+				aria-label={visible ? hideLabel : showLabel}
+				aria-pressed={visible}
+				className={`absolute inset-y-0 right-0 flex items-center px-3 text-text-3 hover:text-text-1 ${hitAreaClassName}`}
 			>
-				{visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+				{visible ? (
+					<EyeOff className="w-4 h-4" aria-hidden />
+				) : (
+					<Eye className="w-4 h-4" aria-hidden />
+				)}
 			</button>
 		</div>
 	);

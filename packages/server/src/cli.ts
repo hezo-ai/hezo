@@ -133,6 +133,24 @@ export function runVersion(
 	return false;
 }
 
+/** Load and validate a config file, then exit without starting any runtime. */
+export function runConfigValidation(
+	argv: string[] = process.argv,
+	out: (line: string) => void = console.log,
+): boolean {
+	if (argv[2] !== 'config' || argv[3] !== 'validate') return false;
+
+	const program = new Command()
+		.name('hezo config validate')
+		.description('Load and validate a CommonJS config file without starting Hezo')
+		.requiredOption('--config <path>', CONFIG_OPTION_DESC)
+		.parse(argv.slice(4), { from: 'user' });
+	const path = resolve(program.opts().config as string);
+	loadConfigFile(path);
+	out(`Valid Hezo config: ${path}`);
+	return true;
+}
+
 /**
  * Refuse an embedded backup/restore while a Hezo server is live on `dataDir`.
  *

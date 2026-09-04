@@ -15,9 +15,11 @@ export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
  * Holds the server's symmetric key material, derived from the **unlock key** —
  * a 32-byte key the client derives from the master-key mnemonic. The mnemonic
  * itself (and the Ed25519 auth private key derived alongside the unlock key)
- * never reaches the server; the unlock key transits only at setup and at
- * unlock-after-restart. The enrolled auth public key (stored in `system_meta`)
- * verifies challenge signatures for login/unlock.
+ * never reaches the server. A new process starts locked by default; the unlock
+ * key arrives through a signed web setup or unlock payload, a supervised
+ * update's in-memory IPC handoff, or direct startup injection derived from
+ * deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input. The enrolled
+ * auth public key (stored in `system_meta`) verifies challenge signatures.
  */
 export class MasterKeyManager {
 	private key: Buffer | null = null;

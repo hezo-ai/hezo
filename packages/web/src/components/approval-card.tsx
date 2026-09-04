@@ -1,10 +1,11 @@
 import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { Check, Loader2, Pencil, X } from 'lucide-react';
+import { Check, ExternalLink, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
 import { agentAvatarUrl } from '../lib/agent-avatar';
+import { useI18n } from '../lib/i18n';
 import { approvalTypeColor } from '../lib/status-meta';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Avatar, getInitials } from './ui/avatar';
@@ -12,6 +13,17 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
 const linkClass = 'font-medium text-accent hover:underline';
+
+/**
+ * A Strategy row the run pipeline files when it has given up on an agent - the
+ * retry budget is spent, or the model provider has refused its runs for hours.
+ * It is a notice, not a proposal: there is nothing to approve or deny, only a
+ * task to open and a card to clear. Every surface that treats it differently
+ * from a real strategy proposal asks this one question.
+ */
+function isAgentErrorNotice(approval: Approval): boolean {
+	return approval.type === ApprovalType.Strategy && approval.payload.type === 'agent_error';
+}
 
 function EntityLink({
 	to,
@@ -185,6 +197,7 @@ function CardBody({
 	showTeam: boolean;
 	unread: boolean;
 }) {
+	const { t } = useI18n();
 	const resolved = approval.status !== ApprovalStatus.Pending;
 	return (
 		<>
@@ -199,11 +212,16 @@ function CardBody({
 				<Badge variant="dot" color={approvalTypeColor(approval.type)}>
 					{approval.type.replace('_', ' ')}
 				</Badge>
-				{resolved && (
-					<Badge color={approval.status === ApprovalStatus.Approved ? 'green' : 'red'}>
-						{approval.status}
-					</Badge>
-				)}
+				{resolved &&
+					(isAgentErrorNotice(approval) ? (
+						// A notice has one way out - Dismiss - so its history badge says
+						// that, whichever status the row was closed with.
+						<Badge color="neutral">{t('approval.agentError.dismissed')}</Badge>
+					) : (
+						<Badge color={approval.status === ApprovalStatus.Approved ? 'green' : 'red'}>
+							{approval.status}
+						</Badge>
+					))}
 				{showTeam && approval.team_name && (
 					<span className="text-xs text-text-2">{approval.team_name}</span>
 				)}
@@ -253,6 +271,7 @@ function resolveOauthDestination(approval: Approval) {
 }
 
 export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) {
+	const { t } = useI18n();
 	const resolveApproval = useResolveApproval();
 	const [modalOpen, setModalOpen] = useState(false);
 	const unread = approval.status === ApprovalStatus.Pending;
@@ -302,6 +321,62 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 			>
 				<CardBody approval={approval} showTeam={showTeam} unread />
 			</Link>
+		);
+	}
+
+	if (isAgentErrorNotice(approval)) {
+		const taskId = approval.payload_task_identifier;
+		return (
+			<div
+				className={`${baseCardClass}${highlight}`}
+				data-testid="approval-card"
+				data-unread={true}
+			>
+				<CardBody approval={approval} showTeam={showTeam} unread />
+				<div className="flex gap-2 mt-3 flex-wrap">
+					{taskId && (
+						<Link
+							to="/projects/$projectId/tasks/$taskId"
+							params={{
+								// The run was scoped to the task's project team, so the
+								// approval's team is the task's project.
+								projectId: approval.payload_project_slug ?? approval.team_slug,
+								taskId: taskId.toLowerCase(),
+							}}
+						>
+							<Button size="sm" variant="secondary" data-testid="approval-open-task">
+								<ExternalLink className="w-3 h-3" />
+								{t('approval.agentError.openTask', { task: taskId })}
+							</Button>
+						</Link>
+					)}
+					{/* Dismiss closes the row through the one resolve route so the pending
+					    count drops and the give-up path may file a fresh notice next time.
+					    There is no third status to close a row with; `approved` runs no
+					    side effect for this payload, and the history badge reads
+					    "dismissed" either way. */}
+					<Button
+						size="sm"
+						variant="ghost"
+						disabled={resolveApproval.isPending}
+						data-testid="approval-dismiss"
+						onClick={() =>
+							resolveApproval.mutate({
+								approvalId: approval.id,
+								status: ApprovalStatus.Approved,
+								projectSlug: approval.payload_project_slug ?? undefined,
+							})
+						}
+					>
+						{resolveApproval.isPending ? (
+							<Loader2 className="w-3 h-3 animate-spin" />
+						) : (
+							<X className="w-3 h-3" />
+						)}
+						{t('approval.agentError.dismiss')}
+					</Button>
+				</div>
+			</div>
 		);
 	}
 

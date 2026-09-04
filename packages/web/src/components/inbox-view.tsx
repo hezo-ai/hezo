@@ -204,7 +204,6 @@ export function InboxView({ projectSlugs, scope, sort, onSortChange }: InboxView
 							value={readFilter}
 							onChange={setReadFilter}
 							label={t('inbox.filters.showLabel')}
-							className=""
 						/>
 						<FilterPills
 							options={sortOptions}
@@ -212,7 +211,6 @@ export function InboxView({ projectSlugs, scope, sort, onSortChange }: InboxView
 							onChange={onSortChange}
 							label={t('inbox.filters.sortLabel')}
 							tone="plain"
-							className=""
 						/>
 						{markAllReadAvailable && (
 							<button

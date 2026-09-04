@@ -1,6 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
+import { hitAreaClassName } from './density.js';
 
-interface BackLinkProps {
+export interface BackLinkProps {
 	onClick: () => void;
 	/** Link text after the arrow. English default; the app passes its own. */
 	label?: string;
@@ -17,7 +18,7 @@ export function BackLink({ onClick, label = 'Back', className = '' }: BackLinkPr
 		<button
 			type="button"
 			onClick={onClick}
-			className={`inline-flex items-center gap-1 text-[13px] text-text-2 hover:text-text-1 transition-colors ${className}`}
+			className={`relative inline-flex items-center gap-1 text-[13px] text-text-2 hover:text-text-1 transition-colors ${hitAreaClassName} ${className}`}
 		>
 			<ArrowLeft className="w-4 h-4" />
 			{label}

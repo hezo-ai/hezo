@@ -306,7 +306,7 @@ export function DocsLibrary({
 								aria-label="Filter documents"
 								placeholder="Filter..."
 								icon={<Search className="w-3.5 h-3.5" />}
-								className="flex-1 min-w-0"
+								wrapperClassName="flex-1 min-w-0"
 								value={search}
 								onChange={(e) => setSearch(e.target.value)}
 							/>

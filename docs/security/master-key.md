@@ -17,8 +17,8 @@ it, Hezo derives the key used to encrypt and decrypt your vault using strong,
 authenticated encryption (AES-256-GCM).
 
 - It is held **in memory only** while Hezo is running - **never written to disk.**
-- Hezo cannot unlock itself. Even on a routine restart, the master key has to be
-  provided again. This is deliberate: nobody who gets a copy of your data directory can
+- After a reboot, crash, or direct service restart, the master key has to be provided
+  again. This is deliberate: nobody who gets a copy of your data directory can
   read your secrets without the phrase.
 
 Treat it like the seed phrase of a crypto wallet: **write it down, store it safely, and
@@ -30,7 +30,7 @@ Hezo has a simple gate around your secrets:
 
 - **Unset** - first run, before you've created a master key.
 - **Locked** - Hezo is running but the master key hasn't been provided yet. Secrets
-  can't be read and agents can't run. This is the state after every restart.
+  can't be read and agents can't run. This is the default state for a new process.
 - **Unlocked** - you've provided the correct phrase; Hezo can decrypt secrets and
   agents run normally.
 
@@ -53,15 +53,12 @@ same rule applies. A copy of the phrase sitting next to the encrypted
 vault means a stolen disk image, a leaked backup, or anyone who can read the box can decrypt
 everything - exactly what encryption at rest is meant to prevent.
 
-That Hezo comes up **locked** after every restart is the feature, not an inconvenience:
-unlock it from the browser gate each time. If you genuinely must automate one launch, you
-can pass `HEZO_MASTER_KEY` to that single invocation, but treat the phrase like a crypto
-wallet seed - keep the only durable copy somewhere safe **off** the server.
-
-The one exception is an in-app **update** restart: the process that supervises the update
-hands the unlock key to the new process **in memory** (still never written to disk), so
-installing an update doesn't ask for the phrase again. Every other restart (service
-restart, reboot, crash) locks as described above. See
+Starting **locked** by default is the feature, not an inconvenience. Two startup paths can
+supply the key in memory: an in-app update hands it from the surviving supervisor to the
+new process, and `--master-key` / `HEZO_MASTER_KEY` supplies it to one invocation. Neither
+path writes it to disk. A reboot, crash, or direct service restart has no surviving handoff and
+comes up locked unless you deliberately provide the one-shot input. Keep the only durable
+copy somewhere safe **off** the server. See
 [Updating](/docs/deployment/self-hosting#updating).
 
 ## Your password vs. the master key
@@ -77,8 +74,10 @@ The master key and your password do two different jobs:
 
 This split is what lets you run Hezo on a public network safely: access is gated by the
 admin password on every request, while the master key stays purely about unlocking
-encryption. You unlock the instance from the browser gate after each restart, and everyone
-still has to sign in with the password to reach the app. See
+encryption. A reboot, crash, or direct service restart comes up locked unless that
+invocation deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input.
+You can otherwise unlock from the browser gate. Everyone still has to sign in with the
+password to reach the app. See
 [Secure remote access](/docs/deployment/secure-remote-access).
 
 **Changing your password?** While signed in, go to **Settings → Users & access**, enter

@@ -9,6 +9,7 @@ import { api } from '../src/lib/api';
 // The banner's confirm dialog resolves its cancel/close labels through `t()`,
 // so the tree needs the i18n context the app shell always provides.
 import { I18nProvider } from '../src/lib/i18n';
+import { expectAccurateUpdateRestartCopy } from './helpers/update-confirmation';
 
 const BASE: UpdateStatusInfo = {
 	current: '0.1.0',
@@ -120,11 +121,12 @@ test('Install & restart asks for confirmation (with master-key warning) before a
 	// to a clean rejection (happy-dom's real fetch would log an ECONNREFUSED).
 	vi.spyOn(global, 'fetch').mockRejectedValue(new Error('down'));
 
-	const { getByTestId, findByTestId, queryByTestId } = renderBanner();
+	const { getByTestId, findByTestId, queryByTestId } = renderBanner({ runsInFlight: 2 });
 
 	// Already staged: clicking the action opens the dialog — it does NOT apply yet.
 	await user.click(getByTestId('update-restart-button'));
 	const dialog = await findByTestId('confirm-dialog');
+	expectAccurateUpdateRestartCopy(dialog, 2);
 	expect(dialog.textContent).toContain('master key');
 	expect(postSpy).not.toHaveBeenCalled();
 	expect(queryByTestId('update-restart-overlay')).toBeNull();

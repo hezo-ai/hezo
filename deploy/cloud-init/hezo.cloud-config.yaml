@@ -6,13 +6,13 @@
 # "Startup script" field when creating an Ubuntu server (2 GB RAM+ recommended).
 # Works as-is on DigitalOcean, Hetzner, Vultr, Linode, and AWS Lightsail.
 #
-# On first boot it creates a 4 GB swap file (so low-RAM boxes don't get OOM-killed),
+# On first boot it creates a 6 GB swap file (so low-RAM boxes don't get OOM-killed),
 # installs Docker, downloads Hezo, sets up automatic HTTPS via Caddy, and starts Hezo
 # under systemd. After ~2 minutes, open the URL it derives (https://<public-ip>.sslip.io)
 # and finish the short in-browser setup: create your master key, set an admin
 # password, and connect a model.
 #
-# OPTIONAL - change the swap size (default 4G, auto-shrunk to fit the disk): set
+# OPTIONAL - change the swap size (default 6G, auto-shrunk to fit the disk): set
 # HEZO_SWAP_SIZE below (e.g. 2G, or 0 to disable). Existing swap is left untouched.
 #
 # OPTIONAL — use your own domain instead of sslip.io: point an A record at the
@@ -28,7 +28,7 @@ packages:
   - curl
 
 runcmd:
-  # To change the swap size (default 4G; set 0 to disable), set this before the curl line:
+  # To change the swap size (default 6G; set 0 to disable), set this before the curl line:
   # - [ sh, -c, "echo 'HEZO_SWAP_SIZE=2G' >> /etc/environment" ]
   # To use your own domain, set this before the curl line (A record must point here first):
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]

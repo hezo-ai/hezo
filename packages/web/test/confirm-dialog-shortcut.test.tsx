@@ -22,6 +22,7 @@ test('ConfirmDialog shows keycaps and confirms on mod+Enter', () => {
 				open
 				onOpenChange={() => {}}
 				title="Delete project?"
+				description="The project and its tasks are removed."
 				confirmLabel="Delete"
 				onConfirm={onConfirm}
 			/>,
@@ -41,7 +42,14 @@ test('ConfirmDialog does not fire while loading', () => {
 	const onConfirm = vi.fn();
 	render(
 		withI18n(
-			<ConfirmDialog open onOpenChange={() => {}} title="Working…" onConfirm={onConfirm} loading />,
+			<ConfirmDialog
+				open
+				onOpenChange={() => {}}
+				title="Working…"
+				description="This takes a moment."
+				onConfirm={onConfirm}
+				loading
+			/>,
 		),
 	);
 	const mac = isMacPlatform();

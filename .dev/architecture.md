@@ -88,6 +88,25 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   that every utility used only by a primitive is missing from the stylesheet and the
   component renders unstyled with nothing to say so. `web` declares it in `index.css`
   and `test/stylesheet-sources.test.ts` holds it there.
+  **Its props types are part of the contract.** Every component exports its own
+  `*Props`, because `ComponentProps<typeof X>` erases the parameter of a generic — a
+  consumer cannot wrap `DataTable`, `SegmentedControl` or `FilterPills` type-safely
+  without them.
+  **Three things a consumer supplies, each failing loudly rather than guessing**:
+  `ThemeProvider` takes a required `storageKey`, since a default would be a name every
+  app on one origin shares (`web` passes `THEME_STORAGE_KEY` from `lib/theme.tsx`, which
+  the pre-paint script in `index.html` duplicates under the guard in
+  `test/theme-first-paint.test.tsx`); `TooltipProvider` is mounted once near the root,
+  because the cross-tooltip delay grouping lives on it and one provider per tooltip is
+  no grouping at all; and `Logo` takes its `src`, `alt` and wordmark, since the package
+  ships no image and a baked-in path resolves against whichever app is serving.
+  **Density is the consumer's choice, made once.** A consumer wanting 44px touch targets
+  sets `data-density="touch"` on `<html>` (there, so portalled dialogs and menus are
+  covered); every stacked control - the buttons `ConfirmDialog` renders for it included -
+  takes a 44px floor through the `in-data-[density=touch]:` variant, and an isolated
+  control (a close button, a menu trigger, a switch) is 44px in every density through the
+  pseudo-element `density.ts` exports. `web` does not opt in. There is no `pointer-coarse`
+  branch: one attribute, one variant.
   **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
   archived asset — or when its copy is a paragraph rather than a word: a sentence with a
   node in it goes through the catalog whole, which a label prop cannot do. That is why
@@ -1521,13 +1540,15 @@ refused -> `read-only`. Logged at `error` with the runtime-specific fix but **no
 exiting would take down the UI the operator needs. Opt out with `containers.skipMountCheck`.
 
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
-key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
-an instance, which comes back **locked** after every restart, cannot read it at the moment
-the backend is chosen. Making that fatal aborts startup on every boot — a stored key reads
-back as "no API key is configured" and a launch-supplied `containers.daytona.apiKey` throws
-"the instance is locked" from `storeDaytonaApiKey` — so a managed backend could not survive a
-restart at all, workable only by passing the master key on the command line, the one thing
-Hezo never asks an operator to persist.
+key lives in the `secrets` vault, encrypted with the master key, which is memory-only. A
+new process starts locked by default. A supervised in-app update hands the key to the new
+process in memory, while a deliberate one-shot `--master-key` or `HEZO_MASTER_KEY`
+invocation supplies it at launch. A reboot, crash, or direct service restart without either
+input cannot read the credential until the operator uses the browser unlock gate. Making
+that locked path fatal would abort startup: a stored key reads back as "no API key is
+configured" and a launch-supplied `containers.daytona.apiKey` throws "the instance is
+locked" from `storeDaytonaApiKey`. Deferring the backend keeps all three paths workable
+without asking an operator to persist the master key.
 
 So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
 credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on
@@ -2775,7 +2796,14 @@ so the bound is on how long the work has been owed instead, measured from the wa
 Errored view and the failure ping both fire, and `fileProviderRefusalApproval` files the same
 shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
 dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
-after the agent when the fault is upstream. A synthetic on-demand wakeup is created at
+after the agent when the fault is upstream. The web renders every such `agent_error` record
+as a notice, not a proposal: a link to the task and a Dismiss that closes the row through the
+ordinary resolve route, never Approve/Deny, since neither had any side effect for this payload
+and both read as a decision the reader was not being asked to make. The record's other half
+is `clearAgentErrorApprovalsOnRecovery`, called from `runAgent` on every succeeded run: it
+resolves the member's pending `agent_error` rows through `resolveApproval` and the approvals
+broadcast, exactly as a human Dismiss does, so a recovered agent does not leave a stale notice
+behind. It spends only a SELECT when nothing is pending. A synthetic on-demand wakeup is created at
 dispatch, so the ceiling never bites a manual run: that hands back once and lets the operator
 see it queued.
 
@@ -5389,15 +5417,18 @@ enrolled at setup in `system_meta.auth_public_key`) and a 32-byte **unlock key**
 input to the server's at-rest derivations — canary, secrets encryption, JWT signing —
 held in memory only). The server needs symmetric key material at runtime because it
 decrypts secrets with no client in the loop (egress substitution, ssh signing, provider
-keys), so the unlock key transits exactly twice per boot — at setup and at
-unlock-after-restart — always inside an Ed25519-signed payload.
+keys). A new process starts locked by default. The unlock key reaches it through an
+Ed25519-signed web setup or unlock payload, a supervised update's private in-memory IPC
+handoff, or direct startup injection derived from deliberate one-shot `--master-key` or
+`HEZO_MASTER_KEY` input.
 
 **Bootstrap (challenge-response).** `POST /auth/setup` enrolls the public key + unlock key
 + canary in one transaction (self-certifying signature, `unset` state only). The mnemonic
 transmits **zero key material** on routine use: `POST /auth/challenge` issues a single-use
 nonce, `POST /auth/verify` verifies the signature over a reconstructed, domain-separated
-message (`hezo-auth-v1:login:<nonce>`). After a restart the server starts **locked**; the
-first `verify` includes the `unlock_key`. Messages are versioned and domain-separated so
+message (`hezo-auth-v1:login:<nonce>`). Without a supervisor handoff or one-shot
+master-key input, the server starts **locked**; the first `verify` includes the
+`unlock_key`. Messages are versioned and domain-separated so
 signatures can't be replayed or cross-purposed; on unlock `MasterKeyManager` fires
 `onUnlock` callbacks that start the `JobManager`.
 
@@ -6179,8 +6210,8 @@ deletes, which also collects orphans). The in-process S3 sim
 (`test/helpers/s3-sim.ts`) backs the driver-conformance and integration suites; the
 `test-s3` CI job runs the env-gated leg against real MinIO.
 
-**Backup/restore.** `hezo backup` captures the whole instance — database **and** asset
-blobs — as a **backup bundle** directory: `database.backup.gz` (the portable logical
+**Backup/restore.** `hezo backup` writes a **database-and-assets migration bundle**:
+`database.backup.gz` (the portable logical
 database backup) + `assets/<projectId>/<assetId>` blob files + a `manifest.json` written
 **last** as the completion marker. The database half is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
@@ -6241,7 +6272,11 @@ and hosted storage in either direction — direction is expressed purely by whic
 artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
 input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
-else is refused with a message naming the expected format. The physical pgdata tarball
+else is refused with a message naming the expected format. These commands do not export
+or restore the rest of `dataDir`; full host recovery also requires its project workspaces,
+git worktrees, instance key state, config file, backend credentials, files referenced by
+the config, and the service definition or startup flags that load it. The physical pgdata
+tarball
 (`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
 backup that could restore onto both backends; converting one needs a Hezo old enough to read
 it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob
@@ -6371,9 +6406,10 @@ supervisor code talks to the new worker binary) on every `onUnlock`; the supervi
 in memory only (`createSupervisorUnlockKeyStore`) and answers the relaunched worker's request
 on a locked boot (`setupWorkerUnlockHandoff`, wired in `index.ts`). The reply still passes the
 master-key canary check, so a stale key just leaves the instance locked; the key never touches
-disk, argv, or env. Restarts the supervisor doesn't survive (crash, service restart, reboot)
-still come up locked — the web restart overlay polls `/api/status` and reloads onto the
-master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
+disk, argv, or env. Restarts the supervisor doesn't survive (crash, direct service restart,
+reboot) still come up locked unless that invocation deliberately receives the one-shot
+`--master-key` or `HEZO_MASTER_KEY` input. The web restart overlay polls `/api/status`
+and reloads onto the master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
 `autoUnlock` hint (startup master key **or** an active handoff channel on a supervised worker)
 so the UI's confirmation only warns about re-unlock when re-unlock will actually be needed. The web banner shows an **"Install & restart"** button only once the
 binary is `Staged` (so the restart is instant); while the background download is in flight it

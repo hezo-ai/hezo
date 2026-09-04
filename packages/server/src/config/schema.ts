@@ -4,7 +4,8 @@ import type { HezoConfig } from './types';
 
 /**
  * The config file's accepted shape: a deep-`Partial` of {@link HezoConfig},
- * minus the two keys that must never live in a file (see `REJECTED_KEYS`).
+ * minus the two keys that must never live in a file (`REJECTED_KEYS` rejects
+ * those, plus the blocks of mechanisms this release removed).
  *
  * Every object is `.strict()`, so an unknown or misspelled key is a hard error
  * naming the key. A silently-ignored `dataDIr` is the specific failure mode a

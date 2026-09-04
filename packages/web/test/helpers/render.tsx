@@ -1,4 +1,5 @@
 import { createTestApp, encrypt, seedProjectContainer } from '@hezo/server/test/helpers/app';
+import { TooltipProvider } from '@hezo/ui';
 import { Toaster } from '@hezo/web/components/ui/toast';
 import { api } from '@hezo/web/lib/api';
 import { I18nProvider } from '@hezo/web/lib/i18n';
@@ -274,10 +275,12 @@ export async function renderApp(options: RenderOptions) {
 			    covers the Toaster. */}
 			<I18nProvider>
 				<ThemeProvider>
-					<RouterProvider router={router} />
-					{/* Mirrors main.tsx: the Toaster mounts beside (not inside) the
-					    router, so toast assertions work like production. */}
-					<Toaster />
+					<TooltipProvider>
+						<RouterProvider router={router} />
+						{/* Mirrors main.tsx: the Toaster mounts beside (not inside) the
+						    router, so toast assertions work like production. */}
+						<Toaster />
+					</TooltipProvider>
 				</ThemeProvider>
 			</I18nProvider>
 		</QueryClientProvider>

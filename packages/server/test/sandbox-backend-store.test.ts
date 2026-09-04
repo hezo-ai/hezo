@@ -27,16 +27,18 @@ import { safeClose } from './helpers';
 import { createStubDocker, createTestApp } from './helpers/app';
 
 /**
- * The property under test is the boot of an instance that is **locked**, which
- * is every boot: the master key is memory-only, so a restart always comes back
- * locked and the operator unlocks from the browser afterwards.
+ * The property under test is a new process with no unlock input. New processes
+ * start locked by default; a supervised update can restore the key through its
+ * in-memory IPC handoff, and deliberate one-shot `--master-key` or
+ * `HEZO_MASTER_KEY` input can inject it at startup. This fixture exercises none
+ * of those inputs, so the operator unlocks from the browser afterwards.
  *
- * That made the vault unusable at the moment the backend was chosen, and both
- * directions were fatal - reading a stored provider key failed as "no API key
- * is configured" for a key plainly on file, and writing a launch-supplied one
- * threw outright. A managed backend could therefore not survive a restart
- * unless the master key was passed on the command line, which is the one thing
- * we never ask an operator to persist.
+ * In that locked-default path, the vault was unusable at the moment the backend
+ * was chosen, and both directions were fatal - reading a stored provider key
+ * failed as "no API key is configured" for a key plainly on file, and writing a
+ * launch-supplied one threw outright. The process therefore exited before a
+ * browser unlock. A supervised in-memory update handoff or deliberate one-shot
+ * `--master-key` / `HEZO_MASTER_KEY` input starts unlocked and bypasses this path.
  *
  * So these assert that neither direction is fatal any more, and - just as
  * important - that the genuine misconfiguration still is.
@@ -45,7 +47,7 @@ import { createStubDocker, createTestApp } from './helpers/app';
 let db: Db;
 const dataDir = mkdtempSync(join(tmpdir(), 'hezo-backend-store-'));
 let unlocked: MasterKeyManager;
-/** State every boot starts in: enrolled, but no key in memory yet. */
+/** Enrolled state with no startup key or supervisor handoff. */
 const locked = new MasterKeyManager();
 
 /**

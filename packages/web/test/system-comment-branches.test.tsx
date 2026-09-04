@@ -15,7 +15,7 @@ import type React from 'react';
 import { expect, test } from 'vitest';
 import type { CommentDataOf } from '../src/components/comment-renderers/comment-data';
 import { SystemComment } from '../src/components/comment-renderers/system-comment';
-import { I18nProvider } from '../src/lib/i18n';
+import { withI18n } from './helpers/i18n';
 
 function renderNode(node: React.ReactNode) {
 	const rootRoute = createRootRoute({ component: () => node });
@@ -24,12 +24,13 @@ function renderNode(node: React.ReactNode) {
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
 	return render(
-		// The event sentences resolve through the message catalog, so these need a
-		// provider just as main.tsx supplies one above the router.
-		<I18nProvider>
-			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
-			<RouterProvider router={router as any} />
-		</I18nProvider>,
+		// The event sentences resolve through the message catalog, and anything
+		// drawing a tooltip needs the provider main.tsx mounts, so these get both
+		// just as the app shell supplies them above the router.
+		withI18n(
+			// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
+			<RouterProvider router={router as any} />,
+		),
 	);
 }
 

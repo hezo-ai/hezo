@@ -1,4 +1,5 @@
 import { type ButtonHTMLAttributes, type Ref, useRef } from 'react';
+import { touchMinHeightClassName } from './density.js';
 import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd.js';
 import { ariaKeyshortcuts, isMacPlatform } from './shortcuts.js';
 import { useShortcut } from './use-shortcut.js';
@@ -18,14 +19,26 @@ const variants = {
 	link: 'bg-transparent text-accent border-none hover:underline',
 } as const;
 
+// Each row carries the touch floor rather than `shape`, so the `link` variant -
+// which skips the rows - stays an inline text control that a 44px box would
+// break the line around.
 const sizes = {
-	sm: 'h-[26px] px-2.5 text-[12.5px] rounded-sm gap-1.5',
-	md: 'h-[30px] px-3 text-[13px] rounded-md gap-1.5',
-	lg: 'h-[38px] px-4 text-sm rounded-md gap-2',
+	sm: `h-[26px] px-2.5 text-[12.5px] rounded-sm gap-1.5 ${touchMinHeightClassName}`,
+	md: `h-[30px] px-3 text-[13px] rounded-md gap-1.5 ${touchMinHeightClassName}`,
+	lg: `h-[38px] px-4 text-sm rounded-md gap-2 ${touchMinHeightClassName}`,
 } as const;
 
 const shape =
 	'inline-flex items-center justify-center whitespace-nowrap border font-medium transition-colors cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent disabled:opacity-45 disabled:pointer-events-none';
+
+export type ButtonVariant = keyof typeof variants;
+export type ButtonSize = keyof typeof sizes;
+
+export interface ButtonClassNameOptions {
+	variant?: ButtonVariant;
+	size?: ButtonSize;
+	className?: string;
+}
 
 /**
  * The class string behind `Button`, for the rare control that must render as an
@@ -37,18 +50,14 @@ export function buttonClassName({
 	variant = 'primary',
 	size = 'md',
 	className = '',
-}: {
-	variant?: keyof typeof variants;
-	size?: keyof typeof sizes;
-	className?: string;
-} = {}): string {
+}: ButtonClassNameOptions = {}): string {
 	const sizeCls = variant === 'link' ? 'gap-1.5' : sizes[size];
 	return `${shape} ${variants[variant]} ${sizeCls} ${className}`;
 }
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-	variant?: keyof typeof variants;
-	size?: keyof typeof sizes;
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+	variant?: ButtonVariant;
+	size?: ButtonSize;
 	/**
 	 * Keyboard shortcut spec (e.g. `"mod+Enter"`, `"mod+k"`, `"Escape"`). Renders
 	 * an inset keycap chip after the label. Unless `shortcutFire` is false, it
@@ -72,6 +81,10 @@ export function Button({
 	variant = 'primary',
 	size = 'md',
 	className = '',
+	// Destructured rather than written on the element, so a caller's `type` still
+	// wins over it. Without a default a button inside a form submits it, which is
+	// never what an action button rendered next to a field means.
+	type = 'button',
 	shortcut,
 	shortcutFire = true,
 	children,
@@ -95,6 +108,7 @@ export function Button({
 	return (
 		<button
 			ref={attachRef}
+			type={type}
 			aria-keyshortcuts={shortcut ? ariaKeyshortcuts(shortcut, isMacPlatform()) : undefined}
 			className={buttonClassName({ variant, size, className })}
 			{...props}

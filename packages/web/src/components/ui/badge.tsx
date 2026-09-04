@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { Badge, type BadgeColor } from '@hezo/ui';
+export { Badge, type BadgeColor, type BadgeProps } from '@hezo/ui';

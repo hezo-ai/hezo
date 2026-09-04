@@ -291,8 +291,10 @@ export interface SsoConfig {
 	 * Where signing out goes. Ending the instance's session is not enough: the
 	 * issuer still has one, and would sign the person straight back in.
 	 *
-	 * Signing out ends a session. It does not re-lock the instance - the master
-	 * key stays in memory until the process restarts, as it always has.
+	 * Signing out ends a session. It does not re-lock the instance. A new process
+	 * starts locked by default, though a supervised update may restore the key
+	 * through its in-memory IPC handoff and deliberate one-shot `--master-key` or
+	 * `HEZO_MASTER_KEY` input may inject it at startup.
 	 */
 	logoutUrl: string;
 	/** The one issuer-side account allowed in. Hosted is one account per instance. */

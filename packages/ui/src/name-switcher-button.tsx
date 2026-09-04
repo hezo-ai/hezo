@@ -1,7 +1,8 @@
 import { ChevronDown } from 'lucide-react';
+import { hitAreaClassName } from './density.js';
 import { SearchableSelect, type SearchableSelectOption } from './searchable-select.js';
 
-interface NameSwitcherButtonProps {
+export interface NameSwitcherButtonProps {
 	options: SearchableSelectOption[];
 	/** The currently-open item's value (checked in the list); null when none. */
 	value: string | null;
@@ -45,7 +46,7 @@ export function NameSwitcherButton({
 					aria-label={label}
 					title={label}
 					data-testid={testId ? `${testId}-button` : undefined}
-					className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-2 outline-none transition-colors hover:bg-surface-3 hover:text-text-1 focus-visible:ring-[3px] focus-visible:ring-ring"
+					className={`relative inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-2 outline-none transition-colors hover:bg-surface-3 hover:text-text-1 focus-visible:ring-[3px] focus-visible:ring-ring ${hitAreaClassName}`}
 				>
 					<ChevronDown className="h-3.5 w-3.5" />
 				</button>
