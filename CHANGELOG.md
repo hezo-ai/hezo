@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.58.0 - 2026-09-04
+
+### Features
+
+- **models:** default OpenRouter connections to openrouter/auto ([#1069](https://github.com/hezo-ai/hezo/pull/1069))
+- **ui:** a package the primitives can be drawn from twice (H21) ([#1070](https://github.com/hezo-ai/hezo/pull/1070))
+
+### Bug Fixes
+
+- harden deployment config migration and restart lifecycle ([#1004](https://github.com/hezo-ai/hezo/pull/1004))
+- **ui:** harden @hezo/ui for a second consumer ([#1073](https://github.com/hezo-ai/hezo/pull/1073))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.57.0...0.58.0
+
 ## 0.57.0 - 2026-09-01
 
 ### Features
