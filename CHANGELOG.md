@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.59.0 - 2026-09-04
+
+### Features
+
+- **ui:** widen every interactive primitive for touch ([#1077](https://github.com/hezo-ai/hezo/pull/1077))
+
+### Bug Fixes
+
+- **web:** render agent-error inbox notices with a task link and Dismiss ([#1075](https://github.com/hezo-ai/hezo/pull/1075))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.58.0...0.59.0
+
 ## 0.58.0 - 2026-09-04
 
 ### Features
