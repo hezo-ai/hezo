@@ -125,6 +125,16 @@ export function SubscriptionLoginPanel({
 		setSubmitting(true);
 		try {
 			await submitSubscriptionLoginCode(flowId, code);
+		} catch (e) {
+			// The code never reached the CLI, so the poll below has nothing left to
+			// report and the operator would be left pressing a button that does
+			// nothing. Stop the loop and hand them the failure and its way out.
+			stopRef.current = true;
+			setState({
+				status: 'failed',
+				error: e instanceof Error ? e.message : String(e),
+				code: 'submit_failed',
+			});
 		} finally {
 			setSubmitting(false);
 		}
@@ -165,6 +175,10 @@ export function SubscriptionLoginPanel({
 					: undefined
 			}
 			onRetry={() => {
+				// Released here rather than by the effect's cleanup, which sees the
+				// cleared ref and lets a flow the server still holds run out its own
+				// expiry - holding a container nobody is signing in to.
+				if (flowIdRef.current) void cancelSubscriptionLogin(flowIdRef.current);
 				setState({ status: 'starting' });
 				flowIdRef.current = null;
 				setAttempt((n) => n + 1);

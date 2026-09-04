@@ -144,3 +144,40 @@ test('a sign-in the CLI cannot drive falls back to manual paste without a messag
 
 	await waitFor(() => expect(onUnavailable).toHaveBeenCalled());
 });
+
+test('a code the server refuses is reported, not swallowed', async () => {
+	const user = userEvent.setup();
+	pollOnce({
+		status: 'awaiting_user',
+		completion: 'code',
+		url: 'https://auth.openai.com/device',
+		user_code: 'HJKD-9QWE',
+		expires_at: new Date(Date.now() + 900_000).toISOString(),
+	});
+	submitSubscriptionLoginCode.mockRejectedValue(new Error('Sign-in session is not waiting'));
+	const { getByTestId, findByTestId, findByText } = renderPanel();
+
+	await user.click(await findByTestId('device-code-copy'));
+	await user.click(await findByTestId('device-code-open'));
+	await waitFor(() => expect(getByTestId('device-code-step-paste')).toBeTruthy());
+	await user.type(getByTestId('device-code-return-input'), 'returned-code');
+	await user.click(getByTestId('device-code-return-submit'));
+
+	// Without this the rejection is an unhandled promise and the operator is
+	// left pressing a button that reports nothing either way.
+	await findByText('Sign-in session is not waiting');
+	expect(getByTestId('device-code-retry')).toBeTruthy();
+});
+
+test('retrying releases the flow the server is still holding', async () => {
+	const user = userEvent.setup();
+	pollOnce({ status: 'failed', error: 'Could not reach the sign-in', code: 'poll_failed' });
+	const { getByTestId, findByText } = renderPanel();
+
+	await findByText('Could not reach the sign-in');
+	await user.click(getByTestId('device-code-retry'));
+
+	// A poll that failed on the client leaves the flow alive server-side; without
+	// this it holds its container until the flow's own expiry.
+	await waitFor(() => expect(cancelSubscriptionLogin).toHaveBeenCalledWith('flow-1'));
+});

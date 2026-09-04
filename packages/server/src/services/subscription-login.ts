@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { type AgentRuntime, type AiProvider, effectiveRuntime } from '@hezo/shared';
 import { RUNTIME_HOME_LAYOUTS } from './runtime-home';
 import {
+	bracketedPasteEnabled,
 	buildSubscriptionLoginCodeScript,
 	buildSubscriptionLoginScript,
 	LOGIN_EXIT_FILE,
@@ -48,6 +49,18 @@ export const LOGIN_FLOW_TTL_MS = 16 * 60_000;
 /** How often the log is re-read while waiting for a challenge or a credential. */
 const POLL_INTERVAL_MS = 1_000;
 
+/**
+ * How long a delivered code has to become a credential before the flow gives up
+ * on it.
+ *
+ * A CLI that refuses a code says so on its own screen and keeps running, so
+ * without this the flow waits out its whole completion timeout while the
+ * operator watches a step that will never advance. The exchange itself is one
+ * request - a wrong code comes back in a couple of seconds - so this is long
+ * enough that only a code that was actually refused reaches it.
+ */
+const CODE_ACCEPT_TIMEOUT_MS = 45_000;
+
 export type LoginFlowState =
 	| { status: 'starting' }
 	| { status: 'awaiting_user'; challenge: LoginChallenge; completion: 'none' | 'code' }
@@ -60,6 +73,7 @@ export type LoginFailureCode =
 	| 'probe_failed'
 	| 'challenge_timeout'
 	| 'completion_timeout'
+	| 'code_rejected'
 	| 'exited_without_credential'
 	| 'cancelled'
 	| 'internal';
@@ -82,6 +96,8 @@ interface FlowEntry extends LoginFlow {
 	/** Released on every exit path - success, failure, cancel, expiry. */
 	teardown: () => Promise<void>;
 	abort: AbortController;
+	/** When the operator's code reached the CLI; null until one has. */
+	codeSubmittedAt: number | null;
 }
 
 export class SubscriptionLoginUnsupportedError extends Error {
@@ -216,6 +232,7 @@ export class SubscriptionLoginService {
 			dir,
 			teardown,
 			abort: new AbortController(),
+			codeSubmittedAt: null,
 		};
 		this.flows.set(id, entry);
 
@@ -267,12 +284,28 @@ export class SubscriptionLoginService {
 		const flow = this.flows.get(id);
 		if (!flow || flow.ownerId !== ownerId) return false;
 		if (flow.state.status !== 'awaiting_user' || flow.driver.completion !== 'code') return false;
+
+		// The prompt's own paste setting, taken from the output it has printed so
+		// far. Read here rather than stored on the driver because it is a property
+		// of the prompt currently on screen, not of the binary.
+		const log = await flow.engine
+			.files(flow.containerId, flow.dir)
+			.read(LOGIN_LOG_FILE)
+			.catch(() => '');
+
 		const res = await execCapture(
 			flow.engine,
 			flow.containerId,
-			buildSubscriptionLoginCodeScript(flow.dir, code.trim()),
+			buildSubscriptionLoginCodeScript(flow.dir, code.trim(), {
+				bracketed: bracketedPasteEnabled(log),
+			}),
 		).catch(() => null);
-		return res?.exitCode === 0;
+
+		if (res?.exitCode !== 0) return false;
+		// Starts the clock the watcher settles the flow on. Only the first delivery
+		// sets it, so a repeated submit cannot keep pushing the deadline out.
+		flow.codeSubmittedAt ??= Date.now();
+		return true;
 	}
 
 	/** Operator-initiated stop. Tears the container down like any other exit. */
@@ -358,6 +391,20 @@ export class SubscriptionLoginService {
 										code: 'exited_without_credential',
 									},
 						);
+						return;
+					}
+					// A refused code leaves the CLI running with its own error on screen,
+					// which is a screen nobody is looking at. Checked after the harvest
+					// above, so a code that did work is never reported as refused.
+					if (
+						flow.codeSubmittedAt !== null &&
+						Date.now() - flow.codeSubmittedAt > CODE_ACCEPT_TIMEOUT_MS
+					) {
+						await this.finish(id, {
+							status: 'failed',
+							error: `${driver.argv[0]} did not accept that code - it may have been mistyped or expired`,
+							code: 'code_rejected',
+						});
 						return;
 					}
 					if (Date.now() - startedAt > driver.completionTimeoutMs) {

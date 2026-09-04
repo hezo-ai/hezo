@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+	bracketedPasteEnabled,
 	buildSubscriptionLoginCodeScript,
 	buildSubscriptionLoginScript,
 	LOGIN_EXIT_FILE,
@@ -149,6 +150,43 @@ describe('buildSubscriptionLoginCodeScript', () => {
 		expect(script).toContain(String.raw`printf '%s\r'`);
 		expect(script).not.toContain(String.raw`\n`);
 	});
+
+	it('frames the code as a paste, with the return outside it, when asked to', () => {
+		const script = buildSubscriptionLoginCodeScript('/tmp/flow', 'CODE-1234', {
+			bracketed: true,
+		});
+		// The CR follows the closing marker: inside it, a prompt that groups a
+		// pasted burst takes it as text and the code is never submitted.
+		expect(script).toContain(String.raw`printf '\033[200~%s\033[201~\r'`);
+	});
+
+	it('sends no markers unless the prompt enabled them', () => {
+		const script = buildSubscriptionLoginCodeScript('/tmp/flow', 'CODE-1234');
+		expect(script).not.toContain('200~');
+		expect(script).not.toContain('201~');
+	});
+});
+
+/**
+ * Which of the two toggles a CLI printed last, since it enables the mode while a
+ * paste prompt is up and disables it again once the prompt is gone. Sending
+ * markers to a prompt that did not ask for them puts them in the code.
+ */
+describe('bracketedPasteEnabled', () => {
+	const esc = '\u001b';
+
+	it('is false for output that never mentions the mode', () => {
+		expect(bracketedPasteEnabled('Paste code here >')).toBe(false);
+	});
+
+	it('is true once the CLI has enabled it', () => {
+		expect(bracketedPasteEnabled(`${esc}[?2004hPaste code here >`)).toBe(true);
+	});
+
+	it('follows the last toggle, not the first', () => {
+		expect(bracketedPasteEnabled(`${esc}[?2004h out ${esc}[?2004l`)).toBe(false);
+		expect(bracketedPasteEnabled(`${esc}[?2004l out ${esc}[?2004h`)).toBe(true);
+	});
 });
 
 // Linux-only: the login script launches its CLI through `util-linux script`
@@ -257,6 +295,39 @@ describe.skipIf(process.platform !== 'linux')('the generated script, under real 
 		// `a`, `b`, then 015 - CR. 012 would be the LF that leaves a TUI's prompt
 		// holding the code, unsubmitted, until the flow times out.
 		expect(log()).toContain('141 142 015');
+		await waitFor(exited(dir));
+	});
+
+	/**
+	 * The framed form, byte for byte. A prompt that groups a burst of input into
+	 * pasted text ends the paste at the closing marker, which is what leaves the
+	 * CR after it readable as the return key rather than as one more pasted
+	 * character - the difference between a code that submits and a code that sits
+	 * in the prompt until the flow expires.
+	 */
+	it('delivers a framed code with the markers intact and the CR last', async () => {
+		const home = tempDir();
+		const dir = join(tempDir(), 'flow');
+		const cli = fakeCli(
+			home,
+			[
+				'stty raw -echo',
+				'echo ready',
+				'dd bs=1 count=15 2>/dev/null | od -An -to1',
+				'stty sane',
+			].join('\n'),
+		);
+
+		await run('sh', ['-c', buildSubscriptionLoginScript({ dir, argv: [cli], holdSecs: 30 })]);
+		const log = () => readFileSync(join(dir, LOGIN_LOG_FILE), 'utf8');
+		await waitFor(() => log().includes('ready'));
+
+		await run('sh', ['-c', buildSubscriptionLoginCodeScript(dir, 'ab', { bracketed: true })]);
+		await waitFor(() => log().includes('015'));
+
+		// ESC [ 2 0 0 ~, the code, ESC [ 2 0 1 ~, then CR.
+		const dumped = log().replace(/\s+/g, ' ');
+		expect(dumped).toContain('033 133 062 060 060 176 141 142 033 133 062 060 061 176 015');
 		await waitFor(exited(dir));
 	});
 

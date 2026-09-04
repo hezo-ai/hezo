@@ -452,14 +452,34 @@ export function buildSubscriptionLoginScript(opts: {
  * TUI reading a raw-mode terminal, where no line discipline translates one into
  * the other and only `\r` is the return key - an LF is delivered as an ordinary
  * character, so the code lands in the prompt's buffer and simply sits there
- * unsubmitted until the flow times out. Measured against claude-code 2.1.250:
- * the pasted text appears masked in the prompt and nothing else happens, where
- * a CR runs the token exchange. A CLI reading lines canonically instead is
- * unaffected, since `ICRNL` turns the CR back into its newline.
+ * unsubmitted until the flow times out. A CLI reading lines canonically instead
+ * is unaffected, since `ICRNL` turns the CR back into its newline.
+ *
+ * **Framed as a paste when the prompt asked for pastes to be framed.** A code
+ * and its CR leave here as one write, so a prompt that groups a burst of bytes
+ * into pasted text takes the CR as part of the paste rather than as the return
+ * key - and the code sits in the prompt, submitted by nothing, until the flow
+ * times out. Splitting the CR into a second write does not separate them; the
+ * reads coalesce. Measured against claude-code 2.1.222 at the width
+ * {@link buildSubscriptionLoginScript} opens: a short code submits, a code the
+ * length of a real callback value does not, and the same code inside paste
+ * markers submits at either length - the markers end the paste, so the CR after
+ * them is unambiguously a keypress.
+ *
+ * `bracketed` is the prompt's own answer, read from what it printed rather than
+ * assumed: markers sent to a CLI that never enabled the mode arrive as literal
+ * characters and corrupt the code.
  */
-export function buildSubscriptionLoginCodeScript(dir: string, code: string): string {
+export function buildSubscriptionLoginCodeScript(
+	dir: string,
+	code: string,
+	opts: { bracketed: boolean } = { bracketed: false },
+): string {
 	if (!/^\/[A-Za-z0-9._/-]*$/.test(dir)) throw new Error(`unsafe dir: ${JSON.stringify(dir)}`);
-	return `printf '%s\\r' ${shellQuote(code)} > ${shellQuote(`${dir}/${LOGIN_STDIN_FIFO}`)}`;
+	// Octal escapes rather than literal control bytes, for the reason the regex
+	// sources below carry: a linter refuses them and a diff cannot show them.
+	const format = opts.bracketed ? String.raw`\033[200~%s\033[201~\r` : String.raw`%s\r`;
+	return `printf '${format}' ${shellQuote(code)} > ${shellQuote(`${dir}/${LOGIN_STDIN_FIFO}`)}`;
 }
 
 /**
@@ -489,6 +509,24 @@ export function parseOsc8Links(raw: string): string[] {
 		if (uri.length > 0) links.push(uri);
 	}
 	return links;
+}
+
+/**
+ * Whether the CLI currently wants pastes framed - DECSET 2004, as it last set
+ * it.
+ *
+ * The last of the two toggles wins, because a TUI enables the mode while a
+ * prompt is up and disables it again when the prompt goes away. Reading the
+ * setting off the CLI's own output is what lets
+ * {@link buildSubscriptionLoginCodeScript} frame a paste without a per-CLI
+ * table row that would silently go stale when a vendor changes its prompt.
+ */
+export function bracketedPasteEnabled(raw: string): boolean {
+	let enabled = false;
+	for (const m of raw.matchAll(new RegExp(`${ESC}\\[\\?2004([hl])`, 'g'))) {
+		enabled = m[1] === 'h';
+	}
+	return enabled;
 }
 
 /**

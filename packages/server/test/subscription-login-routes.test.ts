@@ -1,6 +1,6 @@
 import { AiProvider } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
@@ -58,8 +58,13 @@ const CODEX_AUTH_JSON = JSON.stringify({ tokens: { refresh_token: 'rt-from-conta
 const ESC = String.fromCharCode(0x1b);
 const CLAUDE_AUTHORIZE_URL =
 	'https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code';
-/** What `claude setup-token` has painted by the time it blocks on its prompt. */
+/**
+ * What `claude setup-token` has painted by the time it blocks on its prompt -
+ * including the DECSET that turns bracketed paste on, which is how the prompt
+ * says it wants a paste framed.
+ */
 const CLAUDE_CHALLENGE = [
+	`${ESC}[?2004h`,
 	`${ESC}]8;id=155gj3v;${CLAUDE_AUTHORIZE_URL}${ESC}\\https://claude.com/cai/oauth/auth${ESC}]8;;${ESC}\\`,
 	'Paste code here if prompted >',
 ].join('\r\n');
@@ -173,6 +178,10 @@ beforeEach(async () => {
 	execScripts = [];
 	liveContainers = new Set();
 	await db.query('DELETE FROM ai_provider_configs');
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 afterAll(async () => {
@@ -376,11 +385,13 @@ describe('submitting a code', () => {
 		});
 		expect(submitted.status).toBe(200);
 
-		// Delivered as a keypress the CLI's raw-mode prompt submits on. An LF
-		// reaches the prompt as an ordinary character and the sign-in hangs to its
-		// timeout with the code sitting in the box - which is the whole failure.
+		// Framed as a paste, because the prompt asked for one, with the return
+		// outside the frame. A code and a bare CR in one write reach a prompt that
+		// groups pasted input as text plus one more pasted character: the code sits
+		// in the box and the sign-in hangs to its timeout - which is the whole
+		// failure. An LF instead of the CR does the same.
 		const delivery = execScripts.find((script) => script.includes('code-from-the-callback-page'));
-		expect(delivery).toContain(String.raw`printf '%s\r'`);
+		expect(delivery).toContain(String.raw`printf '\033[200~%s\033[201~\r'`);
 
 		// The CLI completes the exchange and prints its token.
 		log += CLAUDE_TOKEN_LINE;
@@ -393,6 +404,59 @@ describe('submitting a code', () => {
 			[done.config_id],
 		);
 		expect(stored.rows[0].auth_method).toBe('subscription');
+		expect(liveContainers.size).toBe(0);
+	});
+
+	it('sends no paste markers to a prompt that never asked for them', async () => {
+		const start = await post('/api/ai-providers/subscription-login/start', {
+			provider: AiProvider.Anthropic,
+		});
+		const { flow_id } = (await start.json()).data;
+
+		// The same prompt without the DECSET. Markers would arrive at a prompt that
+		// does not read them as literal characters, inside the code.
+		log = CLAUDE_CHALLENGE.replace(`${ESC}[?2004h`, '');
+		await pollUntil(flow_id, 'awaiting_user');
+
+		await post(`/api/ai-providers/subscription-login/${flow_id}/code`, { code: 'unframed-code' });
+
+		const delivery = execScripts.find((script) => script.includes('unframed-code'));
+		expect(delivery).toContain(String.raw`printf '%s\r'`);
+		expect(delivery).not.toContain('200~');
+
+		await app.request(`/api/ai-providers/subscription-login/${flow_id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(liveContainers.size).toBe(0);
+	});
+
+	/**
+	 * A refused code leaves the CLI running with its own error on a screen nobody
+	 * is looking at, so the flow would otherwise hold the operator on a step that
+	 * cannot advance until the whole completion timeout runs out.
+	 */
+	it('gives up on a code the CLI never turned into a credential', async () => {
+		const start = await post('/api/ai-providers/subscription-login/start', {
+			provider: AiProvider.Anthropic,
+		});
+		const { flow_id } = (await start.json()).data;
+
+		log = CLAUDE_CHALLENGE;
+		await pollUntil(flow_id, 'awaiting_user');
+
+		const submitted = await post(`/api/ai-providers/subscription-login/${flow_id}/code`, {
+			code: 'a-code-the-cli-refuses',
+		});
+		expect(submitted.status).toBe(200);
+
+		// Only Date moves, so the watcher keeps polling on real timers and reaches
+		// its deadline check with the clock past it.
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(Date.now() + 60_000);
+
+		const { body } = await pollUntil(flow_id, 'failed');
+		expect(body.code).toBe('code_rejected');
 		expect(liveContainers.size).toBe(0);
 	});
 });
