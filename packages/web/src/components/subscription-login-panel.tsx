@@ -1,4 +1,9 @@
-import { type AgentRuntime, AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
+import {
+	type AgentRuntime,
+	AI_PROVIDER_INFO,
+	type AiProvider,
+	type SubscriptionLoginFailure,
+} from '@hezo/shared';
 import { KeyRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -9,11 +14,32 @@ import {
 	startSubscriptionLogin,
 	submitSubscriptionLoginCode,
 } from '../hooks/use-ai-providers';
-import { useI18n } from '../lib/i18n';
+import { type MessageKey, useI18n } from '../lib/i18n';
 import { type DeviceCodeState, DeviceCodeSteps } from './ui/device-code-steps';
 
 /** How often the flow is polled while the operator is signing in elsewhere. */
 const POLL_MS = 1500;
+
+/**
+ * The sentence shown for each way a sign-in can end without a credential.
+ *
+ * Total over the failure union, so a new code is a compile error here rather
+ * than an operator reading the server's English inside a translated dialog.
+ * `internal` is the one whose server message is a diagnostic rather than a
+ * sentence, so its key is a lead and the message is kept underneath.
+ */
+const FAILURE_MESSAGE: Record<SubscriptionLoginFailure, MessageKey> = {
+	unsupported: 'settings.provider.signIn.error.undrivable',
+	probe_failed: 'settings.provider.signIn.error.undrivable',
+	challenge_timeout: 'settings.provider.signIn.error.noLink',
+	completion_timeout: 'settings.provider.signIn.error.expired',
+	code_rejected: 'settings.provider.signIn.error.codeRejected',
+	exited_without_credential: 'settings.provider.signIn.error.noCredential',
+	cancelled: 'settings.provider.signIn.error.cancelled',
+	internal: 'settings.provider.signIn.error.internal',
+	poll_failed: 'settings.provider.signIn.error.unreachable',
+	submit_failed: 'settings.provider.signIn.error.submitFailed',
+};
 
 interface SubscriptionLoginPanelProps {
 	provider: AiProvider;
@@ -150,9 +176,17 @@ export function SubscriptionLoginPanel({
 	// under the one it shows would be a duplicate.
 	if (state.status === 'succeeded') return null;
 
+	// A code this build has no sentence for - an older web against a newer server -
+	// keeps the server's own message rather than rendering an empty banner.
+	const failureKey = state.status === 'failed' ? FAILURE_MESSAGE[state.code] : undefined;
+
 	const stepsState: DeviceCodeState =
 		state.status === 'failed'
-			? { status: 'failed', title: state.error }
+			? {
+					status: 'failed',
+					title: failureKey ? t(failureKey, { provider: info.name }) : state.error,
+					detail: failureKey && state.code === 'internal' ? state.error : undefined,
+				}
 			: state.status === 'awaiting_user'
 				? {
 						status: 'awaiting',

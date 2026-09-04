@@ -1,5 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { type AgentRuntime, type AiProvider, effectiveRuntime } from '@hezo/shared';
+import {
+	type AgentRuntime,
+	type AiProvider,
+	effectiveRuntime,
+	type SubscriptionLoginFailure,
+} from '@hezo/shared';
 import { RUNTIME_HOME_LAYOUTS } from './runtime-home';
 import {
 	bracketedPasteEnabled,
@@ -67,16 +72,11 @@ export type LoginFlowState =
 	| { status: 'succeeded'; credential: string }
 	| { status: 'failed'; error: string; code: LoginFailureCode };
 
-/** Named so a caller can tell "the CLI moved" from "the operator gave up". */
-export type LoginFailureCode =
-	| 'unsupported'
-	| 'probe_failed'
-	| 'challenge_timeout'
-	| 'completion_timeout'
-	| 'code_rejected'
-	| 'exited_without_credential'
-	| 'cancelled'
-	| 'internal';
+/**
+ * Named so a caller can tell "the CLI moved" from "the operator gave up", and
+ * shared so the web can render each one in the operator's own language.
+ */
+export type LoginFailureCode = SubscriptionLoginFailure;
 
 export interface LoginFlow {
 	readonly id: string;

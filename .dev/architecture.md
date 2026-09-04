@@ -4786,6 +4786,15 @@ the operator clicks, never an automatic `window.open`: a tab fired before the co
 screen arrives asking for something the operator has not seen, and is pop-up blocked often
 enough that the code was all they had left.
 
+**A guided sign-in's failures are translated, not relayed.** `SubscriptionLoginFailure`
+(`@hezo/shared`) is the closed set of ways one can end without a credential, server-raised
+and browser-raised alike, and `SubscriptionLoginPanel` maps it onto catalog keys with a total
+`Record` — a new code is a compile error there rather than English inside a translated
+dialog. `internal` is the exception: its server message is a diagnostic rather than a
+sentence, so the key is a lead and the message is kept as the banner's `detail`. A code this
+build has no row for keeps the server's message, which is what an older web against a newer
+server would otherwise render empty.
+
 ### Connector storage & OAuth flows
 
 **Storage.** `oauth_connections` is **project-scoped** via `project_id` (non-NULL = private

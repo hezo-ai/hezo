@@ -125,10 +125,15 @@ test('a flow with no code leads with the link and never shows a copy step', asyn
 
 test('a failed flow offers both a retry and the manual-paste fallback', async () => {
 	const user = userEvent.setup();
-	pollOnce({ status: 'failed', error: 'The CLI exited before signing in', code: 'cli_failed' });
+	pollOnce({
+		status: 'failed',
+		error: 'claude exited before a credential was issued',
+		code: 'exited_without_credential',
+	});
 	const { getByTestId, getByText, findByText, onUnavailable } = renderPanel();
 
-	await findByText('The CLI exited before signing in');
+	// The operator reads the catalog's sentence, not the server's English.
+	await findByText(/The sign-in ended before/);
 	await user.click(getByTestId('device-code-retry'));
 	// The retry starts a second flow rather than leaving the operator on a dead
 	// panel whose only way forward was pasting a credential by hand.
@@ -165,19 +170,33 @@ test('a code the server refuses is reported, not swallowed', async () => {
 
 	// Without this the rejection is an unhandled promise and the operator is
 	// left pressing a button that reports nothing either way.
-	await findByText('Sign-in session is not waiting');
+	await findByText('Hezo could not send that code. Start the sign-in again.');
 	expect(getByTestId('device-code-retry')).toBeTruthy();
 });
 
 test('retrying releases the flow the server is still holding', async () => {
 	const user = userEvent.setup();
-	pollOnce({ status: 'failed', error: 'Could not reach the sign-in', code: 'poll_failed' });
+	pollOnce({ status: 'failed', error: 'fetch failed', code: 'poll_failed' });
 	const { getByTestId, findByText } = renderPanel();
 
-	await findByText('Could not reach the sign-in');
+	await findByText('Hezo lost contact with the sign-in. Start it again.');
 	await user.click(getByTestId('device-code-retry'));
 
 	// A poll that failed on the client leaves the flow alive server-side; without
 	// this it holds its container until the flow's own expiry.
 	await waitFor(() => expect(cancelSubscriptionLogin).toHaveBeenCalledWith('flow-1'));
+});
+
+test('an internal failure keeps the server diagnostic under the translated lead', async () => {
+	pollOnce({
+		status: 'failed',
+		error: 'could not start claude: exec format error',
+		code: 'internal',
+	});
+	const { findByText, getByText } = renderPanel();
+
+	// The only code whose server message is a diagnostic rather than a sentence,
+	// so replacing it with the catalog's lead would throw away what went wrong.
+	await findByText('The sign-in could not be completed.');
+	expect(getByText('could not start claude: exec format error')).toBeTruthy();
 });
