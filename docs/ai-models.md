@@ -136,7 +136,8 @@ long the code has left, and waits while you finish.
 - **OpenAI (Codex)** finishes on its own once you complete the sign-in. Nothing to bring
   back.
 - **Anthropic (Claude Code)** shows you a code at the end of its sign-in page. Paste that
-  code into Hezo to finish.
+  code into Hezo to finish. If the code was mistyped or has expired, Hezo says so and offers
+  you a fresh sign-in.
 
 Your credential is created inside the sandbox and stored encrypted without passing
 through your browser, so you never copy an auth file around.
