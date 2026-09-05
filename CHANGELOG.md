@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.59.1 - 2026-09-04
+
+### Bug Fixes
+
+- **providers:** submit a guided sign-in code as a framed paste ([#1079](https://github.com/hezo-ai/hezo/pull/1079))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.59.0...0.59.1
+
 ## 0.59.0 - 2026-09-04
 
 ### Features
