@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.59.2 - 2026-09-06
+
+### Bug Fixes
+
+- **providers:** ask the provider whether a subscription credential is real ([#1081](https://github.com/hezo-ai/hezo/pull/1081))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.59.1...0.59.2
+
 ## 0.59.1 - 2026-09-04
 
 ### Bug Fixes
