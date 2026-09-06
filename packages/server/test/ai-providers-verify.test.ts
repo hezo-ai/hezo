@@ -63,6 +63,30 @@ async function addProvider(provider: string, apiKey: string, label: string): Pro
 	return (await res.json()).data.id;
 }
 
+/** An Anthropic subscription config, stored under the create-path validation skip. */
+async function addSubscriptionConfig(label: string): Promise<string> {
+	const res = await app.request('/api/ai-providers', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			provider: 'anthropic',
+			api_key: 'sk-ant-oat01-live-token',
+			auth_method: 'subscription',
+			label,
+		}),
+	});
+	if (res.status !== 201) throw new Error(`addSubscriptionConfig failed: ${res.status}`);
+	return (await res.json()).data.id;
+}
+
+async function expectStatus(configId: string, status: string): Promise<void> {
+	const row = await db.query<{ status: string }>(
+		'SELECT status FROM ai_provider_configs WHERE id = $1',
+		[configId],
+	);
+	expect(row.rows[0].status).toBe(status);
+}
+
 describe('POST /ai-providers/:configId/verify', () => {
 	let configId: string;
 
@@ -146,31 +170,77 @@ describe('POST /ai-providers/:configId/verify', () => {
 		expect(res.status).toBe(403);
 	});
 
-	it('treats a subscription config as always valid without an HTTP call', async () => {
+	it('marks a subscription config invalid when the provider refuses the token', async () => {
 		await db.query('DELETE FROM ai_provider_configs');
-		const create = await app.request('/api/ai-providers', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				provider: 'anthropic',
-				api_key: 'sk-ant-oat01-live-token',
-				auth_method: 'subscription',
-				label: 'sub-verify',
-			}),
-		});
-		expect(create.status).toBe(201);
-		const subId = (await create.json()).data.id;
+		const subId = await addSubscriptionConfig('sub-refused');
 
-		const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+		const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 401 });
 		globalThis.fetch = fetchSpy as unknown as typeof fetch;
 		const res = await app.request(`/api/ai-providers/${subId}/verify`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
+
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.valid).toBe(false);
+		// The token goes on as a bearer, not as `x-api-key` - an OAuth token on the
+		// key header is refused whatever its state, which would make every probe a
+		// false condemnation.
+		const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+		const headers = init.headers as Record<string, string>;
+		expect(headers.Authorization).toBe('Bearer sk-ant-oat01-live-token');
+		expect(headers['x-api-key']).toBeUndefined();
+		await expectStatus(subId, 'invalid');
+	});
+
+	it('leaves a subscription config verified when the probe cannot prove it dead', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		const subId = await addSubscriptionConfig('sub-unproven');
+
+		// A 500 says nothing about the credential, and neither does a 200 whose body
+		// we never read. Only an outright rejection may condemn it, so the badge must
+		// survive both - a token taken out of service by a provider hiccup is the
+		// failure this asymmetry exists to prevent.
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue({ ok: false, status: 500 }) as unknown as typeof fetch;
+		const res = await app.request(`/api/ai-providers/${subId}/verify`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.valid).toBe(true);
-		// Subscription auth short-circuits before any provider HTTP call.
-		expect(fetchSpy).not.toHaveBeenCalled();
+		await expectStatus(subId, 'verified');
+	});
+
+	it('rejects a subscription token the provider refuses at paste time', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		const prev = process.env.SKIP_AI_KEY_VALIDATION;
+		process.env.SKIP_AI_KEY_VALIDATION = '';
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue({ ok: false, status: 401 }) as unknown as typeof fetch;
+		try {
+			const res = await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'anthropic',
+					api_key: 'sk-ant-oat01-already-dead',
+					auth_method: 'subscription',
+					label: 'sub-dead-on-arrival',
+				}),
+			});
+			expect(res.status).toBe(400);
+			expect((await res.json()).error.code).toBe('INVALID_SUBSCRIPTION_BLOB');
+			// Nothing stored: a credential the provider has already refused must not
+			// reach the table wearing a `verified` badge.
+			const rows = await db.query('SELECT id FROM ai_provider_configs');
+			expect(rows.rows).toHaveLength(0);
+		} finally {
+			process.env.SKIP_AI_KEY_VALIDATION = prev;
+		}
 	});
 });
 
