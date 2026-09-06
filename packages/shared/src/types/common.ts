@@ -2910,6 +2910,17 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 export interface AiProviderVerifyEndpoint {
 	url: string | ((apiKey: string) => string);
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
+	/**
+	 * Headers that put a **subscription** credential on the same endpoint, for a
+	 * provider whose subscription token is a bearer its API accepts.
+	 *
+	 * Absent is an answer, not a gap: it says this provider's subscription
+	 * credential cannot be asked about at all (Codex's is a JSON auth file, not a
+	 * bearer), so the shape check stands alone for it. A row here rather than a
+	 * provider name in the resolver, which is what keeps the generic path free of
+	 * any knowledge of which provider it is serving.
+	 */
+	subscriptionHeaders?: (token: string) => Record<string, string>;
 }
 
 /**
@@ -2949,6 +2960,16 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		verifyEndpoint: {
 			url: 'https://api.anthropic.com/v1/models',
 			headers: (apiKey) => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }),
+			// `x-api-key` refuses an `sk-ant-oat01-…` token whatever its state, so the
+			// subscription credential goes on as a bearer instead. Measured against
+			// the live endpoint: a bad bearer answers 401 `OAuth access token is
+			// invalid` and a bad key 401 `API key is invalid`, so the endpoint tells
+			// the two apart rather than refusing the header shape - which is what
+			// makes a rejection here mean the token, not the request.
+			subscriptionHeaders: (token) => ({
+				Authorization: `Bearer ${token}`,
+				'anthropic-version': '2023-06-01',
+			}),
 		},
 	},
 	[AiProvider.OpenAI]: {

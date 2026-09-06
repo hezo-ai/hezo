@@ -268,6 +268,48 @@ export async function casUpdateAiProviderCredential(
 }
 
 /**
+ * Mark a config `invalid`, but only while it still holds the credential the
+ * caller proved dead.
+ *
+ * The compare is the whole point. A run condemns the credential it *ran on*, and
+ * that run may have started minutes before the operator pasted a replacement -
+ * so writing on the config id alone would mark a brand-new credential invalid on
+ * the strength of a dead one's failure, and the operator would watch a key they
+ * had just fixed go red for no reason they could see. Same
+ * lock-then-decrypt-compare as {@link casUpdateAiProviderCredential}, whose
+ * reasoning about the random IV applies here unchanged.
+ *
+ * The status guard keeps a repeat condemnation from rewriting a row that already
+ * says what it needs to: the embedded database does not vacuum, so a no-op
+ * update is leaked storage, and a burst of runs all failing on one dead token is
+ * exactly when that would happen. Returns whether it wrote.
+ */
+export async function casMarkAiProviderInvalid(
+	db: Db,
+	masterKeyManager: MasterKeyManager,
+	configId: string,
+	expectedValue: string,
+): Promise<boolean> {
+	const encryptionKey = masterKeyManager.getKey();
+	if (!encryptionKey) throw new Error('Master key not available');
+	return withTransaction(db, async () => {
+		const current = await db.query<{ encrypted_credential: string; status: string }>(
+			'SELECT encrypted_credential, status FROM ai_provider_configs WHERE id = $1 FOR UPDATE',
+			[configId],
+		);
+		const row = current.rows[0];
+		if (!row) return false;
+		if (row.status === AiProviderStatus.Invalid) return false;
+		if (decrypt(row.encrypted_credential, encryptionKey) !== expectedValue) return false;
+		await db.query('UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2', [
+			AiProviderStatus.Invalid,
+			configId,
+		]);
+		return true;
+	});
+}
+
+/**
  * The current decrypted value of one credential row, or null when the row is
  * gone. For a caller that already chose its config and only needs to know
  * whether the value moved since - a waiter that held a snapshot across a wait
@@ -460,7 +502,7 @@ export async function getProviderConfigCredential(
 	configId: string,
 ): Promise<{
 	provider: string;
-	authMethod: string;
+	authMethod: AiAuthMethod;
 	value: string;
 	baseUrl: string | null;
 } | null> {
@@ -469,7 +511,7 @@ export async function getProviderConfigCredential(
 
 	const result = await db.query<{
 		provider: string;
-		auth_method: string;
+		auth_method: AiAuthMethod;
 		encrypted_credential: string;
 		metadata: Record<string, unknown> | null;
 	}>(

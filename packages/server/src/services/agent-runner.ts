@@ -4,6 +4,7 @@ import {
 	AGENT_RUNTIME_LABELS,
 	type AgentEffort,
 	type AgentRuntime,
+	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	type AiProvider,
 	CommentContentType,
@@ -77,6 +78,7 @@ import {
 } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
+	getAiProviderConfig,
 	getProviderCredentialAndModel,
 	readAiProviderCredentialValue,
 	updateAiProviderCredential,
@@ -145,6 +147,7 @@ import {
 } from './mcp-cli/manifest';
 import {
 	clearAgentErrorApprovalsOnRecovery,
+	fileProviderCredentialRejectedApproval,
 	fileProviderRefusalApproval,
 	PROVIDER_REFUSAL_GIVEUP_MIN,
 	retryOrEscalateLostRun,
@@ -152,6 +155,7 @@ import {
 } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
+import { condemnRejectedProviderCredential } from './provider-credential-health';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
@@ -345,9 +349,12 @@ type CloneRef = RepoLoc & { repoId: string };
  * the credential carried in the auth-method-specific env var. Agents that read
  * a different var won't see the credential.
  *
- * Returns only the static entries when the auth method is subscription-based,
- * since the credential is delivered via a file mount instead — see
- * {@link buildSubscriptionMount}.
+ * Which auth methods get a var at all is the provider's own table
+ * (`credentialEnvByAuthMethod`), and a subscription is not automatically absent
+ * from it: Anthropic's goes in `CLAUDE_CODE_OAUTH_TOKEN` and no file is written,
+ * because Claude Code rotates its credentials file and cannot be handed one on a
+ * per-run mount. A provider whose subscription IS a file (Codex) simply has no
+ * subscription row here and gets it from {@link buildSubscriptionMount} instead.
  */
 export function buildProviderEnv(
 	provider: AiProvider,
@@ -3113,6 +3120,47 @@ export async function runAgent(
 				},
 				runBroadcast,
 			);
+
+			// The provider refused this run's credential. Ask the provider directly
+			// whether the credential itself is dead and, if it is, take it out of
+			// service - otherwise it keeps its `verified` badge and the next dispatch
+			// spends another container proving the same thing.
+			//
+			// The re-probe is not ceremony. `auth` is matched on the runtime's own
+			// error text and that match includes a bare `401`, which an agent's failed
+			// `curl` produces as readily as a refused model call; the credential is
+			// instance-wide, so acting on the text alone would let one agent disable
+			// every team. Awaited so the settings page and Inbox are already right by
+			// the time the caller refetches, but caught: the run has already ended and
+			// its outcome does not turn on whether the probe could be made.
+			if (!success && refusalVerdict?.family === 'auth') {
+				await condemnRejectedProviderCredential(deps.db, deps.masterKeyManager, provider, {
+					configId: credential.configId,
+					value: credential.value,
+					authMethod: credential.authMethod,
+					baseUrl: credential.baseUrl,
+				})
+					.then(async (outcome) => {
+						if (outcome !== 'condemned') return;
+						const config = await getAiProviderConfig(deps.db, credential.configId);
+						await fileProviderCredentialRejectedApproval(
+							deps.db,
+							{
+								runId: heartbeatRunId,
+								memberId: agent.id,
+								teamId: agent.team_id,
+								taskId: task?.id ?? null,
+							},
+							{
+								providerName: AI_PROVIDER_INFO[provider]?.name ?? provider,
+								label: config?.label ?? provider,
+							},
+						);
+					})
+					.catch((e) =>
+						log.error(`Run ${heartbeatRunId}: could not check the refused provider credential:`, e),
+					);
+			}
 
 			// A success is the proof that whatever the give-up paths filed a notice
 			// about is over. Awaited so the Inbox the caller's next refetch shows is

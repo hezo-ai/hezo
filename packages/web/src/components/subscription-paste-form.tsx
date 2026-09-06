@@ -24,9 +24,12 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 		],
 		footer: (
 			<>
-				This is a long-lived token (about a year). Hezo passes it as{' '}
-				<code>CLAUDE_CODE_OAUTH_TOKEN</code> and never uses an API key for this provider. Revoke it
-				anytime from your Anthropic account settings.
+				Paste the token <code>setup-token</code> printed, not the one inside{' '}
+				<code>~/.claude/.credentials.json</code> - that one starts with the same characters but
+				lasts hours, so it is accepted here and then fails every run. This one is long-lived (about
+				a year). Hezo passes it as <code>CLAUDE_CODE_OAUTH_TOKEN</code> and never uses an API key
+				for this provider. There is no refresh token behind it, so once it expires or you revoke it,
+				sign in again to replace it.
 			</>
 		),
 		placeholder: 'sk-ant-oat01-...',

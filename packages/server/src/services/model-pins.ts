@@ -113,7 +113,12 @@ export async function refreshModelPins(
 				result.skipped.push(`${provider}: subscription sign-in has no catalog`);
 				continue;
 			}
-			const catalog = await fetchProviderCatalog(provider, cred.value, cred.baseUrl);
+			const catalog = await fetchProviderCatalog(
+				provider,
+				cred.value,
+				cred.baseUrl,
+				cred.authMethod,
+			);
 			if (!catalog.ok) {
 				result.skipped.push(`${provider}: catalog ${catalog.reason}`);
 				continue;

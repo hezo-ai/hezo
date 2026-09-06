@@ -3844,8 +3844,12 @@ runs price at `$0`, which for local inference is correct rather than the usual f
 
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
-distinguishes an **API key** (injected as env at run start) from a **subscription** blob
-(materialized to a per-run mount in the container). **One api-key exception:** Codex will not
+distinguishes an **API key** (injected as env at run start) from a **subscription** blob.
+Where a subscription lands is the *runtime's* property, not the auth method's: Codex's is
+materialized to a per-run mount, while Anthropic's is an env var like a key
+(`CLAUDE_CODE_OAUTH_TOKEN`), because Claude Code rewrites its own credentials file and cannot
+be handed one on a per-run mount. `RUNTIME_HOME_LAYOUTS[...].authFileRelative` is the switch,
+and its absence is what makes `buildSubscriptionMount` return null. **One api-key exception:** Codex will not
 authenticate a request from `OPENAI_API_KEY` — `codex doctor` reports the variable as present
 and then reports `auth mode: none`, and every request 401s — so its key is written to the same
 per-run `auth.json` its subscription blob uses, in the `{auth_mode: "apikey", …}` shape
@@ -3855,9 +3859,34 @@ key-derived file back over the operator's stored value. Subscription auth is sup
 Anthropic and OpenAI. Google and xAI are API-key only in Hezo - Antigravity has a consumer
 subscription (Login with Google) but its keyring-only OAuth cannot yet be delivered into a
 per-run container. A config's `status` is `verified` (the healthy default —
-the add flow live-verifies the key, the Verify action persists the result, and replacing the
-credential re-verifies it — each restoring `verified` on a key that had gone `invalid`),
-`invalid` (a verify was rejected), or `revoked` (a retired provider).
+the add flow live-verifies the credential, the Verify action persists the result, and replacing the
+credential re-verifies it — each restoring `verified` on one that had gone `invalid`),
+`invalid` (the provider refused it), or `revoked` (a retired provider).
+
+**A subscription credential is asked the same live question as a key, on its own header
+shape.** `AiProviderVerifyEndpoint.subscriptionHeaders` carries it (Anthropic: a bearer,
+since `x-api-key` refuses an `sk-ant-oat01-…` token whatever its state and would make every
+probe a false condemnation); an absent entry says this provider's subscription credential is
+not a bearer at all (Codex's is a JSON auth file) and leaves it on the shape check alone.
+**What a probe may conclude is deliberately asymmetric** and lives in one predicate,
+`probeProvesCredentialDead`: only a 401/403 condemns. Acceptance proves nothing, because what
+a *valid* subscription token does on a catalog endpoint is not assertable for every provider -
+it may answer 200 or refuse the endpoint on scope while remaining good for a run. So the probe
+can catch a dead credential and can never condemn a live one. This is not a fallback path:
+one mechanism, one answer it acts on.
+
+**A run that the provider refuses condemns the credential, but only on the provider's word.**
+`condemnRejectedProviderCredential` (`services/provider-credential-health.ts`, the join between
+the row and the catalog probe) re-asks the provider when a run's terminal verdict is family
+`auth`, then writes through `casMarkAiProviderInvalid` - a compare-and-set on the value the run
+*ran on*, so a credential the operator replaced mid-run is never condemned by the dead one's
+failure, and an already-`invalid` row is not rewritten. The re-probe is the point: `auth` is
+matched on the runtime's own error text and that match includes a bare `401`, which an agent's
+failed `curl` produces as readily as a refused model call - and the credential is
+instance-wide, so acting on the text alone would let one agent disable every team. On a write
+the runner files `fileProviderCredentialRejectedApproval`, which `clearAgentErrorApprovalsOnRecovery`
+closes on the next success like the other agent-error notices. Without this the row keeps
+`verified` forever and every dispatch spends a container to fail identically.
 
 **Guided sign-in.** A subscription credential can be minted by driving the vendor CLI's own
 login inside a throwaway container instead of pasting an auth file. `POST

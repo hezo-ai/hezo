@@ -60,4 +60,6 @@ rather than here, is how a codebase ends up with two of everything.
 | Seeding container uptime a calendar-window reader will bill | `seedUptimeStretch()` / `seedMonthToDateSeconds()` (`test/helpers/uptime.ts`) - web tests reach them through `@hezo/server/test/helpers/uptime` |
 | A CLI runtime's own quirk (env, flags, model-id form, usage recovery, run-end behaviour) | that runtime's `services/runtime-adapters/<runtime>.ts`, its section in `agent-stream-parser.ts`, or its `RUNTIME_*` row (`@hezo/shared`) |
 | An AI provider's own quirk (endpoint, credential env, subscription blob, judge model) | that provider's `PROVIDER_RUNTIME_ADAPTERS` entry (`@hezo/shared`), or its row in the per-provider table that owns the behaviour |
+| "Did the provider refuse this credential itself?" | `probeProviderCatalog` + `probeProvesCredentialDead` (`services/provider-catalog.ts`) - only a 401/403 condemns; acceptance proves nothing |
+| Taking a refused credential out of service | `condemnRejectedProviderCredential` (`services/provider-credential-health.ts`) - the join between the row and the probe; writes only via `casMarkAiProviderInvalid` |
 

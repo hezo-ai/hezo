@@ -154,6 +154,30 @@ token stays usable across concurrent runs, so Hezo runs as many at once as your 
 allow and keeps the stored token current as they go. Nothing here limits how many agents
 share one Codex subscription.
 
+**An Anthropic subscription does not refresh.** Hezo stores the single long-lived token
+`claude setup-token` prints and passes it to Claude Code as-is. There is no refresh token
+behind it, so when that token expires or you revoke it, no run can renew it - sign in again
+to replace it.
+
+If you paste the credential by hand, paste the token `claude setup-token` printed and
+nothing else. The short-lived token inside `~/.claude/.credentials.json` starts with the
+same `sk-ant-oat01-` characters, so it looks right and is accepted, then stops working
+within hours. When that happens every run fails at once with an authentication error.
+
+### What "verified" means
+
+A credential is marked **verified** when the provider accepted it, and **invalid** when the
+provider refused it. Hezo asks the provider when you add a credential, when you select
+**Verify**, and again after a run fails because the provider refused it.
+
+A refused credential is marked invalid and stops being used, so the next run fails
+immediately instead of starting a container to find out. The credential is shared by every
+team on the instance, so this stops their runs too - replace it to bring them back.
+
+Only an outright refusal changes the badge. If Hezo cannot reach the provider, or the
+provider answers with an error of its own, the credential keeps the status it had: an
+outage must not take a working credential out of service.
+
 ## Where to get an API key
 
 Each provider issues API keys from its own console. When you connect a provider, the
