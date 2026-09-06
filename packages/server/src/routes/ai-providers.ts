@@ -29,7 +29,11 @@ import {
 	updateAiProviderConfig,
 } from '../services/ai-provider-keys';
 import { getPinnedModel, refreshModelPins } from '../services/model-pins';
-import { fetchProviderCatalog, probeProviderCatalog } from '../services/provider-catalog';
+import {
+	fetchProviderCatalog,
+	probeProvesCredentialDead,
+	probeProviderCatalog,
+} from '../services/provider-catalog';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
 import {
 	LOGIN_FLOW_TTL_MS,
@@ -158,7 +162,7 @@ async function prepareProviderCredential(
 	}
 
 	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
-		const probe = await probeProviderCatalog(provider, value, baseUrl);
+		const probe = await probeProviderCatalog(provider, value, baseUrl, authMethod);
 		// "We could not ask" is not "your key is wrong", and the difference is the
 		// whole diagnosis for a local runner that simply is not running. Keep the
 		// two apart: only a provider that answered and refused blames the key.
@@ -177,6 +181,25 @@ async function prepareProviderCredential(
 				ok: false,
 				code: 'INVALID_KEY',
 				message: `API key validation failed — the key was rejected by ${info.name}`,
+				status: 400,
+			};
+		}
+	}
+
+	// A subscription token gets the same live question, on the header shape its
+	// provider's table row names. The bar is deliberately lower than the api-key
+	// one above: only an outright rejection stops the store, because acceptance is
+	// not something this probe can assert (see `probeProvesCredentialDead`). That
+	// still catches the failure this exists for - a token that is already dead when
+	// it is pasted - instead of leaving it to surface as a failed run hours later,
+	// under a badge that says `verified`.
+	if (authMethod === AiAuthMethod.Subscription && !process.env.SKIP_AI_KEY_VALIDATION) {
+		const probe = await probeProviderCatalog(provider, value, baseUrl, authMethod);
+		if (probeProvesCredentialDead(probe)) {
+			return {
+				ok: false,
+				code: 'INVALID_SUBSCRIPTION_BLOB',
+				message: `${info.name} rejected this subscription credential. Mint a fresh one and paste that — a token that has expired or been revoked cannot be renewed here.`,
 				status: 400,
 			};
 		}
@@ -351,14 +374,20 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 
 	try {
-		// A subscription blob is not an API key any catalog endpoint accepts, so it
-		// is taken as verified rather than probed - the same rule the create path
-		// applies, kept in step with it here.
-		const probe =
-			cred.authMethod === AiAuthMethod.Subscription
-				? ({ ok: true } as const)
-				: await probeProviderCatalog(cred.provider as AiProvider, cred.value, cred.baseUrl);
-		if (probe.ok) {
+		// Both auth methods are asked, on their own header shape - the same rule the
+		// create path applies, kept in step with it here. What differs is what an
+		// answer is allowed to conclude: an api key that is refused *or* unreachable
+		// is handled below, while a subscription credential is condemned only by an
+		// outright rejection (`probeProvesCredentialDead`), so the branch is on the
+		// verdict rather than on the auth method.
+		const probe = await probeProviderCatalog(
+			cred.provider as AiProvider,
+			cred.value,
+			cred.baseUrl,
+			cred.authMethod,
+		);
+		const subscription = cred.authMethod === AiAuthMethod.Subscription;
+		if (probe.ok || (subscription && !probeProvesCredentialDead(probe))) {
 			// Persist the healthy state so the badge is truthful and a key that was
 			// previously marked `invalid` recovers on a successful re-verify.
 			await db.query(
@@ -378,7 +407,12 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 			AiProviderStatus.Invalid,
 			configId,
 		]);
-		return ok(c, { valid: false, message: 'API key is invalid or expired' });
+		return ok(c, {
+			valid: false,
+			message: subscription
+				? 'Subscription credential is invalid or expired — mint a fresh one'
+				: 'API key is invalid or expired',
+		});
 	} catch {
 		return ok(c, { valid: false, message: 'Could not reach provider to verify key' });
 	}
@@ -561,7 +595,7 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 		);
 	}
 
-	const catalog = await fetchProviderCatalog(provider, cred.value, cred.baseUrl);
+	const catalog = await fetchProviderCatalog(provider, cred.value, cred.baseUrl, cred.authMethod);
 	if (!catalog.ok) {
 		if (catalog.reason === 'unsupported') {
 			return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);

@@ -10,7 +10,7 @@
  * operator's own base URL, and getting that split wrong is silent.
  */
 
-import { AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
+import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider } from '@hezo/shared';
 
 export interface CatalogEndpoint {
 	url: string;
@@ -24,28 +24,47 @@ export interface CatalogEndpoint {
  * built from the operator's configured base URL, falling back to the runner's
  * documented default port. Both runners expose the OpenAI-shaped `/v1/models`,
  * which `parseProviderModels` already handles via its generic `data[]` branch.
+ *
+ * `authMethod` picks which header shape the credential goes on, because a
+ * subscription token is not an API key and the two are not interchangeable on
+ * the same header. Which shape a provider has is a row in its own table entry
+ * (`subscriptionHeaders`), never a provider name tested here; a provider with no
+ * such row returns null for a subscription, which reads as `unsupported`.
  */
 export function resolveCatalogEndpoint(
 	provider: AiProvider,
-	apiKey: string,
-	baseUrl?: string | null,
+	credentialValue: string,
+	baseUrl: string | null | undefined,
+	authMethod: AiAuthMethod,
 ): CatalogEndpoint | null {
 	const info = AI_PROVIDER_INFO[provider];
 	if (!info) return null;
 
 	if (info.local) {
+		// The local runners are api-key only (no `supportsSubscription`), so there is
+		// no second header shape to pick between here.
+		if (authMethod !== AiAuthMethod.ApiKey) return null;
 		const root = (baseUrl?.trim() || info.local.defaultBaseUrl).replace(/\/+$/, '');
 		return {
 			url: `${root}/v1/models`,
-			headers: { Authorization: `Bearer ${apiKey}` },
+			headers: { Authorization: `Bearer ${credentialValue}` },
 		};
 	}
 
 	const endpoint = info.verifyEndpoint;
 	if (!endpoint) return null;
+	const url = typeof endpoint.url === 'function' ? endpoint.url(credentialValue) : endpoint.url;
+
+	if (authMethod === AiAuthMethod.Subscription) {
+		const headers = endpoint.subscriptionHeaders?.(credentialValue);
+		if (!headers) return null;
+		return { url, headers };
+	}
+
 	return {
-		url: typeof endpoint.url === 'function' ? endpoint.url(apiKey) : endpoint.url,
-		headers: typeof endpoint.headers === 'function' ? endpoint.headers(apiKey) : endpoint.headers,
+		url,
+		headers:
+			typeof endpoint.headers === 'function' ? endpoint.headers(credentialValue) : endpoint.headers,
 	};
 }
 
@@ -79,10 +98,11 @@ export type CatalogProbe =
  */
 export async function probeProviderCatalog(
 	provider: AiProvider,
-	apiKey: string,
-	baseUrl?: string | null,
+	credentialValue: string,
+	baseUrl: string | null | undefined,
+	authMethod: AiAuthMethod,
 ): Promise<CatalogProbe> {
-	const endpoint = resolveCatalogEndpoint(provider, apiKey, baseUrl);
+	const endpoint = resolveCatalogEndpoint(provider, credentialValue, baseUrl, authMethod);
 	if (!endpoint) return { ok: false, reason: 'unsupported' };
 
 	let res: Response;
@@ -107,13 +127,36 @@ export async function probeProviderCatalog(
 	return { ok: true, res };
 }
 
+/**
+ * Whether a probe is **proof the credential itself is dead**, as opposed to
+ * anything else that can go wrong between here and the provider.
+ *
+ * One home because three callers act on it and must agree: the create route, the
+ * Verify button and the runner's re-check after a run died on a rejected
+ * credential. Only a provider that answered and refused (401/403) counts.
+ *
+ * **The asymmetry is the point, and it is not a fallback.** There is one
+ * mechanism - ask the provider - and exactly one answer it is allowed to act on.
+ * A rejection is authoritative; acceptance is not, because what a *valid*
+ * subscription token does on a catalog endpoint is not something Hezo can assert
+ * for every provider: it may answer 200, or refuse that endpoint on scope while
+ * remaining perfectly good for a run. So a `false` here means "not disproven",
+ * never "confirmed working", and no caller may read it as the latter. Built this
+ * way round so the probe can only ever catch a dead credential and can never
+ * condemn a live one.
+ */
+export function probeProvesCredentialDead(probe: CatalogProbe): boolean {
+	return !probe.ok && probe.reason === 'rejected';
+}
+
 /** GET and parse the provider's catalog. Never throws - every failure is a result. */
 export async function fetchProviderCatalog(
 	provider: AiProvider,
-	apiKey: string,
-	baseUrl?: string | null,
+	credentialValue: string,
+	baseUrl: string | null | undefined,
+	authMethod: AiAuthMethod,
 ): Promise<CatalogResult> {
-	const probe = await probeProviderCatalog(provider, apiKey, baseUrl);
+	const probe = await probeProviderCatalog(provider, credentialValue, baseUrl, authMethod);
 	if (!probe.ok) return probe;
 	try {
 		return { ok: true, json: await probe.res.json() };

@@ -567,6 +567,34 @@ export async function fileProviderRefusalApproval(
 }
 
 /**
+ * Record that the provider refused the stored credential itself, and that Hezo
+ * has marked it invalid.
+ *
+ * Distinct from {@link fileProviderRefusalApproval} because the fault and the fix
+ * are different in kind: that one is the provider being unwell and clearing on
+ * its own clock, this one is a credential that will never work again and a
+ * person must replace. Saying "the provider has been refusing this agent's runs"
+ * here would send the reader off to wait for a recovery that cannot come.
+ *
+ * The credential is instance-wide, so this stops every team's runs on that
+ * provider - which is why it says so, rather than reading as one agent's problem.
+ * Delegates to the same writer as the two lost-run paths, so all of them leave a
+ * human the same shape of record and share its one-per-stuck-agent dedupe.
+ */
+export async function fileProviderCredentialRejectedApproval(
+	db: Db,
+	run: { runId: string; memberId: string; teamId: string; taskId?: string | null },
+	credential: { providerName: string; label: string },
+): Promise<void> {
+	await fileLostRunApproval(
+		db,
+		run,
+		undefined,
+		`${credential.providerName} rejected the stored credential "${credential.label}", so Hezo has marked it invalid and will not start further runs on it. Replace the credential in Settings > AI Providers - an expired or revoked one cannot be renewed. This credential is shared across every team on this instance.`,
+	);
+}
+
+/**
  * Close the agent-error notices a recovered agent no longer needs.
  *
  * The inverse of {@link fileLostRunApproval}: a successful run is the proof that
