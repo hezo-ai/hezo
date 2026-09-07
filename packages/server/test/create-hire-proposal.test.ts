@@ -1,4 +1,4 @@
-import { CAPTAIN_AGENT_SLUG, DEFAULT_TEAM_ID } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, DEFAULT_TEAM_ID, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -350,12 +350,16 @@ describe('MCP tool create_hire_proposal', () => {
 		// dispatcher re-runs it as soon as the task frees. Match on the payload rather
 		// than the idempotency key so the assertion holds whether the row was inserted
 		// fresh or coalesced onto an existing queued task wakeup.
-		const wakeup = await db.query<{ member_id: string }>(
-			`SELECT member_id FROM agent_wakeup_requests
+		const wakeup = await db.query<{ member_id: string; source: string }>(
+			`SELECT member_id, source FROM agent_wakeup_requests
 			 WHERE payload->>'approval_id' = $1 AND payload->>'reason' = 'hire_resolved'`,
 			[proposal.approval_id as string],
 		);
 		expect(wakeup.rows.length).toBeGreaterThanOrEqual(1);
 		expect(wakeup.rows[0].member_id).toBe(captainId);
+		// On `automation` the dispatcher could discard this before it ever started a
+		// run, and an approved hire then sat with nobody acting on it until the next
+		// scheduled heartbeat. `approval_resolved` is exempt from both suppressions.
+		expect(wakeup.rows[0].source).toBe(WakeupSource.ApprovalResolved);
 	});
 });

@@ -8,6 +8,7 @@ import {
 import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
+import { DISPATCH_SUPPRESSION_EXEMPT_SOURCES } from './no-work-backoff';
 
 const log = logger.child('wakeup');
 
@@ -62,8 +63,12 @@ export async function createWakeup(
 	// with their own local payload, so absorbing the marked row would strand its
 	// marker and let the claim bypass the trigger's dedicated dispatch path.
 	const taskId = typeof payload.task_id === 'string' ? payload.task_id : null;
-	const coalesceResult = await db.query<{ id: string; payload: Record<string, unknown> }>(
-		`SELECT id, payload FROM agent_wakeup_requests
+	const coalesceResult = await db.query<{
+		id: string;
+		source: string;
+		payload: Record<string, unknown>;
+	}>(
+		`SELECT id, source, payload FROM agent_wakeup_requests
 		 WHERE member_id = $1 AND status = $2::wakeup_status
 		   AND payload->>'trigger' IS NULL
 		   AND (($3::text IS NULL AND payload->>'task_id' IS NULL)
@@ -75,6 +80,17 @@ export async function createWakeup(
 	if (coalesceResult.rows.length > 0) {
 		const existingRow = coalesceResult.rows[0];
 		const mergedPayload = mergePayloads(existingRow.payload, payload);
+
+		// A coalesce must never downgrade how the merged row is dispatched. The row
+		// now carries the work of every trigger folded into it, but the dispatcher
+		// reads one `source` - so absorbing an exempt trigger (a person answering the
+		// agent) into a suppressible one (an assignment queued minutes earlier) hands
+		// the answer straight back to the suppressions that exempt list exists to
+		// bypass, and nothing resends it. Promote, never demote: exempt wins, and two
+		// sources on the same side leave the stored one alone.
+		const promoteSource =
+			DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source) &&
+			!DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(existingRow.source);
 
 		// Guard against the dispatcher claiming the row between the SELECT and
 		// here. If it already moved out of `queued`, fall through to a fresh
@@ -90,10 +106,18 @@ export async function createWakeup(
 			`UPDATE agent_wakeup_requests
 			 SET coalesced_count = coalesced_count + 1,
 			     payload = $1::jsonb,
+			     source = CASE WHEN $5 THEN $6::wakeup_source ELSE source END,
 			     created_by_run_id = COALESCE($4::uuid, created_by_run_id)
 			 WHERE id = $2 AND status = $3::wakeup_status
 			 RETURNING id`,
-			[JSON.stringify(mergedPayload), existingRow.id, WakeupStatus.Queued, createdByRunId ?? null],
+			[
+				JSON.stringify(mergedPayload),
+				existingRow.id,
+				WakeupStatus.Queued,
+				createdByRunId ?? null,
+				promoteSource,
+				source,
+			],
 		);
 
 		if (merged.rows.length > 0) {

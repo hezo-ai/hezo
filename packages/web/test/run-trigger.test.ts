@@ -1,9 +1,20 @@
 import { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
 import { expect, test } from 'vitest';
 import type { HeartbeatRun } from '../src/hooks/use-heartbeat-runs';
+import type { MessageKey } from '../src/lib/i18n';
+import en from '../src/lib/i18n/catalog/en.json';
 import { formatTriggerReason } from '../src/lib/run-trigger';
 
 const TEAM = 'acme';
+
+// The real English catalog, resolved the way the provider resolves it. Asserting
+// on rendered English rather than on key names keeps these tests readable AND
+// makes a missing or misnamed key fail here rather than render as a raw key in
+// the run list.
+const t = (key: MessageKey, vars?: Record<string, string | number>) =>
+	(en as Record<string, string>)[key].replace(/\{(\w+)\}/g, (m, name: string) =>
+		vars && name in vars ? String(vars[name]) : m,
+	);
 
 // A fully-populated run with every trigger/deep-link field present. Tests start
 // from this and null out fields to drive the fallback branches.
@@ -56,7 +67,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 }
 
 test('mention with actor + task links to the triggering comment', () => {
-	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Mention }), TEAM);
+	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Mention }), TEAM, t);
 	expect(label.source).toBe(WakeupSource.Mention);
 	expect(label.text).toBe('Mentioned by @alice in ACME-7');
 	expect(label.href).toBe('/teams/acme/projects/web-app/tasks/ACME-7#comment-c-pub-99');
@@ -71,6 +82,7 @@ test('mention without actor/task falls back to generic copy but keeps the commen
 			task_identifier: null,
 		}),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('Mentioned in a comment');
 	// commentHref still resolves: it depends on task_identifier of the *comment*,
@@ -80,7 +92,7 @@ test('mention without actor/task falls back to generic copy but keeps the commen
 });
 
 test('reply with actor + task links to the comment', () => {
-	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Reply }), TEAM);
+	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Reply }), TEAM, t);
 	expect(label.text).toBe('Reply from @alice in ACME-7');
 	expect(label.href).toBe('/teams/acme/projects/web-app/tasks/ACME-7#comment-c-pub-99');
 });
@@ -89,12 +101,13 @@ test('reply without actor uses fallback copy', () => {
 	const label = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Reply, trigger_actor_slug: null, task_identifier: null }),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('Reply to your earlier comment');
 });
 
 test('comment uses the comment href when present', () => {
-	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Comment }), TEAM);
+	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Comment }), TEAM, t);
 	expect(label.text).toBe('New comment on ACME-7');
 	expect(label.href).toBe('/teams/acme/projects/web-app/tasks/ACME-7#comment-c-pub-99');
 });
@@ -103,6 +116,7 @@ test('comment falls back to the task href when no comment public id', () => {
 	const label = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Comment, trigger_comment_public_id: null }),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('New comment on ACME-7');
 	// No comment id → commentHref undefined → taskHref used instead.
@@ -117,6 +131,7 @@ test('comment with no task id at all gets generic copy and no href', () => {
 			task_identifier: null,
 		}),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('New comment on assigned task');
 	expect(label.href).toBeUndefined();
@@ -130,6 +145,7 @@ test('assignment links to the task', () => {
 			trigger_comment_project_slug: null,
 		}),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('Assigned to ACME-7');
 	// taskHref falls back to task_identifier/project_slug when the comment fields are absent.
@@ -144,6 +160,7 @@ test('assignment without a task id uses generic copy', () => {
 			task_identifier: null,
 		}),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('Assigned to a task');
 	expect(label.href).toBeUndefined();
@@ -153,6 +170,7 @@ test('automation reads the kind from the payload', () => {
 	const label = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Automation, trigger_payload: { kind: 'stale-pr-nudge' } }),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('Automation: stale-pr-nudge');
 });
@@ -161,12 +179,14 @@ test('automation falls back to the reason field, then to bare label', () => {
 	const withReason = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Automation, trigger_payload: { reason: 'budget-reset' } }),
 		TEAM,
+		t,
 	);
 	expect(withReason.text).toBe('Automation: budget-reset');
 
 	const bare = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Automation, trigger_payload: null }),
 		TEAM,
+		t,
 	);
 	expect(bare.text).toBe('Automation');
 
@@ -174,6 +194,7 @@ test('automation falls back to the reason field, then to bare label', () => {
 	const nonString = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Automation, trigger_payload: { kind: 42 } }),
 		TEAM,
+		t,
 	);
 	expect(nonString.text).toBe('Automation');
 });
@@ -182,12 +203,13 @@ test('a progress-update run is labelled as the goals-and-progress automation reg
 	const label = formatTriggerReason(
 		run({ kind: HeartbeatRunKind.ProgressUpdate, trigger_source: WakeupSource.Automation }),
 		TEAM,
+		t,
 	);
 	expect(label.text).toBe('Automation: goals and progress report');
 });
 
 test('heartbeat is a fixed label', () => {
-	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Heartbeat }), TEAM);
+	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Heartbeat }), TEAM, t);
 	expect(label.text).toBe('Scheduled heartbeat');
 	expect(label.href).toBeUndefined();
 });
@@ -196,30 +218,80 @@ test('timer reads the reason from the payload, with a fallback', () => {
 	const withReason = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Timer, trigger_payload: { reason: 'no-output' } }),
 		TEAM,
+		t,
 	);
 	expect(withReason.text).toBe('Recovery timer: no-output');
 
 	const bare = formatTriggerReason(
 		run({ trigger_source: WakeupSource.Timer, trigger_payload: {} }),
 		TEAM,
+		t,
 	);
 	expect(bare.text).toBe('Recovery timer');
 });
 
 test('on-demand is a fixed label', () => {
-	const label = formatTriggerReason(run({ trigger_source: WakeupSource.OnDemand }), TEAM);
+	const label = formatTriggerReason(run({ trigger_source: WakeupSource.OnDemand }), TEAM, t);
 	expect(label.text).toBe('Manually started');
 });
 
 test('unknown / null trigger source falls through to the default branch', () => {
-	const nullSource = formatTriggerReason(run({ trigger_source: null }), TEAM);
+	const nullSource = formatTriggerReason(run({ trigger_source: null }), TEAM, t);
 	expect(nullSource.text).toBe('Unknown trigger');
 	expect(nullSource.source).toBeNull();
+});
 
-	// CredentialProvided has no case in the switch, so it hits default too.
+// The three sources that mean "a person answered the thing you asked for". They
+// shared the default branch until each got a label, which read as "Unknown
+// trigger" on the one run an admin most wants to trace back to their own click.
+test('an approval resolution names the task it settled and links to it', () => {
+	const label = formatTriggerReason(
+		run({
+			trigger_source: WakeupSource.ApprovalResolved,
+			trigger_payload: { reason: 'hire_resolved' },
+		}),
+		TEAM,
+		t,
+	);
+	expect(label.text).toBe('Approval resolved on ACME-7');
+	expect(label.href).toBe('/teams/acme/projects/web-app/tasks/ACME-7');
+});
+
+test('an approval resolution without a task falls back to generic copy', () => {
+	const label = formatTriggerReason(
+		run({
+			trigger_source: WakeupSource.ApprovalResolved,
+			trigger_comment_task_identifier: null,
+			task_identifier: null,
+		}),
+		TEAM,
+		t,
+	);
+	expect(label.text).toBe('Approval resolved');
+	expect(label.href).toBeUndefined();
+});
+
+test('credential and asset-deletion answers get their own labels, not the default', () => {
 	const credential = formatTriggerReason(
 		run({ trigger_source: WakeupSource.CredentialProvided }),
 		TEAM,
+		t,
 	);
-	expect(credential.text).toBe('Unknown trigger');
+	expect(credential.text).toBe('Credential provided');
+	expect(credential.href).toBe('/teams/acme/projects/web-app/tasks/ACME-7#comment-c-pub-99');
+
+	const asset = formatTriggerReason(
+		run({ trigger_source: WakeupSource.AssetDeletionResolved }),
+		TEAM,
+		t,
+	);
+	expect(asset.text).toBe('File deletion resolved');
+});
+
+test('every wakeup source has a catalog label, so none can render as a raw key', () => {
+	for (const source of Object.values(WakeupSource)) {
+		const label = formatTriggerReason(run({ trigger_source: source }), TEAM, t);
+		expect(label.text, `no label for ${source}`).not.toMatch(/^runTrigger\./);
+		expect(label.text, `${source} fell through to the default branch`).not.toBe('Unknown trigger');
+	}
 });

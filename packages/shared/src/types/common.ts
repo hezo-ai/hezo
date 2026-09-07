@@ -890,6 +890,7 @@ export const WakeupSource = {
 	Automation: 'automation',
 	CredentialProvided: 'credential_provided',
 	AssetDeletionResolved: 'asset_deletion_resolved',
+	ApprovalResolved: 'approval_resolved',
 	Comment: 'comment',
 	Reply: 'reply',
 	Heartbeat: 'heartbeat',
