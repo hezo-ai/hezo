@@ -1271,6 +1271,12 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    **`start_team_setup`** MCP tool to assign it to itself and begin the run. There is no
    longer a `project_creation` approval row (the enum value is retained for historical
    rows only).
+3. **Seeded** - the same intake, opened by `consumeSeedProject` (`services/seed.ts`) from
+   the `seed.project` block of the config file at the first unlock, once (§ *Hosted first
+   run*). No form was submitted and no team type chosen, so the intake's `name` is a
+   placeholder derived from the brief's first sentence and the CEO is asked to propose the
+   real one. From the greeting on it is the CEO-assisted path above: no wakeup, the admin's
+   first reply is the CEO's first run.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
@@ -5863,6 +5869,41 @@ exists because both faults it covers actually shipped: every icon was missing it
 shorter than the image it writes), and the maskable variant had no safe zone at all.
 
 ---
+
+### Hosted first run
+
+A hosted instance (one with an `sso` block, § *Configuration resolution*) is provisioned
+by a control plane on someone's behalf, and arrives with a `seed` block carrying what that
+person already told the plane: their language and, when they wrote one, a project brief.
+`services/seed.ts` is the one consumer of the block, and the two halves land at the two
+points where the instance can first act on them:
+
+- **The locale, at boot.** `applySeedLocale` runs in the `workspace` startup phase after
+  `seedDefaultTeam`, before the app serves, and writes `seed.locale` into `system_meta`
+  only when `instanceLocaleIsConfigured` is false. `/api/status` therefore reports
+  `localeConfigured: true` from the first request, and `useSyncInstanceLocale` adopts the
+  language on every browser. A locale anyone chose - from the gate's corner switcher or
+  from Settings - is never overwritten, on this or any later boot.
+- **The brief, at the first unlock.** `consumeSeedProject` is registered on
+  `masterKeyManager.onUnlock`, which `setup()` fires before the setup route returns and
+  every later `unlock()` fires again. It writes the `seed_project:consumed` marker into
+  `system_meta` first, as `INSERT ... ON CONFLICT DO NOTHING RETURNING`, and only the
+  caller that got a row back proceeds to `createProjectIntake` - so a restart, a rebuilt
+  host or two processes on one database open one intake, and only a wiped database (the
+  plane's `reset`) seeds again. A null intake or a thrown error deletes the marker and logs,
+  so a transient (HQ or the CEO missing) is tried once more at the next unlock rather than
+  papered over. It runs under `trackBackground` because the unlock hook is synchronous and
+  nothing awaits it.
+
+The intake needs only HQ and an enabled CEO, both seeded before any key exists, and it
+queues no run: by the time the AI-provider step finishes and `/home` mounts, the greeting
+is waiting in `ProjectIntakeHomePanel` and the admin's first reply is the CEO's first run.
+The one ordering that matters is the superuser: `POST /api/auth/setup` calls
+`ensureSuperuserId` **before** `masterKeyManager.setup()`, because the greeting's
+`fireAdminMention` fans out to the superuser and returns silently when there is none -
+and that inbox row is what parks the CEO's heartbeat against an unanswered thread
+(§ *The parked-on-admin suppression*). Created after `setup()` returned, as it used to be,
+the mention would have raced the intake and lost.
 
 ## 12. Build, release, migrations & upgrades
 

@@ -115,6 +115,14 @@ authRoutes.post('/auth/setup', async (c) => {
 		return err(c, 'INVALID_SIGNATURE', 'Signature verification failed', 401);
 	}
 
+	// The superuser exists before the key does. `setup()` fires the unlock hook
+	// before it returns, and what runs there - the seeded project intake among
+	// it - fans its admin mention out to the superuser; created afterwards, the
+	// mention would find nobody and vanish. A row that outlives a failed
+	// enrolment is harmless: the next attempt reuses it, and nothing consults
+	// it while the key is unset.
+	await ensureSuperuserId(c.get('db'));
+
 	const enrolled = await masterKeyManager.setup(c.get('db'), unlock_key, public_key);
 	if (!enrolled) {
 		return err(c, 'ALREADY_SET', 'Master key is already set', 409);

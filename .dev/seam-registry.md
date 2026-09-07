@@ -35,6 +35,7 @@ rather than here, is how a codebase ends up with two of everything.
 | "Who holds this rotating credential, and how do I name them?" | `credentialLockHolder` / `describeCredentialHolder` / `credentialWaitNotice` (`services/agent-runner.ts`) - a `CredentialLockHolder` record, rendered as a run link (`formatRunLink`, `@hezo/shared`) that `RunLinkedText` (web) turns into the link; never a bare label |
 | Text the server writes that names a run (a log line, a chat notice) | `formatRunLink` / `splitRunLinks` (`@hezo/shared`) on the way out, `RunLinkedText` (`packages/web/src/components/`) on the way in |
 | "Did this release stop reading something an instance still sets?" | `REMOVED_ENV_VARS` / `detectRemovedEnvVars` (`config/removed-env.ts`) |
+| What a provisioner handed the first run, applied once | `applySeedLocale` / `consumeSeedProject` (`services/seed.ts`), reading `runtimeConfig().seed` inside the function; once-ness is the `seed_project:consumed` marker in `system_meta`, written as a conditional insert before the work - never a check on whether an intake exists, and never a second reader of the block |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
