@@ -2,6 +2,7 @@ import { Check, Eye, Plug } from 'lucide-react';
 import { connectorStatus, useConnector } from '../../hooks/use-connectors';
 import { ConnectorCompletion } from '../connector-completion';
 import { ConnectorProbeNotice } from '../connector-probe-notice';
+import { Callout } from '../ui/callout';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
@@ -32,15 +33,21 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 				data-testid="connect-required-active"
 				data-connector-id={connector_id}
 			>
-				<div className="flex items-start gap-2 p-2.5 rounded-lg border border-success bg-success-soft hover:bg-success-soft/80 transition-colors">
-					<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
-					<div className="flex-1">
+				{/* `role="none"` throughout: a thread renders many of these at once, and
+				    the thread is what a reader follows - one live region per card is noise. */}
+				<Callout
+					tone="success"
+					role="none"
+					className="border border-success hover:bg-success-soft/80 transition-colors"
+					icon={<Check className="w-4 h-4" />}
+				>
+					<div>
 						<p className="text-sm font-medium text-text-1">{display_name} connected</p>
 						<p className="text-xs text-text-2 mt-0.5">
 							Available to every agent run in this team. Click to manage in Connectors.
 						</p>
 					</div>
-				</div>
+				</Callout>
 			</a>
 		);
 	}
@@ -59,15 +66,17 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					: `Connect ${display_name} to authorize this agent's access`;
 
 	return (
-		<div
-			className="flex flex-col gap-2 p-2.5 rounded-lg border border-warning bg-warning-soft"
+		<Callout
+			tone="warning"
+			role="none"
+			className="border border-warning"
+			icon={<Plug className="w-4 h-4" />}
 			data-testid="connect-required"
 			data-connector-id={connector_id}
 			data-status={status}
 		>
-			<div className="flex items-start gap-2">
-				<Plug className="w-4 h-4 text-warning-soft-fg shrink-0 mt-0.5" />
-				<div className="flex-1">
+			<div className="flex flex-col gap-2">
+				<div>
 					<p className="text-sm font-medium text-text-1">
 						Connect required: <span className="font-semibold">{display_name}</span>
 						{provider_id && (
@@ -97,19 +106,19 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					)}
 					{connector && <ConnectorProbeNotice connector={connector} />}
 				</div>
+				<div className="flex flex-col gap-2">
+					{connector && (
+						<ConnectorCompletion connector={connector} projectId={projectId} variant="comment" />
+					)}
+					<a
+						href={focusedConnectorUrl}
+						className="text-xs text-text-2 hover:text-text-1 underline w-fit"
+						data-testid="connect-required-link"
+					>
+						Open in Connectors
+					</a>
+				</div>
 			</div>
-			<div className="flex flex-col gap-2 pl-6">
-				{connector && (
-					<ConnectorCompletion connector={connector} projectId={projectId} variant="comment" />
-				)}
-				<a
-					href={focusedConnectorUrl}
-					className="text-xs text-text-2 hover:text-text-1 underline w-fit"
-					data-testid="connect-required-link"
-				>
-					Open in Connectors
-				</a>
-			</div>
-		</div>
+		</Callout>
 	);
 }

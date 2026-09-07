@@ -73,8 +73,8 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
   dialog and confirmation, the button, input, textarea, toggle and password field, the
-  badges, card, breadcrumb, data table, tooltips, selects, segmented control, filter
-  pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
+  badges and callout, card, breadcrumb, data table, tooltips, selects, segmented control,
+  filter pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
   them. Source-only, with an `exports` map, so a consumer transpiles it the way `web`
   already transpiles its own `.tsx`. **Three rules keep it importable**: no copy is
   resolved inside it (every user-visible string is a prop with an English default, and
@@ -88,6 +88,11 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   that every utility used only by a primitive is missing from the stylesheet and the
   component renders unstyled with nothing to say so. `web` declares it in `index.css`
   and `test/stylesheet-sources.test.ts` holds it there.
+  **A tone reaches the screen twice, from one table.** `tone.ts` holds the `Tone`
+  union and the tint/solid/dot class pairs, and exports them: `Badge` draws a tone as a
+  pill, `Callout` as a block of prose (deriving `role="alert"` for the destructive tone
+  and `role="status"` otherwise, which a hand-rolled tinted `<div>` carries neither of),
+  and a consumer composing a third shape reads the same rows rather than restating them.
   **Its props types are part of the contract.** Every component exports its own
   `*Props`, because `ComponentProps<typeof X>` erases the parameter of a generic — a
   consumer cannot wrap `DataTable`, `SegmentedControl` or `FilterPills` type-safely
