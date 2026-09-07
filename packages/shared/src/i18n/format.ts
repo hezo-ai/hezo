@@ -332,3 +332,56 @@ export function coerceLocaleSettings(input: unknown): LocaleSettings {
 		? { ...DEFAULT_LOCALE_SETTINGS, ...parsed.value }
 		: { ...DEFAULT_LOCALE_SETTINGS };
 }
+
+// ---------------------------------------------------------------------------
+// The project brief a hosted signup carries into an instance. It sits beside
+// the locale validators because the same config block carries both, and one
+// rule bounds the brief on every side of that wire: the signup form, the
+// plane's storage, and the instance's config schema.
+// ---------------------------------------------------------------------------
+
+/**
+ * Longest project brief accepted anywhere, in Unicode code points. Counted in
+ * code points rather than UTF-16 units so an emoji costs one, and so a brief
+ * the signup form accepts can never be refused by the instance it is written
+ * for. A code point is at most four UTF-8 bytes, so this also bounds the brief
+ * at 8,000 bytes.
+ */
+export const PROJECT_BRIEF_MAX_CHARS = 2000;
+
+const TAB = 0x09;
+const LINE_FEED = 0x0a;
+const CARRIAGE_RETURN = 0x0d;
+const DEL = 0x7f;
+
+/** True for every C0 control except tab, newline and carriage return, and for DEL. */
+function isForbiddenControl(code: number): boolean {
+	if (code === DEL) return true;
+	if (code >= 0x20) return false;
+	return code !== TAB && code !== LINE_FEED && code !== CARRIAGE_RETURN;
+}
+
+/**
+ * Validate a project brief and return it trimmed. One rule for the form that
+ * collects it, the plane that stores it and the config schema that reads it,
+ * so no side can accept a brief another refuses.
+ */
+export function parseProjectBrief(input: unknown): ParseResult<string> {
+	if (typeof input !== 'string') return { ok: false, error: 'brief must be a string' };
+	const value = input.trim();
+	if (value.length === 0) return { ok: false, error: 'brief must not be empty' };
+	let length = 0;
+	for (const char of value) {
+		length += 1;
+		if (isForbiddenControl(char.codePointAt(0) ?? 0)) {
+			return { ok: false, error: 'brief must not contain control characters' };
+		}
+	}
+	if (length > PROJECT_BRIEF_MAX_CHARS) {
+		return {
+			ok: false,
+			error: `brief must be at most ${PROJECT_BRIEF_MAX_CHARS} characters (got ${length})`,
+		};
+	}
+	return { ok: true, value };
+}

@@ -280,6 +280,49 @@ it could not read.
 not thereby given it somewhere to sign in, and an instance offering single sign-on
 need not have any of its settings pinned.
 
+### Seeding a first run
+
+Where something provisions an instance on a person's behalf, it can hand the first run
+a starting point: the language the person chose, and the project brief they wrote. Set a
+`seed` block and the instance starts in that language and opens one CEO intake for the
+brief; leave it out and nothing happens, which is what an ordinary instance wants.
+
+| Setting | Default | Description |
+|---|---|---|
+| `seed.locale.language` | - | The language the instance starts in. One of the twelve language codes. |
+| `seed.locale.date_format` | - | The date field order: `dmy`, `mdy`, `ymd` or `d-mon-y`. |
+| `seed.locale.number_format` | - | How amounts are punctuated: `dot-comma`, `comma-dot` or `space-comma`. |
+| `seed.project.description` | - | A project brief. The CEO opens an intake for it at the first unlock. At most 2,000 characters; tabs and line breaks are fine, other control characters are refused. |
+
+Both halves are optional and independent; the three locale fields travel together.
+
+```js
+module.exports = {
+  seed: {
+    locale: { language: 'de', date_format: 'dmy', number_format: 'comma-dot' },
+    project: {
+      description: 'A newsletter for our climbing gym: weekly route updates and events.',
+    },
+  },
+};
+```
+
+**A seed is applied once, then the instance owns the result.** The locale is written at
+the first boot that finds no language chosen yet, and never again: once anyone has saved a
+language, from the setup gate or from Settings, the file's value is ignored. The brief opens
+its intake at the first unlock and is marked as consumed in the database, so a restart, a
+rebuild or an edited file does not open a second one. A wiped database starts over, and the
+seed is applied again.
+
+**The intake is a conversation, not a project.** The CEO greets the brief in an HQ task
+and waits for the first reply; nothing is created and no agent runs until the person
+answers. The brief itself is the subject of that conversation, never instructions to
+the CEO.
+
+**The brief is plain text in a config file.** It is not a secret, but it is the person's own
+words and it sits in the file for the life of the instance. Give the file mode 600 as
+above and keep the brief to what a first conversation needs.
+
 ## The master key is not a config setting
 
 The master key is **never** read from the config file, and Hezo rejects a `masterKey` key

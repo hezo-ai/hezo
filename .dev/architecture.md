@@ -5897,6 +5897,17 @@ than a generic "unrecognized key":
 - **`reset`** - it renames the embedded `pgdata` aside, which is a one-off action. In a
   persistent file it would wipe the database on **every** restart.
 
+**The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
+first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
+running instance applies to the same data - `parseLocaleSettingsPatch` for the locale, and
+`parseProjectBrief` (`@hezo/shared`, beside it) for the brief, which counts
+`PROJECT_BRIEF_MAX_CHARS` in code points so a brief the signup form accepted is never refused
+here. Like `sso`, it is file-only and inert when absent; unlike `sso`, every key inside is
+optional. `services/seed.ts` consumes it: the locale at boot when none is configured, the
+brief once at the first unlock (§ *Hosted first run*). An older binary
+handed a file carrying `seed` refuses to start naming the key, which is the strict schema
+doing its job - a plane writes the block only for a release that reads it.
+
 **Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
 reading were removed with no shim and no warning, so an instance whose supervisor still
 exported them fell back to the built-in defaults. For `HEZO_DATA_DIR` that meant opening an
