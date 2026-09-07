@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.61.0 - 2026-09-07
+
+### Breaking Changes
+
+- seed a hosted first run with a language and a project brief (Track H H24-H30) ([#1090](https://github.com/hezo-ai/hezo/pull/1090))
+
+### Features
+
+- seed a hosted first run with a language and a project brief (Track H H24-H30) ([#1090](https://github.com/hezo-ai/hezo/pull/1090))
+- **inbox:** open the failed run from a run-failure notice, and stop calling a queued retry an error ([#1089](https://github.com/hezo-ai/hezo/pull/1089))
+
+### Bug Fixes
+
+- **providers:** a verify that checks, reports what it found, and stays put ([#1088](https://github.com/hezo-ai/hezo/pull/1088))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.60.0...0.61.0
+
 ## 0.60.0 - 2026-09-07
 
 ### Features
