@@ -292,7 +292,17 @@ export async function getActiveContainers(
  * `>=` rather than `>`: at exactly the cap the allowance is spent, and admitting
  * one more container would put the instance over a figure the operator chose.
  */
-async function hoursQuotaExhausted(db: Db): Promise<boolean> {
+/**
+ * Whether the instance has spent its monthly container-hours allowance.
+ *
+ * Exported because admission is no longer the only caller: a chat read asks it
+ * too, so the composer can say the allowance is gone *before* someone types a
+ * message that cannot start a container. One function, so what the surface
+ * warns about and what the pool refuses can never disagree.
+ *
+ * An unset or zero allowance means unmetered, never exhausted.
+ */
+export async function hoursQuotaExhausted(db: Db): Promise<boolean> {
 	const capHours = await getMonthlyContainerHours(db);
 	if (capHours <= 0) return false;
 	return (await monthToDateContainerSeconds(db)) >= capHours * 3600;

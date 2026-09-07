@@ -19,6 +19,7 @@ import { isUuid } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { postChatSystemMessage } from '../services/chat-breadcrumbs';
+import { hoursQuotaExhausted } from '../services/run-concurrency';
 import { CreateTaskError, createTask } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
 import {
@@ -238,6 +239,9 @@ projectChatRoutes.get('/projects/:projectId/chat/agents/:agentSlug/conversation'
 			attachments: byMessage.get(r.id as string) ?? [],
 		})),
 		compacted_count: compacted.rows[0]?.count ?? 0,
+		// See the CEO read: the composer warns from the same predicate admission
+		// uses, so nobody types a message that cannot start a container.
+		hours_exhausted: await hoursQuotaExhausted(db),
 	});
 });
 
@@ -440,6 +444,7 @@ projectChatRoutes.get('/projects/:projectId/chat/groups/:conversationId', async 
 			attachments: byMessage.get(r.id as string) ?? [],
 		})),
 		compacted_count: compacted.rows[0]?.count ?? 0,
+		hours_exhausted: await hoursQuotaExhausted(db),
 	});
 });
 

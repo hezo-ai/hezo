@@ -87,6 +87,13 @@ interface ConversationData {
 	participants?: GroupParticipant[];
 	/** Group rooms only: replies still queued behind the latest message. */
 	pending_turns?: GroupPendingTurn[];
+	/**
+	 * The instance has spent its monthly container-hours allowance, so a turn
+	 * needing a new container is refused. Carried on the room read rather than
+	 * fetched separately: the composer must be able to say so before someone
+	 * types, and this is a response the surface already loads.
+	 */
+	hours_exhausted?: boolean;
 }
 
 /**
@@ -860,6 +867,9 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		conversationId: query.data?.conversation_id ?? undefined,
 		// >0 once older messages have been compacted into long-term memory.
 		compactedCount: query.data?.compacted_count ?? 0,
+		// The allowance is spent: a reply needing a new container will not start.
+		// Warm reuse still serves, so this warns rather than locking the composer.
+		hoursExhausted: query.data?.hours_exhausted === true,
 		// Group rooms: the roster (author-label lookup), the pending strip, its
 		// cancel, and the local "tag a teammate" nudge. Inert everywhere else.
 		participants: query.data?.participants ?? EMPTY_PARTICIPANTS,

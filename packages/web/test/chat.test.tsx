@@ -1,3 +1,5 @@
+import { setMonthlyContainerHours } from '@hezo/server/src/lib/system-meta';
+import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
 import type { ChatMessage } from '@hezo/web/hooks/use-chat';
 import { toast } from '@hezo/web/hooks/use-toast';
 import { queryClient } from '@hezo/web/lib/query-client';
@@ -25,6 +27,28 @@ function seedConversation(messages: ChatMessage[], compactedCount = 0) {
 		compacted_count: compactedCount,
 	});
 }
+
+test('a spent hours allowance warns in the composer, without locking it', async () => {
+	// The refusal itself is the server's (decision 14 keeps chat metered). What
+	// this pins is that the operator learns it *before* typing a message that
+	// cannot start a container - and that the composer stays usable, because a
+	// turn landing on a container already warm still runs.
+	const { db } = getTestContext();
+	await setMonthlyContainerHours(db, 10);
+	await seedMonthToDateSeconds(db, 10 * 3600);
+	try {
+		const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+		(await findByTestId('app-header-chat')).click();
+
+		const banner = await findByTestId('chat-hours-banner');
+		expect(banner.textContent).toContain('Container hours are spent');
+		// The admin sees where to raise it; the composer is not locked either way.
+		expect(banner.querySelector('a')?.getAttribute('href')).toContain('/budget/hours');
+		expect((getByTestId('chat-input') as HTMLTextAreaElement).disabled).toBe(false);
+	} finally {
+		await setMonthlyContainerHours(db, 0);
+	}
+});
 
 test('the header CEO monogram opens the dock and composer', async () => {
 	const { findByTestId, getByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });

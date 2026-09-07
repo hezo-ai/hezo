@@ -8,6 +8,7 @@ import {
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
+import { setMonthlyContainerHours } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt, signChatSessionJwt } from '../src/middleware/auth';
 import { ChatSessionManager } from '../src/services/chat-session-manager';
@@ -252,6 +253,35 @@ describe('CEO chat HTTP routes', () => {
 				'second active',
 			]);
 			expect(body.messages[1].role).toBe('assistant');
+		});
+
+		test('reports the spent hours allowance so the composer can warn before a send', async () => {
+			// The whole point of carrying it on the read: the operator sees the
+			// warning while typing, instead of discovering the refusal from a failed
+			// bubble after the round trip. Same predicate the pool admits on.
+			const before = await app.request('/api/chat/conversation', {
+				headers: authHeader(ctx.token),
+			});
+			expect((await before.json()).data.hours_exhausted).toBe(false);
+
+			await setMonthlyContainerHours(ctx.db, 10);
+			await ctx.db.query(
+				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+				 VALUES ('spent-hours-read', date_trunc('month', now() AT TIME ZONE 'UTC'),
+				         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '10 hours', 'docker')`,
+			);
+			try {
+				const res = await app.request('/api/chat/conversation', {
+					headers: authHeader(ctx.token),
+				});
+				expect(res.status).toBe(200);
+				expect((await res.json()).data.hours_exhausted).toBe(true);
+			} finally {
+				await setMonthlyContainerHours(ctx.db, 0);
+				await ctx.db.query(
+					`DELETE FROM container_uptime_entries WHERE container_id = 'spent-hours-read'`,
+				);
+			}
 		});
 
 		test('creates the conversation on first use and returns an empty window', async () => {

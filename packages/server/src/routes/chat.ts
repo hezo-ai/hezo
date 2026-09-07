@@ -18,6 +18,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireTeamAccessForResource } from '../middleware/auth';
 import { postChatSystemMessage } from '../services/chat-breadcrumbs';
+import { hoursQuotaExhausted } from '../services/run-concurrency';
 import { CreateTaskError, createTask } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
 import { buildCreateTaskCaller } from './tasks';
@@ -106,6 +107,10 @@ chatRoutes.get('/chat/conversation', async (c) => {
 		conversation_id: conversationId,
 		messages: await withAttachments(c, messages.rows),
 		compacted_count: compacted.rows[0]?.count ?? 0,
+		// The composer's own warning, from the same predicate admission uses. A
+		// turn that needs a new container is refused while this is true, and
+		// learning that only after sending is the failure this answer prevents.
+		hours_exhausted: await hoursQuotaExhausted(db),
 	});
 });
 

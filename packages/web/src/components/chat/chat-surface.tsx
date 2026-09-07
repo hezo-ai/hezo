@@ -5,6 +5,7 @@ import {
 	displayToolName,
 	extractActiveAgentMentionSlugs,
 	HQ_PROJECT_NAME,
+	HQ_PROJECT_SLUG,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
@@ -35,6 +36,7 @@ import {
 import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
 import { LONG_PRESS_MS, useLongPress } from '../../hooks/use-long-press';
+import { useMe } from '../../hooks/use-me';
 import { useMediaQuery } from '../../hooks/use-media-query';
 import { useHqProject, useProjectMeta } from '../../hooks/use-projects';
 import { useUploadChatAttachment } from '../../hooks/use-upload-chat-attachment';
@@ -148,8 +150,12 @@ export function ChatSurface({
 		cancelPendingTurn,
 		groupNudge,
 		conversationId,
+		hoursExhausted,
 	} = useChat(active, room);
 	const { t } = useI18n();
+	// Only HQ can raise the allowance, so only a superuser is offered the link.
+	// The probe is the app-wide cached one; this adds no request.
+	const isSuperuser = useMe().data?.is_superuser === true;
 	// The room's own project scopes labels and uploads; the CEO scope is HQ.
 	const isProjectRoom = room.kind === 'agent' || room.kind === 'group';
 	const roomProjectSlug = isProjectRoom ? room.projectSlug : null;
@@ -521,6 +527,39 @@ export function ChatSurface({
 							>
 								<History aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
 								<span>{t('chat.history.banner')}</span>
+							</div>
+						)}
+						{hoursExhausted && !composerLocked && (
+							<div
+								data-testid="chat-hours-banner"
+								className="mb-2 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[12px] text-warning-soft-fg"
+							>
+								<TriangleAlert aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+								{/* Says what will happen, not "chat is off": a turn that lands on
+								    a container already warm still runs, so the composer stays
+								    open and this warns instead of locking it. The allowance is
+								    instance-wide and only HQ can raise it, so the link is the
+								    superuser's alone - the rest are told who to ask. */}
+								<span>
+									{isSuperuser ? (
+										<Trans
+											k="chat.hoursExhausted.bannerAdmin"
+											vars={{
+												link: (
+													<Link
+														to="/projects/$projectId/budget/hours"
+														params={{ projectId: HQ_PROJECT_SLUG }}
+														className="underline underline-offset-2"
+													>
+														{t('chat.hoursExhausted.linkLabel')}
+													</Link>
+												),
+											}}
+										/>
+									) : (
+										t('chat.hoursExhausted.banner')
+									)}
+								</span>
 							</div>
 						)}
 						{hasAnyChip && (
