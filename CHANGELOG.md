@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.61.1 - 2026-09-07
+
+### Bug Fixes
+
+- **wakeups:** let an approval decision reach the agent that asked for it ([#1092](https://github.com/hezo-ai/hezo/pull/1092))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.61.0...0.61.1
+
 ## 0.61.0 - 2026-09-07
 
 ### Breaking Changes
