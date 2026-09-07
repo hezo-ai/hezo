@@ -153,7 +153,13 @@ export function AiProvidersSection() {
 					<span className="flex items-center gap-2 justify-end">
 						{verifiedOk[c.id] && (
 							<Tooltip content="Key is valid">
-								<ShieldCheck className="w-3.5 h-3.5 text-success-soft-fg" />
+								{/* Tagged because the tooltip's text only exists while hovered, so
+								    absence of the tick - the thing that used to claim a check that
+								    never happened - is otherwise not assertable. */}
+								<ShieldCheck
+									data-testid={`credential-verified-${c.id}`}
+									className="w-3.5 h-3.5 text-success-soft-fg"
+								/>
 							</Tooltip>
 						)}
 						<Tooltip content={t('settings.provider.edit')}>
