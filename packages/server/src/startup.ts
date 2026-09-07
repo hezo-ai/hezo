@@ -36,6 +36,7 @@ import { ONBOARDING_TOOLS } from './mcp/onboarding';
 import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
+import { framingMiddleware } from './middleware/framing';
 import { agentHoursRoutes } from './routes/agent-hours';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
@@ -651,6 +652,9 @@ export function buildApp(
 		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
 		return c.text('Internal Server Error', 500);
 	});
+
+	// Outermost, so it sees the response every later layer settled on.
+	app.use('*', framingMiddleware);
 
 	// Compress text responses. Nothing was compressed before: every JSON payload
 	// and every SPA asset shipped raw, which on a self-hosted instance reached

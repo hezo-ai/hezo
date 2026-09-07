@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AssetStore, WriteAssetResult } from '../src/assets/store';
 import { AssetNotFoundError, AttachmentTooLargeError } from '../src/assets/store';
 import { signAssetUrl } from '../src/lib/asset-urls';
+import { FRAME_ANCESTORS_NONE, FRAME_ANCESTORS_SELF } from '../src/middleware/framing';
 import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
@@ -479,7 +480,10 @@ describe('public signed-URL serving (GET /api/assets/:assetId)', () => {
 		expect(res.headers.get('content-disposition')).not.toContain('gallery');
 		expect(res.headers.get('x-content-type-options')).toBe('nosniff');
 		expect(res.headers.get('cache-control')).toBe('private, max-age=3600');
-		expect(res.headers.get('content-security-policy')).toBeNull();
+		// No policy of its own, so the instance-wide refusal to be framed applies;
+		// an <img> is not governed by frame-ancestors, so nothing the app draws
+		// with it changes.
+		expect(res.headers.get('content-security-policy')).toBe(FRAME_ANCESTORS_NONE);
 		expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
 	});
 
@@ -494,6 +498,10 @@ describe('public signed-URL serving (GET /api/assets/:assetId)', () => {
 		const csp = res.headers.get('content-security-policy');
 		expect(csp).toContain('sandbox');
 		expect(csp).not.toContain('allow-same-origin');
+		// The app's own viewer frames this response, so it names itself as the
+		// one allowed ancestor rather than taking the instance-wide 'none'.
+		expect(csp).toContain(FRAME_ANCESTORS_SELF);
+		expect(csp).not.toContain(FRAME_ANCESTORS_NONE);
 	});
 });
 

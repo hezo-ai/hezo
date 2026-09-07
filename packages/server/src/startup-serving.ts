@@ -10,6 +10,7 @@
  */
 
 import { ssoStatus } from './lib/sso-status';
+import { refuseFraming } from './middleware/framing';
 import type { StartupFailureRecord } from './startup-failure';
 import type { StartupProgress } from './startup-progress';
 import type { StaticAsset } from './static-assets';
@@ -55,6 +56,15 @@ export async function serveStartupRequest(
 	req: Request,
 	deps: StartupServingDeps,
 ): Promise<Response> {
+	// The shell served here is the same document `buildApp` serves later, and
+	// it refuses to be framed the same way; this path runs before the app and
+	// its middleware exist, so the header is applied by hand.
+	const res = await answerStartupRequest(req, deps);
+	refuseFraming(res.headers);
+	return res;
+}
+
+async function answerStartupRequest(req: Request, deps: StartupServingDeps): Promise<Response> {
 	const path = new URL(req.url).pathname;
 
 	// Always answer health so liveness probes don't flap during boot.

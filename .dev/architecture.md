@@ -5468,6 +5468,17 @@ unthrottled. The one exception is password auth - `routes/auth.ts` keeps an in-m
 brute-force counter (5 attempts, then a 60s lockout with exponential backoff capped at
 1h, HTTP 429) on the password-verify and password-change paths.
 
+**Framing.** Every response leaves with `Content-Security-Policy: frame-ancestors 'none'`
+unless the route wrote a policy of its own: `framingMiddleware` (`middleware/framing.ts`) is
+the outermost middleware in `buildApp`, and `serveStartupRequest` applies the same
+`refuseFraming` by hand because it runs before the app exists. The one route with its own
+policy is the signed asset route, which serves agent-authored HTML under `sandbox` and is
+framed by the app's own asset viewer - so that policy is kept, and it names itself the one
+allowed ancestor (`frame-ancestors 'self'`) rather than taking `'none'`, or the viewer would
+break. The control plane that provisions hosted instances sends the same
+`'none'` on its documents; the point on both sides is that no third-party page can draw its
+chrome around the master-key gate or the sign-in screen.
+
 ---
 
 ## 11. Web frontend
