@@ -175,8 +175,19 @@ immediately instead of starting a container to find out. The credential is share
 team on the instance, so this stops their runs too - replace it to bring them back.
 
 Only an outright refusal changes the badge. If Hezo cannot reach the provider, or the
-provider answers with an error of its own, the credential keeps the status it had: an
-outage must not take a working credential out of service.
+provider answers with an error of its own, **Verify** says it could not check the
+credential and leaves the status exactly as it was: an outage must not take a working
+credential out of service, and it must not claim a pass either.
+
+Where the provider gives a reason, Hezo repeats it back to you. That reason is the useful
+part: Anthropic answers `OAuth access token is invalid.` for a subscription token that has
+expired or been revoked, and `API key is invalid.` when what was pasted is an API key
+rather than a subscription token. The first means sign in again; the second means the
+credential is the wrong kind for the box it went in.
+
+**A Codex subscription cannot be checked this way.** Its credential is a sign-in file, not
+a token any endpoint accepts, so **Verify** tells you it could not check it rather than
+reporting a pass. The first real test is a run.
 
 ## Where to get an API key
 
@@ -224,6 +235,11 @@ say so, naming the connection. Hezo will not quietly move them onto one of your 
 connections: a run billing a provider you didn't pick, while the star still sits on the one
 you did, is the kind of thing that goes unnoticed for weeks. Re-verify the connection, or
 move the star, and runs resume.
+
+Deleting the default is different, because you removed the designation yourself. The star
+moves to another connection rather than leaving your instance with none, preferring a
+verified one and taking the oldest where several qualify. It is visible on the connections
+list straight away, so you can move it if the pick is not the one you wanted.
 
 ## Change a stored key
 

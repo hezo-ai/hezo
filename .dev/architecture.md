@@ -3778,6 +3778,15 @@ shape.** `AiProviderVerifyEndpoint.subscriptionHeaders` carries it (Anthropic: a
 since `x-api-key` refuses an `sk-ant-oat01-…` token whatever its state and would make every
 probe a false condemnation); an absent entry says this provider's subscription credential is
 not a bearer at all (Codex's is a JSON auth file) and leaves it on the shape check alone.
+**A verify has three outcomes, not two, and the same three for both auth methods.**
+Accepted (the provider took it) writes `verified`; refused (`probeProvesCredentialDead`)
+writes `invalid` and relays the provider's own reason through `refusalDetail`, scrubbed of
+the credential; everything else - unreachable, the provider's own 5xx, or a subscription
+with no `subscriptionHeaders` to ask with - is **unknown** and writes nothing, reported as
+`checked: false` so the UI withholds the tick. Expressing only two is where this route's
+bugs lived: a provider answering 500 condemned a working api key, and a Codex subscription
+was written `verified` and reported valid having made no request at all.
+
 **What a probe may conclude is deliberately asymmetric** and lives in one predicate,
 `probeProvesCredentialDead`: only a 401/403 condemns. Acceptance proves nothing, because what
 a *valid* subscription token does on a catalog endpoint is not assertable for every provider -

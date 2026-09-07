@@ -79,13 +79,14 @@ export type CatalogFailure = 'unsupported' | 'unreachable' | 'rejected' | 'error
 
 export type CatalogResult =
 	| { ok: true; json: unknown }
-	| { ok: false; reason: CatalogFailure; status?: number };
+	| { ok: false; reason: CatalogFailure; status?: number; detail?: string };
 
 const CATALOG_TIMEOUT_MS = 10_000;
 
 export type CatalogProbe =
 	| { ok: true; res: Response }
-	| { ok: false; reason: CatalogFailure; status?: number };
+	/** `detail` is the provider's own refusal reason, present only on `rejected`. */
+	| { ok: false; reason: CatalogFailure; status?: number; detail?: string };
 
 /**
  * Call the catalog endpoint and classify the outcome, **without reading the
@@ -120,11 +121,60 @@ export async function probeProviderCatalog(
 
 	if (!res.ok) {
 		if (res.status === 401 || res.status === 403) {
-			return { ok: false, reason: 'rejected', status: res.status };
+			return {
+				ok: false,
+				reason: 'rejected',
+				status: res.status,
+				detail: await refusalDetail(res, credentialValue),
+			};
 		}
 		return { ok: false, reason: 'error', status: res.status };
 	}
 	return { ok: true, res };
+}
+
+/** Cap on the refused body we read. A refusal is a sentence; anything longer is not one. */
+const REFUSAL_DETAIL_LIMIT = 400;
+
+/**
+ * The provider's own reason for refusing, for an operator to read.
+ *
+ * Worth the one extra body read that {@link probeProviderCatalog} otherwise
+ * avoids, because the providers distinguish cases the status code cannot and the
+ * operator cannot act without knowing which they hit: Anthropic answers `OAuth
+ * access token is invalid.` for a spent subscription token and `API key is
+ * invalid.` for a key, so relaying it is the difference between "mint a new
+ * token" and "you pasted the wrong kind of credential".
+ *
+ * **Scrubbed, and never derived from the credential.** Per the credential rules
+ * this must return nothing carrying the secret - no prefix, no masked form - so
+ * the value is stripped from whatever came back rather than trusted not to
+ * appear in it. Read only on a refusal, and only ever `null` on trouble: a
+ * diagnostic that throws would turn a clean verdict into a failed request.
+ */
+async function refusalDetail(res: Response, credentialValue: string): Promise<string | undefined> {
+	let body: string;
+	try {
+		body = (await res.text()).slice(0, REFUSAL_DETAIL_LIMIT);
+	} catch {
+		return undefined;
+	}
+
+	let message: string | undefined;
+	try {
+		const parsed = JSON.parse(body) as { error?: { message?: unknown }; message?: unknown };
+		const raw = typeof parsed.error?.message === 'string' ? parsed.error.message : parsed.message;
+		if (typeof raw === 'string') message = raw;
+	} catch {
+		// Not JSON. A plain-text refusal is still worth relaying.
+		message = body;
+	}
+
+	const cleaned = message?.trim();
+	if (!cleaned) return undefined;
+	// Defensive: no provider observed returns the credential in its refusal, but a
+	// diagnostic is exactly the wrong place to find out that one does.
+	return cleaned.split(credentialValue).join('[redacted]').slice(0, REFUSAL_DETAIL_LIMIT);
 }
 
 /**

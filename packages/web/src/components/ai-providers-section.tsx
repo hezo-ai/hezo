@@ -37,7 +37,10 @@ export function AiProvidersSection() {
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProviderConfig | null>(null);
 	// Per-row transient "verified OK" marker — failures surface as a toast and a
-	// refetched `invalid` status badge, so only successes need an inline cue.
+	// refetched `invalid` status badge, so only successes need an inline cue. Set
+	// only where the provider actually answered and accepted: a credential nothing
+	// could ask about must not wear the tick, which is the whole complaint about a
+	// Verify that returned instantly having checked nothing.
 	const [verifiedOk, setVerifiedOk] = useState<Record<string, boolean>>({});
 	const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
@@ -47,9 +50,14 @@ export function AiProvidersSection() {
 		setVerifyingId(configId);
 		try {
 			const result = await verifyProvider.mutateAsync(configId);
-			setVerifiedOk((prev) => ({ ...prev, [configId]: result.valid }));
+			const confirmed = result.valid && result.checked !== false;
+			setVerifiedOk((prev) => ({ ...prev, [configId]: confirmed }));
 			if (!result.valid) {
 				toast.error(result.message ?? result.error ?? 'Key is invalid or expired');
+			} else if (!confirmed) {
+				// Not a failure and not a pass. Saying nothing here is what made the
+				// button look like it had silently succeeded.
+				toast.info(result.message ?? 'Could not check this credential');
 			}
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not verify key');
