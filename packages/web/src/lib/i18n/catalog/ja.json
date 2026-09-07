@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo がログイン画面を開きます。リンクと短いコードが表示されるので、どの端末でも入力できます。",
 	"settings.provider.signIn.error.cancelled": "ログインはキャンセルされました。",
 	"settings.provider.signIn.error.codeRejected": "{provider} はこのコードを受け付けませんでした。入力に誤りがあるか、有効期限が切れている可能性があります。",
+	"settings.provider.signIn.error.credentialRejected": "ログインは完了しましたが、発行された認証情報を {provider} が受け付けませんでした。もう一度やり直してください。",
 	"settings.provider.signIn.error.expired": "ログインは完了する前に有効期限が切れました。もう一度やり直してください。",
 	"settings.provider.signIn.error.internal": "ログインを完了できませんでした。",
 	"settings.provider.signIn.error.noCredential": "{provider} が認証情報を発行する前にログインが終了しました。",

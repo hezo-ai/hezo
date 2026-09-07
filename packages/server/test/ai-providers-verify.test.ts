@@ -116,7 +116,8 @@ describe('POST /ai-providers/:configId/verify', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.valid).toBe(false);
-		expect(body.data.message).toContain('invalid');
+		expect(body.data.checked).toBe(true);
+		expect(body.data.message).toContain('rejected');
 
 		const status = await db.query<{ status: string }>(
 			'SELECT status FROM ai_provider_configs WHERE id = $1',
@@ -142,7 +143,11 @@ describe('POST /ai-providers/:configId/verify', () => {
 		expect(status.rows[0].status).toBe('verified');
 	});
 
-	it('returns valid:false when the provider is unreachable', async () => {
+	it('reports an unreachable provider as unchecked, not as a bad key', async () => {
+		// Reaching nobody says nothing about the credential. Reporting it as invalid
+		// puts the operator on a hunt for a fault that is not theirs, and the status
+		// must not move on it either.
+		await db.query(`UPDATE ai_provider_configs SET status = 'verified' WHERE id = $1`, [configId]);
 		globalThis.fetch = vi.fn().mockRejectedValue(new Error('net')) as unknown as typeof fetch;
 		const res = await app.request(`/api/ai-providers/${configId}/verify`, {
 			method: 'POST',
@@ -150,8 +155,26 @@ describe('POST /ai-providers/:configId/verify', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.valid).toBe(false);
-		expect(body.data.message).toContain('Could not reach provider');
+		expect(body.data.valid).toBe(true);
+		expect(body.data.checked).toBe(false);
+		expect(body.data.message).toContain('Could not reach');
+		await expectStatus(configId, 'verified');
+	});
+
+	it('does not blame the key when the provider answers with its own error', async () => {
+		// A 500 is the provider's problem. This used to fall through to the reject
+		// branch and mark a working key invalid.
+		await db.query(`UPDATE ai_provider_configs SET status = 'verified' WHERE id = $1`, [configId]);
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue({ ok: false, status: 500 }) as unknown as typeof fetch;
+		const res = await app.request(`/api/ai-providers/${configId}/verify`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		expect(body.data.checked).toBe(false);
+		await expectStatus(configId, 'verified');
 	});
 
 	it('returns 404 for an unknown config id', async () => {
@@ -210,8 +233,90 @@ describe('POST /ai-providers/:configId/verify', () => {
 		});
 
 		expect(res.status).toBe(200);
-		expect((await res.json()).data.valid).toBe(true);
+		const unproven = (await res.json()).data;
+		expect(unproven.valid).toBe(true);
+		// Not disproven is not the same as checked, and the tick follows `checked`.
+		expect(unproven.checked).toBe(false);
 		await expectStatus(subId, 'verified');
+	});
+
+	it('reports a subscription it cannot check as unchecked, and writes nothing', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		// Codex's subscription credential is a sign-in file, not a token any endpoint
+		// accepts, so its table entry carries no `subscriptionHeaders`. This used to
+		// return `valid: true` instantly having made no request, putting a green tick
+		// beside a credential nobody had checked.
+		const create = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: '{"tokens":{"refresh_token":"r"}}',
+				auth_method: 'subscription',
+				label: 'codex-unverifiable',
+			}),
+		});
+		expect(create.status).toBe(201);
+		const subId = (await create.json()).data.id;
+		await db.query(`UPDATE ai_provider_configs SET status = 'invalid' WHERE id = $1`, [subId]);
+
+		const fetchSpy = vi.fn();
+		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		const res = await app.request(`/api/ai-providers/${subId}/verify`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()).data;
+		expect(body.checked).toBe(false);
+		expect(body.message).toContain('cannot be checked');
+		expect(fetchSpy).not.toHaveBeenCalled();
+		// Nothing was established, so nothing is written - the stored status stands.
+		await expectStatus(subId, 'invalid');
+	});
+
+	it("relays the provider's own reason for refusing", async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		const subId = await addSubscriptionConfig('sub-with-reason');
+
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 401,
+			text: async () => JSON.stringify({ error: { message: 'OAuth access token is invalid.' } }),
+		}) as unknown as typeof fetch;
+		const res = await app.request(`/api/ai-providers/${subId}/verify`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+
+		const body = (await res.json()).data;
+		expect(body.valid).toBe(false);
+		expect(body.checked).toBe(true);
+		// The distinguishing half: this is what separates a spent token from an api
+		// key pasted into the subscription box, which both fail with a bare 401.
+		expect(body.message).toContain('OAuth access token is invalid.');
+	});
+
+	it('never relays the credential itself in a refusal', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		const subId = await addSubscriptionConfig('sub-echoing-provider');
+
+		// A provider that echoes what it was sent must not turn a diagnostic into a
+		// credential leak.
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 401,
+			text: async () => `token sk-ant-oat01-live-token is not valid`,
+		}) as unknown as typeof fetch;
+		const res = await app.request(`/api/ai-providers/${subId}/verify`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+
+		const body = (await res.json()).data;
+		expect(body.message).not.toContain('sk-ant-oat01-live-token');
+		expect(body.message).toContain('[redacted]');
 	});
 
 	it('rejects a subscription token the provider refuses at paste time', async () => {

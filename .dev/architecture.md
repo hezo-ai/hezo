@@ -3778,6 +3778,15 @@ shape.** `AiProviderVerifyEndpoint.subscriptionHeaders` carries it (Anthropic: a
 since `x-api-key` refuses an `sk-ant-oat01-…` token whatever its state and would make every
 probe a false condemnation); an absent entry says this provider's subscription credential is
 not a bearer at all (Codex's is a JSON auth file) and leaves it on the shape check alone.
+**A verify has three outcomes, not two, and the same three for both auth methods.**
+Accepted (the provider took it) writes `verified`; refused (`probeProvesCredentialDead`)
+writes `invalid` and relays the provider's own reason through `refusalDetail`, scrubbed of
+the credential; everything else - unreachable, the provider's own 5xx, or a subscription
+with no `subscriptionHeaders` to ask with - is **unknown** and writes nothing, reported as
+`checked: false` so the UI withholds the tick. Expressing only two is where this route's
+bugs lived: a provider answering 500 condemned a working api key, and a Codex subscription
+was written `verified` and reported valid having made no request at all.
+
 **What a probe may conclude is deliberately asymmetric** and lives in one predicate,
 `probeProvesCredentialDead`: only a 401/403 condemns. Acceptance proves nothing, because what
 a *valid* subscription token does on a catalog endpoint is not assertable for every provider -
@@ -3819,9 +3828,26 @@ screen nobody is watching. `DELETE …/:flowId` cancels. Which runtimes can be d
 (`@hezo/shared`, read by the web to decide whether to offer the button) paired with
 `SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
 asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
-one pasted code; Google has no subscription auth at all (API key only). **The credential never
-reaches the browser** — on success the poll route stores it via `storeAiProviderKey` and
-returns only the config id, coalescing concurrent polls so overlapping requests insert once.
+one pasted code; Google has no subscription auth at all (API key only).
+
+**What the CLI printed is read off a composed screen, never out of the byte stream**
+(`renderTerminalScreen`, `sandbox/terminal-screen.ts`). A TUI repaints only the cells that
+changed, so a value reaches the log as fragments at coordinates: `claude setup-token` writes
+`sk-ant-`, steps the cursor over a character an earlier frame left standing, then writes the
+rest. Deleting the escapes splices the fragments together minus that character, yielding a
+token of the right shape and the wrong value — which passes every shape check, is stored, and
+is then refused by the provider on every run. For the same reason the script sizes the PTY
+with `stty` rather than with `COLUMNS`: `script` opens a terminal that reports `0 0`, so the
+CLI falls back to 80 columns and wraps both the sign-in URL and the token it mints. The
+mechanics and the rest of the traps are `.dev/driving-a-cli-in-a-container.md`.
+
+**The credential never
+reaches the browser** — on success the poll route puts it through `prepareProviderCredential`,
+the same shape check and live provider question a pasted credential answers, then stores it via
+`storeAiProviderKey` and returns only the config id, coalescing concurrent polls so overlapping
+requests insert once. A credential the provider refuses fails the flow as `credential_rejected`
+and stores nothing: a sign-in Hezo drove is not more trustworthy than one the operator pasted,
+because everything between the vendor's screen and the vault is Hezo's own reading of a terminal.
 Every exit path releases the container through `finish`, and `sweepLoginContainers` collects
 anything a mid-flow crash stranded, scoped by an instance-id label value. The login container
 deliberately gets **no egress proxy**: a sign-in emits no `__HEZO_SECRET_*__` placeholders to

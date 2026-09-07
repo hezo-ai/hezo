@@ -2320,6 +2320,12 @@ export const RUNTIMES_WITH_GUIDED_SIGN_IN: readonly AgentRuntime[] = [
  * the sign-in failed either way, and the operator reads them from the same
  * place. `internal` is the one whose message is a diagnostic rather than a
  * sentence, so it is shown alongside a fixed lead rather than replaced by one.
+ *
+ * `credential_rejected` is the sign-in that produced something the provider then
+ * refused. It is distinct from `code_rejected`, which is the operator's code
+ * being refused: here the exchange worked and what came out of it does not
+ * authenticate, so the fault is in the credential rather than in anything the
+ * operator typed.
  */
 export type SubscriptionLoginFailure =
 	| 'unsupported'
@@ -2328,6 +2334,7 @@ export type SubscriptionLoginFailure =
 	| 'completion_timeout'
 	| 'code_rejected'
 	| 'exited_without_credential'
+	| 'credential_rejected'
 	| 'cancelled'
 	| 'internal'
 	| 'poll_failed'

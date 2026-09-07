@@ -15,6 +15,7 @@ rather than here, is how a codebase ends up with two of everything.
 | A container backend | `ContainerEngine` (`services/sandbox/types.ts`), always reached via `SandboxBackendHolder.engine` |
 | "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
 | An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |
+| Reading what a CLI printed to a terminal | `renderTerminalScreen` (`services/sandbox/terminal-screen.ts`) - compose the screen, never strip the escapes out of the stream |
 | What a container was provisioned with | `container_pool_members` (`memory_bytes`, `disk_ceiling_bytes`) - never re-read from the setting |
 | "How long was this container up, and what did it cost?" | `container_uptime_entries`, written only by `services/sandbox/uptime-ledger.ts` from inside `pool-db.ts`'s own state writes; read through `services/container-hours.ts`, never with a second copy of the clipping SQL |
 | A chat platform | `ChatChannelAdapter` (`services/chat-channels/`) |

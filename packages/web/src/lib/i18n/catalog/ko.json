@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo가 로그인 화면을 열어 드려요. 링크와 짧은 코드를 받아 어떤 기기에서든 입력할 수 있어요.",
 	"settings.provider.signIn.error.cancelled": "로그인이 취소되었어요.",
 	"settings.provider.signIn.error.codeRejected": "{provider}에서 이 코드를 받아들이지 않았어요. 잘못 입력했거나 만료되었을 수 있어요.",
+	"settings.provider.signIn.error.credentialRejected": "로그인은 끝났지만 {provider}에서 발급된 인증 정보를 받아들이지 않았어요. 다시 시작해 주세요.",
 	"settings.provider.signIn.error.expired": "로그인이 완료되기 전에 만료되었어요. 다시 시작해 주세요.",
 	"settings.provider.signIn.error.internal": "로그인을 완료하지 못했어요.",
 	"settings.provider.signIn.error.noCredential": "{provider}가 인증 정보를 발급하기 전에 로그인이 끝났어요.",

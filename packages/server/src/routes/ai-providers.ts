@@ -10,6 +10,7 @@ import {
 	parseProviderModels,
 	providerRuntimes,
 	providerSupportsRuntime,
+	type SubscriptionLoginFailure,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -374,44 +375,62 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 
 	try {
-		// Both auth methods are asked, on their own header shape - the same rule the
-		// create path applies, kept in step with it here. What differs is what an
-		// answer is allowed to conclude: an api key that is refused *or* unreachable
-		// is handled below, while a subscription credential is condemned only by an
-		// outright rejection (`probeProvesCredentialDead`), so the branch is on the
-		// verdict rather than on the auth method.
+		// One question, three answers, and the same three for both auth methods. The
+		// route used to express only two, which is where its bugs lived: a provider
+		// that answered 500 condemned a working api key, and a subscription nothing could
+		// ask about was written `verified` and reported valid - instantly, having made
+		// no request at all, which is the "the badge is not a fact" defect this whole
+		// area exists to remove.
 		const probe = await probeProviderCatalog(
 			cred.provider as AiProvider,
 			cred.value,
 			cred.baseUrl,
 			cred.authMethod,
 		);
-		const subscription = cred.authMethod === AiAuthMethod.Subscription;
-		if (probe.ok || (subscription && !probeProvesCredentialDead(probe))) {
-			// Persist the healthy state so the badge is truthful and a key that was
+		const info = AI_PROVIDER_INFO[cred.provider as AiProvider];
+
+		// Accepted: the provider answered and took it.
+		if (probe.ok) {
+			// Persist the healthy state so the badge is truthful and a credential that was
 			// previously marked `invalid` recovers on a successful re-verify.
 			await db.query(
 				`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`,
 				[AiProviderStatus.Verified, configId],
 			);
-			return ok(c, { valid: true });
+			return ok(c, { valid: true, checked: true });
 		}
-		// An unreachable provider says nothing about the key, so the stored status
-		// is left alone rather than being marked invalid on a network blip - a
-		// badge that flips to "invalid" because the operator's laptop was offline
-		// is worse than no badge.
-		if (probe.reason === 'unreachable') {
-			return ok(c, { valid: false, message: 'Could not reach provider to verify key' });
+
+		// Refused: the provider answered and rejected it. The only answer that writes
+		// `invalid`, and the only one that may - see `probeProvesCredentialDead`.
+		if (probeProvesCredentialDead(probe)) {
+			await db.query(
+				`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`,
+				[AiProviderStatus.Invalid, configId],
+			);
+			// The provider's own words where it gave any: they separate a spent token from
+			// the wrong kind of credential pasted into the right box, which is the whole
+			// question an operator is left holding otherwise.
+			const why = probe.detail ? ` ${info?.name ?? cred.provider} said: ${probe.detail}` : '';
+			return ok(c, {
+				valid: false,
+				checked: true,
+				message:
+					cred.authMethod === AiAuthMethod.Subscription
+						? `Subscription credential was rejected. Sign in again to replace it - an expired or revoked one cannot be renewed.${why}`
+						: `API key was rejected.${why}`,
+			});
 		}
-		await db.query(`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`, [
-			AiProviderStatus.Invalid,
-			configId,
-		]);
+
+		// Unknown: nothing was established, so nothing is written. Reported as such
+		// rather than as either verdict - claiming "valid" here is what put a green
+		// tick beside a credential no one had checked.
 		return ok(c, {
-			valid: false,
-			message: subscription
-				? 'Subscription credential is invalid or expired — mint a fresh one'
-				: 'API key is invalid or expired',
+			valid: true,
+			checked: false,
+			message:
+				probe.reason === 'unsupported'
+					? `A ${info?.runtimeLabel ?? cred.provider} subscription cannot be checked without running it - the credential is a sign-in file, not a token any endpoint accepts. Its status is unchanged.`
+					: `Could not reach ${info?.name ?? cred.provider} to check this credential. Its status is unchanged.`,
 		});
 	} catch {
 		return ok(c, { valid: false, message: 'Could not reach provider to verify key' });
@@ -755,19 +774,31 @@ aiProvidersRoutes.get('/ai-providers/subscription-login/:flowId', async (c) => {
 		const masterKeyManager = c.get('masterKeyManager');
 		if (!masterKeyManager.getKey()) return err(c, 'LOCKED', 'Master key is locked', 401);
 		const db = c.get('db');
-		// Re-validated even though the CLI wrote it: the same tombstone guard the
-		// rotation write-back uses, so a blank file from a failed refresh is never
-		// stored as a credential.
-		const validation = validateSubscriptionBlob(flow.provider, state.credential);
-		if (!validation.ok) {
+		// Put through the same shape check and the same live question a pasted
+		// credential answers. A sign-in Hezo drove is not more trustworthy than one
+		// the operator pasted - it is less, because everything between the vendor's
+		// screen and this line is Hezo's own reading of a terminal. Storing it
+		// unasked is what turns a misread token into a provider that looks
+		// configured and refuses every run.
+		const prepared = await prepareProviderCredential(
+			flow.provider,
+			AiAuthMethod.Subscription,
+			state.credential,
+			undefined,
+		);
+		if (!prepared.ok) {
 			forgetFlow(flowId);
-			return err(c, 'INVALID_CREDENTIAL', validation.error ?? 'Invalid credential', 400);
+			return ok(c, {
+				status: 'failed',
+				error: prepared.message,
+				code: 'credential_rejected' satisfies SubscriptionLoginFailure,
+			});
 		}
 		pending = storeAiProviderKey(
 			db,
 			masterKeyManager,
 			flow.provider,
-			state.credential,
+			prepared.value,
 			AiAuthMethod.Subscription,
 			flowLabels.get(flowId),
 			{},

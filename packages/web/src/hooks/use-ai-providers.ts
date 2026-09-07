@@ -83,10 +83,13 @@ export function useSetDefaultAiProvider() {
 
 export function useVerifyAiProvider() {
 	return useMutation({
-		// The server returns `{ valid, message }` on failure; `error` is kept for
-		// back-compat with any caller still reading it.
+		// `checked` says whether the provider actually answered. It is separate from
+		// `valid` because the two disagree in the case that matters: a credential
+		// nothing can ask about is not known to be bad, but showing it as verified
+		// claims a check that never happened. `error` is kept for back-compat with
+		// any caller still reading it.
 		mutationFn: (configId: string) =>
-			api.post<{ valid: boolean; message?: string; error?: string }>(
+			api.post<{ valid: boolean; checked?: boolean; message?: string; error?: string }>(
 				`/api/ai-providers/${configId}/verify`,
 			),
 		onSuccess: invalidateAll,

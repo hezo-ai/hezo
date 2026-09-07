@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo öppnar inloggningen åt dig. Du får en länk och en kort kod som du kan ange på vilken enhet som helst.",
 	"settings.provider.signIn.error.cancelled": "Inloggningen avbröts.",
 	"settings.provider.signIn.error.codeRejected": "{provider} godtog inte koden. Den kan ha skrivits fel eller ha gått ut.",
+	"settings.provider.signIn.error.credentialRejected": "Inloggningen blev klar, men {provider} godtog inte uppgifterna som utfärdades. Börja om.",
 	"settings.provider.signIn.error.expired": "Inloggningen gick ut innan den blev klar. Börja om.",
 	"settings.provider.signIn.error.internal": "Inloggningen kunde inte slutföras.",
 	"settings.provider.signIn.error.noCredential": "Inloggningen tog slut innan {provider} utfärdade några uppgifter.",

@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo opent de aanmelding voor je. Je krijgt een link en een korte code die je op elk apparaat kunt invoeren.",
 	"settings.provider.signIn.error.cancelled": "De aanmelding is geannuleerd.",
 	"settings.provider.signIn.error.codeRejected": "{provider} heeft die code niet geaccepteerd. Mogelijk is de code verkeerd ingevoerd of verlopen.",
+	"settings.provider.signIn.error.credentialRejected": "De aanmelding is voltooid, maar {provider} heeft de afgegeven inloggegevens geweigerd. Begin opnieuw.",
 	"settings.provider.signIn.error.expired": "De aanmelding is verlopen voordat die klaar was. Begin opnieuw.",
 	"settings.provider.signIn.error.internal": "De aanmelding kon niet worden voltooid.",
 	"settings.provider.signIn.error.noCredential": "De aanmelding is geëindigd voordat {provider} inloggegevens had afgegeven.",

@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo öffnet die Anmeldung für Sie. Sie erhalten einen Link und einen kurzen Code, den Sie auf einem beliebigen Gerät eingeben können.",
 	"settings.provider.signIn.error.cancelled": "Die Anmeldung wurde abgebrochen.",
 	"settings.provider.signIn.error.codeRejected": "{provider} hat diesen Code nicht akzeptiert. Er wurde möglicherweise falsch eingegeben oder ist abgelaufen.",
+	"settings.provider.signIn.error.credentialRejected": "Die Anmeldung wurde abgeschlossen, aber {provider} hat die dabei ausgestellten Zugangsdaten abgelehnt. Starten Sie sie erneut.",
 	"settings.provider.signIn.error.expired": "Die Anmeldung ist abgelaufen, bevor sie abgeschlossen wurde. Starten Sie sie erneut.",
 	"settings.provider.signIn.error.internal": "Die Anmeldung konnte nicht abgeschlossen werden.",
 	"settings.provider.signIn.error.noCredential": "Die Anmeldung endete, bevor {provider} Zugangsdaten ausgestellt hat.",

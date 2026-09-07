@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo ouvre la connexion pour vous. Vous recevrez un lien et un code court à saisir sur n'importe quel appareil.",
 	"settings.provider.signIn.error.cancelled": "La connexion a été annulée.",
 	"settings.provider.signIn.error.codeRejected": "{provider} n'a pas accepté ce code. Il a peut-être été mal saisi ou il a expiré.",
+	"settings.provider.signIn.error.credentialRejected": "La connexion a abouti, mais {provider} a refusé les identifiants produits. Recommencez.",
 	"settings.provider.signIn.error.expired": "La connexion a expiré avant d'être terminée. Recommencez.",
 	"settings.provider.signIn.error.internal": "La connexion n'a pas pu aboutir.",
 	"settings.provider.signIn.error.noCredential": "La connexion s'est terminée avant que {provider} n'émette d'identifiants.",

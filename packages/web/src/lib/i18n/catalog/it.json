@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "Hezo apre l'accesso per te. Riceverai un link e un codice breve da inserire su qualsiasi dispositivo.",
 	"settings.provider.signIn.error.cancelled": "L'accesso è stato annullato.",
 	"settings.provider.signIn.error.codeRejected": "{provider} non ha accettato quel codice. Potrebbe essere stato digitato male o essere scaduto.",
+	"settings.provider.signIn.error.credentialRejected": "L'accesso è andato a buon fine, ma {provider} ha rifiutato le credenziali prodotte. Ricomincia.",
 	"settings.provider.signIn.error.expired": "L'accesso è scaduto prima di essere completato. Ricomincia.",
 	"settings.provider.signIn.error.internal": "Non è stato possibile completare l'accesso.",
 	"settings.provider.signIn.error.noCredential": "L'accesso è terminato prima che {provider} rilasciasse le credenziali.",
