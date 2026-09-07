@@ -32,7 +32,9 @@ export function AiProviderPicker() {
 					<ProviderLogo provider={provider} className="h-5 w-5" />
 				</span>
 				<div className="flex min-w-0 flex-col">
-					<span className="truncate text-sm font-medium text-text-1">Connect {info.name}</span>
+					<span className="truncate text-sm font-medium text-text-1">
+						{t('deviceSignIn.connectTitle', { provider: info.name })}
+					</span>
 					<span className="truncate text-xs text-text-3">{info.runtimeLabel}</span>
 				</div>
 			</div>

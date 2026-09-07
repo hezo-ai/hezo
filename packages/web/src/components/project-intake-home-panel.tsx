@@ -4,6 +4,7 @@ import { Loader2, Send } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useComments, useCreateComment } from '../hooks/use-comments';
 import type { ProjectIntake } from '../hooks/use-project-intake';
+import { useI18n } from '../lib/i18n';
 import { CaptainIntakeChat } from './captain-intake-chat';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -20,6 +21,7 @@ interface ProjectIntakeHomePanelProps {
  * here in the conversation.
  */
 export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) {
+	const { t } = useI18n();
 	const projectId = intake.project_slug;
 	const taskId = intake.task_identifier.toLowerCase();
 	const createComment = useCreateComment(projectId, taskId);
@@ -73,7 +75,7 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 						params={{ projectId, taskId }}
 						className="text-xs text-info hover:underline shrink-0"
 					>
-						Open full thread
+						{t('intake.openThread')}
 					</Link>
 				</div>
 
@@ -88,7 +90,7 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 					<Textarea
 						value={message}
 						onChange={(e) => setMessage(e.target.value)}
-						placeholder="Tell the CEO what you're looking to achieve…"
+						placeholder={t('intake.placeholder')}
 						rows={3}
 						className="min-h-[80px] resize-y"
 						data-testid="home-project-intake-input"
@@ -100,7 +102,7 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 							) : (
 								<Send className="w-4 h-4" />
 							)}
-							Send
+							{t('intake.send')}
 						</Button>
 					</div>
 				</form>
