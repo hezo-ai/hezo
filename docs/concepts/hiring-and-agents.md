@@ -59,7 +59,10 @@ When you hire an agent you set:
 - **Code access** - whether the agent works in the project's code workspace.
 
 Once approved, the agent is onboarded into the team and starts picking up work on its
-heartbeat.
+heartbeat. The agent that proposed the hire is woken as soon as you decide, so it can act on
+your answer straight away: confirm the reporting line, finish the rest of the setup, or, if
+you denied it, revise the role or drop it. Denying wakes it for the same reason. Your decision
+also shows on the originating task, where the proposal card flips to hired or denied.
 
 ## New agents wait for the team setup review
 

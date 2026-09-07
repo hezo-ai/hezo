@@ -101,6 +101,51 @@ describe('wakeup service', () => {
 		expect(queued.rows[0].coalesced_count).toBeGreaterThanOrEqual(1);
 	});
 
+	it('promotes the merged source when an exempt trigger lands on a suppressible wakeup', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		// The hire flow exactly: the onboarding task queues an `assignment` wakeup,
+		// then the admin approves and the resolution wakes the same agent on the
+		// same task. Merged onto the assignment row, the answer would be dispatched
+		// as an assignment and handed straight back to the suppressions it is
+		// exempt from - and nothing resends it.
+		const assigned = await createWakeup(db, agentId, teamId, 'assignment', {
+			task_id: 'promote-task',
+		});
+		const resolved = await createWakeup(db, agentId, teamId, 'approval_resolved', {
+			task_id: 'promote-task',
+			reason: 'hire_resolved',
+		});
+		expect(resolved).toBe(assigned);
+
+		const row = await db.query<{ source: string; payload: Record<string, unknown> }>(
+			'SELECT source, payload FROM agent_wakeup_requests WHERE id = $1',
+			[assigned],
+		);
+		expect(row.rows[0].source).toBe('approval_resolved');
+		expect(row.rows[0].payload.reason).toBe('hire_resolved');
+	});
+
+	it('does not demote an exempt wakeup when a system trigger merges into it', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		// The mirror direction. Promotion is one-way, or the same merge would undo
+		// itself depending only on which trigger happened to arrive second.
+		const resolved = await createWakeup(db, agentId, teamId, 'approval_resolved', {
+			task_id: 'demote-task',
+		});
+		const heartbeat = await createWakeup(db, agentId, teamId, 'heartbeat', {
+			task_id: 'demote-task',
+		});
+		expect(heartbeat).toBe(resolved);
+
+		const row = await db.query<{ source: string }>(
+			'SELECT source FROM agent_wakeup_requests WHERE id = $1',
+			[resolved],
+		);
+		expect(row.rows[0].source).toBe('approval_resolved');
+	});
+
 	it('collapses repeated triggers from different sources onto one queued wakeup', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 

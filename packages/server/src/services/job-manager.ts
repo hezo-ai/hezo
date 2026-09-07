@@ -2367,9 +2367,16 @@ export class JobManager {
 					}
 				: null;
 		if (suppression) {
-			log.debug(
-				`Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping wakeup`,
-			);
+			// Warned, not debugged, for every source but the two the system raises on a
+			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its
+			// job and would drown the log; a discarded wakeup from anything else means
+			// something asked for this agent and got nothing, with the row flipped to
+			// `completed` below and gone from the queued list - which is exactly how an
+			// approved hire came to sit with nobody acting on it and no line saying so.
+			const quiet = wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer;
+			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
+			if (quiet) log.debug(line);
+			else log.warn(line);
 			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
 			// Completed, not left claimed: the wakeup was considered and answered -
 			// there is nothing to do - which is the same outcome as the "no actionable

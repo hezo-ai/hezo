@@ -1112,7 +1112,13 @@ project.
   tool both reject a re-point of these roles, and the settings UI disables the field. Each proposal is also mirrored as a `hire_proposal` action comment on the
   linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
   resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
-  the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent runs through the `setAgentAdminStatus`
+  the requester (the CEO) closes it once setup is complete. That wake is
+  **`approval_resolved`** (`services/proposal-comment.ts`, shared with the goal-suggestion
+  twin), and the source is the load-bearing half: on the generic `automation` source the
+  dispatch suppressions were entitled to discard it, and did, on exactly the state an agent
+  parked on its own proposal is in — so an approved hire sat with nobody acting on it until
+  the requester's next scheduled heartbeat, 12 hours out at the default cadence. A proposal
+  filed with no `task_id` still wakes nobody: there is no ticket to render or resume against. Retiring/reinstating an agent runs through the `setAgentAdminStatus`
   service, shared by the `set_agent_status` MCP tool (gated to the team's Captain or an HQ
   coordinator) and the REST disable/enable routes (admin web UI). The **instance singletons
   (CEO/Coach) cannot be disabled through any path** — the MCP tool rejects it and the REST
@@ -2519,11 +2525,17 @@ scheduled heartbeat would have come round anyway); and no `task_comments` row ha
 since, excluding ones that run authored. Comments are the signal rather than `tasks.updated_at`
 because every mutation that could give the agent work - status, assignee, title, unblock -
 writes one through `task-events.ts`, whereas `updated_at` is bumped by the run's own
-in-progress flip and would report "changed" on the quietest run. Conversational sources
-(`mention`, `comment`, `reply`, `on_demand`, `credential_provided`, `asset_deletion_resolved`)
-are exempt: each is somebody asking for something the last pass could not have served. A
-suppressed wakeup is marked `completed` with `last_skipped_reason = no_work_cooldown` -
-answered, not re-queued to ask again, and not left dangling in `claimed`.
+in-progress flip and would report "changed" on the quietest run. **Answering a choice card
+writes no row** - it sets `chosen_option` on the card already there - so `chosen_at`
+(stamped by a trigger, migration 074) is read alongside `created_at`; without it the one
+event that most conclusively ends a wait was the one event neither suppression could see.
+Conversational sources (`mention`, `comment`, `reply`, `on_demand`, `credential_provided`,
+`asset_deletion_resolved`, `approval_resolved`) are exempt: each is somebody asking for
+something the last pass could not have served. A suppressed wakeup is marked `completed` with
+`last_skipped_reason = no_work_cooldown` - answered, not re-queued to ask again, and not left
+dangling in `claimed`. The skip is logged at `warn` for every source but `heartbeat` and
+`timer`: on those two it is the backoff working, on anything else it means something asked
+for this agent and got nothing, and the row leaves the queued list as it goes.
 
 **The parked-on-admin suppression.** `noWorkCooldownActive` covers only the case where the
 agent *said* it had nothing to do. The commoner one is an agent that asked a human something
@@ -2534,8 +2546,9 @@ task closed. `parkedOnAdminAsk` (same module) applies the second verdict at the 
 suppressing when both hold: an ask still stands on the thread - a comment that raised an
 `admin_mentions` row, or an unanswered choice card (`chosen_option IS NULL`), spelled through
 `outstandingAdminAskExistsSql` in `lib/task-sort.ts` so migration 059's partial index still
-applies - and nobody but this agent has commented since. The agent's own later comments are
-excluded: chasing its own question is not an answer to it. Unlike the no-work backoff it is
+applies - and nobody but this agent has commented since, `chosen_at` counting as the admin
+speaking whoever authored the card. The agent's own later comments are excluded: chasing its
+own question is not an answer to it. Unlike the no-work backoff it is
 **unbounded in time**, because a question addressed to a person goes stale only when they
 answer; the same exempt sources carry every form that answer can take, and `on_demand` ("Run
 now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
