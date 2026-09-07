@@ -5,6 +5,7 @@ import { useFulfillCredential } from '../../hooks/use-comments';
 import { MarkdownProse } from '../markdown-prose';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
@@ -59,12 +60,16 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 
 	if (fulfilled) {
 		return (
-			<div
-				className="flex items-start gap-2 p-2.5 rounded-lg border border-success bg-success-soft"
+			// `role="none"`: a thread renders many of these at once, and the thread is
+			// what a reader follows - one live region per card is noise.
+			<Callout
+				tone="success"
+				role="none"
+				className="border border-success"
+				icon={<Check className="w-4 h-4" />}
 				data-testid="credential-fulfilled"
 			>
-				<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
-				<div className="flex-1">
+				<div>
 					<p className="text-sm font-medium text-text-1">{name} provided</p>
 					<p className="text-xs text-text-2 mt-0.5">
 						Stored as a secret. Agent will use the placeholder{' '}
@@ -72,7 +77,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 						HTTP headers; the egress proxy substitutes the real value at request time.
 					</p>
 				</div>
-			</div>
+			</Callout>
 		);
 	}
 

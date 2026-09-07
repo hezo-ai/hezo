@@ -2,6 +2,7 @@ import {
 	BackLink,
 	Button,
 	buttonClassName,
+	Callout,
 	Card,
 	ConfirmDialog,
 	DataTable,
@@ -23,6 +24,9 @@ import {
 	ThemeSwitcher,
 	Toggle,
 	TooltipProvider,
+	toneDotClassName,
+	toneSolidClassName,
+	toneTintClassName,
 	touchCellHeightClassName,
 	touchMinHeightClassName,
 } from '@hezo/ui';
@@ -288,6 +292,31 @@ test("a field's presets mirror the button's, and md is the box it always was", (
 	expect(screen.getByLabelText('Notes').className).toContain('min-h-[56px]');
 	rerender(<Textarea label="Notes" />);
 	expect(screen.getByLabelText('Notes').className).toContain('min-h-[72px]');
+});
+
+// **The tone tables are a contract a second consumer reads**, which is why they
+// are asserted here rather than through the screen: a consumer composing its own
+// shape from these pairs is the alternative to restating them, and a tone that
+// went missing from one table would fail only in that consumer's repo.
+test('every tone is drawn by every table, and none reads a raw custom property', () => {
+	const tones = Object.keys(toneTintClassName);
+	expect(tones.length).toBeGreaterThan(0);
+
+	for (const table of [toneTintClassName, toneSolidClassName, toneDotClassName]) {
+		expect(Object.keys(table).sort()).toEqual([...tones].sort());
+		for (const classes of Object.values(table)) {
+			expect(classes).not.toContain('var(--');
+			expect(classes.trim()).not.toBe('');
+		}
+	}
+});
+
+// The pill and the paragraph take their colour from the same row, so a restyle
+// of one cannot silently leave the other behind.
+test('a callout is painted from the same tint the badge uses', () => {
+	render(<Callout tone="warning">Reconnecting.</Callout>);
+
+	expect(screen.getByRole('status').className).toContain(toneTintClassName.warning);
 });
 
 test('a card highlights only when it is interactive', () => {

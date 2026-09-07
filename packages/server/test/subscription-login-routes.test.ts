@@ -158,7 +158,17 @@ async function pollUntil(flowId: string, want: string, t = token) {
 	throw new Error(`flow never reached ${want}`);
 }
 
+/**
+ * The store step asks the provider whether the harvested credential works, and
+ * these tests are about the flow rather than about a real token. Skipped here so
+ * nothing in this file reaches the network; the one test that is about the
+ * question turns it back on and answers it itself.
+ */
+let prevSkipValidation: string | undefined;
+
 beforeAll(async () => {
+	prevSkipValidation = process.env.SKIP_AI_KEY_VALIDATION;
+	process.env.SKIP_AI_KEY_VALIDATION = '1';
 	const ctx = await createTestApp({ docker: scriptedDocker() });
 	app = ctx.app;
 	db = ctx.db;
@@ -185,6 +195,8 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+	if (prevSkipValidation === undefined) delete process.env.SKIP_AI_KEY_VALIDATION;
+	else process.env.SKIP_AI_KEY_VALIDATION = prevSkipValidation;
 	await safeClose(db);
 });
 
@@ -405,6 +417,43 @@ describe('submitting a code', () => {
 		);
 		expect(stored.rows[0].auth_method).toBe('subscription');
 		expect(liveContainers.size).toBe(0);
+	});
+
+	/**
+	 * A sign-in Hezo drove is not more trustworthy than a credential the operator
+	 * pasted: everything between the vendor's screen and the vault is Hezo's own
+	 * reading of a terminal. Storing what it read without asking is what turns a
+	 * misread token into a provider that looks configured and refuses every run,
+	 * so the same live question the paste path asks is asked here.
+	 */
+	it('refuses to store a credential the provider will not accept', async () => {
+		delete process.env.SKIP_AI_KEY_VALIDATION;
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify({ error: { message: 'OAuth access token is invalid.' } }), {
+				status: 401,
+			}),
+		);
+		try {
+			const start = await post('/api/ai-providers/subscription-login/start', {
+				provider: AiProvider.Anthropic,
+			});
+			const { flow_id } = (await start.json()).data;
+
+			log = CLAUDE_CHALLENGE;
+			await pollUntil(flow_id, 'awaiting_user');
+			await post(`/api/ai-providers/subscription-login/${flow_id}/code`, { code: 'callback-code' });
+			log += CLAUDE_TOKEN_LINE;
+
+			const { body } = await pollUntil(flow_id, 'failed');
+			expect(body.code).toBe('credential_rejected');
+			expect(fetchSpy).toHaveBeenCalled();
+
+			const stored = await db.query('SELECT id FROM ai_provider_configs');
+			expect(stored.rows).toHaveLength(0);
+		} finally {
+			fetchSpy.mockRestore();
+			process.env.SKIP_AI_KEY_VALIDATION = '1';
+		}
 	});
 
 	it('sends no paste markers to a prompt that never asked for them', async () => {

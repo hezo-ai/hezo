@@ -21,7 +21,12 @@ import {
 } from '../../hooks/use-projects';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
 import { useI18n } from '../../lib/i18n';
-import { inboxRowKind, inboxRowLead } from '../../lib/inbox-row-kind';
+import {
+	AGENT_ERROR_ROW,
+	inboxRowKind,
+	inboxRowLead,
+	isAgentErrorApproval,
+} from '../../lib/inbox-row-kind';
 
 function formatMoney(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`;
@@ -159,6 +164,14 @@ function NeedsYouRowShell({
 }
 
 function NeedsYouAction({ approval }: { approval: Approval }) {
+	const { t } = useI18n();
+	// A run-failure notice is a `strategy` row, so the type alone would call it a
+	// strategy decision - and send the reader to the inbox they are already
+	// looking at, rather than to the run that stopped.
+	const notice = isAgentErrorApproval(approval);
+	const taskId = approval.payload_task_identifier;
+	// Never `team_slug`: a route param resolves against `projects.slug`.
+	const projectSlug = approval.payload_task_project_slug ?? approval.payload_project_slug;
 	return (
 		<NeedsYouRowShell
 			tag="action"
@@ -178,19 +191,36 @@ function NeedsYouAction({ approval }: { approval: Approval }) {
 					/>
 				) : undefined
 			}
-			project={approval.payload_project_slug}
+			project={projectSlug}
 			createdAt={approval.created_at}
 			actionLink={
-				<Link
-					to="/projects/$projectId/inbox"
-					params={{ projectId: approval.payload_project_slug ?? '' }}
-					className={ACTION_LINK_CLASS}
-				>
-					{approvalActionLabel(approval.type)}
-				</Link>
+				projectSlug ? (
+					notice && taskId ? (
+						<Link
+							to="/projects/$projectId/tasks/$taskId"
+							params={{ projectId: projectSlug, taskId: taskId.toLowerCase() }}
+							{...(approval.payload_run_comment_public_id
+								? { hash: `comment-${approval.payload_run_comment_public_id}` }
+								: {})}
+							className={ACTION_LINK_CLASS}
+						>
+							{approvalActionLabel(approval.type)}
+						</Link>
+					) : (
+						<Link
+							to="/projects/$projectId/inbox"
+							params={{ projectId: projectSlug }}
+							className={ACTION_LINK_CLASS}
+						>
+							{approvalActionLabel(approval.type)}
+						</Link>
+					)
+				) : null
 			}
 		>
-			{approvalText(approval)}
+			{notice
+				? t(AGENT_ERROR_ROW.text, { who: approval.requested_by_name ?? 'An agent' })
+				: approvalText(approval)}
 		</NeedsYouRowShell>
 	);
 }

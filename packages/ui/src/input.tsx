@@ -1,4 +1,4 @@
-import { type InputHTMLAttributes, type ReactNode, useId } from 'react';
+import { type InputHTMLAttributes, type ReactNode, type Ref, useId } from 'react';
 import { touchMinHeightClassName } from './density.js';
 
 export type InputSize = 'sm' | 'md' | 'lg';
@@ -19,20 +19,38 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
 	label?: string;
 	/** Optional leading icon (e.g. a search glyph), rendered inside the field. */
 	icon?: ReactNode;
+	/**
+	 * Optional trailing content - a unit, a currency, a fixed domain - rendered
+	 * inside the same border box as the field.
+	 *
+	 * Placed here rather than beside the whole control so it sits inside the focus
+	 * ring and moves with the size preset; a sibling does neither.
+	 */
+	suffix?: ReactNode;
 	/** Class override for the wrapper (e.g. `sm:w-96`, `flex-1`) rather than the field. */
 	wrapperClassName?: string;
 	/** Height preset, mirroring `Button`'s. Defaults to `md` (32px). */
 	size?: InputSize;
+	/**
+	 * Forwarded to the `<input>`, not to either wrapper.
+	 *
+	 * Declared because `InputHTMLAttributes` carries no `ref` - that lives on
+	 * `ClassAttributes` - so a caller wanting to focus the field was refused by
+	 * TypeScript for something React already passes through.
+	 */
+	ref?: Ref<HTMLInputElement>;
 }
 
 // Wire's `.hz-input`: strong border, surface bg, accent focus ring.
 export function Input({
 	label,
 	icon,
+	suffix,
 	size = 'md',
 	className = '',
 	wrapperClassName = 'flex flex-col gap-1.5',
 	id,
+	ref,
 	...props
 }: InputProps) {
 	// A generated id, never one derived from the label: two fields labelled the
@@ -57,9 +75,11 @@ export function Input({
 				    text at any height, so the whole border box is the target. */}
 				<input
 					id={inputId}
+					ref={ref}
 					className={`min-w-0 flex-1 self-stretch bg-transparent text-text-1 placeholder:text-text-3 outline-none ${className}`}
 					{...props}
 				/>
+				{suffix && <span className="shrink-0 text-text-3">{suffix}</span>}
 			</div>
 		</div>
 	);

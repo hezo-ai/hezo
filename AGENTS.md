@@ -32,6 +32,7 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Changing how a run is judged, delivered or priced | `agent-run-hooks.md` |
 | Adding a container backend | `adding-a-container-backend.md` |
 | Adding a chat channel | `adding-a-chat-channel.md` |
+| Driving a vendor CLI inside a container | `driving-a-cli-in-a-container.md` |
 | Working around the Bun runtime | `bun-issues.md` |
 | Looking up where a helper lives | `seam-registry.md` |
 | Checking what else a change must touch | `mirrored-surfaces.md` |
@@ -254,6 +255,14 @@ External chat avenues sit behind a channel adapter plus registry. **Adding one: 
 
 - **The core is channel-agnostic and stays that way** - resolve a channel through the registry, never by branching on a platform name. If a new channel forces a change there, close the gap in the abstraction instead.
 - **One home surface per thread, and replies go where the turn was asked.** No adapter mirrors threads onto another channel. Channel-specific settings live in the adapter's own metadata, never a per-channel column; tokens go in the vault.
+
+### Driving an interactive CLI in a container
+Running a vendor's own command in a sandbox and reading what it printed. **Traps and mechanics: `.dev/driving-a-cli-in-a-container.md`.** Getting these wrong yields a value of the right shape and the wrong contents, stored and refused later somewhere else.
+
+- **Read a CLI's output as a screen, never by deleting escape sequences** - `renderTerminalScreen`. A repaint writes only changed cells, so a value arrives as fragments at coordinates and stripping splices them together minus whatever the cursor stepped over.
+- **Size the PTY with `stty`, inside it.** `COLUMNS` resizes nothing: the terminal reports `0 0` and the CLI lays its output out to 80 columns.
+- **Submit with CR, framed as a paste when the prompt asked for one**, and hold stdin open for the flow's life.
+- **Validate what you scraped as if it arrived any other way** before storing it. A credential Hezo read off a terminal earns more suspicion than one a human pasted, not less.
 
 ### User-facing docs terminology
 

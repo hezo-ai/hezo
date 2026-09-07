@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { copyToClipboard } from '../../lib/clipboard';
 import { Trans, useI18n } from '../../lib/i18n';
 import { Button, buttonClassName } from './button';
+import { Callout } from './callout';
 import { Input } from './input';
 
 /**
@@ -213,12 +214,11 @@ export function DeviceCodeSteps({
 	if (state.status === 'succeeded') {
 		return (
 			<div className="flex flex-col gap-3" data-testid={testId} data-status="succeeded">
-				<div className="flex items-start gap-2.5 rounded-md bg-success-soft p-3 text-[12.5px] text-success-soft-fg">
-					<Check className="mt-px size-4 shrink-0" strokeWidth={2.5} />
+				<Callout tone="success" icon={<Check className="size-4" strokeWidth={2.5} />}>
 					<span className="font-medium">
 						{state.label ?? t('deviceSignIn.connected', { provider: providerLabel })}
 					</span>
-				</div>
+				</Callout>
 			</div>
 		);
 	}
@@ -226,13 +226,9 @@ export function DeviceCodeSteps({
 	if (state.status === 'failed') {
 		return (
 			<div className="flex flex-col gap-4" data-testid={testId} data-status="failed">
-				<div className="flex items-start gap-2.5 rounded-md bg-danger-soft p-3 text-[12.5px] text-danger-soft-fg">
-					<TriangleAlert className="mt-px size-4 shrink-0" />
-					<span>
-						<span className="block font-semibold">{state.title}</span>
-						{state.detail && <span className="opacity-85">{state.detail}</span>}
-					</span>
-				</div>
+				<Callout tone="danger" icon={<TriangleAlert className="size-4" />} title={state.title}>
+					{state.detail && <span className="opacity-85">{state.detail}</span>}
+				</Callout>
 				<div className="flex flex-wrap justify-end gap-2">
 					{onCancel && (
 						<Button type="button" variant="secondary" onClick={onCancel}>

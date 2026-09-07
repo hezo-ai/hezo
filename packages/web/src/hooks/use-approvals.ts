@@ -34,6 +34,14 @@ export interface Approval {
 	payload_project_name: string | null;
 	payload_project_slug: string | null;
 	payload_task_identifier: string | null;
+	/**
+	 * The task's own project. A route param resolves against `projects.slug`, and
+	 * a team's slug is a different string set independently - so a task link built
+	 * from `team_slug` points at a project that need not exist.
+	 */
+	payload_task_project_slug: string | null;
+	/** Anchor for the failed run's entry in the task thread, when it has one. */
+	payload_run_comment_public_id: string | null;
 }
 
 export function useApprovals(

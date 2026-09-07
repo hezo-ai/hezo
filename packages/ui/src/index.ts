@@ -44,6 +44,11 @@
  * overflow masks the breadcrumb reads. A colour it does not define renders as
  * nothing rather than as an error.
  *
+ * **A tone's colours live in one place.** `tone.ts` holds the tables `Badge`
+ * and `Callout` both read, and exports them, so a consumer drawing a tone on a
+ * third shape composes from the same pairs rather than restating them - which is
+ * a copy with nothing comparing it.
+ *
  * **A component belongs here when any Hezo site could draw it.** One that names
  * a Hezo concept — an actor, a budget, an archived asset — stays in the app,
  * and so does one whose copy is a paragraph rather than a word: a sentence with
@@ -51,7 +56,7 @@
  */
 export { Avatar, type AvatarProps, type AvatarSize, getInitials } from './avatar.js';
 export { BackLink, type BackLinkProps } from './back-link.js';
-export { Badge, type BadgeColor, type BadgeProps, type Tone } from './badge.js';
+export { Badge, type BadgeColor, type BadgeProps } from './badge.js';
 export {
 	Breadcrumb,
 	type BreadcrumbProps,
@@ -68,6 +73,7 @@ export {
 	type ButtonVariant,
 	buttonClassName,
 } from './button.js';
+export { Callout, type CalloutProps } from './callout.js';
 export { Card, type CardElement, type CardProps } from './card.js';
 export { copyToClipboard } from './clipboard.js';
 export { Code, type CodeProps } from './code.js';
@@ -151,6 +157,12 @@ export {
 } from './theme.js';
 export { THEME_OPTIONS, ThemeSwitcher, type ThemeSwitcherProps } from './theme-switcher.js';
 export { Toggle, type ToggleProps } from './toggle.js';
+export {
+	type Tone,
+	toneDotClassName,
+	toneSolidClassName,
+	toneTintClassName,
+} from './tone.js';
 export {
 	TOOLTIP_Z,
 	Tooltip,

@@ -349,16 +349,19 @@ describe('POST run-now', () => {
 		expect(res.status).toBe(409);
 	});
 
-	it('409s with a task-busy message when the task already runs', async () => {
+	// A busy task does not lose the wakeup - it stays queued and the cron starts
+	// it when the running one ends - so this reports a wait, not a failure.
+	it('reports the run as queued when the task already runs', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
 		await insertRunningRun(agentA, taskId);
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
 
 		const res = await runNow(taskId, wakeupId);
-		expect(res.status).toBe(409);
-		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toContain('already has a run in progress');
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { data: { queued: boolean; reason: string } };
+		expect(body.data.queued).toBe(true);
+		expect(body.data.reason).toBe('task_busy');
 		const row = await db.query<{ status: string; last_skipped_reason: string | null }>(
 			'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
 			[wakeupId],
@@ -368,7 +371,7 @@ describe('POST run-now', () => {
 		await clearRuns();
 	});
 
-	it('409s when the container limit is reached', async () => {
+	it('reports the run as queued when the container limit is reached', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
 		await setContainerCapacityForTest(db, 1);
@@ -376,14 +379,20 @@ describe('POST run-now', () => {
 		await seedRunningContainerProject(db, 'cap-covfill-runnow');
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
 
-		const res = await runNow(taskId, wakeupId);
-		expect(res.status).toBe(409);
-		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toContain('active-container limit');
-		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
-		await removeSeededContainerProject(db, 'cap-covfill-runnow');
-		await clearContainerCapacityForTest(db);
-		await clearRuns();
+		// The capacity ceiling is instance-wide, so a failed assertion that skipped
+		// the teardown would put every later case in this file at capacity too.
+		try {
+			const res = await runNow(taskId, wakeupId);
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as { data: { queued: boolean; reason: string } };
+			expect(body.data.queued).toBe(true);
+			expect(body.data.reason).toBe('instance_at_capacity');
+		} finally {
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await removeSeededContainerProject(db, 'cap-covfill-runnow');
+			await clearContainerCapacityForTest(db);
+			await clearRuns();
+		}
 	});
 
 	it('409s when the wakeup source is gated by an open dependency', async () => {
@@ -433,16 +442,29 @@ describe('POST runs/:runId/retry', () => {
 		await clearRuns();
 	});
 
-	it('409s when the task already has a run in progress', async () => {
+	// The retry's wakeup is created before dispatch is attempted and survives the
+	// busy-task guard, so the retry really is pending. Reporting it as a conflict
+	// told the reader their retry had failed while it was on its way.
+	it('reports the retry as queued when the task already has a run in progress', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
 		await insertRunningRun(agentA, taskId);
 		const failed = await insertFailedRun(agentB, taskId);
 
 		const res = await retry(taskId, failed);
-		expect(res.status).toBe(409);
-		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toContain('already has a run in progress');
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			data: { queued: boolean; reason: string; wakeup_id: string };
+		};
+		expect(body.data.queued).toBe(true);
+		expect(body.data.reason).toBe('task_busy');
+
+		// The row the caller was promised is really there, and really pending.
+		const row = await db.query<{ status: string }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[body.data.wakeup_id],
+		);
+		expect(row.rows[0].status).toBe('queued');
 		await clearRuns();
 	});
 

@@ -451,12 +451,56 @@ export async function updateAiProviderConfig(
 	return result.rows.length > 0;
 }
 
+/**
+ * Delete a config, handing the instance-wide default on when the deleted row
+ * held it.
+ *
+ * Without the hand-on, deleting the default leaves the instance with no
+ * designated credential at all. Nothing fails loudly - `resolveRuntimeForTask`
+ * falls through to its "no default designated" branch and picks the oldest
+ * verified row - so runs keep working while the settings page shows no Default
+ * on any row, and the operator's next deliberate choice is made against a
+ * designation that quietly stopped existing.
+ *
+ * **The successor is a verified row wherever one exists.** A designated default
+ * that cannot run is not a fallback the resolver forgives: it refuses the run
+ * naming that credential rather than passing to the next in line. So promoting a
+ * rejected row over a working one would take an instance that still had a usable
+ * credential and stop it dead. Only when nothing is verified does the oldest
+ * remaining row take it, which leaves the resolver able to name the credential
+ * the operator has to fix instead of reporting that none is configured.
+ *
+ * Ordering matches `selectProviderConfigRow` and the resolver - oldest first,
+ * `id` breaking a same-millisecond tie - so the row promoted here is the one a
+ * run would have chosen anyway. The whole thing is one transaction: the partial
+ * unique index permits a single default, and a delete that committed without its
+ * successor would leave exactly the state this exists to prevent.
+ */
 export async function deleteAiProviderConfig(db: Db, configId: string): Promise<boolean> {
-	const result = await db.query<{ id: string }>(
-		`DELETE FROM ai_provider_configs WHERE id = $1 RETURNING id`,
-		[configId],
-	);
-	return result.rows.length > 0;
+	return withTransaction(db, async () => {
+		const result = await db.query<{ id: string; is_default: boolean }>(
+			`DELETE FROM ai_provider_configs WHERE id = $1 RETURNING id, is_default`,
+			[configId],
+		);
+		const deleted = result.rows[0];
+		if (!deleted) return false;
+		if (!deleted.is_default) return true;
+
+		const successor = await db.query<{ id: string }>(
+			`SELECT id FROM ai_provider_configs
+			 ORDER BY (status = $1) DESC, created_at ASC, id ASC
+			 LIMIT 1`,
+			[AiProviderStatus.Verified],
+		);
+		const promote = successor.rows[0];
+		if (promote) {
+			await db.query(
+				`UPDATE ai_provider_configs SET is_default = true, updated_at = now() WHERE id = $1`,
+				[promote.id],
+			);
+		}
+		return true;
+	});
 }
 
 export async function setDefaultAiProvider(db: Db, configId: string): Promise<boolean> {
@@ -482,18 +526,34 @@ export async function setDefaultAiProvider(db: Db, configId: string): Promise<bo
 	return true;
 }
 
+/**
+ * Whether the operator has set an AI provider up, and which of them can run.
+ *
+ * **The two are deliberately different questions**, because one consumer gates
+ * the whole app on the first. `configured` asks whether setup has been done at
+ * all - any row, whatever its status - and `providers` asks which providers a
+ * run could actually use, which is the verified ones.
+ *
+ * Answering `configured` from the verified rows is what made a rejected
+ * credential look like a fresh install: the first-run wizard replaces the entire
+ * app shell while `configured` is false, so an operator who pressed Verify on a
+ * credential the provider refused was thrown out of Settings and into onboarding -
+ * away from the one screen where the credential could be replaced, and reading as
+ * though their instance had lost its setup.
+ */
 export async function getAiProviderStatus(
 	db: Db,
 ): Promise<{ configured: boolean; providers: string[] }> {
-	const result = await db.query<{ provider: string }>(
-		`SELECT DISTINCT provider FROM ai_provider_configs WHERE status = $1`,
-		[AiProviderStatus.Verified],
+	const result = await db.query<{ provider: string; status: string }>(
+		`SELECT DISTINCT provider, status FROM ai_provider_configs`,
 	);
 
-	return {
-		configured: result.rows.length > 0,
-		providers: result.rows.map((r) => r.provider),
-	};
+	// A provider holding both a verified and a rejected credential comes back on
+	// two rows, so the usable list is de-duplicated rather than taken as-is.
+	const verified = new Set(
+		result.rows.filter((r) => r.status === AiProviderStatus.Verified).map((r) => r.provider),
+	);
+	return { configured: result.rows.length > 0, providers: [...verified] };
 }
 
 export async function getProviderConfigCredential(

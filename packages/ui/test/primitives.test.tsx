@@ -3,6 +3,7 @@ import {
 	Badge,
 	Breadcrumb,
 	BreadcrumbRow,
+	Callout,
 	Card,
 	Code,
 	CountOverlayBadge,
@@ -77,6 +78,39 @@ test('a running avatar says so, not only draws so', () => {
 test('a badge renders its label', () => {
 	render(<Badge color="green">Running</Badge>);
 	expect(screen.getByText('Running')).toBeTruthy();
+});
+
+// **The tone decides how loudly the block announces itself.** A tinted `<div>`
+// carries no role at all, which is the part each app was getting wrong on its
+// own - so the rule lives here and is asserted here.
+test('a callout interrupts for danger and waits its turn otherwise', () => {
+	const { rerender } = render(<Callout tone="danger">The run could not start.</Callout>);
+	expect(screen.getByRole('alert').textContent).toContain('The run could not start.');
+
+	rerender(<Callout tone="warning">This has to finish first.</Callout>);
+	expect(screen.getByRole('status').textContent).toContain('This has to finish first.');
+});
+
+// A block that is on screen at first paint has not *happened*, so declaring it a
+// live region has a reader told about it on every arrival.
+test('a callout can decline to be a live region', () => {
+	render(<Callout role="none">How this works.</Callout>);
+
+	expect(screen.queryByRole('alert')).toBeNull();
+	expect(screen.queryByRole('status')).toBeNull();
+	expect(screen.getByText('How this works.')).toBeTruthy();
+});
+
+test('a callout renders its title, its icon and its prose', () => {
+	render(
+		<Callout tone="success" title="Connected" icon={<span data-testid="callout-icon" />}>
+			You can close this window.
+		</Callout>,
+	);
+
+	expect(screen.getByText('Connected')).toBeTruthy();
+	expect(screen.getByText('You can close this window.')).toBeTruthy();
+	expect(screen.getByTestId('callout-icon')).toBeTruthy();
 });
 
 test('a card renders what it wraps', () => {

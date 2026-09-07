@@ -48,6 +48,16 @@ export interface ConfirmDialogProps {
 	/** Called when `onConfirm` rejects, for a caller that reports failures itself. */
 	onError?: (error: unknown) => void;
 	loading?: boolean;
+	/**
+	 * Withholds the action until the confirmation's own precondition is met - the
+	 * typed name matched, the required field filled.
+	 *
+	 * **Separate from `loading` on purpose.** One says *working*, the other says
+	 * *not yet*; borrowing `loading` for this spins a spinner over no work. The
+	 * ⌘/Ctrl+Enter binding is withheld with the button, so the shortcut cannot
+	 * fire what the pointer cannot.
+	 */
+	confirmDisabled?: boolean;
 }
 
 const confirmVariantClass = {
@@ -68,6 +78,7 @@ export function ConfirmDialog({
 	onConfirm,
 	onError,
 	loading: externalLoading,
+	confirmDisabled = false,
 	children,
 }: ConfirmDialogProps) {
 	const [internalLoading, setInternalLoading] = useState(false);
@@ -87,7 +98,9 @@ export function ConfirmDialog({
 	// ⌘/Ctrl+Enter confirms; Escape is handled natively by AlertDialog (the Esc
 	// chip on Cancel is display-only). Gated on `open` since ConfirmDialog stays
 	// mounted while closed.
-	useShortcut(CONFIRM_SHORTCUT, () => actionRef.current?.click(), { enabled: open && !loading });
+	useShortcut(CONFIRM_SHORTCUT, () => actionRef.current?.click(), {
+		enabled: open && !loading && !confirmDisabled,
+	});
 
 	async function handleConfirm(e: React.MouseEvent) {
 		e.preventDefault();
@@ -147,7 +160,7 @@ export function ConfirmDialog({
 						<AlertDialog.Action
 							ref={actionRef}
 							data-testid="confirm-dialog-confirm"
-							disabled={loading}
+							disabled={loading || confirmDisabled}
 							onClick={handleConfirm}
 							// The keycap is hidden from assistive tech, so the binding it
 							// pictures is named here instead.

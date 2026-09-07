@@ -353,15 +353,26 @@ export function shellQuote(arg: string): string {
 }
 
 /**
- * Terminal columns the login PTY is opened at.
+ * The size the login PTY is opened at.
  *
- * A vendor CLI wraps its sign-in URL to the terminal width, and a wrapped URL
- * arrives interleaved with the spinner frames redrawn around it - Claude Code's
- * visible URL text comes back in four overlapping fragments at 80 columns. Wide
- * enough that nothing these CLIs print wraps at all, which is what lets the
- * parsers below read a line rather than reassemble one.
+ * A vendor CLI lays its output out to the terminal width, and anything wider
+ * than that is split across rows - Claude Code's sign-in URL and the token it
+ * mints both arrive in fragments at 80 columns. Wide enough that nothing these
+ * CLIs print wraps at all, which is what lets a parser read a value rather than
+ * reassemble one.
+ *
+ * **Set on the terminal, not in the environment.** A TUI reads its width from
+ * the tty itself, so `COLUMNS` alone changes nothing: `script` opens a PTY whose
+ * size is never initialised, `stty size` reports `0 0`, and the CLI falls back
+ * to its own default of 80. `stty` inside the PTY is what actually resizes it;
+ * the variables are exported alongside so a CLI that prefers them agrees with
+ * the tty rather than contradicting it.
+ *
+ * Rows matter as much as columns - a zero-height terminal is not a shape a
+ * full-screen CLI is written for.
  */
-const LOGIN_PTY_COLUMNS = 1000;
+const LOGIN_PTY_COLUMNS = 400;
+const LOGIN_PTY_ROWS = 100;
 
 /** Per-flow file names under a login flow's own directory. */
 export const LOGIN_STDIN_FIFO = 'in';
@@ -404,8 +415,13 @@ export function buildSubscriptionLoginScript(opts: {
 
 	const d = shellQuote(dir);
 	// `script` needs the command as one string; each argv element is quoted
-	// individually so nothing in it can reach the outer shell.
-	const inner = argv.map(shellQuote).join(' ');
+	// individually so nothing in it can reach the outer shell. The resize runs
+	// inside that string because it has to happen on the PTY `script` allocated,
+	// and it precedes the CLI so the first frame is already painted at the width
+	// the parsers expect.
+	const inner = `stty cols ${LOGIN_PTY_COLUMNS} rows ${LOGIN_PTY_ROWS}; ${argv
+		.map(shellQuote)
+		.join(' ')}`;
 	const envPrefix = Object.entries(env)
 		.map(([k, v]) => {
 			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`unsafe env name: ${k}`);
@@ -436,7 +452,7 @@ export function buildSubscriptionLoginScript(opts: {
 		// the call that starts the flow never returns and the flow never begins.
 		// The inner redirections still win for the commands they name.
 		`( sleep ${holdSecs} > ${fifo} ) >/dev/null 2>&1 & ` +
-		`( COLUMNS=${LOGIN_PTY_COLUMNS} ${envPrefix} ` +
+		`( COLUMNS=${LOGIN_PTY_COLUMNS} LINES=${LOGIN_PTY_ROWS} ${envPrefix} ` +
 		`script -qec ${shellQuote(inner)} /dev/null ` +
 		`< ${fifo} > ${log} 2>&1; ` +
 		// Written last and read as the flow's "process is gone" signal.
@@ -529,19 +545,6 @@ export function bracketedPasteEnabled(raw: string): boolean {
 	return enabled;
 }
 
-/**
- * Drop the escape sequences a PTY interleaves with a CLI's own output.
- *
- * Covers CSI (colour, cursor moves, erases), OSC (window title, and the
- * hyperlinks {@link parseOsc8Links} reads first), and the bare two-byte escapes
- * a full-screen redraw emits. Carriage returns become newlines so a redrawn line
- * is its own line to a line-oriented matcher rather than joining the one before.
- */
-export function stripTerminalNoise(raw: string): string {
-	return raw
-		.replace(new RegExp(`${ESC}][^${ESC}${BEL}]*(?:${ST})`, 'g'), '')
-		.replace(new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g'), '')
-		.replace(new RegExp(`${ESC}[()][A-Za-z0-9]`, 'g'), '')
-		.replace(new RegExp(`${ESC}[=><]`, 'g'), '')
-		.replace(/\r/g, '\n');
-}
+// Reading a value back out of what a CLI printed is `renderTerminalScreen`
+// (`./terminal-screen`), which composes the screen rather than deleting the
+// escapes out of the stream. It is imported from there, not re-exported here.

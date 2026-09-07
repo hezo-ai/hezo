@@ -132,6 +132,112 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 	});
 });
 
+// The run pipeline files these as `strategy` rows carrying an `agent_error`
+// payload, and it never writes `project_id` - so the two fields the inbox card
+// needs to open the run that failed both come off the task join.
+describe('GET approvals: the agent-error notice projection', () => {
+	it('resolves the task project and the run entry, leaving payload_project_slug alone', async () => {
+		const RUN_ID = '9f1d0000-0000-0000-0000-0000000000aa';
+		const project = (
+			await db.query<{ id: string; slug: string }>(
+				'SELECT id, slug FROM projects WHERE slug = $1',
+				[projectSlug],
+			)
+		).rows[0];
+
+		const task = (
+			await db.query<{ id: string; identifier: string }>(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+				 VALUES ($1, $2, 9001, 'ENR-9001', 'Refused task')
+				 RETURNING id, identifier`,
+				[teamId, project.id],
+			)
+		).rows[0];
+		const runComment = (
+			await db.query<{ public_id: string }>(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'run', $3::jsonb)
+				 RETURNING public_id`,
+				[task.id, agentId, JSON.stringify({ run_id: RUN_ID, agent_id: agentId })],
+			)
+		).rows[0];
+
+		await db.query(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
+			[
+				teamId,
+				ApprovalType.Strategy,
+				agentId,
+				JSON.stringify({
+					type: 'agent_error',
+					member_id: agentId,
+					run_id: RUN_ID,
+					task_id: task.id,
+					message: 'PROJECTION_TEST',
+				}),
+			],
+		);
+
+		const listRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			headers: authHeader(token),
+		});
+		const rows = (await listRes.json()).data as any[];
+		const row = rows.find((r: any) => r.payload?.message === 'PROJECTION_TEST');
+		expect(row).toBeDefined();
+
+		expect(row.payload_task_identifier).toBe(task.identifier);
+		// The slug a task link must route through. `team_slug` is a different
+		// string and resolves against nothing.
+		expect(row.payload_task_project_slug).toBe(project.slug);
+		expect(row.payload_run_comment_public_id).toBe(runComment.public_id);
+		// The pre-existing field keeps its meaning - the OAuth and hire
+		// destinations read it, and this payload carries no `project_id`.
+		expect(row.payload_project_slug).toBeNull();
+	});
+
+	it('leaves the run anchor null when the run left no entry in the thread', async () => {
+		const project = (
+			await db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [projectSlug])
+		).rows[0];
+		const task = (
+			await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+				 VALUES ($1, $2, 9002, 'ENR-9002', 'Anchorless task')
+				 RETURNING id`,
+				[teamId, project.id],
+			)
+		).rows[0];
+
+		await db.query(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
+			[
+				teamId,
+				ApprovalType.Strategy,
+				agentId,
+				JSON.stringify({
+					type: 'agent_error',
+					member_id: agentId,
+					run_id: null,
+					task_id: task.id,
+					message: 'NO_RUN_ENTRY',
+				}),
+			],
+		);
+
+		const listRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			headers: authHeader(token),
+		});
+		const rows = (await listRes.json()).data as any[];
+		const row = rows.find((r: any) => r.payload?.message === 'NO_RUN_ENTRY');
+		expect(row).toBeDefined();
+		expect(row.payload_run_comment_public_id).toBeNull();
+		// The task is still reachable; only the anchor is missing.
+		expect(row.payload_task_project_slug).toBeTruthy();
+	});
+});
+
 describe('POST /teams/:teamId/approvals validation', () => {
 	it('returns 400 when type is missing', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/approvals`, {

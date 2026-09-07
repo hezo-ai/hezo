@@ -73,8 +73,8 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
   dialog and confirmation, the button, input, textarea, toggle and password field, the
-  badges, card, breadcrumb, data table, tooltips, selects, segmented control, filter
-  pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
+  badges and callout, card, breadcrumb, data table, tooltips, selects, segmented control,
+  filter pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
   them. Source-only, with an `exports` map, so a consumer transpiles it the way `web`
   already transpiles its own `.tsx`. **Three rules keep it importable**: no copy is
   resolved inside it (every user-visible string is a prop with an English default, and
@@ -88,6 +88,11 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   that every utility used only by a primitive is missing from the stylesheet and the
   component renders unstyled with nothing to say so. `web` declares it in `index.css`
   and `test/stylesheet-sources.test.ts` holds it there.
+  **A tone reaches the screen twice, from one table.** `tone.ts` holds the `Tone`
+  union and the tint/solid/dot class pairs, and exports them: `Badge` draws a tone as a
+  pill, `Callout` as a block of prose (deriving `role="alert"` for the destructive tone
+  and `role="status"` otherwise, which a hand-rolled tinted `<div>` carries neither of),
+  and a consumer composing a third shape reads the same rows rather than restating them.
   **Its props types are part of the contract.** Every component exports its own
   `*Props`, because `ComponentProps<typeof X>` erases the parameter of a generic — a
   consumer cannot wrap `DataTable`, `SegmentedControl` or `FilterPills` type-safely
@@ -411,7 +416,11 @@ section only when `ctx.goals` is non-empty. A run can also be triggered on deman
 `JobManager.dispatchProgressUpdateNow`), which passes `manual` to skip the due-check entirely —
 pressing the button always runs. If **Run now** hits a *transient* conflict — the Captain is already running, the
 instance is at its active-container limit, or a launch race — the run is
-**queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
+**queued** rather than erroring (the task-level `/run-now` and `/retry` handlers in
+`routes/queued-wakeups.ts` answer the same way, off their shared `DISPATCH_OUTCOMES` table:
+`markWakeupSkipped` leaves the row `queued`, so every reason but `blocked` and `not_queued`
+is a wait the wakeup cron clears, and reporting it as a 409 told the reader their run had
+failed while it was on its way): a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
 "Run now" is idempotent) that the 5s dispatcher retries until the Captain frees up. This trigger tag
 also makes such a wakeup guard against fall-through: when it is finally dispatched, `activateAgent`
@@ -2707,9 +2716,15 @@ Errored view and the failure ping both fire, and `fileProviderRefusalApproval` f
 shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
 dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
 after the agent when the fault is upstream. The web renders every such `agent_error` record
-as a notice, not a proposal: a link to the task and a Dismiss that closes the row through the
-ordinary resolve route, never Approve/Deny, since neither had any side effect for this payload
-and both read as a decision the reader was not being asked to make. The record's other half
+as a notice, not a proposal, and the card *is* the control: clicking it resolves the row
+through the ordinary resolve route and navigates to `#comment-<run entry>` on the task, never
+Approve/Deny, since neither had any side effect for this payload and both read as a decision
+the reader was not being asked to make. The approvals route supplies both halves of that
+destination - `payload_task_project_slug` off the task's own project (a route param resolves
+against `projects.slug`, and `team_slug` is a different string that resolves against nothing)
+and `payload_run_comment_public_id` off the `run` comment carrying `payload.run_id`. A notice
+whose run left no task, and so has nothing to open, keeps the Dismiss button instead - it is
+the only shape that still carries one. The record's other half
 is `clearAgentErrorApprovalsOnRecovery`, called from `runAgent` on every succeeded run: it
 resolves the member's pending `agent_error` rows through `resolveApproval` and the approvals
 broadcast, exactly as a human Dismiss does, so a recovered agent does not leave a stale notice
@@ -3787,6 +3802,15 @@ shape.** `AiProviderVerifyEndpoint.subscriptionHeaders` carries it (Anthropic: a
 since `x-api-key` refuses an `sk-ant-oat01-…` token whatever its state and would make every
 probe a false condemnation); an absent entry says this provider's subscription credential is
 not a bearer at all (Codex's is a JSON auth file) and leaves it on the shape check alone.
+**A verify has three outcomes, not two, and the same three for both auth methods.**
+Accepted (the provider took it) writes `verified`; refused (`probeProvesCredentialDead`)
+writes `invalid` and relays the provider's own reason through `refusalDetail`, scrubbed of
+the credential; everything else - unreachable, the provider's own 5xx, or a subscription
+with no `subscriptionHeaders` to ask with - is **unknown** and writes nothing, reported as
+`checked: false` so the UI withholds the tick. Expressing only two is where this route's
+bugs lived: a provider answering 500 condemned a working api key, and a Codex subscription
+was written `verified` and reported valid having made no request at all.
+
 **What a probe may conclude is deliberately asymmetric** and lives in one predicate,
 `probeProvesCredentialDead`: only a 401/403 condemns. Acceptance proves nothing, because what
 a *valid* subscription token does on a catalog endpoint is not assertable for every provider -
@@ -3828,9 +3852,26 @@ screen nobody is watching. `DELETE …/:flowId` cancels. Which runtimes can be d
 (`@hezo/shared`, read by the web to decide whether to offer the button) paired with
 `SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
 asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
-one pasted code; Google has no subscription auth at all (API key only). **The credential never
-reaches the browser** — on success the poll route stores it via `storeAiProviderKey` and
-returns only the config id, coalescing concurrent polls so overlapping requests insert once.
+one pasted code; Google has no subscription auth at all (API key only).
+
+**What the CLI printed is read off a composed screen, never out of the byte stream**
+(`renderTerminalScreen`, `sandbox/terminal-screen.ts`). A TUI repaints only the cells that
+changed, so a value reaches the log as fragments at coordinates: `claude setup-token` writes
+`sk-ant-`, steps the cursor over a character an earlier frame left standing, then writes the
+rest. Deleting the escapes splices the fragments together minus that character, yielding a
+token of the right shape and the wrong value — which passes every shape check, is stored, and
+is then refused by the provider on every run. For the same reason the script sizes the PTY
+with `stty` rather than with `COLUMNS`: `script` opens a terminal that reports `0 0`, so the
+CLI falls back to 80 columns and wraps both the sign-in URL and the token it mints. The
+mechanics and the rest of the traps are `.dev/driving-a-cli-in-a-container.md`.
+
+**The credential never
+reaches the browser** — on success the poll route puts it through `prepareProviderCredential`,
+the same shape check and live provider question a pasted credential answers, then stores it via
+`storeAiProviderKey` and returns only the config id, coalescing concurrent polls so overlapping
+requests insert once. A credential the provider refuses fails the flow as `credential_rejected`
+and stores nothing: a sign-in Hezo drove is not more trustworthy than one the operator pasted,
+because everything between the vendor's screen and the vault is Hezo's own reading of a terminal.
 Every exit path releases the container through `finish`, and `sweepLoginContainers` collects
 anything a mid-flow crash stranded, scoped by an instance-id label value. The login container
 deliberately gets **no egress proxy**: a sign-in emits no `__HEZO_SECRET_*__` placeholders to

@@ -42,7 +42,9 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
             pma.slug AS payload_member_slug,
             pp.name AS payload_project_name,
             pp.slug AS payload_project_slug,
-            pi.identifier AS payload_task_identifier
+            pi.identifier AS payload_task_identifier,
+            tp.slug AS payload_task_project_slug,
+            prc.public_id AS payload_run_comment_public_id
      FROM approvals a
      JOIN teams co ON co.id = a.team_id
      LEFT JOIN members m ON m.id = a.requested_by_member_id
@@ -52,6 +54,18 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
      LEFT JOIN member_agents pma ON pma.id = pm.id
      LEFT JOIN projects pp ON pp.id = (a.payload->>'project_id')::uuid
      LEFT JOIN tasks pi ON pi.id = (a.payload->>'task_id')::uuid
+     -- The task's own project, because a route param resolves against
+     -- projects.slug and a team's slug is a different, independently assigned
+     -- string. payload_project_slug stays as it is: the OAuth and hire
+     -- destinations read it, and widening it would silently redirect them.
+     LEFT JOIN projects tp ON tp.id = pi.project_id
+     -- The run's entry in the task thread, so a notice can link to the run that
+     -- failed rather than the top of the task. Anchored on the indexed task_id;
+     -- the JSON predicate filters within one task's comments, which is why this
+     -- needs no index of its own.
+     LEFT JOIN task_comments prc ON prc.task_id = pi.id
+       AND prc.content_type = 'run'
+       AND prc.content->>'run_id' = a.payload->>'run_id'
      WHERE a.team_id = $1 AND a.status IN (${statusFilter
 				.split(',')
 				.map((_, i) => `$${i + 2}::approval_status`)

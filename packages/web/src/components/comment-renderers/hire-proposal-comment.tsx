@@ -2,6 +2,7 @@ import { ApprovalStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Check, Pencil, UserPlus, X } from 'lucide-react';
 import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
@@ -25,13 +26,17 @@ export function HireProposalComment({ comment, projectId }: Props) {
 	const note = comment.chosen_option?.resolution_note;
 
 	if (status === ApprovalStatus.Approved) {
+		// `role="none"` throughout: a thread renders many of these at once, and the
+		// thread is what a reader follows - one live region per card is noise.
 		return (
-			<div
-				className="flex items-start gap-2 p-2.5 rounded-lg border border-success bg-success-soft"
+			<Callout
+				tone="success"
+				role="none"
+				className="border border-success"
+				icon={<Check className="w-4 h-4" />}
 				data-testid="hire-proposal-approved"
 			>
-				<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
-				<div className="flex-1">
+				<div>
 					<p className="text-sm font-medium text-text-1">
 						Hired <span className="font-semibold">{title}</span>
 					</p>
@@ -45,35 +50,39 @@ export function HireProposalComment({ comment, projectId }: Props) {
 						</Link>
 					)}
 				</div>
-			</div>
+			</Callout>
 		);
 	}
 
 	if (status === ApprovalStatus.Denied) {
 		return (
-			<div
-				className="flex items-start gap-2 p-2.5 rounded-lg border border-border bg-surface-2"
+			<Callout
+				tone="neutral"
+				role="none"
+				className="border border-border"
+				icon={<X className="w-4 h-4 text-text-3" />}
 				data-testid="hire-proposal-denied"
 			>
-				<X className="w-4 h-4 text-text-3 shrink-0 mt-0.5" />
-				<div className="flex-1">
+				<div>
 					<p className="text-sm font-medium text-text-1">
 						Hire proposal for <span className="font-semibold">{title}</span> was denied
 					</p>
 					{note && <p className="text-xs text-text-2 mt-0.5">Note: {note}</p>}
 				</div>
-			</div>
+			</Callout>
 		);
 	}
 
 	return (
-		<div
-			className="flex flex-col gap-2 p-2.5 rounded-lg border border-warning bg-warning-soft"
+		<Callout
+			tone="warning"
+			role="none"
+			className="border border-warning"
+			icon={<UserPlus className="w-4 h-4" />}
 			data-testid="hire-proposal-pending"
 		>
-			<div className="flex items-start gap-2">
-				<UserPlus className="w-4 h-4 text-warning-soft-fg shrink-0 mt-0.5" />
-				<div className="flex-1">
+			<div className="flex flex-col gap-2">
+				<div>
 					<p className="text-sm font-medium text-text-1">
 						Proposing to hire <span className="font-semibold">{title}</span>
 					</p>
@@ -82,20 +91,20 @@ export function HireProposalComment({ comment, projectId }: Props) {
 						Pending admin review - edit and review the full spec to approve or deny.
 					</p>
 				</div>
+				{projectId && approvalId && (
+					<div>
+						<Link
+							to="/projects/$projectId/agents/hire"
+							params={{ projectId }}
+							search={{ approvalId }}
+						>
+							<Button size="sm" variant="secondary" data-testid="hire-proposal-edit">
+								<Pencil className="w-3 h-3" /> Edit & review
+							</Button>
+						</Link>
+					</div>
+				)}
 			</div>
-			{projectId && approvalId && (
-				<div className="pl-6">
-					<Link
-						to="/projects/$projectId/agents/hire"
-						params={{ projectId }}
-						search={{ approvalId }}
-					>
-						<Button size="sm" variant="secondary" data-testid="hire-proposal-edit">
-							<Pencil className="w-3 h-3" /> Edit & review
-						</Button>
-					</Link>
-				</div>
-			)}
-		</div>
+		</Callout>
 	);
 }
