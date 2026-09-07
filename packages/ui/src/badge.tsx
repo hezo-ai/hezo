@@ -1,16 +1,5 @@
 import type { ReactNode } from 'react';
-
-/** The semantic tones the design system defines. */
-export type Tone =
-	| 'neutral'
-	| 'accent'
-	| 'success'
-	| 'warning'
-	| 'danger'
-	| 'info'
-	| 'live'
-	| 'purple'
-	| 'pink';
+import { type Tone, toneDotClassName, toneSolidClassName, toneTintClassName } from './tone.js';
 
 /** Back-compat colour aliases callers still pass. */
 const aliasToTone = {
@@ -23,45 +12,6 @@ const aliasToTone = {
 } as const;
 
 export type BadgeColor = Tone | keyof typeof aliasToTone;
-
-/** Variant A "quiet tint" — soft bg + soft fg. The default. */
-const tintMap: Record<Tone, string> = {
-	neutral: 'bg-neutral-soft text-neutral-soft-fg',
-	accent: 'bg-accent-soft text-accent-soft-fg',
-	success: 'bg-success-soft text-success-soft-fg',
-	warning: 'bg-warning-soft text-warning-soft-fg',
-	danger: 'bg-danger-soft text-danger-soft-fg',
-	info: 'bg-info-soft text-info-soft-fg',
-	live: 'bg-live-soft text-live-soft-fg',
-	purple: 'bg-purple-soft text-purple-soft-fg',
-	pink: 'bg-pink-soft text-pink-soft-fg',
-};
-
-/** Variant B "solid signal" — solid bg + on-solid fg. */
-const solidMap: Record<Tone, string> = {
-	neutral: 'bg-inverse text-inverse-fg',
-	accent: 'bg-accent-solid text-accent-solid-fg',
-	success: 'bg-success text-success-solid-fg',
-	warning: 'bg-warning text-warning-solid-fg',
-	danger: 'bg-danger text-danger-solid-fg',
-	info: 'bg-info text-info-solid-fg',
-	live: 'bg-live text-live-solid-fg',
-	purple: 'bg-purple-soft text-purple-soft-fg',
-	pink: 'bg-pink text-pink-fg',
-};
-
-/** Dot colour for the "dot + label" variant (the inbox type tag). */
-const dotMap: Record<Tone, string> = {
-	neutral: 'bg-text-3',
-	accent: 'bg-accent',
-	success: 'bg-success',
-	warning: 'bg-warning',
-	danger: 'bg-danger',
-	info: 'bg-info',
-	live: 'bg-live',
-	purple: 'bg-purple-soft-fg',
-	pink: 'bg-pink',
-};
 
 function resolveTone(color: BadgeColor): Tone {
 	return (aliasToTone as Record<string, Tone>)[color] ?? (color as Tone);
@@ -97,7 +47,7 @@ export function Badge({
 				className={`${base} bg-transparent px-0.5 text-text-2 ${fontCls} ${className}`}
 				data-testid={testId}
 			>
-				<span className={`h-[7px] w-[7px] shrink-0 rounded-full ${dotMap[tone]}`} />
+				<span className={`h-[7px] w-[7px] shrink-0 rounded-full ${toneDotClassName[tone]}`} />
 				{children}
 			</span>
 		);
@@ -112,7 +62,7 @@ export function Badge({
 			</span>
 		);
 	}
-	const toneCls = variant === 'solid' ? solidMap[tone] : tintMap[tone];
+	const toneCls = variant === 'solid' ? toneSolidClassName[tone] : toneTintClassName[tone];
 	return (
 		<span className={`${base} ${toneCls} ${fontCls} ${className}`} data-testid={testId}>
 			{children}

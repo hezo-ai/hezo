@@ -2,6 +2,7 @@ import { ApprovalStatus } from '@hezo/shared';
 import { Check, Target, X } from 'lucide-react';
 import { GOAL_EXPLAINER_TOOLTIP, useResolveGoalSuggestion } from '../../hooks/use-goals';
 import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
 import { InfoTooltip } from '../ui/info-tooltip';
 import type { CommentDataOf } from './comment-data';
 
@@ -28,41 +29,49 @@ export function GoalSuggestionComment({ comment, projectId }: Props) {
 	const resolve = useResolveGoalSuggestion(projectId ?? '');
 
 	if (status === ApprovalStatus.Approved) {
+		// `role="none"` throughout: a thread renders many of these at once, and the
+		// thread is what a reader follows - one live region per card is noise.
 		return (
-			<div
-				className="flex items-start gap-2 p-2.5 rounded-lg border border-success bg-success-soft"
+			<Callout
+				tone="success"
+				role="none"
+				className="border border-success"
+				icon={<Check className="w-4 h-4" />}
 				data-testid="goal-suggestion-approved"
 			>
-				<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
 				<p className="text-sm font-medium text-text-1">
 					Goal created: <span className="font-semibold">{title}</span>
 				</p>
-			</div>
+			</Callout>
 		);
 	}
 
 	if (status === ApprovalStatus.Denied) {
 		return (
-			<div
-				className="flex items-start gap-2 p-2.5 rounded-lg border border-border bg-surface-2"
+			<Callout
+				tone="neutral"
+				role="none"
+				className="border border-border"
+				icon={<X className="w-4 h-4 text-text-3" />}
 				data-testid="goal-suggestion-denied"
 			>
-				<X className="w-4 h-4 text-text-3 shrink-0 mt-0.5" />
 				<p className="text-sm font-medium text-text-1">
 					Goal suggestion <span className="font-semibold">{title}</span> was denied
 				</p>
-			</div>
+			</Callout>
 		);
 	}
 
 	return (
-		<div
-			className="flex flex-col gap-2 p-2.5 rounded-lg border border-warning bg-warning-soft"
+		<Callout
+			tone="warning"
+			role="none"
+			className="border border-warning"
+			icon={<Target className="w-4 h-4" />}
 			data-testid="goal-suggestion-pending"
 		>
-			<div className="flex items-start gap-2">
-				<Target className="w-4 h-4 text-warning-soft-fg shrink-0 mt-0.5" />
-				<div className="flex-1">
+			<div className="flex flex-col gap-2">
+				<div>
 					<div className="flex items-start gap-1.5">
 						<p className="text-sm font-medium text-text-1">
 							Suggested goal: <span className="font-semibold">{title}</span>
@@ -83,28 +92,28 @@ export function GoalSuggestionComment({ comment, projectId }: Props) {
 						Approve to create this goal, or deny to dismiss.
 					</p>
 				</div>
+				{projectId && approvalId && (
+					<div className="flex gap-2">
+						<Button
+							size="sm"
+							disabled={resolve.isPending}
+							onClick={() => resolve.mutate({ approvalId, status: ApprovalStatus.Approved })}
+							data-testid="goal-suggestion-approve"
+						>
+							<Check className="w-3 h-3" /> Approve
+						</Button>
+						<Button
+							size="sm"
+							variant="secondary"
+							disabled={resolve.isPending}
+							onClick={() => resolve.mutate({ approvalId, status: ApprovalStatus.Denied })}
+							data-testid="goal-suggestion-deny"
+						>
+							<X className="w-3 h-3" /> Deny
+						</Button>
+					</div>
+				)}
 			</div>
-			{projectId && approvalId && (
-				<div className="flex gap-2 pl-6">
-					<Button
-						size="sm"
-						disabled={resolve.isPending}
-						onClick={() => resolve.mutate({ approvalId, status: ApprovalStatus.Approved })}
-						data-testid="goal-suggestion-approve"
-					>
-						<Check className="w-3 h-3" /> Approve
-					</Button>
-					<Button
-						size="sm"
-						variant="secondary"
-						disabled={resolve.isPending}
-						onClick={() => resolve.mutate({ approvalId, status: ApprovalStatus.Denied })}
-						data-testid="goal-suggestion-deny"
-					>
-						<X className="w-3 h-3" /> Deny
-					</Button>
-				</div>
-			)}
-		</div>
+		</Callout>
 	);
 }

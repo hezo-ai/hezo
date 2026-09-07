@@ -636,6 +636,15 @@ on `<html>` and every stacked primitive - the buttons `ConfirmDialog` renders on
 its behalf included - takes the 44px floor, while the isolated controls carry a
 44px target in every density. `density.ts` in the package is the contract.
 
+**The three things the adopting consumer worked around are now imports.** A tone
+is drawable as a block of prose (`Callout`) as well as a pill, from the tone
+tables `tone.ts` now exports - so the dashboard's local `Notice` and the regex
+that compared its colour pairs against our source both go. `ConfirmDialog` takes
+`confirmDisabled`, so a typed-name check withholds the destructive button rather
+than refusing it after the press. `Input` types a `ref` and takes a `suffix`
+rendered inside its border box, so a subdomain field's fixed domain sits inside
+the focus ring.
+
 ---
 
 ## Already satisfied upstream — do not build these

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useResolveAssetDeletion } from '../../hooks/use-comments';
 import { useI18n } from '../../lib/i18n';
 import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import type { CommentDataOf } from './comment-data';
 
@@ -40,18 +41,17 @@ export function AssetDeletionRequestComment({ comment, projectId, taskId }: Prop
 		const approved = chosen.status === 'approved';
 		const deletedCount = chosen.deleted_asset_ids?.length ?? 0;
 		return (
-			<div
-				className={`flex items-start gap-2 p-2.5 rounded-lg border ${
-					approved ? 'border-success bg-success-soft' : 'border-border bg-surface-2'
-				}`}
+			// The tone is the outcome, so it is a prop rather than a second class
+			// string. `role="none"`: a thread renders many of these at once, and the
+			// thread is what a reader follows - one live region per card is noise.
+			<Callout
+				tone={approved ? 'success' : 'neutral'}
+				role="none"
+				className={approved ? 'border border-success' : 'border border-border'}
+				icon={approved ? <Check className="w-4 h-4" /> : <X className="w-4 h-4 text-text-3" />}
 				data-testid={approved ? 'asset-deletion-approved' : 'asset-deletion-denied'}
 			>
-				{approved ? (
-					<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
-				) : (
-					<X className="w-4 h-4 text-text-3 shrink-0 mt-0.5" />
-				)}
-				<div className="flex-1">
+				<div>
 					<p className="text-sm font-medium text-text-1">
 						{approved
 							? `Deletion approved - ${deletedCount} asset${deletedCount === 1 ? '' : 's'} deleted`
@@ -61,7 +61,7 @@ export function AssetDeletionRequestComment({ comment, projectId, taskId }: Prop
 						{assets.map((a) => `assets/${a.path}`).join(', ')}
 					</p>
 				</div>
-			</div>
+			</Callout>
 		);
 	}
 

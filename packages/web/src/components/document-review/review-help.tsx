@@ -1,4 +1,5 @@
 import { TriangleAlert } from 'lucide-react';
+import { Callout } from '../ui/callout';
 import { HelpDialog } from '../ui/help-dialog';
 
 /**
@@ -56,14 +57,18 @@ export function ReviewHelp({
 					The <strong>trash button</strong> clears the entire review.
 				</li>
 			</ul>
-			<div className="mt-4 flex items-start gap-2 rounded-md bg-warning-soft p-3 text-[12.5px] leading-relaxed text-warning-soft-fg">
-				<TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-				<span>
-					{isAsset
-						? 'Any write to the asset - by you or an agent - automatically deletes all existing review comments. A review applies to the current version of the asset only.'
-						: 'Any update to the document - by you or an agent - automatically deletes all existing review comments. A review applies to the current version of the document only.'}
-				</span>
-			</div>
+			{/* Standing explanation, on screen the moment the dialog opens - a live
+			    region would have it read out with nothing having happened. */}
+			<Callout
+				tone="warning"
+				role="none"
+				icon={<TriangleAlert className="h-3.5 w-3.5" />}
+				className="mt-4"
+			>
+				{isAsset
+					? 'Any write to the asset - by you or an agent - automatically deletes all existing review comments. A review applies to the current version of the asset only.'
+					: 'Any update to the document - by you or an agent - automatically deletes all existing review comments. A review applies to the current version of the document only.'}
+			</Callout>
 		</HelpDialog>
 	);
 }
