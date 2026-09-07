@@ -1,6 +1,8 @@
 import {
+	buildSetupMessage,
 	buildSsoTokenMessage,
 	deriveAuthKeyPair,
+	deriveUnlockKey,
 	encodeSsoToken,
 	generateMnemonic,
 	SSO_TOKEN_CLOCK_SKEW_SECONDS,
@@ -18,7 +20,8 @@ import {
 	resetSsoState,
 	verifySsoAssertion,
 } from '../src/services/sso';
-import { authHeader, loginViaAuthApi, restartTestApp } from './helpers/app';
+import { safeClose } from './helpers';
+import { authHeader, createUnsetTestApp, loginViaAuthApi, restartTestApp } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const ISSUER = deriveAuthKeyPair(generateMnemonic());
@@ -283,6 +286,70 @@ describe('POST /api/auth/sso on an unlocked instance', () => {
 		withSso(null);
 		expect((await post('/api/auth/sso', { token: mint(payload()) })).status).toBe(404);
 		expect((await post('/api/auth/sso/session', { handle: 'x' })).status).toBe(404);
+	});
+});
+
+describe('PATCH /api/instance-settings/locale on a hosted instance', () => {
+	// A hosted instance never enrols a password, so a window keyed on one would
+	// never close and the route would stay world-writable for the life of every
+	// tenant. It is keyed on the master key instead: open until setup, then the
+	// SSO-minted session is the bearer that may change it.
+	let ctx: Awaited<ReturnType<typeof createUnsetTestApp>>;
+
+	beforeAll(async () => {
+		ctx = await createUnsetTestApp();
+	});
+	afterAll(async () => {
+		await safeClose(ctx.db);
+	});
+	beforeEach(() => {
+		resetSsoState();
+		withSso(SSO);
+	});
+	afterEach(() => resetRuntimeConfig());
+
+	async function patchLocale(body: unknown, token?: string): Promise<Response> {
+		return await ctx.app.request('/api/instance-settings/locale', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...(token ? authHeader(token) : {}) },
+			body: JSON.stringify(body),
+		});
+	}
+
+	it('is open before setup, refuses anonymous writes after it, and takes the SSO session', async () => {
+		expect((await patchLocale({ language: 'de' })).status).toBe(200);
+
+		const mnemonic = generateMnemonic();
+		const keys = deriveAuthKeyPair(mnemonic);
+		const unlockKey = deriveUnlockKey(mnemonic);
+		const setup = await ctx.app.request('/api/auth/setup', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				public_key: keys.publicKeyHex,
+				unlock_key: unlockKey,
+				signature: signAuthMessage(
+					keys.privateKey,
+					buildSetupMessage(keys.publicKeyHex, unlockKey),
+				),
+			}),
+		});
+		expect(setup.status).toBe(200);
+
+		expect((await patchLocale({ language: 'fr' })).status).toBe(401);
+
+		const sso = await ctx.app.request('/api/auth/sso', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token: mint(payload()) }),
+		});
+		expect(sso.status).toBe(200);
+		const { data } = (await sso.json()) as { data: { token: string } };
+		const res = await patchLocale({ language: 'fr' }, data.token);
+		expect(res.status).toBe(200);
+		expect(
+			((await res.json()) as { data: { locale: { language: string } } }).data.locale.language,
+		).toBe('fr');
 	});
 });
 

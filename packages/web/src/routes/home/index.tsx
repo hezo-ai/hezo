@@ -276,6 +276,7 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 }
 
 function WelcomeCard({ onCreate }: { onCreate: () => void }) {
+	const { t } = useI18n();
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// Project scoping is CEO-driven, but a stopped (or never-provisioned) HQ
@@ -287,10 +288,7 @@ function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 	return (
 		<Card className="mb-6 p-0 overflow-hidden" data-testid="home-welcome-card">
 			{hq && blockedHealth ? (
-				<HqContainerNotice
-					health={blockedHealth}
-					description="Setting up Hezo. You can create your first project once the HQ container is running."
-				/>
+				<HqContainerNotice health={blockedHealth} description={t('home.hqNotice')} />
 			) : (
 				<div
 					className="flex flex-col items-center gap-3 px-4 py-8 text-center"
@@ -298,15 +296,12 @@ function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 				>
 					<Building2 className="w-8 h-8 text-text-2 shrink-0" />
 					<div>
-						<h1 className="text-base font-semibold text-text-1">Get started with Hezo</h1>
-						<p className="text-[13px] text-text-2 mt-1 max-w-md">
-							Create your first project. Each one gets its own team - spin it up from a template, or
-							let the CEO scope it with you first.
-						</p>
+						<h1 className="text-base font-semibold text-text-1">{t('home.welcome.title')}</h1>
+						<p className="text-[13px] text-text-2 mt-1 max-w-md">{t('home.welcome.description')}</p>
 					</div>
 					<Button onClick={onCreate} data-testid="home-welcome-create">
 						<Plus className="w-4 h-4" />
-						New project
+						{t('home.welcome.create')}
 					</Button>
 				</div>
 			)}
@@ -439,6 +434,7 @@ function ProjectsDashboard({
 }
 
 function HomePage() {
+	const { t } = useI18n();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
 	const [createOpen, setCreateOpen] = useState(false);
 
@@ -468,7 +464,11 @@ function HomePage() {
 	const { data: intake } = useProjectIntake(noProjectsYet);
 
 	if (projectsLoading) {
-		return <div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">Loading...</div>;
+		return (
+			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">
+				{t('common.loading')}
+			</div>
+		);
 	}
 
 	const hasProject = projects.length > 0;
@@ -478,7 +478,9 @@ function HomePage() {
 	return (
 		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			<div className="mb-5 flex items-baseline justify-between gap-3">
-				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">Home</h1>
+				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">
+					{t('nav.home')}
+				</h1>
 			</div>
 
 			{showWelcome && <WelcomeCard onCreate={() => setCreateOpen(true)} />}

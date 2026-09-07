@@ -1,4 +1,14 @@
-import { DateFormat, DEFAULT_LOCALE_SETTINGS, Language, NumberFormat } from '@hezo/shared';
+import {
+	buildSetupMessage,
+	DateFormat,
+	DEFAULT_LOCALE_SETTINGS,
+	deriveAuthKeyPair,
+	deriveUnlockKey,
+	generateMnemonic,
+	Language,
+	NumberFormat,
+	signAuthMessage,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -6,7 +16,7 @@ import { getSystemMeta, LOCALE_KEYS } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createUnsetTestApp } from './helpers/app';
 
 let app: Hono<Env>;
 let db: Db;
@@ -40,27 +50,6 @@ function patchLocale(body: unknown, authToken?: string) {
 	});
 }
 
-/**
- * Simulate a fresh, un-set-up instance. `adminPasswordIsSet` is the gate the
- * route reads, so clearing the verifier is exactly the pre-onboarding state.
- */
-async function withUninitializedInstance<T>(fn: () => Promise<T>): Promise<T> {
-	const saved = await db.query<{ id: string; password_public_key: string | null }>(
-		'SELECT id, password_public_key FROM users WHERE is_superuser = true',
-	);
-	await db.query('UPDATE users SET password_public_key = NULL WHERE is_superuser = true');
-	try {
-		return await fn();
-	} finally {
-		for (const row of saved.rows) {
-			await db.query('UPDATE users SET password_public_key = $1 WHERE id = $2', [
-				row.password_public_key,
-				row.id,
-			]);
-		}
-	}
-}
-
 describe('GET /api/instance-settings', () => {
 	it('reports the default locale before anything is chosen', async () => {
 		const res = await app.request('/api/instance-settings', { headers: authHeader(token) });
@@ -72,8 +61,8 @@ describe('GET /api/instance-settings', () => {
 
 describe('GET /api/status', () => {
 	it('carries the locale publicly, so pre-auth screens can render in it', async () => {
-		// No Authorization header: the language step, master-key gate, and login
-		// form all need this before any credential exists.
+		// No Authorization header: the master-key gate and the login form both
+		// need this before any credential exists.
 		const res = await app.request('/api/status');
 		expect(res.status).toBe(200);
 		const body = await res.json();
@@ -167,29 +156,74 @@ describe('PATCH /api/instance-settings/locale authorization', () => {
 		expect(body.data.locale.language).toBe(Language.Ja);
 	});
 
-	it('is public while the instance is uninitialized, so onboarding can write it', async () => {
-		// The same window in which /api/auth/setup already lets anyone claim the
-		// instance, so this grants nothing new - and it is what lets the language
-		// step persist a choice that survives a mid-onboarding refresh.
-		await withUninitializedInstance(async () => {
-			const res = await patchLocale({ language: 'ko', date_format: 'ymd' });
-			expect(res.status).toBe(200);
-			const body = await res.json();
-			expect(body.data.locale.language).toBe(Language.Ko);
-			expect(body.data.locale.date_format).toBe(DateFormat.Ymd);
+	it('stays closed to anonymous callers on an initialized instance with no password', async () => {
+		// The window is keyed on the master key, not on an enrolled password: a
+		// hosted instance never enrols one, and a password-keyed window would
+		// have stayed open for its whole life.
+		await db.query('UPDATE users SET password_public_key = NULL WHERE is_superuser = true');
+		const res = await patchLocale({ language: 'fr' });
+		expect(res.status).toBe(401);
+	});
+});
+
+describe('PATCH /api/instance-settings/locale before the master key exists', () => {
+	// The one window the route is open in: the master key is unset, which is
+	// exactly when /api/auth/setup lets anyone claim the instance, so this grants
+	// nothing new - and it is what lets a language picked on the first screen
+	// survive a page refresh.
+	let unset: Awaited<ReturnType<typeof createUnsetTestApp>>;
+
+	beforeAll(async () => {
+		unset = await createUnsetTestApp();
+	});
+
+	afterAll(async () => {
+		await safeClose(unset.db);
+	});
+
+	function patchUnset(body: unknown) {
+		return unset.app.request('/api/instance-settings/locale', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
 		});
+	}
+
+	it('is public while the master key is unset, so the first screen can write it', async () => {
+		const res = await patchUnset({ language: 'ko', date_format: 'ymd' });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.locale.language).toBe(Language.Ko);
+		expect(body.data.locale.date_format).toBe(DateFormat.Ymd);
 	});
 
 	it('still validates while public', async () => {
-		await withUninitializedInstance(async () => {
-			const res = await patchLocale({ language: 'not-a-language' });
-			expect(res.status).toBe(400);
-		});
+		const res = await patchUnset({ language: 'not-a-language' });
+		expect(res.status).toBe(400);
 	});
 
-	it('closes again as soon as the instance is initialized', async () => {
-		const res = await patchLocale({ language: 'fr' });
+	it('closes the moment the key is enrolled', async () => {
+		const mnemonic = generateMnemonic();
+		const keys = deriveAuthKeyPair(mnemonic);
+		const unlockKey = deriveUnlockKey(mnemonic);
+		const setup = await unset.app.request('/api/auth/setup', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				public_key: keys.publicKeyHex,
+				unlock_key: unlockKey,
+				signature: signAuthMessage(
+					keys.privateKey,
+					buildSetupMessage(keys.publicKeyHex, unlockKey),
+				),
+			}),
+		});
+		expect(setup.status).toBe(200);
+		expect(unset.masterKeyManager.getState()).toBe('unlocked');
+
+		const res = await patchUnset({ language: 'fr' });
 		expect(res.status).toBe(401);
+		expect(await getSystemMeta(unset.db, LOCALE_KEYS.language)).toBe('ko');
 	});
 });
 

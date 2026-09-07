@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import type { SandboxBackend } from '@hezo/shared';
+import type { LocaleSettings, SandboxBackend } from '@hezo/shared';
 import {
 	CONNECTOR_CAPABILITIES,
 	DEFAULT_DATA_DIR,
@@ -308,6 +308,25 @@ export interface SsoConfig {
 	audience: string;
 }
 
+/**
+ * What a first run starts from, written by whoever provisioned the instance.
+ *
+ * Applied once and never pinned: the locale lands in `system_meta` at the first
+ * boot that finds none, and the project brief opens one CEO intake at the first
+ * unlock. After that the instance owns both, and a later edit to this block
+ * changes nothing. Null when nothing was seeded, which is every self-hosted
+ * instance and leaves the whole mechanism inert.
+ */
+export interface SeedConfig {
+	/** The language and formats the instance starts in, when nothing chose them yet. */
+	locale?: LocaleSettings;
+	/** A project the CEO opens an intake for at the first unlock. */
+	project?: {
+		/** The brief as written at signup. Bounded by `PROJECT_BRIEF_MAX_CHARS`. */
+		description: string;
+	};
+}
+
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
@@ -333,6 +352,8 @@ export interface HezoConfig {
 	chat: ChatConfig;
 	/** The configured SSO issuer, or null when sign-in is local only. */
 	sso: SsoConfig | null;
+	/** What a first run starts from, or null when nothing was seeded. */
+	seed: SeedConfig | null;
 	/**
 	 * Settings fixed by the deployer, or null when nothing is. Loaded from its own
 	 * file (`policyFile`) rather than the main config, so it can be reloaded on a
@@ -374,8 +395,9 @@ export function resolveDataDir(raw: string): string {
 
 /**
  * Every built-in default, in one place. This is the base of the
- * flag > config file > default merge, and the documented default column in
- * `docs/deployment/configuration.md` is generated from the same values.
+ * flag > config file > default merge. The default column in
+ * `docs/deployment/configuration.md` is written by hand against these values;
+ * no generator reads them, so a change here is a change there too.
  */
 export const DEFAULT_CONFIG: HezoConfig = {
 	port: DEFAULT_PORT,
@@ -386,6 +408,7 @@ export const DEFAULT_CONFIG: HezoConfig = {
 
 	policy: null,
 	sso: null,
+	seed: null,
 
 	database: { poolSize: 10 },
 	assetStorage: {},

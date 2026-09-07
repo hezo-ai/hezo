@@ -36,6 +36,7 @@ import { ONBOARDING_TOOLS } from './mcp/onboarding';
 import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
+import { framingMiddleware } from './middleware/framing';
 import { agentHoursRoutes } from './routes/agent-hours';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
@@ -110,6 +111,7 @@ import { DOCKER_CONTAINER_HOST_ALIAS } from './services/sandbox/endpoints';
 import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
+import { applySeedLocale, consumeSeedProject } from './services/seed';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { setStartupPhase } from './startup-progress';
@@ -476,6 +478,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	} catch (err) {
 		log.error('Failed to seed default team:', err);
 	}
+	// A provisioned instance starts in the language its owner chose. Written
+	// only when no locale is configured, so a chosen one is never overwritten,
+	// and before the app serves so the first /api/status already reports it.
+	try {
+		await applySeedLocale(db);
+	} catch (err) {
+		log.error('Failed to apply the seeded locale:', err);
+	}
 
 	// Before the app serves a request, and regardless of lock state: the API must
 	// never show a run as `running` when the process driving it is gone. Both
@@ -556,6 +566,17 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		);
 	});
 
+	// A seeded project brief becomes one CEO intake at the first unlock, which
+	// on a provisioned instance is the moment setup completes. The consumer
+	// guards its own once-ness with a marker, so a later unlock is a no-op.
+	masterKeyManager.onUnlock(() => {
+		trackBackground(
+			consumeSeedProject(db, wsManager).catch((err) =>
+				log.error('Failed to open the seeded project intake:', err),
+			),
+		);
+	});
+
 	const app = buildApp(
 		db,
 		masterKeyManager,
@@ -631,6 +652,9 @@ export function buildApp(
 		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
 		return c.text('Internal Server Error', 500);
 	});
+
+	// Outermost, so it sees the response every later layer settled on.
+	app.use('*', framingMiddleware);
 
 	// Compress text responses. Nothing was compressed before: every JSON payload
 	// and every SPA asset shipped raw, which on a self-hosted instance reached

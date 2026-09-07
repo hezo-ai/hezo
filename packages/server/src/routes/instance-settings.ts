@@ -45,7 +45,6 @@ import {
 } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireAdminEquivalentBearer } from '../middleware/auth';
-import { adminPasswordIsSet } from '../services/password';
 import type { ContainerEngine } from '../services/sandbox/types';
 
 export const instanceSettingsRoutes = new Hono<Env>();
@@ -130,16 +129,18 @@ instanceSettingsRoutes.get('/instance-settings', async (c) => {
 });
 
 /**
- * The instance display locale — the one endpoint both the onboarding language
- * screen and the Settings dialog call, so the write path is identical wherever
- * it is edited from.
+ * The instance display locale — the one endpoint the gate's corner switcher and
+ * the Settings dialog call, so the write path is identical wherever it is
+ * edited from.
  *
- * Authorization is conditional because the onboarding screen runs before any
- * credential exists. While the instance is uninitialized this is open — the
- * same window in which `POST /api/auth/setup` already lets anyone claim the
- * instance outright, so it grants nothing new, and it is what lets the language
- * choice survive a mid-onboarding page refresh. Once an admin password is
- * enrolled it is superuser-only, like every other instance setting.
+ * Authorization is conditional because the corner switcher runs before any
+ * credential exists. While the master key is unset this is open — exactly the
+ * window in which `POST /api/auth/setup` lets anyone claim the instance
+ * outright, so it grants nothing new, and it is what lets a language picked on
+ * the first screen survive a page refresh. From the moment a key exists it is
+ * admin-only, like every other instance setting. Keyed on the key rather than
+ * on an enrolled password because a hosted instance never enrols one: an
+ * issuer signs it in, so a password-keyed window would never close.
  *
  * Listed in `PUBLIC_PATHS`, so `authMiddleware` never ran and the bearer is
  * resolved here (the self-authenticating idiom `POST /api/auth/password` uses).
@@ -151,7 +152,7 @@ instanceSettingsRoutes.get('/instance-settings', async (c) => {
 instanceSettingsRoutes.patch('/instance-settings/locale', async (c) => {
 	const db = c.get('db');
 
-	if (await adminPasswordIsSet(db)) {
+	if (c.get('masterKeyManager').getState() !== 'unset') {
 		const denied = await requireAdminEquivalentBearer(c);
 		if (denied) return denied;
 	}

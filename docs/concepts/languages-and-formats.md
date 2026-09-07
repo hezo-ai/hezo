@@ -6,9 +6,9 @@ section: Concepts
 
 # Languages & formats
 
-Hezo's web app runs in twelve languages. You pick one on the very first screen, before
-anything else is set up, and Hezo guesses it from your browser so the screen usually
-arrives already answered.
+Hezo's web app runs in twelve languages. The very first screen is already in yours: Hezo
+reads it from your browser, and a language button in the top right lets you pick another
+one before anything else is set up.
 
 ## Supported languages
 
@@ -21,22 +21,26 @@ falls back to Simplified - closer than English in both cases, but not a perfect 
 
 ## Where you set it
 
-**On first run**, ahead of creating your master key. This comes first on purpose: every
-screen after it is already the product, and reading your master key instructions in a
-language you don't speak is a bad way to start. See
-[First-run setup](/docs/getting-started/first-run).
+**On first run**, with your master key. The language showing when you create the key
+becomes the instance's language, together with the date format and currency format that
+usually go with it, so every screen after that - for you and for anyone else who signs in -
+reads the same way. The button in the top right of the master-key screen is where you
+change it first. See [First-run setup](/docs/getting-started/first-run).
 
-**After that**, in **Settings -> Languages & formats**.
+**After that**, in **Settings -> Languages & formats**, where you can also change the date
+and currency formats on their own.
 
 While you are signed out - at the unlock screen after a locked start, or at the sign-in screen -
 there is a language button in the top right, because those screens have no menu to reach
 Settings through. Changing the language there applies to that browser only and tells you
-so; sign in to change it for everyone.
+so; sign in to change it for everyone. The one exception is the very first screen: until the
+master key exists there is nobody to sign in yet, so a language picked there is saved for the
+whole instance.
 
 Picking a language re-renders the picker itself straight away, so you can check it reads the
 way you expect before you commit to it. Nothing is saved at that point: the rest of the app,
-and your date and currency choices, change only when you press Continue or Save. Leave the
-screen without saving and everything stays as it was.
+and your date and currency choices, change only when you press Save. Leave the screen without
+saving and everything stays as it was.
 
 ## It is a setting for the whole instance
 

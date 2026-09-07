@@ -1280,6 +1280,20 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    **`start_team_setup`** MCP tool to assign it to itself and begin the run. There is no
    longer a `project_creation` approval row (the enum value is retained for historical
    rows only).
+3. **Seeded** - the same intake, opened by `consumeSeedProject` (`services/seed.ts`) from
+   the `seed.project` block of the config file at the first unlock, once (§ *Hosted first
+   run*). No form was submitted and no team type chosen, so the intake's `name` is a
+   placeholder derived from the brief's first sentence and the CEO is asked to propose the
+   real one. `CreateProjectIntakeInput.origin` (`'form' | 'seed'`, required) selects a row of
+   `ORIGIN_PROSE` in `services/project-intake.ts`: the greeting's opener and closing ask, the
+   task body's context paragraph, the baseline line (a seed has none chosen, never "Blank"),
+   and steps 2-3. The seed row says the brief was written at signup on hezo.ai, quotes it as a
+   blockquote between two stated rules so a heading or a step inside it cannot read as the
+   CEO's instructions, names the admin's language from the instance locale and asks for the
+   reply in it, and tells the CEO the working title never reaches `create_project` unchanged
+   (`toSlug` would mangle a non-Latin one). The form row is the dialog's prose, byte for
+   byte. From the greeting on it is the CEO-assisted path above: no wakeup, the admin's first
+   reply is the CEO's first run.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
@@ -5495,6 +5509,17 @@ unthrottled. The one exception is password auth - `routes/auth.ts` keeps an in-m
 brute-force counter (5 attempts, then a 60s lockout with exponential backoff capped at
 1h, HTTP 429) on the password-verify and password-change paths.
 
+**Framing.** Every response leaves with `Content-Security-Policy: frame-ancestors 'none'`
+unless the route wrote a policy of its own: `framingMiddleware` (`middleware/framing.ts`) is
+the outermost middleware in `buildApp`, and `serveStartupRequest` applies the same
+`refuseFraming` by hand because it runs before the app exists. The one route with its own
+policy is the signed asset route, which serves agent-authored HTML under `sandbox` and is
+framed by the app's own asset viewer - so that policy is kept, and it names itself the one
+allowed ancestor (`frame-ancestors 'self'`) rather than taking `'none'`, or the viewer would
+break. The control plane that provisions hosted instances sends the same
+`'none'` on its documents; the point on both sides is that no third-party page can draw its
+chrome around the master-key gate or the sign-in screen.
+
 ---
 
 ## 11. Web frontend
@@ -5708,9 +5733,13 @@ here), and **invalidate + refetch** (validation-heavy / long-running work). Erro
 on rollback; successes are confirmed by the UI change itself.
 
 **Locale.** The instance has one display locale - language, date field order, and money
-punctuation - chosen on a first-run screen that runs *ahead of master-key generation* and
-editable afterwards at Settings › Languages & formats. It is global (no per-user override)
-and lives in three `system_meta` keys, so it needed no migration.
+punctuation - recorded by the request that enrols the master key (`POST /api/auth/setup`
+carries the gate's current `LocaleSettings`, persisted only when none is configured), by a
+`seed` block on a provisioned instance (§ *Hosted first run*), or from the gate's corner
+switcher, and editable afterwards at Settings › Languages & formats. There is no language
+step of its own: the master-key gate renders in the browser's language and that is what
+setup records. It is global (no per-user override) and lives in three `system_meta` keys, so
+it needed no migration.
 
 Three axes rather than one BCP-47 tag: field order and month language are independent (there
 is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
@@ -5724,7 +5753,8 @@ renders in it before a credential exists (the boot-time status handler omits it 
 open yet). `I18nProvider` (`lib/i18n`) wraps `ThemeProvider` in `main.tsx`, above both the
 router and the `Toaster`; it seeds from a localStorage *render hint* to avoid a first-paint
 flash, then adopts the server value - but only once `localeConfigured` is true, since the
-pre-choice default would otherwise overwrite `navigator.languages` detection.
+pre-choice default would otherwise overwrite `navigator.languages` detection, which is the
+language the first gate renders in and the setup request then records.
 `lib/format-date.ts` keeps its exported signatures and reads the active locale from module
 state (sound because the locale is global and the provider is its only writer), so its
 consumers were untouched. Catalogs are committed JSON per language, statically imported, with
@@ -5755,11 +5785,14 @@ renders under the preview. Its hosts pass a `MessageKey` rather than a translate
 `submitLabel`, since a string translated in the host is frozen in the committed language.
 
 `PATCH /api/instance-settings/locale` is the single write path. It is listed in
-`PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
-same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
-in-route via `requireAdminEquivalentBearer`. The language button that hosts the editor appears
-only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
-than failing.
+`PUBLIC_PATHS` but self-authenticating: open only while `masterKeyManager.getState()` is
+`unset` (exactly the window `POST /api/auth/setup` is open in), admin-only after, resolving
+the bearer in-route via `requireAdminEquivalentBearer`. It used to key on an enrolled admin
+password, which a hosted instance never has - an issuer signs it in - so on every tenant the
+route stayed world-writable for life. The language button that hosts the editor appears only
+on pre-auth surfaces; an unauthorized save there applies to that browser alone rather than
+failing, and on a self-hosted instance that now covers the gap between the key and the
+password step as well.
 
 **Responsive.** Mobile-first is mandatory — build the mobile layout first, enhance with
 `sm:`/`md:`/`lg:`. Three breakpoints (mobile <768px, tablet 768–1023px, desktop 1024px+).
@@ -5905,6 +5938,50 @@ shorter than the image it writes), and the maskable variant had no safe zone at 
 
 ---
 
+### Hosted first run
+
+A hosted instance (one with an `sso` block, § *Configuration resolution*) is provisioned
+by a control plane on someone's behalf, and arrives with a `seed` block carrying what that
+person already told the plane: their language and, when they wrote one, a project brief.
+
+The gate order on any fresh instance is: the boot screen while `/api/status` reports
+`starting`; `MasterKeyGate` (`unset`, then `locked` on every later restart) with the corner
+locale switcher; on a hosted instance `SsoRedirect` to the issuer and back with `#sso=`; then
+`SetupGate` with the AI-provider step (the password step is omitted when an issuer owns
+sign-in); then `/home`. There is no language step: the master-key gate renders in the
+browser's language, the corner switcher can change it, and the setup request records
+whichever is showing - unless the seed already did.
+
+`services/seed.ts` is the one consumer of the block, and the two halves land at the two
+points where the instance can first act on them:
+
+- **The locale, at boot.** `applySeedLocale` runs in the `workspace` startup phase after
+  `seedDefaultTeam`, before the app serves, and writes `seed.locale` into `system_meta`
+  only when `instanceLocaleIsConfigured` is false. `/api/status` therefore reports
+  `localeConfigured: true` from the first request, and `useSyncInstanceLocale` adopts the
+  language on every browser. A locale anyone chose - from the gate's corner switcher or
+  from Settings - is never overwritten, on this or any later boot.
+- **The brief, at the first unlock.** `consumeSeedProject` is registered on
+  `masterKeyManager.onUnlock`, which `setup()` fires before the setup route returns and
+  every later `unlock()` fires again. It writes the `seed_project:consumed` marker into
+  `system_meta` first, as `INSERT ... ON CONFLICT DO NOTHING RETURNING`, and only the
+  caller that got a row back proceeds to `createProjectIntake` - so a restart, a rebuilt
+  host or two processes on one database open one intake, and only a wiped database (the
+  plane's `reset`) seeds again. A null intake or a thrown error deletes the marker and logs,
+  so a transient (HQ or the CEO missing) is tried once more at the next unlock rather than
+  papered over. It runs under `trackBackground` because the unlock hook is synchronous and
+  nothing awaits it.
+
+The intake needs only HQ and an enabled CEO, both seeded before any key exists, and it
+queues no run: by the time the AI-provider step finishes and `/home` mounts, the greeting
+is waiting in `ProjectIntakeHomePanel` and the admin's first reply is the CEO's first run.
+The one ordering that matters is the superuser: `POST /api/auth/setup` calls
+`ensureSuperuserId` **before** `masterKeyManager.setup()`, because the greeting's
+`fireAdminMention` fans out to the superuser and returns silently when there is none -
+and that inbox row is what parks the CEO's heartbeat against an unanswered thread
+(§ *The parked-on-admin suppression*). Created after `setup()` returned, as it used to be,
+the mention would have raced the intake and lost.
+
 ## 12. Build, release, migrations & upgrades
 
 ### Configuration resolution
@@ -5937,6 +6014,17 @@ than a generic "unrecognized key":
   argv is visible in the process list.
 - **`reset`** - it renames the embedded `pgdata` aside, which is a one-off action. In a
   persistent file it would wipe the database on **every** restart.
+
+**The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
+first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
+running instance applies to the same data - `parseLocaleSettingsPatch` for the locale, and
+`parseProjectBrief` (`@hezo/shared`, beside it) for the brief, which counts
+`PROJECT_BRIEF_MAX_CHARS` in code points so a brief the signup form accepted is never refused
+here. Like `sso`, it is file-only and inert when absent; unlike `sso`, every key inside is
+optional. `services/seed.ts` consumes it: the locale at boot when none is configured, the
+brief once at the first unlock (§ *Hosted first run*). An older binary
+handed a file carrying `seed` refuses to start naming the key, which is the strict schema
+doing its job - a plane writes the block only for a release that reads it.
 
 **Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
 reading were removed with no shim and no warning, so an instance whose supervisor still

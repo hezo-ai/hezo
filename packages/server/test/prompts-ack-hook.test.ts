@@ -18,7 +18,7 @@ import {
  * paths and a different obligation.
  */
 describe('prompt-bearing classification', () => {
-	it('covers the four surfaces that carry agent-facing prose', () => {
+	it('covers the five surfaces that carry agent-facing prose', () => {
 		expect(
 			promptBearingFiles([
 				'agents/app-dev/engineer.md',
@@ -26,8 +26,9 @@ describe('prompt-bearing classification', () => {
 				'skills/code-review.md',
 				'marketplace/teams/investment.json',
 				'packages/server/src/services/template-resolver.ts',
+				'packages/server/src/services/project-intake.ts',
 			]),
-		).toHaveLength(5);
+		).toHaveLength(6);
 	});
 
 	it('ignores everything else, including tests and docs', () => {
@@ -42,10 +43,12 @@ describe('prompt-bearing classification', () => {
 		).toEqual([]);
 	});
 
-	it('matches template-resolver.ts exactly, not by prefix', () => {
+	it('matches the prose-bearing services exactly, not by prefix', () => {
 		const hit = (f: string) => PROMPT_BEARING_PATTERNS.some((p) => p.test(f));
 		expect(hit('packages/server/src/services/template-resolver.ts')).toBe(true);
 		expect(hit('packages/server/test/template-resolver.test.ts')).toBe(false);
+		expect(hit('packages/server/src/services/project-intake.ts')).toBe(true);
+		expect(hit('packages/server/test/project-intake.test.ts')).toBe(false);
 	});
 });
 

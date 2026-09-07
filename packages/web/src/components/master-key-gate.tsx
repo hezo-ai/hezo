@@ -19,7 +19,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { authenticateWithMnemonic } from '../lib/auth';
 import { copyToClipboard } from '../lib/clipboard';
-import { useI18n } from '../lib/i18n';
+import { Trans, useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { GateLocaleSwitcher } from './locale/locale-switcher';
@@ -83,7 +83,8 @@ interface MasterKeyFormProps {
 }
 
 export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFormProps) {
-	const { t } = useI18n();
+	// The locale the gate is showing is what setup records for the instance.
+	const { t, language, date_format, number_format } = useI18n();
 	const [key, setKey] = useState('');
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [error, setError] = useState('');
@@ -166,19 +167,19 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 		// In setup we're always on the confirm step here: the pasted phrase must
 		// match the phrase we generated, so we know the user captured all 12 words.
 		if (isUnset && normalizeMnemonic(key) !== generatedKey) {
-			setError("That doesn't match your master key. Paste all 12 words exactly.");
+			setError(t('masterKey.mismatch'));
 			return;
 		}
 		const phrase = isUnset ? (generatedKey ?? '') : normalizeMnemonic(key);
 		if (!phrase) return;
 		setError('');
 		if (!validateMnemonic(phrase)) {
-			setError('That is not a valid 12-word master key.');
+			setError(t('masterKey.invalid'));
 			return;
 		}
 		setLoading(true);
 		try {
-			await authenticateWithMnemonic(phrase, state);
+			await authenticateWithMnemonic(phrase, state, { language, date_format, number_format });
 			if (onAuthenticated) {
 				onAuthenticated();
 				return;
@@ -191,7 +192,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 			}
 		} catch (err: unknown) {
 			const apiErr = err as { message?: string };
-			setError(apiErr.message || 'Invalid master key');
+			setError(apiErr.message || t('masterKey.failed'));
 			setLoading(false);
 		}
 	}
@@ -205,14 +206,14 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 	}
 
 	const heading = !isUnset
-		? 'Unlock Hezo'
+		? t('masterKey.unlockTitle')
 		: phase === 'confirm'
-			? 'Confirm you saved your key'
-			: 'Create your master key';
+			? t('masterKey.confirmTitle')
+			: t('masterKey.createTitle');
 	const subtitle = !isUnset
-		? 'The instance is locked. Enter your 12-word master key to bring it back online.'
+		? t('masterKey.unlockSubtitle')
 		: phase === 'confirm'
-			? 'Paste the 12 words back so we know you have the full phrase. You can always go back.'
+			? t('masterKey.confirmSubtitle')
 			: // Generate phase: the callout below the heading replaces a one-line subtitle.
 				null;
 
@@ -247,7 +248,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 				{isUnset && phase === 'generate' && !generatedKey && (
 					<Button type="button" variant="secondary" onClick={handleGenerate}>
 						<KeyRound className="w-4 h-4" />
-						Generate master key
+						{t('masterKey.generate')}
 					</Button>
 				)}
 
@@ -265,17 +266,23 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 						<div className="flex gap-2.5 items-start">
 							<AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
 							<span>
-								<span className="font-semibold text-text-1">
-									No one can recover it - not even Hezo.
-								</span>{' '}
-								Lose these words and your data is locked away for good.
+								<span className="font-semibold text-text-1">{t('masterKey.noRecoveryTitle')}</span>{' '}
+								{t('masterKey.noRecovery')}
 							</span>
 						</div>
 						<div className="flex gap-2.5 items-start">
 							<Lock className="w-4 h-4 shrink-0 mt-0.5" />
 							<span>
-								<span className="font-semibold text-text-1">Save it now</span> in a password manager
-								or another safe place - you'll confirm it on the next step.
+								<Trans
+									k="masterKey.saveNow"
+									vars={{
+										lead: (
+											<span className="font-semibold text-text-1">
+												{t('masterKey.saveNowLead')}
+											</span>
+										),
+									}}
+								/>
 							</span>
 						</div>
 					</div>
@@ -285,13 +292,13 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 					<div className="flex flex-col gap-3">
 						<div className="flex items-center justify-between">
 							<div className="flex items-center gap-2">
-								<span className="text-eyebrow text-text-2">Your master key</span>
-								<Tooltip content="Generate a new master key">
+								<span className="text-eyebrow text-text-2">{t('masterKey.yourKey')}</span>
+								<Tooltip content={t('masterKey.regenerate')}>
 									<button
 										type="button"
 										onClick={handleGenerate}
 										disabled={regenerating}
-										aria-label="Generate a new key"
+										aria-label={t('masterKey.regenerateAria')}
 										className="text-text-3 hover:text-text-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
 									>
 										<RefreshCw className={`w-3.5 h-3.5 ${regenerating ? 'animate-spin' : ''}`} />
@@ -302,16 +309,16 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 								type="button"
 								onClick={() => setRevealed((v) => !v)}
 								disabled={regenerating}
-								aria-label={revealed ? 'Hide key' : 'Show key'}
+								aria-label={revealed ? t('masterKey.hideKey') : t('masterKey.showKey')}
 								className="flex items-center gap-1.5 text-xs text-text-3 hover:text-text-1 disabled:opacity-40"
 							>
 								{revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-								{revealed ? 'Hide' : 'Show'}
+								{revealed ? t('masterKey.hide') : t('masterKey.show')}
 							</button>
 						</div>
 						<ol
 							className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"
-							aria-label="Master key"
+							aria-label={t('setup.step.masterKey')}
 						>
 							{gridWords.map((word, index) => (
 								<li
@@ -342,17 +349,17 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 				{showEntry && (
 					<div className="flex flex-col gap-1.5">
 						<label htmlFor="mnemonic-entry" className="text-sm font-medium text-text-1">
-							Master Key
+							{t('masterKey.fieldLabel')}
 						</label>
 						<PasswordInput
 							id="mnemonic-entry"
-							showLabel="Show key"
-							hideLabel="Hide key"
+							showLabel={t('masterKey.showKey')}
+							hideLabel={t('masterKey.hideKey')}
 							className="font-mono"
 							value={key}
 							onChange={(e) => setKey(e.target.value)}
 							placeholder={
-								isUnset ? 'Paste your 12-word master key' : 'Enter your 12-word master key'
+								isUnset ? t('masterKey.pastePlaceholder') : t('masterKey.enterPlaceholder')
 							}
 							autoComplete="off"
 							autoCapitalize="none"
@@ -367,18 +374,18 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 					(copyClicked ? (
 						<div className="flex flex-col gap-1.5">
 							<Button type="button" onClick={goToConfirm} disabled={countdown > 0}>
-								{countdown > 0 ? `Continue (${countdown})` : 'Continue'}
+								{countdown > 0
+									? t('masterKey.continueIn', { count: countdown })
+									: t('common.continue')}
 							</Button>
 							{countdown > 0 && (
-								<p className="text-center text-xs text-text-3">
-									Take a moment to save your key somewhere safe.
-								</p>
+								<p className="text-center text-xs text-text-3">{t('masterKey.saveReminder')}</p>
 							)}
 						</div>
 					) : (
 						<Button type="button" onClick={handleCopy} disabled={regenerating}>
 							<Copy className="w-4 h-4" />
-							Copy to clipboard
+							{t('masterKey.copy')}
 						</Button>
 					))}
 
@@ -390,7 +397,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 						disabled={loading || !key.trim()}
 					>
 						{loading && <Loader2 className="w-4 h-4 animate-spin" />}
-						Confirm key and continue
+						{t('masterKey.confirmAndContinue')}
 					</Button>
 				)}
 
@@ -402,7 +409,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 						disabled={loading || !key.trim()}
 					>
 						{loading && <Loader2 className="w-4 h-4 animate-spin" />}
-						Unlock
+						{t('masterKey.unlock')}
 					</Button>
 				)}
 			</form>

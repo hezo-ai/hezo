@@ -908,6 +908,10 @@ export function resolveConfig(
 		// line is visible in the process table to every account on the box.
 		sso: file.sso ?? null,
 
+		// File-only as well: a provisioner writes the file, and a brief on the
+		// command line would sit in the process table.
+		seed: file.seed ?? null,
+
 		reset,
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		configPath,

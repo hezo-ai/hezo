@@ -19,7 +19,6 @@ import { PwaInstallPrompt } from '../components/pwa-install-prompt';
 import { ReloadPromptBanner } from '../components/reload-prompt-banner';
 import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
-import { LanguageStep } from '../components/setup/language-step';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { SsoRedirect } from '../components/sso-redirect';
 import { StartingScreen } from '../components/starting-screen';
@@ -133,7 +132,8 @@ function AppShell() {
 	// the payload already being fetched rather than requesting it again. Absent
 	// while the server is booting, in which case the stored hint stands; and
 	// ignored until actually configured, so the default never overwrites the
-	// browser detection that pre-answers the language step.
+	// browser detection the first gate renders in - which is the language the
+	// setup request then records for the instance.
 	useSyncInstanceLocale(status?.locale, status?.localeConfigured);
 	// Session probe: only meaningful (and only fired) once the instance is unlocked.
 	// A 401 here means "unlocked but no valid session → show the password login".
@@ -250,16 +250,6 @@ function AppShell() {
 		// "Retrying…" — that state is surfaced only on the explicit Retry-now button.
 		const message = isNetwork ? t('connection.unreachable') : (raw ?? '');
 		return <UnreachableScreen message={message} isNetwork={isNetwork} onRetry={refetch} />;
-	}
-
-	// Step 0 of a fresh instance, ahead of the master key. Only ever shown when
-	// the operator has never chosen a locale AND the instance is brand new
-	// (`unset`): an initialized instance in the locked state predates this feature at worst,
-	// and must land on the unlock screen rather than be re-onboarded. The locale
-	// control stays in the corner of every later gate, so this never becomes the
-	// only chance to set it.
-	if (status.masterKeyState === 'unset' && !status.localeConfigured) {
-		return <LanguageStep />;
 	}
 
 	if (status.masterKeyState !== 'unlocked') {
