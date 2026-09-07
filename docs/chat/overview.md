@@ -146,6 +146,20 @@ something else. That is deliberate, so it takes a deliberate action:
 Anything already queued stays queued behind the message you cut in with. The queue
 lives in your browser, per room, and does not survive a page reload.
 
+## Why the first reply is quick
+
+Chat replies run in the same containers your tasks run in, claimed for one reply and
+handed back after. Two things keep that from showing:
+
+- **A container's worth of the memory budget is held back for chat.** Task runs are
+  admitted up to the budget less that reservation, so however busy your agents are,
+  a reply always has room to start.
+- **Focusing the message box starts the container.** If the project has nothing
+  running, the wait for one happens while you type instead of after you hit send.
+  Nothing is reserved standing idle - a project already holding a container skips
+  this entirely - and if the budget or the hours allowance is full, it simply does
+  not happen.
+
 ## What a chat turn costs
 
 Chat is metered like everything else. Each turn's model spend lands on the agent's

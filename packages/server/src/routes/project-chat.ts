@@ -13,12 +13,15 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { trackBackground } from '../lib/background';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
+import { buildContainerDeps } from '../lib/container-deps';
 import { buildCursorPage, decodeCursor, encodeCursor } from '../lib/pagination';
 import { isUuid } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { postChatSystemMessage } from '../services/chat-breadcrumbs';
+import { prewarmChatContainer } from '../services/containers';
 import { hoursQuotaExhausted } from '../services/run-concurrency';
 import { CreateTaskError, createTask } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
@@ -153,6 +156,25 @@ projectChatRoutes.get('/projects/:projectId/chat/conversations', async (c) => {
 		groups: page.data,
 		groups_next_cursor: page.meta.next_cursor,
 	});
+});
+
+// Warm a container for this project before its next chat turn asks for one.
+// Fired when a composer takes focus - the earliest honest signal that a turn is
+// coming - so a project holding nothing pays its cold provision while the
+// operator is still typing rather than afterwards.
+//
+// Answers at once and warms in the background: nothing in the response depends
+// on the outcome, and holding a request open for a whole provision would be a
+// round trip spent waiting. A refusal stays silent here; the send that follows
+// raises capacity and hours in the conversation, in the wording that path owns.
+//
+// HQ routes here too - the CEO chat runs in the HQ project's pool like any
+// other room - so this is the one prewarm for every chat surface.
+projectChatRoutes.post('/projects/:projectId/chat/prewarm', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const deps = buildContainerDeps(c);
+	trackBackground(prewarmChatContainer(deps, projectId));
+	return ok(c, { started: true });
 });
 
 /**

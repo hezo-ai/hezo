@@ -32,6 +32,7 @@ import {
 	type ChatMessage,
 	type ChatRoom,
 	useChat,
+	useChatPrewarm,
 } from '../../hooks/use-chat';
 import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
@@ -167,6 +168,9 @@ export function ChatSurface({
 	// The message the operator is converting into a task, while the dialog is up.
 	const [convertMessage, setConvertMessage] = useState<ChatMessage | null>(null);
 	const uploadAttachment = useUploadChatAttachment(roomProjectSlug);
+	// The CEO's room runs in HQ's pool, so its prewarm is HQ's - the same scope
+	// its uploads and labels take.
+	const prewarm = useChatPrewarm(roomProjectSlug ?? hq?.slug);
 	const {
 		isDragActive,
 		visibleAttachments,
@@ -590,6 +594,7 @@ export function ChatSurface({
 							<textarea
 								ref={inputRef}
 								value={draft}
+								onFocus={prewarm}
 								onChange={(e) => setDraft(e.target.value)}
 								onKeyDown={(e) => {
 									if (e.key === 'Enter' && !e.shiftKey) {

@@ -7,6 +7,7 @@ import {
 	type ContainerDeps,
 	PoolCapacityError,
 	PoolHoursExhaustedError,
+	prewarmChatContainer,
 } from '../src/services/containers';
 import { listAllContainers } from '../src/services/sandbox/pool-db';
 import type { ContainerConfig, ContainerEngine } from '../src/services/sandbox/types';
@@ -723,6 +724,63 @@ describe('acquireRunContainer for a chat turn', () => {
 		} finally {
 			await second.release();
 			await first.release();
+		}
+	});
+});
+
+/**
+ * Warming a container ahead of the turn that will want it.
+ *
+ * The lane already guarantees a chat turn a slot and the pool keeps a project's
+ * last member resumable, so what this covers is the one case neither reaches: a
+ * project holding nothing, where the turn would pay a cold provision with a
+ * person watching. It is an ordinary `chat-turn` claim released at once, so the
+ * assertions are that it leaves a container *idle* rather than held, that it
+ * declines to buy a second one when the project can already serve a turn, and
+ * that a refusal stays a no-op rather than an error the operator never asked for.
+ */
+describe('prewarming a chat container', () => {
+	beforeEach(resetPool);
+
+	it('leaves a warm idle container for a project that had none', async () => {
+		const project = await freshProject('Prewarm Cold');
+		expect(await prewarmChatContainer(deps(provisioningDocker()), project)).toBe(true);
+		const members = await listAllContainers(db);
+		const mine = members.filter((m) => m.project_id === project);
+		expect(mine).toHaveLength(1);
+		// Idle, not busy: the point is a container the next turn can take off the
+		// ladder's first rung, not one this call is still holding.
+		expect(mine[0].state).toBe('idle');
+	});
+
+	it('buys nothing when the project can already serve a turn', async () => {
+		const project = await freshProject('Prewarm Warm');
+		const docker = provisioningDocker();
+		expect(await prewarmChatContainer(deps(docker), project)).toBe(true);
+		// Second call: an idle member is already there, so it declines rather than
+		// provisioning a container nothing asked for.
+		expect(await prewarmChatContainer(deps(docker), project)).toBe(false);
+		expect((await listAllContainers(db)).filter((m) => m.project_id === project)).toHaveLength(1);
+	});
+
+	it('declines quietly when the allowance is spent, rather than throwing', async () => {
+		// The send that follows raises the refusal in the conversation, in the
+		// wording that path owns. A prewarm nobody asked for says nothing.
+		const project = await freshProject('Prewarm Refused');
+		await setMonthlyContainerHours(db, 10);
+		await db.query(
+			`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+			 VALUES ('prewarm-hours-spent', date_trunc('month', now() AT TIME ZONE 'UTC'),
+			         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '10 hours', 'docker')`,
+		);
+		try {
+			expect(await prewarmChatContainer(deps(provisioningDocker()), project)).toBe(false);
+			expect((await listAllContainers(db)).filter((m) => m.project_id === project)).toHaveLength(0);
+		} finally {
+			await setMonthlyContainerHours(db, 0);
+			await db.query(
+				`DELETE FROM container_uptime_entries WHERE container_id = 'prewarm-hours-spent'`,
+			);
 		}
 	});
 });

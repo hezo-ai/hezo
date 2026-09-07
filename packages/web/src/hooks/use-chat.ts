@@ -881,5 +881,29 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	};
 }
 
+/**
+ * Warm a container for this project's next chat turn.
+ *
+ * Called when a composer takes focus - the earliest honest signal that a turn is
+ * coming. The chat lane already guarantees the turn a slot and the pool keeps a
+ * project's last member resumable, so this only pays off in one case: a project
+ * holding no container at all, where the turn would otherwise pay a cold
+ * provision while the operator watches. That provision now overlaps the typing.
+ *
+ * Once per project per mount, and fire-and-forget. The server dedupes concurrent
+ * calls and stays silent on a refusal; the send that follows raises capacity and
+ * hours in the conversation itself, so there is nothing here worth reporting.
+ */
+export function useChatPrewarm(projectSlug: string | null | undefined): () => void {
+	const firedFor = useRef<string | null>(null);
+	return useCallback(() => {
+		if (!projectSlug || firedFor.current === projectSlug) return;
+		firedFor.current = projectSlug;
+		void api
+			.post(`/api/projects/${encodeURIComponent(projectSlug)}/chat/prewarm`, {})
+			.catch(() => undefined);
+	}, [projectSlug]);
+}
+
 /** Stable identity for "no participants" so it never re-triggers effects. */
 const EMPTY_PARTICIPANTS: readonly GroupParticipant[] = Object.freeze([]);

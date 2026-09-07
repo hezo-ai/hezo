@@ -28,6 +28,31 @@ function seedConversation(messages: ChatMessage[], compactedCount = 0) {
 	});
 }
 
+test('focusing the composer warms a container for the room ahead of the send', async () => {
+	// The wiring, not the pool: focus is the earliest honest signal that a turn is
+	// coming, and the CEO's room warms HQ's pool. What it buys (a cold provision
+	// overlapping the typing) is asserted in the server tier; what matters here is
+	// that the composer actually asks for it.
+	const { db } = getTestContext();
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('app-header-chat')).click();
+	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
+
+	// The harness seeds HQ a container, which is exactly the case a prewarm
+	// declines - so clear the pool first to put the room in the state the call
+	// exists for: a project holding nothing.
+	await db.query('DELETE FROM container_pool_members');
+	input.focus();
+
+	// The route answers before it warms, so the effect is the thing to wait for.
+	await waitFor(async () => {
+		const rows = await db.query<{ n: number }>(
+			'SELECT COUNT(*)::int AS n FROM container_pool_members',
+		);
+		expect(rows.rows[0].n).toBeGreaterThan(0);
+	});
+});
+
 test('a spent hours allowance warns in the composer, without locking it', async () => {
 	// The refusal itself is the server's (decision 14 keeps chat metered). What
 	// this pins is that the operator learns it *before* typing a message that

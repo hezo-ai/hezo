@@ -562,6 +562,20 @@ left `starting`/`running`/`suspended` by a previous process, `suspended` include
 because the release that parked rows there is gone and a leftover would wedge the
 singleton. `suspended` is deliberately **not** accepted by `authMiddleware`.
 
+**A composer's focus warms the pool.** `POST /projects/:id/chat/prewarm` runs
+`prewarmChatContainer` in the background: an ordinary `chat-turn` acquire, released
+immediately, so what it leaves is an idle member the next turn takes off the ladder's
+first rung. It is guarded per project by its own lock registry (a prewarm is held
+across a whole acquire, which takes the lifecycle lock itself) and declines outright
+when the project already holds an idle, suspended or busy member, since each of those
+already serves the next turn without a cold provision. The lane guarantees a chat turn
+a *slot* and `planSurplusIdleRetirement` keeps a project's last member resumable, so
+the case this exists for is the remaining one: a project holding nothing, where the
+turn would otherwise pay image resolve, clone and install with a person watching.
+Every refusal - full budget, spent allowance, archived project - is a silent no-op,
+because the send that follows raises capacity and hours in the conversation itself.
+HQ routes here like any project, so the CEO room warms through the same path.
+
 **A turn's provider is resolved when it runs.** `buildTurnSession` calls
 `resolveInvocationSelection` (the one copy of the precedence: the agent's
 `model_override_*`, else the instance default) and bakes the result into that turn's

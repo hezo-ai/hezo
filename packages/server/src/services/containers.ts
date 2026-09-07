@@ -1444,6 +1444,68 @@ export async function acquireRunContainer(
 const MAX_ACQUIRE_ATTEMPTS = 8;
 
 /**
+ * One prewarm at a time per project, so two composers focusing at once do not
+ * each provision a container the other is about to make redundant.
+ *
+ * Its own registry rather than the lifecycle lock: this is held across a whole
+ * acquire, which takes that lock itself.
+ */
+const prewarmLocks: KeyedLockRegistry = new Map();
+
+/**
+ * Bring a container up for a project *before* its next chat turn asks for one.
+ *
+ * The chat lane guarantees a turn a slot, and the pool's warm-start floor keeps
+ * a project's last member resumable, so the only genuinely slow case left is a
+ * project holding nothing at all: that turn pays a cold provision - image
+ * resolve, clone, install - while a person watches a spinner. Focusing the
+ * composer is the earliest honest signal that a turn is coming, and this is what
+ * that signal buys: the provision overlaps the typing instead of following it.
+ *
+ * **An ordinary `chat-turn` claim, released at once.** Nothing new is reserved
+ * and no rung is skipped, so the memory budget, the hours allowance and the
+ * whole ladder rule on a prewarm exactly as they rule on the turn it precedes.
+ * Releasing immediately is what makes it a *warm* container rather than a held
+ * one: it lands back in the pool as idle, where the next turn - chat or task -
+ * takes it off the first rung.
+ *
+ * **Never speaks up.** A refusal here is not a failure the operator asked for:
+ * the send that follows raises capacity and hours in the conversation itself,
+ * with the wording that path already owns. So a full budget, a spent allowance
+ * or an archived project simply means no prewarm, and the answer is `false`.
+ *
+ * Returns whether a container was actually warmed, which is what the tests
+ * assert on; callers treat it as advisory.
+ */
+export async function prewarmChatContainer(
+	deps: ContainerDeps,
+	projectId: string,
+): Promise<boolean> {
+	return withKeyedLock(prewarmLocks, projectId, async () => {
+		// A member in any of these states already serves the next turn without a
+		// cold provision - idle takes it off rung two, suspended resumes in about a
+		// second, and busy is one about to become idle. Prewarming past them would
+		// buy nothing and bill for it.
+		const members = await loadPoolMembers(deps.db, projectId);
+		if (members.some((m) => m.state === 'idle' || m.state === 'suspended' || m.state === 'busy')) {
+			return false;
+		}
+		try {
+			const acquired = await acquireRunContainer(deps, projectId, null, 'chat-turn');
+			await acquired.release();
+			return true;
+		} catch (e) {
+			if (e instanceof PoolCapacityError) return false;
+			// Anything else is a real fault - an unreachable engine, an archived
+			// project - and it belongs in the log rather than in the operator's face,
+			// since nobody asked for this call.
+			logger.warn(`<chat> prewarm failed for project ${projectId}: ${String(e)}`);
+			return false;
+		}
+	});
+}
+
+/**
  * Reflect a resume on the project row, which is what the Container page reads.
  *
  * `projects.container_*` is still the surface an operator sees, so a container
