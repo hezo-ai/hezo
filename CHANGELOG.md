@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.60.0 - 2026-09-07
+
+### Features
+
+- **ui:** a tone as a paragraph, a confirmation that can withhold, a field with a ref and a suffix ([#1086](https://github.com/hezo-ai/hezo/pull/1086))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.59.2...0.60.0
+
 ## 0.59.2 - 2026-09-06
 
 ### Bug Fixes
