@@ -215,3 +215,19 @@ test('a token arriving before setup shows the setup screen, not an error', async
 	await expect(page.getByTestId('sso-redirect')).toHaveCount(0);
 	await expect(page.getByText(/did not complete/i)).toHaveCount(0);
 });
+
+// The locale route is the one write open before any credential exists, so the
+// corner switcher can save on the first screen. A hosted instance never enrols
+// a password, so the window has to close on the master key instead - keyed on
+// a password it stayed open for the life of every tenant.
+test('the locale route closes once the master key exists', async ({ page }) => {
+	const url = `http://localhost:${GATE_SERVER_PORT}/api/instance-settings/locale`;
+	await startServer({ reset: true, enrol: false });
+	const open = await page.request.patch(url, { data: { language: 'de' } });
+	expect(open.status()).toBe(200);
+
+	// Same database, now enrolled: the window is shut to anyone without a session.
+	await startServer({ reset: false, enrol: true });
+	const closed = await page.request.patch(url, { data: { language: 'fr' } });
+	expect(closed.status()).toBe(401);
+});

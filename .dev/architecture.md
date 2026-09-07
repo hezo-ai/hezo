@@ -5733,11 +5733,14 @@ renders under the preview. Its hosts pass a `MessageKey` rather than a translate
 `submitLabel`, since a string translated in the host is frozen in the committed language.
 
 `PATCH /api/instance-settings/locale` is the single write path. It is listed in
-`PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
-same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
-in-route via `requireAdminEquivalentBearer`. The language button that hosts the editor appears
-only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
-than failing.
+`PUBLIC_PATHS` but self-authenticating: open only while `masterKeyManager.getState()` is
+`unset` (exactly the window `POST /api/auth/setup` is open in), admin-only after, resolving
+the bearer in-route via `requireAdminEquivalentBearer`. It used to key on an enrolled admin
+password, which a hosted instance never has - an issuer signs it in - so on every tenant the
+route stayed world-writable for life. The language button that hosts the editor appears only
+on pre-auth surfaces; an unauthorized save there applies to that browser alone rather than
+failing, and on a self-hosted instance that now covers the gap between the key and the
+password step as well.
 
 **Responsive.** Mobile-first is mandatory — build the mobile layout first, enhance with
 `sm:`/`md:`/`lg:`. Three breakpoints (mobile <768px, tablet 768–1023px, desktop 1024px+).

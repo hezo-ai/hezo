@@ -33,7 +33,9 @@ and currency formats on their own.
 While you are signed out - at the unlock screen after a locked start, or at the sign-in screen -
 there is a language button in the top right, because those screens have no menu to reach
 Settings through. Changing the language there applies to that browser only and tells you
-so; sign in to change it for everyone.
+so; sign in to change it for everyone. The one exception is the very first screen: until the
+master key exists there is nobody to sign in yet, so a language picked there is saved for the
+whole instance.
 
 Picking a language re-renders the picker itself straight away, so you can check it reads the
 way you expect before you commit to it. Nothing is saved at that point: the rest of the app,
