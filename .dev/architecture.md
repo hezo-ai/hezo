@@ -416,7 +416,11 @@ section only when `ctx.goals` is non-empty. A run can also be triggered on deman
 `JobManager.dispatchProgressUpdateNow`), which passes `manual` to skip the due-check entirely —
 pressing the button always runs. If **Run now** hits a *transient* conflict — the Captain is already running, the
 instance is at its active-container limit, or a launch race — the run is
-**queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
+**queued** rather than erroring (the task-level `/run-now` and `/retry` handlers in
+`routes/queued-wakeups.ts` answer the same way, off their shared `DISPATCH_OUTCOMES` table:
+`markWakeupSkipped` leaves the row `queued`, so every reason but `blocked` and `not_queued`
+is a wait the wakeup cron clears, and reporting it as a 409 told the reader their run had
+failed while it was on its way): a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
 "Run now" is idempotent) that the 5s dispatcher retries until the Captain frees up. This trigger tag
 also makes such a wakeup guard against fall-through: when it is finally dispatched, `activateAgent`
@@ -2698,9 +2702,15 @@ Errored view and the failure ping both fire, and `fileProviderRefusalApproval` f
 shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
 dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
 after the agent when the fault is upstream. The web renders every such `agent_error` record
-as a notice, not a proposal: a link to the task and a Dismiss that closes the row through the
-ordinary resolve route, never Approve/Deny, since neither had any side effect for this payload
-and both read as a decision the reader was not being asked to make. The record's other half
+as a notice, not a proposal, and the card *is* the control: clicking it resolves the row
+through the ordinary resolve route and navigates to `#comment-<run entry>` on the task, never
+Approve/Deny, since neither had any side effect for this payload and both read as a decision
+the reader was not being asked to make. The approvals route supplies both halves of that
+destination - `payload_task_project_slug` off the task's own project (a route param resolves
+against `projects.slug`, and `team_slug` is a different string that resolves against nothing)
+and `payload_run_comment_public_id` off the `run` comment carrying `payload.run_id`. A notice
+whose run left no task, and so has nothing to open, keeps the Dismiss button instead - it is
+the only shape that still carries one. The record's other half
 is `clearAgentErrorApprovalsOnRecovery`, called from `runAgent` on every succeeded run: it
 resolves the member's pending `agent_error` rows through `resolveApproval` and the approvals
 broadcast, exactly as a human Dismiss does, so a recovered agent does not leave a stale notice

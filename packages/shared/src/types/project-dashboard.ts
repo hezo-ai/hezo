@@ -64,6 +64,14 @@ export interface ProjectDashboardApproval {
 	created_at: string;
 	requested_by_name: string | null;
 	payload_task_identifier: string | null;
+	/**
+	 * The payload's own discriminator. A run-failure notice is a `strategy` row
+	 * carrying `agent_error`, so `type` alone cannot tell a notice from a
+	 * proposal - and the two read nothing alike to a person.
+	 */
+	payload_kind: string | null;
+	/** Anchor for the failed run's entry in the task thread, when it has one. */
+	payload_run_comment_public_id: string | null;
 }
 
 /** An unread admin-inbox row; `content_type` says what is being asked for. */
