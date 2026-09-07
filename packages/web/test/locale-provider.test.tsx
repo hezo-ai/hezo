@@ -160,14 +160,14 @@ describe('I18nProvider', () => {
 	test('t() looks up a message', () => {
 		installLanguages(['en-US']);
 		const { result } = renderHook(() => useI18n(), { wrapper });
-		expect(result.current.t('locale.title')).toBe('Choose your language');
+		expect(result.current.t('locale.settings.title')).toBe('Languages & formats');
 	});
 
 	test('t() renders the active language when a catalog exists', () => {
 		installLanguages(['pl-PL']);
 		const { result } = renderHook(() => useI18n(), { wrapper });
 		expect(result.current.language).toBe(Language.Pl);
-		expect(result.current.t('locale.title')).toBe('Wybierz język');
+		expect(result.current.t('locale.settings.title')).toBe('Języki i formaty');
 	});
 
 	test('t() falls back to English rather than rendering a raw key', () => {
@@ -266,7 +266,7 @@ describe('LanguagePreview', () => {
 		});
 
 		expect(result.current.language).toBe(Language.De);
-		expect(result.current.t('locale.title')).toBe('Sprache auswählen');
+		expect(result.current.t('locale.settings.title')).toBe('Sprachen & Formate');
 	});
 
 	test('previews the language only - the formats stay committed', () => {

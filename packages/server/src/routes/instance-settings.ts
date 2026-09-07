@@ -130,15 +130,15 @@ instanceSettingsRoutes.get('/instance-settings', async (c) => {
 });
 
 /**
- * The instance display locale — the one endpoint both the onboarding language
- * screen and the Settings dialog call, so the write path is identical wherever
- * it is edited from.
+ * The instance display locale — the one endpoint the gate's corner switcher and
+ * the Settings dialog call, so the write path is identical wherever it is
+ * edited from.
  *
- * Authorization is conditional because the onboarding screen runs before any
+ * Authorization is conditional because the corner switcher runs before any
  * credential exists. While the instance is uninitialized this is open — the
  * same window in which `POST /api/auth/setup` already lets anyone claim the
- * instance outright, so it grants nothing new, and it is what lets the language
- * choice survive a mid-onboarding page refresh. Once an admin password is
+ * instance outright, so it grants nothing new, and it is what lets a language
+ * picked on the gate survive a page refresh. Once an admin password is
  * enrolled it is superuser-only, like every other instance setting.
  *
  * Listed in `PUBLIC_PATHS`, so `authMiddleware` never ran and the bearer is

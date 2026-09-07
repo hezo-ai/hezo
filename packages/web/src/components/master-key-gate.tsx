@@ -83,7 +83,8 @@ interface MasterKeyFormProps {
 }
 
 export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFormProps) {
-	const { t } = useI18n();
+	// The locale the gate is showing is what setup records for the instance.
+	const { t, language, date_format, number_format } = useI18n();
 	const [key, setKey] = useState('');
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [error, setError] = useState('');
@@ -178,7 +179,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 		}
 		setLoading(true);
 		try {
-			await authenticateWithMnemonic(phrase, state);
+			await authenticateWithMnemonic(phrase, state, { language, date_format, number_format });
 			if (onAuthenticated) {
 				onAuthenticated();
 				return;

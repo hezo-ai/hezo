@@ -210,8 +210,8 @@ test('a token arriving before setup shows the setup screen, not an error', async
 
 	await page.goto(`/#sso=${mintToken()}`);
 
-	// The ordinary first-run journey, unchanged: language, then the master key.
-	await expect(page.getByTestId('setup-step-language')).toBeVisible();
+	// The ordinary first-run journey, unchanged: the master key comes first.
+	await expect(page.getByTestId('master-key-setup')).toBeVisible();
 	await expect(page.getByTestId('sso-redirect')).toHaveCount(0);
 	await expect(page.getByText(/did not complete/i)).toHaveCount(0);
 });

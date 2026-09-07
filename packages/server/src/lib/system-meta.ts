@@ -410,10 +410,12 @@ export async function setInstanceLocale(
 }
 
 /**
- * Whether the operator has explicitly chosen a locale. Drives the onboarding
- * gate: an instance that has never been asked shows the language screen, and
- * one that has does not ask again. Distinct from "the locale equals the
- * default", which an operator may legitimately have chosen.
+ * Whether a locale has been chosen for the instance - by the setup request that
+ * enrolled the master key, by a seed, or from Settings. While false, `/api/status`
+ * reports the default as a placeholder and every browser keeps its own
+ * detection; once true, every browser adopts the stored value. Distinct from
+ * "the locale equals the default", which an operator may legitimately have
+ * chosen.
  */
 export async function instanceLocaleIsConfigured(db: Db): Promise<boolean> {
 	return (await getSystemMeta(db, LOCALE_KEYS.language)) !== null;

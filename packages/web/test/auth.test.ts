@@ -117,6 +117,21 @@ describe('checkStatus', () => {
 });
 
 describe('authenticateWithMnemonic — setup (unset)', () => {
+	test('sends the locale the gate is rendering in, when given one', async () => {
+		post.mockResolvedValueOnce({ token: 'tok-setup' });
+		const locale = { language: 'de', date_format: 'dmy', number_format: 'comma-dot' } as const;
+		await authenticateWithMnemonic(PHRASE, 'unset', locale);
+		const [, payload] = post.mock.calls[0] as [string, Record<string, unknown>];
+		expect(payload.locale).toEqual(locale);
+	});
+
+	test('sends no locale key at all when none is given', async () => {
+		post.mockResolvedValueOnce({ token: 'tok-setup' });
+		await authenticateWithMnemonic(PHRASE, 'unset');
+		const [, payload] = post.mock.calls[0] as [string, Record<string, unknown>];
+		expect('locale' in payload).toBe(false);
+	});
+
 	test('posts a valid setup payload and holds the scoped token (not a session)', async () => {
 		post.mockResolvedValueOnce({ token: 'tok-setup' });
 		await authenticateWithMnemonic(PHRASE, 'unset');

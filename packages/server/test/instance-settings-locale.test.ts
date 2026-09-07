@@ -72,8 +72,8 @@ describe('GET /api/instance-settings', () => {
 
 describe('GET /api/status', () => {
 	it('carries the locale publicly, so pre-auth screens can render in it', async () => {
-		// No Authorization header: the language step, master-key gate, and login
-		// form all need this before any credential exists.
+		// No Authorization header: the master-key gate and the login form both
+		// need this before any credential exists.
 		const res = await app.request('/api/status');
 		expect(res.status).toBe(200);
 		const body = await res.json();

@@ -5681,9 +5681,13 @@ here), and **invalidate + refetch** (validation-heavy / long-running work). Erro
 on rollback; successes are confirmed by the UI change itself.
 
 **Locale.** The instance has one display locale - language, date field order, and money
-punctuation - chosen on a first-run screen that runs *ahead of master-key generation* and
-editable afterwards at Settings › Languages & formats. It is global (no per-user override)
-and lives in three `system_meta` keys, so it needed no migration.
+punctuation - recorded by the request that enrols the master key (`POST /api/auth/setup`
+carries the gate's current `LocaleSettings`, persisted only when none is configured), by a
+`seed` block on a provisioned instance (§ *Hosted first run*), or from the gate's corner
+switcher, and editable afterwards at Settings › Languages & formats. There is no language
+step of its own: the master-key gate renders in the browser's language and that is what
+setup records. It is global (no per-user override) and lives in three `system_meta` keys, so
+it needed no migration.
 
 Three axes rather than one BCP-47 tag: field order and month language are independent (there
 is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
@@ -5697,7 +5701,8 @@ renders in it before a credential exists (the boot-time status handler omits it 
 open yet). `I18nProvider` (`lib/i18n`) wraps `ThemeProvider` in `main.tsx`, above both the
 router and the `Toaster`; it seeds from a localStorage *render hint* to avoid a first-paint
 flash, then adopts the server value - but only once `localeConfigured` is true, since the
-pre-choice default would otherwise overwrite `navigator.languages` detection.
+pre-choice default would otherwise overwrite `navigator.languages` detection, which is the
+language the first gate renders in and the setup request then records.
 `lib/format-date.ts` keeps its exported signatures and reads the active locale from module
 state (sound because the locale is global and the provider is its only writer), so its
 consumers were untouched. Catalogs are committed JSON per language, statically imported, with
@@ -5883,6 +5888,15 @@ shorter than the image it writes), and the maskable variant had no safe zone at 
 A hosted instance (one with an `sso` block, § *Configuration resolution*) is provisioned
 by a control plane on someone's behalf, and arrives with a `seed` block carrying what that
 person already told the plane: their language and, when they wrote one, a project brief.
+
+The gate order on any fresh instance is: the boot screen while `/api/status` reports
+`starting`; `MasterKeyGate` (`unset`, then `locked` on every later restart) with the corner
+locale switcher; on a hosted instance `SsoRedirect` to the issuer and back with `#sso=`; then
+`SetupGate` with the AI-provider step (the password step is omitted when an issuer owns
+sign-in); then `/home`. There is no language step: the master-key gate renders in the
+browser's language, the corner switcher can change it, and the setup request records
+whichever is showing - unless the seed already did.
+
 `services/seed.ts` is the one consumer of the block, and the two halves land at the two
 points where the instance can first act on them:
 

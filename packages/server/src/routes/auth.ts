@@ -4,6 +4,7 @@ import {
 	buildPasswordSetupMessage,
 	buildSetupMessage,
 	buildUnlockMessage,
+	parseLocaleSettingsPatch,
 	verifyAuthSignature,
 } from '@hezo/shared';
 import type { Context } from 'hono';
@@ -14,7 +15,9 @@ import { err, ok } from '../lib/response';
 import {
 	getSystemMeta,
 	INSTANCE_BASE_URL_KEY,
+	instanceLocaleIsConfigured,
 	normalizeBaseUrl,
+	setInstanceLocale,
 	setSystemMeta,
 } from '../lib/system-meta';
 import type { Env } from '../lib/types';
@@ -84,14 +87,24 @@ export const authRoutes = new Hono<Env>();
 // input derives it for direct startup injection.
 
 // Enrollment, first boot only: bind the auth public key and store the canary.
+//
+// `locale` is the language the browser was showing when the key was made - the
+// provider's current value, which is the stored hint, the corner switcher's
+// choice or the browser's own detection, in that order. It is persisted only
+// after the key is enrolled and only when no locale is configured yet, so an
+// instance seeded with one keeps it. Outside the signed message on purpose:
+// the whole endpoint is claimable in this window, and a language is not what
+// the signature protects.
 authRoutes.post('/auth/setup', async (c) => {
-	let body: { public_key?: string; unlock_key?: string; signature?: string };
+	let body: { public_key?: string; unlock_key?: string; signature?: string; locale?: unknown };
 	try {
 		body = await c.req.json();
 	} catch {
 		return err(c, 'INVALID_REQUEST', 'JSON body required', 400);
 	}
 	const { public_key, unlock_key, signature } = body;
+	const locale = body.locale === undefined ? null : parseLocaleSettingsPatch(body.locale);
+	if (locale && !locale.ok) return err(c, 'INVALID_REQUEST', `locale: ${locale.error}`, 400);
 	if (
 		typeof public_key !== 'string' ||
 		!KEY_HEX.test(public_key) ||
@@ -126,6 +139,15 @@ authRoutes.post('/auth/setup', async (c) => {
 	const enrolled = await masterKeyManager.setup(c.get('db'), unlock_key, public_key);
 	if (!enrolled) {
 		return err(c, 'ALREADY_SET', 'Master key is already set', 409);
+	}
+
+	if (locale?.ok) {
+		try {
+			const db = c.get('db');
+			if (!(await instanceLocaleIsConfigured(db))) await setInstanceLocale(db, locale.value);
+		} catch (e) {
+			log.error('Failed to record the setup locale:', e);
+		}
 	}
 
 	return issuePasswordSetupToken(c);
