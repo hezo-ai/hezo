@@ -98,8 +98,22 @@ describe('buildSubscriptionLoginScript', () => {
 		expect(script).toContain(`'\\''codex'\\'' '\\''login'\\'' '\\''--device-auth'\\''`);
 	});
 
-	it('opens the PTY wide enough that a sign-in URL cannot wrap', () => {
-		expect(buildSubscriptionLoginScript(base)).toContain('COLUMNS=1000');
+	/**
+	 * The variables alone are what this used to do, and they size nothing: the
+	 * PTY `script` opens is never initialised, so it reports `0 0` and a CLI that
+	 * asks the terminal falls back to 80 columns and lays its output out to that.
+	 * The `stty` is the part that resizes, so it is the part asserted on.
+	 */
+	it('resizes the PTY itself, not just the environment describing it', () => {
+		const script = buildSubscriptionLoginScript(base);
+		expect(script).toContain('stty cols 400 rows 100');
+		expect(script).toContain('COLUMNS=400');
+		expect(script).toContain('LINES=100');
+	});
+
+	it('resizes before the CLI starts, so its first frame is already at that width', () => {
+		const script = buildSubscriptionLoginScript(base);
+		expect(script.indexOf('stty cols')).toBeLessThan(script.indexOf(`'\\''codex'\\''`));
 	});
 
 	it('holds the stdin FIFO open for the whole flow', () => {

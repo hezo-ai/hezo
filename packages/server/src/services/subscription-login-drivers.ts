@@ -1,5 +1,6 @@
 import { AgentRuntime } from '@hezo/shared';
-import { parseOsc8Links, stripTerminalNoise } from './sandbox/proc-scripts';
+import { parseOsc8Links } from './sandbox/proc-scripts';
+import { renderTerminalScreen } from './sandbox/terminal-screen';
 
 /**
  * How each coding CLI mints a subscription credential from an interactive
@@ -37,10 +38,10 @@ export interface SubscriptionLoginDriver {
 	 * Proof the installed CLI still offers this flow, run before the operator is
 	 * shown anything.
 	 *
-	 * The three coding CLIs are installed **unpinned** in the agent image, so a
-	 * flag can vanish under a rebuild. Without this the loss would surface as a
-	 * flow that hangs until its challenge timeout with nothing to say; with it,
-	 * the start fails naming the CLI and the flag.
+	 * A pin fixes which version the image installs, not which flags that version
+	 * offers, so a bump can still retire one. Without this the loss would surface
+	 * as a flow that hangs until its challenge timeout with nothing to say; with
+	 * it, the start fails naming the CLI and the flag.
 	 */
 	capabilityProbe?: { argv: readonly string[]; mustContain: string };
 	/** Recognise the challenge in the log so far. Null until the CLI has printed it. */
@@ -96,7 +97,7 @@ const CODEX_DRIVER: SubscriptionLoginDriver = {
 	argv: ['codex', 'login', '--device-auth'],
 	capabilityProbe: { argv: ['codex', 'login', '--help'], mustContain: '--device-auth' },
 	parseChallenge(log) {
-		const text = stripTerminalNoise(log);
+		const text = renderTerminalScreen(log);
 		const url = firstStandaloneUrl(text, 'auth.openai.com');
 		if (!url) return null;
 		// The code is printed alone on its line; matching that rather than
@@ -127,9 +128,17 @@ const CODEX_DRIVER: SubscriptionLoginDriver = {
  * code rather than redirecting to a loopback port - so nothing has to listen
  * anywhere and the operator simply brings the code back.
  *
- * The URL is read from the OSC 8 hyperlink rather than the visible text: the
- * spinner redraws around it, and the on-screen copy comes back interleaved
- * across several overlapping fragments while the escape stays whole.
+ * The URL is read from the OSC 8 hyperlink rather than from the screen: the
+ * hyperlink carries the whole target in one escape, while the visible copy is
+ * laid out to the terminal and would have to be read back off it.
+ *
+ * **The token is read off the composed screen, never out of the byte stream.**
+ * It is printed into a box the CLI repaints, which reaches the log as fragments
+ * at coordinates: one repaint writes `sk-ant-`, jumps the cursor over a
+ * character already standing from an earlier frame, then writes the rest. Delete
+ * the escapes and that character is gone and the fragments splice together, so
+ * the harvest yields a token that is the right shape and the wrong value - which
+ * is stored, and then refused by Anthropic on every run.
  */
 const CLAUDE_CODE_DRIVER: SubscriptionLoginDriver = {
 	argv: ['claude', 'setup-token'],
@@ -140,7 +149,7 @@ const CLAUDE_CODE_DRIVER: SubscriptionLoginDriver = {
 		return null;
 	},
 	completion: 'code',
-	harvest: (log) => stripTerminalNoise(log).match(/sk-ant-oat01-[A-Za-z0-9_-]+/)?.[0] ?? null,
+	harvest: (log) => renderTerminalScreen(log).match(/sk-ant-oat01-[A-Za-z0-9_-]+/)?.[0] ?? null,
 	challengeTimeoutMs: 2 * MINUTE,
 	completionTimeoutMs: 15 * MINUTE,
 };

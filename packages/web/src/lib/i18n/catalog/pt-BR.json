@@ -650,6 +650,7 @@
 	"settings.provider.signIn.blurb": "O Hezo abre o login para você. Você vai receber um link e um código curto para digitar em qualquer dispositivo.",
 	"settings.provider.signIn.error.cancelled": "O login foi cancelado.",
 	"settings.provider.signIn.error.codeRejected": "O {provider} não aceitou esse código. Ele pode ter sido digitado errado ou ter expirado.",
+	"settings.provider.signIn.error.credentialRejected": "O login foi concluído, mas o {provider} recusou a credencial gerada. Comece de novo.",
 	"settings.provider.signIn.error.expired": "O login expirou antes de ser concluído. Comece de novo.",
 	"settings.provider.signIn.error.internal": "Não foi possível concluir o login.",
 	"settings.provider.signIn.error.noCredential": "O login terminou antes de o {provider} emitir uma credencial.",

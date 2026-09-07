@@ -10,6 +10,7 @@ import {
 	parseProviderModels,
 	providerRuntimes,
 	providerSupportsRuntime,
+	type SubscriptionLoginFailure,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -773,19 +774,31 @@ aiProvidersRoutes.get('/ai-providers/subscription-login/:flowId', async (c) => {
 		const masterKeyManager = c.get('masterKeyManager');
 		if (!masterKeyManager.getKey()) return err(c, 'LOCKED', 'Master key is locked', 401);
 		const db = c.get('db');
-		// Re-validated even though the CLI wrote it: the same tombstone guard the
-		// rotation write-back uses, so a blank file from a failed refresh is never
-		// stored as a credential.
-		const validation = validateSubscriptionBlob(flow.provider, state.credential);
-		if (!validation.ok) {
+		// Put through the same shape check and the same live question a pasted
+		// credential answers. A sign-in Hezo drove is not more trustworthy than one
+		// the operator pasted - it is less, because everything between the vendor's
+		// screen and this line is Hezo's own reading of a terminal. Storing it
+		// unasked is what turns a misread token into a provider that looks
+		// configured and refuses every run.
+		const prepared = await prepareProviderCredential(
+			flow.provider,
+			AiAuthMethod.Subscription,
+			state.credential,
+			undefined,
+		);
+		if (!prepared.ok) {
 			forgetFlow(flowId);
-			return err(c, 'INVALID_CREDENTIAL', validation.error ?? 'Invalid credential', 400);
+			return ok(c, {
+				status: 'failed',
+				error: prepared.message,
+				code: 'credential_rejected' satisfies SubscriptionLoginFailure,
+			});
 		}
 		pending = storeAiProviderKey(
 			db,
 			masterKeyManager,
 			flow.provider,
-			state.credential,
+			prepared.value,
 			AiAuthMethod.Subscription,
 			flowLabels.get(flowId),
 			{},

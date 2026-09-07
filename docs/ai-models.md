@@ -139,8 +139,14 @@ long the code has left, and waits while you finish.
   code into Hezo to finish. If the code was mistyped or has expired, Hezo says so and offers
   you a fresh sign-in.
 
+Finish promptly once you have the code. It expires on the provider's clock, which is shorter
+than the window Hezo keeps the sign-in open for, so a code that sat for several minutes can be
+refused with nothing wrong at either end. Start again and it works.
+
 Your credential is created inside the sandbox and stored encrypted without passing
-through your browser, so you never copy an auth file around.
+through your browser, so you never copy an auth file around. Before storing it, Hezo asks the
+provider whether it works, and tells you if the answer is no rather than saving something that
+would fail on your first run.
 
 For any instance where the sandbox cannot reach the provider's sign-in page, use **Paste
 credential manually** instead and follow the steps the form shows.
