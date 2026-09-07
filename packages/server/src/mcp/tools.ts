@@ -109,6 +109,7 @@ import { assertNoBlockingRun } from '../lib/reassign-guard';
 import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
+	isUuid,
 	resolveActorMemberId,
 	resolveAgentId,
 	resolveAssigneeId,
@@ -137,7 +138,8 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
-import { upsertChatMemory } from '../services/chat-memory';
+import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
+import { upsertChatMemory, upsertConversationChatMemory } from '../services/chat-memory';
 import {
 	buildWakeReceipt,
 	fireAdminMention,
@@ -1562,6 +1564,10 @@ export function registerTools(
 				if (e instanceof CreateTaskError) return { error: e.message };
 				throw e;
 			}
+			// A task filed by a live chat turn leaves a receipt in its conversation
+			// and remembers where it came from, so completion and blocked receipts
+			// can find their way back. No-op for every other caller.
+			await recordChatTaskOrigin(db, wsManager, auth, created);
 			return withBacktickWarning(
 				db,
 				auth,
@@ -1853,6 +1859,10 @@ export function registerTools(
 				events,
 			);
 			if (auth.type !== AuthType.Agent) return results;
+			// Same receipt a single create_task leaves - one per created item.
+			for (const r of results) {
+				if (r.ok) await recordChatTaskOrigin(db, wsManager, auth, r.task);
+			}
 			// Per-item advisory: flag a created task whose own description backticked
 			// a real entity. Keyed by the result index back to the source item.
 			return Promise.all(
@@ -7055,9 +7065,15 @@ export function registerTools(
 	tool(
 		server,
 		'update_chat_memory',
-		"Replace your long-term chat memory - the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/task/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.",
+		"Replace a long-term chat memory - the durable notes carried into every turn of a live chat. Without `conversation` it is YOUR memory, carried into your operator DM; with `conversation` (a group room's conversation id, given to you by that room's compaction instructions) it is that room's shared memory instead. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/task/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.",
 		{
 			content: z.string().describe('The full long-term memory markdown (replaces existing memory)'),
+			conversation: z
+				.string()
+				.optional()
+				.describe(
+					"Group room conversation id whose shared memory to replace. Omit for your own DM memory. Only a room you participate in; the room's compaction instructions carry the id.",
+				),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent || !auth.memberId) {
@@ -7065,9 +7081,30 @@ export function registerTools(
 					error: 'update_chat_memory can only be called by an agent updating its own memory',
 				};
 			}
+			const conversationId = typeof args.conversation === 'string' ? args.conversation : null;
+			if (conversationId && !isUuid(conversationId)) {
+				return { error: 'conversation must be a conversation id (UUID)' };
+			}
+			if (conversationId) {
+				// A room's shared memory is writable only by its own participants, in
+				// the caller's own team - the same boundary its turns run under.
+				const room = await db.query(
+					`SELECT 1 FROM chat_conversations c
+					 JOIN chat_conversation_participants p
+					   ON p.conversation_id = c.id AND p.member_id = $2
+					 JOIN members m ON m.id = $2
+					 WHERE c.id = $1 AND c.kind = 'group' AND c.team_id = m.team_id`,
+					[conversationId, auth.memberId],
+				);
+				if (!room.rows[0]) {
+					return { error: 'conversation is not a group room you participate in' };
+				}
+			}
 			let mem: Awaited<ReturnType<typeof upsertChatMemory>>;
 			try {
-				mem = await upsertChatMemory(db, auth.memberId, args.content as string);
+				mem = conversationId
+					? await upsertConversationChatMemory(db, conversationId, args.content as string)
+					: await upsertChatMemory(db, auth.memberId, args.content as string);
 			} catch (e) {
 				// A dead-end refusal would wedge the chat, since compaction is what
 				// drains the window — the message names the ceiling so the retry is a

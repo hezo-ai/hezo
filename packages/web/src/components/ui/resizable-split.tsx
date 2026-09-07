@@ -61,8 +61,7 @@ interface UseResizableSplitResult {
 }
 
 /**
- * Drag-to-resize state for a two-column split. The pointer mechanics mirror
- * {@link file://../../hooks/use-draggable-fab.ts}: pointer capture (with a
+ * Drag-to-resize state for a two-column split: pointer capture (with a
  * happy-dom `try/catch`), document-level move/up listeners gated by a resizing
  * flag, and a `ResizeObserver` re-clamp when the container shrinks. Reusable on
  * its own for a bespoke grid; {@link ResizableSplit} wraps it with the layout.

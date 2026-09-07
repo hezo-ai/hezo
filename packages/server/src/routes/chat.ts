@@ -1,32 +1,33 @@
 import {
 	ATTACHMENT_MAX_BYTES,
 	AuthType,
+	CAPTAIN_AGENT_SLUG,
 	CHAT_UPLOADS_FOLDER,
 	ChatChannel,
 	ChatConversationKind,
+	ChatMessageRole,
+	ChatSystemMessageKind,
 	DEFAULT_TEAM_ID,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
-import {
-	actorTypeFromAuth,
-	apiKeyIdFromAuth,
-	resolveActorMemberId,
-	resolveProject,
-} from '../lib/resolve';
+import { isUuid, resolveProject } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireTeamAccessForResource } from '../middleware/auth';
-import { ChatConvertError } from '../services/chat-session-manager';
-import { CreateTaskError } from '../services/tasks';
+import { postChatSystemMessage } from '../services/chat-breadcrumbs';
+import { hoursQuotaExhausted } from '../services/run-concurrency';
+import { CreateTaskError, createTask } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
+import { buildCreateTaskCaller } from './tasks';
 
 export const chatRoutes = new Hono<Env>();
 
-const MESSAGE_COLUMNS = `id, conversation_id, role, channel, status, content, author_user_id,
-	input_tokens, output_tokens, cost_cents, error, system_kind, created_at, completed_at`;
+export const MESSAGE_COLUMNS = `id, conversation_id, role, channel, status, content, author_user_id,
+	author_member_id, suggested_replies, input_tokens, output_tokens, cost_cents, error, system_kind,
+	created_at, completed_at`;
 
 /**
  * The CEO chat is instance-wide (one global conversation), so these are global
@@ -58,7 +59,10 @@ async function resolveConversationId(
 	if (!manager) return null;
 	if (explicit) {
 		const convo = await manager.getConversation(explicit);
-		return convo ? convo.id : null;
+		// The global routes are the CEO/HQ surface only: a project DM lives under
+		// its own `/api/projects/:projectId/chat/*` routes and their per-project
+		// authorization, so an HQ-authorized read must not reach it from here.
+		return convo && convo.team_id === DEFAULT_TEAM_ID ? convo.id : null;
 	}
 	return manager.getConversationId();
 }
@@ -103,6 +107,10 @@ chatRoutes.get('/chat/conversation', async (c) => {
 		conversation_id: conversationId,
 		messages: await withAttachments(c, messages.rows),
 		compacted_count: compacted.rows[0]?.count ?? 0,
+		// The composer's own warning, from the same predicate admission uses. A
+		// turn that needs a new container is refused while this is true, and
+		// learning that only after sending is the failure this answer prevents.
+		hours_exhausted: await hoursQuotaExhausted(db),
 	});
 });
 
@@ -210,6 +218,11 @@ chatRoutes.post('/chat/messages', async (c) => {
 	// the write surface.
 	if (conversationId) {
 		const convo = await manager.getConversation(conversationId);
+		// Project DMs are not sendable from the global surface - see
+		// resolveConversationId.
+		if (convo && convo.team_id !== DEFAULT_TEAM_ID) {
+			return err(c, 'NOT_FOUND', 'conversation not found', 404);
+		}
 		if (convo?.kind === ChatConversationKind.Coworker) {
 			return err(
 				c,
@@ -256,7 +269,7 @@ chatRoutes.post('/chat/messages', async (c) => {
 });
 
 /** Hard cap on a single turn's queued-message batch. */
-const MAX_BATCH_MESSAGES = 20;
+export const MAX_BATCH_MESSAGES = 20;
 
 /**
  * Normalize a send body into an ordered batch of user messages. Accepts the
@@ -264,7 +277,7 @@ const MAX_BATCH_MESSAGES = 20;
  * (`messages: [{ text, attachment_ids }]`). Returns null when nothing sendable
  * is present — every message needs text or at least one attachment.
  */
-function parseMessageBatch(
+export function parseMessageBatch(
 	body: Record<string, unknown>,
 ): Array<{ text: string; attachmentIds: string[] }> | null {
 	const ids = (raw: unknown): string[] =>
@@ -295,72 +308,6 @@ chatRoutes.get('/chat/conversations', async (c) => {
 	return ok(c, { conversations: await manager.listConversations({ includeClosed }) });
 });
 
-// Create a new web conversation thread (the new-thread button).
-chatRoutes.post('/chat/conversations', async (c) => {
-	const access = await authorize(c);
-	if (access instanceof Response) return access;
-	const manager = c.get('chatSessionManager');
-	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
-	const body = await c.req.json().catch(() => ({}));
-	const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : undefined;
-	const id = await manager.createWebConversation(title);
-	const conversation = await manager.getConversation(id);
-	return ok(c, { conversation }, 201);
-});
-
-// Convert a conversation into a task in a chosen project, assigned to the CEO:
-// the transcript becomes the task description, a system meta message linking
-// the task ends the thread, and the conversation closes but stays listed
-// (read-only) in the chatbox. Deliberately has NO MCP twin (the precedent is
-// documented in routes/connectors.ts): converting the operator's own chat is a
-// human-only surface — agents create tasks via the create_task tool.
-chatRoutes.post('/chat/conversations/:id/convert-to-task', async (c) => {
-	const access = await authorize(c);
-	if (access instanceof Response) return access;
-	const manager = c.get('chatSessionManager');
-	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
-
-	const body = await c.req.json().catch(() => ({}));
-	const projectRef = typeof body.project_id === 'string' ? body.project_id.trim() : '';
-	if (!projectRef) return err(c, 'BAD_REQUEST', 'project_id is required', 400);
-	const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : undefined;
-
-	const db = c.get('db');
-	const project = await resolveProject(db, projectRef);
-	if (!project) return err(c, 'NOT_FOUND', 'project not found', 404);
-
-	const auth = c.get('auth');
-	const caller = {
-		actorType: actorTypeFromAuth(auth),
-		actorMemberId: await resolveActorMemberId(db, auth, project.teamId),
-		actorApiKeyId: apiKeyIdFromAuth(auth),
-	};
-
-	try {
-		const { conversation } = await manager.convertConversationToTask({
-			conversationId: c.req.param('id'),
-			projectId: project.projectId,
-			projectTeamId: project.teamId,
-			title,
-			caller,
-			events: c.get('events'),
-		});
-		// The joined reference carries the project slug the task link needs — the
-		// same shape the thread listing serves.
-		return ok(c, { task: conversation.converted_task, conversation }, 201);
-	} catch (e) {
-		if (e instanceof ChatConvertError) {
-			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'INVALID_REQUEST' ? 400 : 409;
-			return err(c, e.code, e.message, status);
-		}
-		if (e instanceof CreateTaskError) {
-			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400;
-			return err(c, e.code, e.message, status);
-		}
-		throw e;
-	}
-});
-
 // Close a conversation thread.
 chatRoutes.post('/chat/conversations/:id/close', async (c) => {
 	const access = await authorize(c);
@@ -369,9 +316,168 @@ chatRoutes.post('/chat/conversations/:id/close', async (c) => {
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
 	const id = c.req.param('id');
 	const convo = await manager.getConversation(id);
-	if (!convo) return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	if (!convo || convo.team_id !== DEFAULT_TEAM_ID) {
+		return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	}
 	await manager.closeConversation(id);
 	return ok(c, { closed: true });
+});
+
+// Mark a conversation read up to a message: the server-side unread watermark,
+// per (user, conversation), multi-device correct. Global rather than
+// per-project because it spans both surfaces; it authorizes against the
+// conversation's own team, and writes only on real change so a repeated mark
+// costs no row. Admin (human) callers only - agents have no unread.
+chatRoutes.post('/chat/conversations/:id/read', async (c) => {
+	const auth = c.get('auth');
+	if (auth.type !== AuthType.Admin || !auth.userId) {
+		return err(c, 'FORBIDDEN', 'reads are per-user', 403);
+	}
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const convo = await db.query<{ team_id: string }>(
+		`SELECT team_id FROM chat_conversations WHERE id = $1`,
+		[id],
+	);
+	if (!convo.rows[0]) return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	const access = await requireTeamAccessForResource(db, c, convo.rows[0].team_id);
+	if (access instanceof Response) return access;
+
+	const body = await c.req.json().catch(() => ({}));
+	const lastRead = typeof body.last_read_message_id === 'string' ? body.last_read_message_id : null;
+	if (!lastRead) return err(c, 'BAD_REQUEST', 'last_read_message_id is required', 400);
+	// The watermark must name a message of this conversation, or a crafted id
+	// could park the pointer on another thread's message.
+	const message = await db.query<{ id: string }>(
+		`SELECT id FROM chat_messages WHERE id = $1 AND conversation_id = $2`,
+		[lastRead, id],
+	);
+	if (!message.rows[0]) return err(c, 'BAD_REQUEST', 'message not in this conversation', 400);
+	await db.query(
+		`INSERT INTO chat_conversation_reads (user_id, conversation_id, last_read_message_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (user_id, conversation_id) DO UPDATE
+		    SET last_read_message_id = EXCLUDED.last_read_message_id, updated_at = now()
+		  WHERE chat_conversation_reads.last_read_message_id IS DISTINCT FROM EXCLUDED.last_read_message_id`,
+		[auth.userId, id, lastRead],
+	);
+	return ok(c, { read: true });
+});
+
+/** Bound on the convert preamble's quoted message; the origin breadcrumb links the rest. */
+const CONVERT_MESSAGE_MAX_BYTES = 16 * 1024;
+
+/**
+ * Title + description for a task converted from one chat message: the explicit
+ * title, else the message's first line; the description quotes the message
+ * (bounded) under a short preamble. Shared by the project-chat and CEO
+ * converts so the two produce identical tasks.
+ */
+export function deriveConvertTaskFields(
+	message: { content: string; role: string; author_label: string | null },
+	bodyTitle: unknown,
+): { title: string; description: string } | null {
+	const content = message.content;
+	const firstLine = content.split('\n')[0]?.trim() ?? '';
+	const title =
+		typeof bodyTitle === 'string' && bodyTitle.trim() !== ''
+			? bodyTitle.trim()
+			: firstLine.length > 80
+				? `${firstLine.slice(0, 79)}…`
+				: firstLine;
+	if (!title) return null;
+	const speaker =
+		message.role === ChatMessageRole.User ? 'Operator' : (message.author_label ?? 'Agent');
+	const quoted =
+		Buffer.byteLength(content, 'utf8') > CONVERT_MESSAGE_MAX_BYTES
+			? `${content.slice(0, CONVERT_MESSAGE_MAX_BYTES)}\n\n[Message truncated]`
+			: content;
+	return {
+		title,
+		description: `This task was created from a chat message.\n\n---\n\n${speaker}: ${quoted}`,
+	};
+}
+
+// Convert one CEO-chat message into a task in any project the caller can
+// reach. The CEO stream spans every project, so the target arrives explicitly
+// (the picker); authorization runs against the TARGET team, not just HQ.
+// Assignee defaults to that project's Captain. The stream survives - this is
+// the message-level convert, not the old close-the-thread conversion.
+chatRoutes.post('/chat/conversations/:id/convert-message', async (c) => {
+	const access = await authorize(c);
+	if (access instanceof Response) return access;
+	const manager = c.get('chatSessionManager');
+	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
+	const db = c.get('db');
+	const conversationId = c.req.param('id');
+	const convo = await manager.getConversation(conversationId);
+	if (!convo || convo.team_id !== DEFAULT_TEAM_ID) {
+		return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	}
+
+	const body = await c.req.json().catch(() => ({}));
+	const messageId = typeof body.message_id === 'string' ? body.message_id : '';
+	if (!isUuid(messageId)) return err(c, 'BAD_REQUEST', 'message_id is required', 400);
+	const message = await db.query<{ content: string; role: string; author_label: string | null }>(
+		`SELECT content, role::text AS role, author_label FROM chat_messages
+		 WHERE id = $1 AND conversation_id = $2`,
+		[messageId, conversationId],
+	);
+	if (!message.rows[0]) return err(c, 'BAD_REQUEST', 'message not in this conversation', 400);
+
+	const projectRef = typeof body.project === 'string' ? body.project : '';
+	if (!projectRef) return err(c, 'BAD_REQUEST', 'project is required', 400);
+	const target = await resolveProject(db, projectRef);
+	if (!target) return err(c, 'NOT_FOUND', 'project not found', 404);
+	const targetAccess = await requireTeamAccessForResource(db, c, target.teamId);
+	if (targetAccess instanceof Response) return targetAccess;
+
+	const fields = deriveConvertTaskFields(message.rows[0], body.title);
+	if (!fields) return err(c, 'BAD_REQUEST', 'A task title is required', 400);
+	const assigneeSlug =
+		typeof body.assignee_slug === 'string' && body.assignee_slug !== ''
+			? body.assignee_slug
+			: CAPTAIN_AGENT_SLUG;
+
+	const caller = await buildCreateTaskCaller(c, target.teamId);
+	let task: Awaited<ReturnType<typeof createTask>>;
+	try {
+		task = await createTask(
+			db,
+			target.teamId,
+			{
+				project_id: target.projectId,
+				title: fields.title,
+				description: fields.description,
+				assignee_slug: assigneeSlug,
+			},
+			caller,
+			c.get('wsManager'),
+			c.get('events'),
+		);
+	} catch (e) {
+		if (e instanceof CreateTaskError) {
+			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400;
+			return err(c, e.code, e.message, status);
+		}
+		throw e;
+	}
+	await db.query(`UPDATE tasks SET origin_chat_conversation_id = $2 WHERE id = $1`, [
+		task.id,
+		conversationId,
+	]);
+	const projectName = await db.query<{ name: string }>(`SELECT name FROM projects WHERE id = $1`, [
+		target.projectId,
+	]);
+	const where = projectName.rows[0]?.name ? ` in ${projectName.rows[0].name}` : '';
+	await postChatSystemMessage(
+		db,
+		c.get('wsManager'),
+		conversationId,
+		ChatSystemMessageKind.TaskCreated,
+		`Created task ${task.identifier}${where}: ${fields.title}`,
+	);
+	return ok(c, task, 201);
 });
 
 chatRoutes.post('/chat/session/restart', async (c) => {

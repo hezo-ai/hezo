@@ -17,9 +17,8 @@ const LONG_PRESS_MS = 250;
 
 /**
  * happy-dom's PointerEvent support is spotty, so synthesize pointer events as
- * MouseEvents carrying the pointer fields the hook reads. Same approach as
- * use-draggable-fab.test.tsx, plus `pointerType`, which drives this hook's
- * mouse-threshold vs touch-long-press branch.
+ * MouseEvents carrying the pointer fields the hook reads, plus `pointerType`,
+ * which drives this hook's mouse-threshold vs touch-long-press branch.
  */
 function pointerEvent(
 	type: string,

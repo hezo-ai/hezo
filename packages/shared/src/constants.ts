@@ -153,15 +153,18 @@ export interface ContainerHostMemory {
 
 /**
  * The budget when there is no host memory to derive one from: a managed backend,
- * or a host whose memory is unreadable. Three 2 GB task containers plus the one
- * held back for the assistant chat.
+ * or a host whose memory is unreadable. Six 2 GB containers: five rungs for task
+ * runs, and one container's worth floating as the chat lane
+ * ({@link taskContainerMemoryBudgetGb}) so a chat turn always has somewhere to
+ * go while tasks are busy.
  *
- * Deliberately modest rather than generous. On a managed backend this figure is
- * a **spend guard**, and the cost of setting it too low is a queued run the
+ * Still a deliberate figure rather than a generous one. On a managed backend it
+ * is a **spend guard**, and the cost of setting it too low is a queued run the
  * operator can see and raise; the cost of setting it too high is a bill they
- * find out about later.
+ * find out about later. Raised from 8 so chat stays responsive on the default
+ * without the operator having to discover this setting first.
  */
-export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 8;
+export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 12;
 
 /**
  * The automatic memory-budget default, in GB.
@@ -179,11 +182,12 @@ export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 8;
  * On a host engine it is everything host memory allows, less the system reserve
  * ({@link HOST_RESERVED_MEMORY_GB}, via {@link usableMemoryGibForContainers}).
  *
- * **This is the TOTAL, chat included.** The chat's reservation is taken at the
- * point of use by {@link taskContainerMemoryBudgetGb}, not baked in here, so an
- * explicitly-set budget reserves exactly as an automatic one does. It used to be
- * subtracted here instead, which meant an operator who set the number by hand got
- * no reservation at all and quietly ran one container over their own figure.
+ * **This is the TOTAL - every container, chat included, is charged against it.**
+ * The chat lane is held back from *task admission* at the point of use by
+ * {@link taskContainerMemoryBudgetGb}, not baked in here, so an explicitly-set
+ * budget keeps a lane exactly as an automatic one does. It used to be subtracted
+ * here instead, which meant an operator who set the number by hand got no lane
+ * at all and quietly ran one container over their own figure.
  */
 export function computeDefaultMaxContainerMemoryGb(
 	hostMemory: ContainerHostMemory | null,
@@ -195,7 +199,7 @@ export function computeDefaultMaxContainerMemoryGb(
 		hostMemory.totalRamBytes,
 		hostMemory.totalSwapBytes,
 	);
-	// **Floored at one task container plus the chat reservation, not at
+	// **Floored at one task container plus the chat lane, not at
 	// MAX_CONTAINER_MEMORY_GB_MIN.** The budget is compared against a whole
 	// container's request, so a total that leaves less than one container for task
 	// runs admits nothing: every run queues `InstanceAtCapacity` forever with
@@ -222,13 +226,14 @@ export function computeDefaultMaxContainerMemoryGb(
  * honest response would be to queue a run that can never start.
  */
 /**
- * Memory held back from the budget so the assistant chat always has somewhere to
- * go, in GB - one container's worth, at the per-container cap in force.
+ * The floating chat lane: memory held back from *task admission* so a chat turn
+ * always has somewhere to go, in GB - one container's worth, at the
+ * per-container cap in force.
  *
  * Named rather than written inline because three places have to agree on it: the
- * task-run budget subtracts it, the minimum total is it plus one task container,
- * and the settings page renders it as its own figure so the split is visible
- * rather than inferred from a number that does not add up.
+ * task-run admission ceiling subtracts it, the minimum total is it plus one task
+ * container, and the settings page renders it as its own figure so the split is
+ * visible rather than inferred from a number that does not add up.
  *
  * Floored at 1 GB against a cap of zero or less, which no setting permits but
  * `system_meta` can be made to hold by hand.
@@ -238,26 +243,28 @@ export function chatContainerReservationGb(ramCapGb: number): number {
 }
 
 /**
- * How much of the configured budget task-run containers may hold, in GB.
+ * How much of the configured budget **task-run** admission may fill, in GB.
  *
- * The assistant chat is **exempt** from the budget rather than charged to it: a
- * queued task run is invisible and harmless, while a queued chat turn is a person
- * watching a spinner. What makes that exemption honest is this reservation - the
- * configured number is the total all containers may consume at once, and one
- * container's worth of it is held back so the chat always has somewhere to go.
+ * Every running container - one held by a chat turn included - is charged
+ * against the configured total; what differs is the ceiling each workload admits
+ * against. Task runs admit only up to this figure, one container's worth short
+ * of the total; chat turns admit against the full total. The gap is the floating
+ * chat lane: a queued task run is invisible and harmless, while a queued chat
+ * turn is a person watching a spinner, so the lane guarantees a chat turn a slot
+ * however busy the tasks are.
  *
- * Taken here rather than inside the automatic default because an operator can set
- * the budget by hand, and only the automatic path used to reserve. A 12 GB budget
- * with a 4 GB cap therefore admitted three task containers *and* a chat container:
- * 16 GB consumed against a number that said 12.
+ * Taken here rather than inside the automatic default because an operator can
+ * set the budget by hand, and only the automatic path used to hold the lane
+ * back. A 12 GB budget with a 4 GB cap therefore admitted three task containers
+ * *and* a chat container: 16 GB consumed against a number that said 12.
  *
- * **Deliberately unfloored**: it may come out at or below zero, and then nothing
- * starts. Flooring here would silently hand back the container the reservation
- * just took, over-subscribing by exactly the amount this reservation exists to
- * prevent. The floor belongs where a person can see it instead - the automatic
- * default never computes a total below {@link minTotalContainerMemoryGb}, and the
- * settings route refuses one, so the only way to reach a budget that admits
- * nothing is to write `system_meta` by hand.
+ * **Deliberately unfloored**: it may come out at or below zero, and then no task
+ * run starts. Flooring here would silently hand back the lane, over-subscribing
+ * by exactly the amount it exists to protect. The floor belongs where a person
+ * can see it instead - the automatic default never computes a total below
+ * {@link minTotalContainerMemoryGb}, and the settings route refuses one, so the
+ * only way to reach a budget that admits nothing is to write `system_meta` by
+ * hand.
  */
 export function taskContainerMemoryBudgetGb(configuredGb: number, ramCapGb: number): number {
 	return configuredGb - chatContainerReservationGb(ramCapGb);
@@ -266,9 +273,9 @@ export function taskContainerMemoryBudgetGb(configuredGb: number, ramCapGb: numb
 /**
  * The smallest total budget that still admits one task container, in GB.
  *
- * One container's worth for the task and one held back for the assistant chat.
- * A total below this admits nothing, which queues every run forever with nothing
- * naming the cause - so it is refused where it is set rather than discovered later.
+ * One container's worth for the task and one for the chat lane. A total below
+ * this admits nothing, which queues every run forever with nothing naming the
+ * cause - so it is refused where it is set rather than discovered later.
  */
 export function minTotalContainerMemoryGb(ramCapGb: number): number {
 	return chatContainerReservationGb(ramCapGb) + Math.max(1, ramCapGb);
@@ -462,6 +469,13 @@ export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
 export const CHAT_IDLE_TIMEOUT_MIN = 15;
 
 /**
+ * Width cap for a chat message preview on list-shaped surfaces: the room list's
+ * `last_message_preview` column and the per-team signal room's boundary events.
+ * One constant so the pushed preview can never be wider than the fetched one.
+ */
+export const CHAT_MESSAGE_PREVIEW_CHARS = 140;
+
+/**
  * How long a member must have sat idle before another **project** may reclaim it
  * to fit its own container into the memory budget.
  *
@@ -568,10 +582,19 @@ export const wsRoom = {
 	/**
 	 * Global CEO chat signal room. Every chat surface subscribes here for
 	 * conversation-list level activity (a new thread, cross-thread badges).
+	 * HQ/CEO conversations only - a project team's chat signals on
+	 * {@link wsRoom.chatTeam}, gated on that team's access.
 	 */
 	chat: () => 'chat:global',
 	/**
-	 * Per-conversation CEO chat room. Message start/delta/complete for a single
+	 * Per-team chat signal room: boundary events (message start/complete,
+	 * conversation updates) for every DM in that team's project, for list
+	 * ordering and unread badges. Deltas never come here - they stream only on
+	 * the per-conversation room.
+	 */
+	chatTeam: (teamId: string) => `chat:team:${teamId}`,
+	/**
+	 * Per-conversation chat room. Message start/delta/complete for a single
 	 * thread stream here, so an open thread only receives its own deltas.
 	 */
 	chatConversation: (conversationId: string) => `chat:${conversationId}`,

@@ -18,7 +18,7 @@ import {
  * paths and a different obligation.
  */
 describe('prompt-bearing classification', () => {
-	it('covers the four surfaces that carry agent-facing prose', () => {
+	it('covers the five surfaces that carry agent-facing prose', () => {
 		expect(
 			promptBearingFiles([
 				'agents/app-dev/engineer.md',
@@ -26,8 +26,9 @@ describe('prompt-bearing classification', () => {
 				'skills/code-review.md',
 				'marketplace/teams/investment.json',
 				'packages/server/src/services/template-resolver.ts',
+				'packages/server/src/services/chat-session-manager.ts',
 			]),
-		).toHaveLength(5);
+		).toHaveLength(6);
 	});
 
 	it('ignores everything else, including tests and docs', () => {

@@ -44,16 +44,15 @@ test('shows a top-right reconnecting toast when the socket drops, clears when it
 	await expect(toast).toContainText('Connection lost');
 	await expect(toast).toContainText('Reconnecting');
 
-	// Position: top-right, below the app header, and clear of the CEO chat launcher
-	// (which is pinned bottom-right — the whole reason toasts moved to the top).
+	// Position: top-right, below the app header - clear of the bottom-right
+	// corner where the chat dock anchors.
 	const toastBox = await toast.boundingBox();
 	const headerBox = await page.getByTestId('app-header').boundingBox();
-	const launcherBox = await page.getByTestId('chat-launcher').boundingBox();
 	const viewport = page.viewportSize();
-	if (!toastBox || !headerBox || !launcherBox || !viewport) throw new Error('missing boxes');
+	if (!toastBox || !headerBox || !viewport) throw new Error('missing boxes');
 	expect(toastBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 1);
 	expect(toastBox.x + toastBox.width).toBeGreaterThan(viewport.width / 2);
-	expect(toastBox.y + toastBox.height).toBeLessThan(launcherBox.y);
+	expect(toastBox.y + toastBox.height).toBeLessThan(viewport.height / 2);
 
 	// "Retry now" is a real control: clicking it while still offline forces a
 	// reconnect attempt without crashing, and the toast stays up (still offline).

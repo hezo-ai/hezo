@@ -152,16 +152,16 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 				params: { projectId, agentId: result.agent.slug },
 			});
 		} else {
-			navigate({ to: '/projects/$projectId/agents', params: { projectId } });
+			navigate({ to: '/projects/$projectId/budget/team', params: { projectId } });
 		}
 	}
 
 	return (
 		<form onSubmit={handleSubmit}>
-			{/* Back to the chooser rather than to the team page: a wrong turn at the
+			{/* Back to the chooser rather than to the Team tab: a wrong turn at the
 			    fork should cost one click, not a re-hunt for the button. */}
 			<Link
-				to="/projects/$projectId/agents"
+				to="/projects/$projectId/budget/team"
 				params={{ projectId }}
 				search={{ hire: true }}
 				className="mb-4 inline-flex items-center gap-1.5 text-[12.5px] text-text-2 hover:text-text-1"
@@ -176,7 +176,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 				</p>
 			)}
 			<div className="flex justify-end gap-2 pt-4 mt-5 border-t border-border">
-				<Link to="/projects/$projectId/agents" params={{ projectId }}>
+				<Link to="/projects/$projectId/budget/team" params={{ projectId }}>
 					<Button type="button" variant="secondary">
 						Cancel
 					</Button>
@@ -216,7 +216,7 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 	const busy = updateProposal.isPending || resolveApproval.isPending;
 
 	function backToAgents() {
-		navigate({ to: '/projects/$projectId/agents', params: { projectId } });
+		navigate({ to: '/projects/$projectId/budget/team', params: { projectId } });
 	}
 
 	async function saveIfDirty() {
@@ -266,7 +266,7 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 				</p>
 			)}
 			<div className="flex flex-wrap justify-end gap-2 pt-4 mt-5 border-t border-border">
-				<Link to="/projects/$projectId/agents" params={{ projectId }}>
+				<Link to="/projects/$projectId/budget/team" params={{ projectId }}>
 					<Button type="button" variant="secondary">
 						Cancel
 					</Button>

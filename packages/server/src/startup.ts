@@ -69,6 +69,7 @@ import { mentionsRoutes } from './routes/mentions';
 import { modelPricingRoutes } from './routes/model-pricing';
 import { oauthRoutes } from './routes/oauth';
 import { previewRoutes } from './routes/preview';
+import { projectChatRoutes } from './routes/project-chat';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes, publicProjectsRoutes } from './routes/projects';
 import { queuedWakeupsRoutes } from './routes/queued-wakeups';
@@ -445,10 +446,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sink: buildInboundEventSink({ db, manager: chatSessionManager }),
 	});
 	wireManagerToChannels(chatSessionManager, chatChannelRegistry);
-	// Closes the one edge that runs the other way: the idle pass parks a live
-	// assistant session before taking its container down, so the session is
-	// suspended deliberately rather than discovering it through a dead tunnel.
-	jobManager.setChatSessions(chatSessionManager);
 
 	setStartupPhase('workspace');
 	// On a genuinely fresh instance (HQ not yet seeded) install the default skills
@@ -511,7 +508,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 						.catch((err) => log.error('Failed to warm HQ container on startup:', err)),
 				);
 			});
-		chatSessionManager.start();
 		// Re-encode any legacy plaintext webhook secret (migration 050) before the
 		// adapters come up. Needs the master key, which migrations at boot do not
 		// have — this is the first moment it exists. Idempotent: a no-op once every
@@ -878,6 +874,7 @@ export function buildApp(
 	app.route('/api', searchRoutes);
 	app.route('/api', buildUpdatesRoutes({ autoUnlock: config.autoUnlock ?? false }));
 	app.route('/api', chatRoutes);
+	app.route('/api', projectChatRoutes);
 	app.route('/api', chatChannelRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory

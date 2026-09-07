@@ -4,6 +4,8 @@ import {
 	type ChatMessageRole,
 	ChatMessageStatus,
 	type ChatSystemMessageKind,
+	type WsChatGroupPendingTurn,
+	type WsChatGroupPendingTurnsMessage,
 	type WsChatMessageCompleteMessage,
 	type WsChatMessageDeltaMessage,
 	type WsChatMessageStartMessage,
@@ -19,6 +21,40 @@ import { queryKeys } from '../lib/query-keys';
 import type { CommentAttachment } from './use-comments';
 import { toast } from './use-toast';
 
+/**
+ * Which conversation the dock is showing. Chat lives in rooms, not routes
+ * (decision: there is no dedicated chat page):
+ *
+ * - `ceo` — the CEO's single live stream (the server resolves it; HQ scope).
+ * - `thread` — a specific CEO-scope conversation by id: a History thread, an
+ *   external DM, or a read-only team channel.
+ * - `agent` — a project agent's DM, addressed by project + agent slug the way
+ *   every project surface is.
+ * - `group` — a project group room (several agents, mention-driven turns).
+ *   Rooms have no slug, so the conversation id is their identity.
+ */
+export type ChatRoom =
+	| { kind: 'ceo' }
+	| { kind: 'thread'; id: string }
+	| { kind: 'agent'; projectSlug: string; agentSlug: string; title: string }
+	| {
+			kind: 'group';
+			projectSlug: string;
+			conversationId: string;
+			title: string;
+			isGeneral?: boolean;
+	  };
+
+export const CEO_ROOM: ChatRoom = { kind: 'ceo' };
+
+/** Stable identity key for a room — query keys, queue buckets, persistence. */
+export function chatRoomKey(room: ChatRoom): string {
+	if (room.kind === 'ceo') return 'ceo';
+	if (room.kind === 'thread') return `thread:${room.id}`;
+	if (room.kind === 'group') return `group:${room.projectSlug}:${room.conversationId}`;
+	return `agent:${room.projectSlug}:${room.agentSlug}`;
+}
+
 export interface ChatMessage {
 	id: string;
 	role: ChatMessageRole;
@@ -32,19 +68,38 @@ export interface ChatMessage {
 	system_kind?: ChatSystemMessageKind | null;
 	/** Why a failed reply failed, in the server's words. */
 	error?: string | null;
+	/** The replying agent, on assistant rows — drives the author label. */
+	author_member_id?: string | null;
+	/** Denormalized author name on group replies — the label the room saw at the time. */
+	author_label?: string | null;
+	/** Up to three one-tap replies the agent offered with this reply. */
+	suggested_replies?: string[] | null;
 }
 
 interface ConversationData {
-	conversation_id: string;
+	conversation_id: string | null;
 	messages: ChatMessage[];
 	/** How many older messages have been compacted into long-term memory. */
 	compacted_count: number;
+	/** Group rooms only: the room's own metadata and roster. */
+	title?: string | null;
+	is_general?: boolean;
+	participants?: GroupParticipant[];
+	/** Group rooms only: replies still queued behind the latest message. */
+	pending_turns?: GroupPendingTurn[];
+	/**
+	 * The instance has spent its monthly container-hours allowance, so a turn
+	 * needing a new container is refused. Carried on the room read rather than
+	 * fetched separately: the composer must be able to say so before someone
+	 * types, and this is a response the surface already loads.
+	 */
+	hours_exhausted?: boolean;
 }
 
 /**
- * A message parked while the CEO is mid-reply. It has not reached the server, so
- * it can still be pulled back out; the whole queue flushes as one turn the moment
- * the reply settles.
+ * A message parked while the agent is mid-reply. It has not reached the server,
+ * so it can still be pulled back out; the whole queue flushes as one turn the
+ * moment the reply settles.
  */
 export interface QueuedChatMessage {
 	id: string;
@@ -58,9 +113,6 @@ interface OutboundChatMessage {
 	attachments: CommentAttachment[];
 }
 
-/** Queue bucket for the default web thread, which has no caller-supplied id. */
-const DEFAULT_THREAD_QUEUE_KEY = '__default__';
-
 /** Stable identity for "no queue" so it never re-triggers effects. */
 const EMPTY_QUEUE: readonly QueuedChatMessage[] = Object.freeze([]);
 
@@ -68,11 +120,11 @@ let queuedMessageSeq = 0;
 const nextQueuedMessageId = () => `queued-${++queuedMessageSeq}`;
 
 /**
- * Unread badge state for the minimized launcher. The CEO conversation has no
- * server-side read tracking, so we count completed CEO replies that land while
- * the widget is closed and persist the tally in localStorage (mirrors the
- * `hezo_token` convention) so a reload still shows the indicator. Opening the
- * chat clears it. The overlay itself reuses the same component as the inbox.
+ * Unread badge state for the header's CEO monogram. The count survives reloads
+ * in localStorage (mirrors the `hezo_token` convention); opening the chat
+ * clears it. HQ-scoped by construction: the `chat:global` room this rides only
+ * carries HQ/CEO events now — a project DM signals on its team's room and
+ * badges through the server-side watermark instead.
  */
 const CHAT_UNREAD_KEY = 'hezo_chat_unread';
 
@@ -95,29 +147,104 @@ function writeStoredUnread(count: number): void {
 }
 
 /**
- * The thread the operator last switched to in the chatbox (same localStorage
- * convention as the unread tally above). The widget restores it on mount, so
- * closing and reopening — or a reload, or the remount a bare route forces —
- * comes back to that conversation instead of snapping to the server's default
- * web thread. Only an *explicit* switch is recorded, and returning to the default
- * clears the key, so an operator who never touches the switcher keeps exactly the
- * old behaviour. A stored id is discarded once the thread list shows it is no
- * longer open.
+ * How many CEO-room surfaces are on screen right now. The dock is only one of
+ * them - the fresh-instance landing (and the chat landing preference) render
+ * the same room full-pane with the dock closed - and a reply the operator is
+ * watching stream in is not unread. Module-level because the badge and the
+ * surfaces are separate component trees.
  */
-const CHAT_THREAD_KEY = 'hezo_chat_thread';
+const ceoSurfaces = { count: 0, listeners: new Set<() => void>() };
 
-export function readStoredThreadId(): string | undefined {
+function registerCeoSurface(): () => void {
+	ceoSurfaces.count += 1;
+	for (const l of ceoSurfaces.listeners) l();
+	return () => {
+		ceoSurfaces.count -= 1;
+		for (const l of ceoSurfaces.listeners) l();
+	};
+}
+
+/**
+ * The CEO-reply unread tally for the header monogram. Lives beside the widget
+ * rather than inside `useChat` because its one consumer — the header badge —
+ * renders whether or not the dock is mounted open. Joins the global HQ room
+ * for its lifetime; a completed CEO reply while no CEO surface is on screen
+ * bumps it, and any CEO surface appearing (the dock, the full-pane landing)
+ * clears it. A visible surface also holds the conversation's own room, whose
+ * duplicate Complete copy would otherwise double-count every reply.
+ */
+export function useCeoUnread(chatOpen: boolean): number {
+	const { subscribe, joinRoom, leaveRoom } = useSocket();
+	const [unread, setUnread] = useState<number>(readStoredUnread);
+	const openRef = useRef(chatOpen);
+	useEffect(() => {
+		openRef.current = chatOpen;
+		if (chatOpen) {
+			setUnread(0);
+			writeStoredUnread(0);
+		}
+	}, [chatOpen]);
+	useEffect(() => {
+		const clearWhenVisible = () => {
+			if (ceoSurfaces.count > 0) {
+				setUnread(0);
+				writeStoredUnread(0);
+			}
+		};
+		ceoSurfaces.listeners.add(clearWhenVisible);
+		clearWhenVisible();
+		return () => {
+			ceoSurfaces.listeners.delete(clearWhenVisible);
+		};
+	}, []);
+	useEffect(() => {
+		const room = wsRoom.chat();
+		joinRoom(room);
+		return () => leaveRoom(room);
+	}, [joinRoom, leaveRoom]);
+	useEffect(() => {
+		return subscribe(WsMessageType.ChatMessageComplete, (raw) => {
+			const m = raw as WsChatMessageCompleteMessage;
+			if (m.status !== ChatMessageStatus.Complete || openRef.current || ceoSurfaces.count > 0)
+				return;
+			setUnread((n) => {
+				const next = n + 1;
+				writeStoredUnread(next);
+				return next;
+			});
+		});
+	}, [subscribe]);
+	return unread;
+}
+
+/**
+ * The room the operator last had open, restored on the next mount (same
+ * localStorage convention as the unread tally). Selecting the CEO clears the
+ * key so an untouched dock keeps the default behaviour.
+ */
+const CHAT_ROOM_KEY = 'hezo_chat_room';
+
+export function readStoredRoom(): ChatRoom | undefined {
 	try {
-		return localStorage.getItem(CHAT_THREAD_KEY) ?? undefined;
+		const raw = localStorage.getItem(CHAT_ROOM_KEY);
+		if (!raw) return undefined;
+		const parsed = JSON.parse(raw) as ChatRoom;
+		if (
+			parsed &&
+			(parsed.kind === 'thread' || parsed.kind === 'agent' || parsed.kind === 'group')
+		) {
+			return parsed;
+		}
+		return undefined;
 	} catch {
 		return undefined;
 	}
 }
 
-export function writeStoredThreadId(id: string | undefined): void {
+export function writeStoredRoom(room: ChatRoom | undefined): void {
 	try {
-		if (id) localStorage.setItem(CHAT_THREAD_KEY, id);
-		else localStorage.removeItem(CHAT_THREAD_KEY);
+		if (room && room.kind !== 'ceo') localStorage.setItem(CHAT_ROOM_KEY, JSON.stringify(room));
+		else localStorage.removeItem(CHAT_ROOM_KEY);
 	} catch {
 		// localStorage may be unavailable (private mode); the selection just won't persist.
 	}
@@ -131,7 +258,7 @@ export interface ChatConvertedTaskRef {
 	project_slug: string;
 }
 
-/** A conversation thread in the switcher list. */
+/** A CEO-scope conversation in the switcher (live, external, channel, History). */
 export interface ChatConversationSummary {
 	id: string;
 	/** The thread's one home surface (web, telegram, slack, discord, …). */
@@ -142,172 +269,346 @@ export interface ChatConversationSummary {
 	title: string | null;
 	last_activity_at: string;
 	closed_at: string | null;
-	/** Set when the thread was converted into a task (it stays listed, read-only). */
+	/** Set when the thread was converted into a task (readable History). */
 	converted_task_id: string | null;
 	/** Joined reference; null when not converted or the task was since deleted. */
 	converted_task: ChatConvertedTaskRef | null;
 }
 
+/** One agent DM row in a project's room list (menu cards + dock switcher). */
+export interface ProjectChatRoomSummary {
+	member_id: string;
+	slug: string;
+	title: string;
+	display_name: string;
+	conversation_id: string | null;
+	last_activity_at: string | null;
+	last_message_id: string | null;
+	last_message_preview: string | null;
+	last_message_role: string | null;
+	unread: boolean;
+}
+
+/** One participant of a group room (also the author-label lookup for its bubbles). */
+export interface GroupParticipant {
+	member_id: string;
+	slug: string;
+	title: string;
+	display_name: string;
+}
+
+/** One group room row in a project's room list. The built-in General room leads. */
+export interface ProjectChatGroupSummary {
+	id: string;
+	title: string | null;
+	is_general: boolean;
+	last_activity_at: string | null;
+	last_message_id: string | null;
+	last_message_preview: string | null;
+	last_message_role: string | null;
+	last_message_author: string | null;
+	unread: boolean;
+	participants: GroupParticipant[];
+}
+
+/** A reply still queued behind a group message (the pending strip's chips). */
+export type GroupPendingTurn = WsChatGroupPendingTurn;
+
 /**
- * List the CEO chat conversation threads (open only) and expose create/close
- * mutations for the switcher. Invalidated on new activity via the global room.
+ * The CEO-scope conversation list: the live stream, external DMs, team
+ * channels, and closed threads (History). Refetched on conversation-updated
+ * broadcasts from the global HQ room.
  */
 export function useChatConversations(active: boolean) {
 	const queryClient = useQueryClient();
 	const { subscribe } = useSocket();
 	const query = useQuery({
 		queryKey: queryKeys.chatConversations(),
-		queryFn: () => api.get<{ conversations: ChatConversationSummary[] }>('/api/chat/conversations'),
+		queryFn: () =>
+			api.get<{ conversations: ChatConversationSummary[] }>(
+				'/api/chat/conversations?include_closed=true',
+			),
 		enabled: active,
 	});
-	// A thread's title can change server-side (the CEO auto-titles an untitled thread
-	// from its first message, in parallel with the reply — so it can land while the
-	// reply is still streaming). Refetch the list when that broadcast arrives so the
-	// switcher/rail label updates live. The widget's `useChat` already joins the
-	// `chat:global` room for its lifetime, so the broadcast reaches us without a separate join here.
 	useEffect(() => {
 		if (!active) return;
 		return subscribe(WsMessageType.ChatConversationUpdated, () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() });
 		});
 	}, [active, subscribe, queryClient]);
-	const create = useMutation({
-		mutationFn: (title?: string) =>
-			api.post<{ conversation: ChatConversationSummary }>('/api/chat/conversations', { title }),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() }),
-		onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to create thread'),
-	});
-	const close = useMutation({
-		mutationFn: (id: string) => api.post(`/api/chat/conversations/${id}/close`, {}),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() }),
-		onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to close thread'),
-	});
-	// Invalidate + refetch, not optimistic: the server creates the task, writes
-	// the meta message, and closes the thread in one go — the UI must only ever
-	// show that state as read back. Both keys matter: the list carries the
-	// converted flag, and the conversation query (staleTime: Infinity) needs the
-	// invalidation to pull in the system meta message for tabs that missed the
-	// WebSocket event. No success toast — the in-thread meta message is the
-	// confirmation.
-	const convert = useMutation({
-		mutationFn: (input: { id: string; projectId: string; title?: string }) =>
-			api.post<{
-				task: ChatConvertedTaskRef;
-				conversation: ChatConversationSummary;
-			}>(`/api/chat/conversations/${input.id}/convert-to-task`, {
-				project_id: input.projectId,
-				title: input.title,
-			}),
-		onSuccess: (_data, input) => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() });
-			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversation(input.id) });
-		},
-	});
 	return {
 		conversations: query.data?.conversations ?? [],
 		loaded: !query.isPending,
-		createThread: (title?: string) => create.mutateAsync(title),
-		closeThread: (id: string) => close.mutateAsync(id),
-		convertThread: (input: { id: string; projectId: string; title?: string }) =>
-			convert.mutateAsync(input),
-		converting: convert.isPending,
 	};
 }
 
 /**
- * Drives one CEO chat conversation thread (the default web thread when
- * `conversationId` is omitted). The TanStack Query cache is the source of truth
- * for messages (keyed by {@link queryKeys.chatConversation} + the thread id); the
- * initial history loads via `useQuery` and streamed start/delta/complete events
- * are folded into the same cache entry via `setQueryData`. Events carry their
- * `conversationId`, so a message for another thread is ignored. The query never
- * refetches on its own (`staleTime: Infinity`) so an in-flight reply's accumulated
- * deltas aren't clobbered by a server snapshot that only persists on completion.
+ * A project's DM room list: one row per enabled roster agent, with the unread
+ * bit computed server-side from the reads watermark. Drives the project menu's
+ * chat cards and the dock switcher's project section. Kept live by boundary
+ * events on the conversations' own rooms (the open dock) and refetch-on-open.
  */
-export function useChat(active: boolean, conversationId?: string) {
+export function useProjectChatRooms(projectSlug: string | null | undefined, active: boolean) {
+	const queryClient = useQueryClient();
+	const { subscribe, joinRoom, leaveRoom } = useSocket();
+	const enabled = !!projectSlug && active;
+	const query = useQuery({
+		queryKey: queryKeys.projectChatRooms(projectSlug ?? ''),
+		queryFn: async () => {
+			// The switcher and the menu cards render EVERY room, so walk the group
+			// cursor to the end rather than silently stopping at page one - a page
+			// the list never shows is the exact bug the paging rule names. Bounded:
+			// pages are 50 rooms and the walk stops at 20 (a thousand rooms).
+			const first = await api.get<{
+				team_id?: string;
+				conversations: ProjectChatRoomSummary[];
+				groups?: ProjectChatGroupSummary[];
+				groups_next_cursor?: string | null;
+			}>(`/api/projects/${projectSlug}/chat/conversations`);
+			let cursor = first.groups_next_cursor ?? null;
+			const groups = [...(first.groups ?? [])];
+			for (let pages = 0; cursor && pages < 20; pages++) {
+				const next = await api.get<{
+					groups?: ProjectChatGroupSummary[];
+					groups_next_cursor?: string | null;
+				}>(
+					`/api/projects/${projectSlug}/chat/conversations?group_cursor=${encodeURIComponent(cursor)}`,
+				);
+				groups.push(...(next.groups ?? []));
+				cursor = next.groups_next_cursor ?? null;
+			}
+			return { ...first, groups };
+		},
+		enabled,
+	});
+	// The team's chat signal room is where the server fans this project's
+	// boundary events (start/complete) for exactly this list's benefit - the
+	// per-conversation rooms carry only the one open room. Keyed by the team
+	// UUID the list itself reports (rooms are UUID-keyed; URLs are slugs).
+	const teamId = query.data?.team_id ?? null;
+	useEffect(() => {
+		if (!enabled || !teamId) return;
+		const room = wsRoom.chatTeam(teamId);
+		joinRoom(room);
+		return () => leaveRoom(room);
+	}, [enabled, teamId, joinRoom, leaveRoom]);
+	// Any boundary event changes ordering, preview or unread state — refetch the
+	// list. Rename/close events land as conversation-updated.
+	useEffect(() => {
+		if (!enabled) return;
+		const invalidate = () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.projectChatRooms(projectSlug ?? '') });
+		const offStart = subscribe(WsMessageType.ChatMessageStart, invalidate);
+		const offComplete = subscribe(WsMessageType.ChatMessageComplete, invalidate);
+		const offUpdated = subscribe(WsMessageType.ChatConversationUpdated, invalidate);
+		return () => {
+			offStart();
+			offComplete();
+			offUpdated();
+		};
+	}, [enabled, projectSlug, subscribe, queryClient]);
+	return {
+		rooms: query.data?.conversations ?? [],
+		groups: query.data?.groups ?? EMPTY_GROUPS,
+		loaded: !query.isPending,
+	};
+}
+
+/** Stable identity for "no groups" so it never re-triggers effects. */
+const EMPTY_GROUPS: readonly ProjectChatGroupSummary[] = Object.freeze([]);
+
+function conversationUrl(room: ChatRoom): string {
+	if (room.kind === 'agent') {
+		return `/api/projects/${encodeURIComponent(room.projectSlug)}/chat/agents/${encodeURIComponent(room.agentSlug)}/conversation`;
+	}
+	if (room.kind === 'group') {
+		return `/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}`;
+	}
+	if (room.kind === 'thread') {
+		return `/api/chat/conversation?conversation_id=${encodeURIComponent(room.id)}`;
+	}
+	return '/api/chat/conversation';
+}
+
+function roomQueryKey(room: ChatRoom): readonly unknown[] {
+	if (room.kind === 'agent') return queryKeys.agentChatRoom(room.projectSlug, room.agentSlug);
+	if (room.kind === 'group') return queryKeys.groupChatRoom(room.projectSlug, room.conversationId);
+	return queryKeys.chatConversation(room.kind === 'thread' ? room.id : undefined);
+}
+
+/**
+ * Drives one chat room. The TanStack Query cache is the source of truth for
+ * messages (keyed per room); the initial history loads via `useQuery` and
+ * streamed start/delta/complete events are folded into the same cache entry via
+ * `setQueryData`. Events carry their `conversationId`, so another room's stream
+ * never lands here. The query never refetches on its own (`staleTime:
+ * Infinity`) so an in-flight reply's accumulated deltas aren't clobbered by a
+ * server snapshot that only persists on completion.
+ */
+export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const { subscribe, joinRoom, leaveRoom } = useSocket();
 	const queryClient = useQueryClient();
-	const [unread, setUnread] = useState<number>(readStoredUnread);
-	// The server-resolved id of the thread this hook is showing (the default web
-	// thread resolves to a concrete id in the query response). Used to filter WS
-	// events so another thread's stream never lands in this cache entry.
-	const resolvedIdRef = useRef<string | null>(conversationId ?? null);
+	// The server-resolved id of the conversation this hook is showing. Used to
+	// filter WS events so another room's stream never lands in this cache entry.
+	const resolvedIdRef = useRef<string | null>(
+		room.kind === 'thread' ? room.id : room.kind === 'group' ? room.conversationId : null,
+	);
 	// In-flight send: the user's messages are shown optimistically (with a pending
-	// assistant placeholder) while the server warms the session / egress check, so
-	// the operator gets immediate feedback instead of a ~10s blank. Cleared when the
-	// real user message arrives over WS, or when the send settles (incl. failure).
-	// It's a list because a flushed queue sends several messages as one turn.
-	const [pending, setPending] = useState<{
+	// assistant placeholder) while the server warms the container, so the operator
+	// gets immediate feedback instead of a blank. Cleared when the real user
+	// message arrives over WS, or when the send settles (incl. failure). It's a
+	// list because a flushed queue sends several messages as one turn, and it is
+	// tagged with the room it was sent in so switching rooms mid-send never
+	// renders (or busies) the bubble in the wrong room.
+	const [pendingSend, setPendingSend] = useState<{
+		roomKey: string;
 		at: string;
 		messages: OutboundChatMessage[];
 	} | null>(null);
-	// Messages parked while a reply streams, bucketed per thread so switching
-	// threads (or closing the panel) never drops or misdelivers a queued message.
-	// Client-side only: a reload loses the queue, which is the accepted cost of not
-	// making a parked message a `chat_messages` row + migration.
+	// Messages parked while a reply streams, bucketed per room so switching rooms
+	// (or closing the panel) never drops or misdelivers a queued message.
 	const [queues, setQueues] = useState<Record<string, QueuedChatMessage[]>>({});
-	// The tool the in-flight reply last reached for, if any. Transient — see the
-	// subscription below.
+	// The tool the in-flight reply last reached for, if any. Transient.
 	const [toolActivity, setToolActivity] = useState<{ messageId: string; tool: string } | null>(
 		null,
 	);
-	const queueKey = conversationId ?? DEFAULT_THREAD_QUEUE_KEY;
+	// Group rooms: the replies still queued behind the latest message (the
+	// pending strip), fed by the server's pending-turns broadcasts.
+	const [pendingTurns, setPendingTurns] = useState<GroupPendingTurn[]>([]);
+	// Group rooms: the last send summoned nobody (no mention, no locus) — the
+	// local nudge to tag a teammate. Never a server round trip.
+	const [groupNudge, setGroupNudge] = useState(false);
+	const queueKey = chatRoomKey(room);
 	const queue = queues[queueKey] ?? EMPTY_QUEUE;
-	// The socket handler is wired once; this ref lets it read the live open state
-	// (whether the chat is currently visible) without re-subscribing every toggle.
-	const activeRef = useRef(active);
+	const queryKey = roomQueryKey(room);
+
+	// Room-scoped transient state: a switched-to room starts with no strip and
+	// no nudge — both belong to the room they happened in.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on room identity change
 	useEffect(() => {
-		activeRef.current = active;
-	}, [active]);
+		setPendingTurns([]);
+		setGroupNudge(false);
+	}, [queueKey]);
+
+	// A visible CEO room - the dock's or the full-pane landing's - suppresses
+	// and clears the header monogram's unread tally: the operator is watching
+	// these replies arrive.
+	const isCeoSurface = active && room.kind === 'ceo';
+	useEffect(() => {
+		if (!isCeoSurface) return;
+		return registerCeoSurface();
+	}, [isCeoSurface]);
 
 	const query = useQuery({
-		queryKey: queryKeys.chatConversation(conversationId),
-		queryFn: () =>
-			api.get<ConversationData>(
-				conversationId
-					? `/api/chat/conversation?conversation_id=${encodeURIComponent(conversationId)}`
-					: '/api/chat/conversation',
-			),
+		queryKey,
+		queryFn: () => api.get<ConversationData>(conversationUrl(room)),
 		enabled: active,
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: false,
 	});
-	// Track the server-resolved thread id so WS events can be filtered to this thread.
-	resolvedIdRef.current = query.data?.conversation_id ?? conversationId ?? null;
+	// Replay the pending strip from the read: broadcasts only reach whoever was
+	// subscribed when the queue changed, so a room opened (or reloaded)
+	// mid-queue would otherwise show nothing to see or cancel.
+	const seededPendingTurns = query.data?.pending_turns;
+	useEffect(() => {
+		if (room.kind === 'group' && seededPendingTurns) setPendingTurns(seededPendingTurns);
+	}, [room.kind, seededPendingTurns]);
 
-	// Opening the chat means the operator is reading it — drop the unread badge.
+	// Track the server-resolved conversation id so WS events can be filtered.
+	resolvedIdRef.current =
+		query.data?.conversation_id ??
+		(room.kind === 'thread' ? room.id : room.kind === 'group' ? room.conversationId : null);
+
+	// Join the resolved conversation's own room: streaming deltas go ONLY there
+	// (signal rooms carry boundary events for lists and badges), so an open room
+	// without this subscription would render replies only on completion.
+	const resolvedConversationId = query.data?.conversation_id ?? null;
+	useEffect(() => {
+		if (!resolvedConversationId) return;
+		const r = wsRoom.chatConversation(resolvedConversationId);
+		joinRoom(r);
+		return () => leaveRoom(r);
+	}, [joinRoom, leaveRoom, resolvedConversationId]);
+
+	// The room's own first send, still in flight: the only window in which an
+	// unresolved room may accept (and anchor to) broadcast events.
+	const awaitingFirstSendRef = useRef(false);
+
+	// A cached tail stuck in a non-terminal state means the settle event landed
+	// while another room was shown (events patch only the visible room, and this
+	// cache never goes stale on its own). Refetch on activation so a switched-
+	// back room shows the server's truth instead of eternal typing dots - and a
+	// reply genuinely still streaming simply resumes from the refetched row.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: run on room activation
 	useEffect(() => {
 		if (!active) return;
-		setUnread(0);
-		writeStoredUnread(0);
-	}, [active]);
+		const cached = queryClient.getQueryData<ConversationData>(queryKey);
+		const tail = cached?.messages[cached.messages.length - 1];
+		if (tail && tail.role === 'assistant' && tail.status === 'streaming') {
+			queryClient.invalidateQueries({ queryKey });
+		}
+	}, [active, queueKey, queryClient]);
 
-	// Join the global CEO room for the widget's whole lifetime (it's mounted
-	// app-wide), not just while open, so a reply badges the launcher even when the
-	// chat is minimized. Cache patches below are no-ops until history has loaded.
+	// Server-side read watermark: while the room is open, the newest message is
+	// what the operator has seen. Written only when the tail actually moves, and
+	// never for the operator's own just-sent message (their bubble is not
+	// "unread" anywhere). Fire-and-forget — a failed mark costs a stale badge,
+	// but a landed one refreshes the room list so its unread dot clears now
+	// rather than on the next unrelated event.
+	const lastMarkedRef = useRef<string | null>(null);
+	const serverMessagesForMark = query.data?.messages;
 	useEffect(() => {
-		const room = wsRoom.chat();
-		joinRoom(room);
-		return () => leaveRoom(room);
-	}, [joinRoom, leaveRoom]);
+		if (!active || !resolvedConversationId || !serverMessagesForMark?.length) return;
+		const tail = serverMessagesForMark[serverMessagesForMark.length - 1];
+		if (!tail || tail.id.startsWith('optimistic-') || lastMarkedRef.current === tail.id) return;
+		lastMarkedRef.current = tail.id;
+		api
+			.post(`/api/chat/conversations/${resolvedConversationId}/read`, {
+				last_read_message_id: tail.id,
+			})
+			.then(() => {
+				if (room.kind === 'agent' || room.kind === 'group') {
+					queryClient.invalidateQueries({
+						queryKey: queryKeys.projectChatRooms(room.projectSlug),
+					});
+				}
+			})
+			.catch(() => undefined);
+	}, [active, resolvedConversationId, serverMessagesForMark, room, queryClient]);
 
+	// queryKey is derived from the room; the string key is the stable identity.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: queryKey identity is the room key
 	useEffect(() => {
 		const patch = (fn: (messages: ChatMessage[]) => ChatMessage[]) => {
-			queryClient.setQueryData<ConversationData>(
-				queryKeys.chatConversation(conversationId),
-				(prev) => (prev ? { ...prev, messages: fn(prev.messages) } : prev),
+			queryClient.setQueryData<ConversationData>(queryKey, (prev) =>
+				prev ? { ...prev, messages: fn(prev.messages) } : prev,
 			);
 		};
-		// A message belongs to this thread when its conversationId matches the
-		// resolved id (or either side is absent — back-compat / pre-resolution).
-		const forThisThread = (cid?: string): boolean =>
-			!cid || !resolvedIdRef.current || cid === resolvedIdRef.current;
+		// A message belongs to this room when its conversationId matches the
+		// resolved id. A room that has no conversation yet (a fresh agent DM)
+		// accepts events only while its OWN first send is in flight - that send is
+		// what creates the conversation. Without the gate, any HQ event on the
+		// always-joined global room (a CEO reply from another device, a task
+		// breadcrumb) would render in the empty DM and anchor it to the CEO's
+		// conversation for good.
+		const forThisRoom = (cid?: string): boolean => {
+			if (!cid) return true;
+			if (resolvedIdRef.current) return cid === resolvedIdRef.current;
+			return awaitingFirstSendRef.current;
+		};
 		const offStart = subscribe(WsMessageType.ChatMessageStart, (raw) => {
 			const m = raw as WsChatMessageStartMessage;
-			if (!forThisThread(m.conversationId)) return;
+			if (!forThisRoom(m.conversationId)) return;
 			// The real user message landed — drop the optimistic placeholder so the
 			// server rows (user + streaming assistant) take over without duplicating.
-			if (m.role === 'user') setPending(null);
+			if (m.role === 'user') setPendingSend((p) => (p && p.roomKey === queueKey ? null : p));
+			// A fresh DM's first send creates its conversation server-side; anchor
+			// the cache to it so later events filter correctly.
+			queryClient.setQueryData<ConversationData>(queryKey, (prev) =>
+				prev && prev.conversation_id === null
+					? { ...prev, conversation_id: m.conversationId }
+					: prev,
+			);
 			patch((messages) =>
 				messages.some((x) => x.id === m.messageId)
 					? messages
@@ -322,52 +623,54 @@ export function useChat(active: boolean, conversationId?: string) {
 								created_at: m.createdAt,
 								attachments: m.attachments,
 								system_kind: m.systemKind,
+								author_member_id: m.authorMemberId ?? null,
 							},
 						],
 			);
 		});
 		const offDelta = subscribe(WsMessageType.ChatMessageDelta, (raw) => {
 			const m = raw as WsChatMessageDeltaMessage;
-			if (!forThisThread(m.conversationId)) return;
+			if (!forThisRoom(m.conversationId)) return;
 			patch((messages) =>
 				messages.map((x) => (x.id === m.messageId ? { ...x, content: x.content + m.text } : x)),
 			);
 		});
-		// Transient: the last tool the CEO reached for on the in-flight reply, shown
-		// beside the dots and dropped when the reply settles. Deliberately not part
-		// of the message cache — it is progress, not conversation, and persisting it
-		// would leave a stale "Using ..." on a reloaded thread.
+		// Transient: the last tool the agent reached for on the in-flight reply.
 		const offToolActivity = subscribe(WsMessageType.ChatMessageToolActivity, (raw) => {
 			const m = raw as WsChatMessageToolActivityMessage;
-			if (!forThisThread(m.conversationId)) return;
+			if (!forThisRoom(m.conversationId)) return;
 			setToolActivity({ messageId: m.messageId, tool: m.tool });
 		});
 		const offComplete = subscribe(WsMessageType.ChatMessageComplete, (raw) => {
 			const m = raw as WsChatMessageCompleteMessage;
-			if (!forThisThread(m.conversationId)) return;
+			if (!forThisRoom(m.conversationId)) return;
 			patch((messages) =>
 				messages.map((x) =>
-					x.id === m.messageId ? { ...x, content: m.content, status: m.status, error: m.error } : x,
+					x.id === m.messageId
+						? {
+								...x,
+								content: m.content,
+								status: m.status,
+								error: m.error,
+								suggested_replies: m.suggestedReplies ?? null,
+							}
+						: x,
 				),
 			);
 			setToolActivity((prev) => (prev?.messageId === m.messageId ? null : prev));
-			// Complete events fire only for assistant replies. One that finishes
-			// while the widget is closed is an unread CEO message → badge the launcher.
-			if (m.status === ChatMessageStatus.Complete && !activeRef.current) {
-				setUnread((n) => {
-					const next = n + 1;
-					writeStoredUnread(next);
-					return next;
-				});
-			}
 		});
-		// Older messages were compacted into long-term memory and evicted. Refetch
-		// the conversation so the chatbox drops them (leaving the retained tail) and
-		// picks up the new compacted_count that drives the "chat compacted" marker.
+		// Older messages were compacted into long-term memory and evicted.
 		const offCompacted = subscribe(WsMessageType.ChatCompacted, (raw) => {
 			const m = raw as { conversationId?: string };
-			if (!forThisThread(m.conversationId)) return;
-			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversation(conversationId) });
+			if (!forThisRoom(m.conversationId)) return;
+			queryClient.invalidateQueries({ queryKey });
+		});
+		// Group rooms: the server's pending-turn queue, replacing the strip whole
+		// each time it changes so every open view of the room agrees.
+		const offPending = subscribe(WsMessageType.ChatGroupPendingTurns, (raw) => {
+			const m = raw as WsChatGroupPendingTurnsMessage;
+			if (!forThisRoom(m.conversationId)) return;
+			setPendingTurns(m.pending);
 		});
 		return () => {
 			offStart();
@@ -375,33 +678,74 @@ export function useChat(active: boolean, conversationId?: string) {
 			offToolActivity();
 			offComplete();
 			offCompacted();
+			offPending();
 		};
-	}, [subscribe, queryClient, conversationId]);
+	}, [subscribe, queryClient, queueKey]);
 
 	const sendMutation = useMutation({
 		// Always the batch shape: one turn carries N user messages, so a flushed
 		// queue posts each as its own bubble and a single reply answers all of them.
-		mutationFn: (batch: OutboundChatMessage[]) =>
-			api.post('/api/chat/messages', {
+		mutationFn: (batch: OutboundChatMessage[]) => {
+			const body = {
 				messages: batch.map((m) => ({
 					text: m.text,
 					attachment_ids: m.attachments.map((a) => a.id),
 				})),
-				...(conversationId ? { conversation_id: conversationId } : {}),
-			}),
-		onError: (error: { message?: string }) => {
-			toast.error(error?.message ?? 'Failed to send message to the CEO');
+			};
+			if (room.kind === 'agent') {
+				return api.post(
+					`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/agents/${encodeURIComponent(room.agentSlug)}/messages`,
+					body,
+				);
+			}
+			if (room.kind === 'group') {
+				return api.post<{ pending_member_ids: string[] }>(
+					`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}/messages`,
+					body,
+				);
+			}
+			return api.post('/api/chat/messages', {
+				...body,
+				...(room.kind === 'thread' ? { conversation_id: room.id } : {}),
+			});
 		},
-		// Clear the optimistic placeholder once the request settles — on success the
-		// WS user-message event has already cleared it; on failure (e.g. egress gate
-		// reject, toasted above) this drops the unsent bubble.
-		onSettled: () => setPending(null),
+		onSuccess: (data) => {
+			// A group send that summoned nobody (no mention, no locus) gets the
+			// local "tag a teammate" nudge; anything else clears it.
+			if (room.kind === 'group') {
+				const pendingIds = (data as { pending_member_ids?: string[] })?.pending_member_ids;
+				setGroupNudge(Array.isArray(pendingIds) && pendingIds.length === 0);
+			}
+		},
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to send message');
+		},
+	});
+
+	// Cancel one still-queued group reply (a chip on the pending strip). The
+	// server broadcasts the updated queue, which is what removes the chip - a
+	// security-irrelevant but server-owned state, so no optimistic removal.
+	const cancelTurnMutation = useMutation({
+		mutationFn: (memberId: string) => {
+			if (room.kind !== 'group') return Promise.resolve({});
+			return api.post(
+				`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}/cancel-turn`,
+				{ member_id: memberId },
+			);
+		},
+		// A failed or raced cancel must not die silently while the chip stays lit.
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to cancel the reply');
+		},
 	});
 
 	const serverMessages = query.data?.messages ?? [];
-	// Append the optimistic user bubbles + a pending assistant "thinking" placeholder
-	// while a send is in flight (an assistant row with empty streaming content renders
-	// the existing typing indicator). They're dropped the moment the real rows arrive.
+	// Append the optimistic user bubbles + a pending assistant "thinking"
+	// placeholder while a send is in flight - only in the room the send belongs
+	// to, so flipping rooms mid-send never shows (or busies) the wrong room. A
+	// group room skips the assistant placeholder: who replies (or that nobody
+	// does) is the server's call, and the pending strip is that answer.
+	const pending = pendingSend && pendingSend.roomKey === queueKey ? pendingSend : null;
 	const messages: ChatMessage[] =
 		pending !== null
 			? [
@@ -415,34 +759,48 @@ export function useChat(active: boolean, conversationId?: string) {
 						created_at: pending.at,
 						attachments: m.attachments,
 					})),
-					{
-						id: 'optimistic-assistant',
-						role: 'assistant' as ChatMessageRole,
-						channel: 'web' as ChatChannel,
-						status: 'streaming' as ChatMessageStatus,
-						content: '',
-						created_at: pending.at,
-					},
+					...(room.kind === 'group'
+						? []
+						: [
+								{
+									id: 'optimistic-assistant',
+									role: 'assistant' as ChatMessageRole,
+									channel: 'web' as ChatChannel,
+									status: 'streaming' as ChatMessageStatus,
+									content: '',
+									created_at: pending.at,
+								},
+							]),
 				]
 			: serverMessages;
 	const streaming = messages.some((m) => m.role === 'assistant' && m.status === 'streaming');
 	const sending = pending !== null;
 
-	// Stable across renders so the flush effect below can depend on it honestly
-	// rather than suppressing the dependency.
 	const { mutateAsync } = sendMutation;
 	const sendBatch = useCallback(
 		(batch: OutboundChatMessage[]) => {
 			if (batch.length === 0) return Promise.resolve();
-			setPending({ at: new Date().toISOString(), messages: batch });
-			return mutateAsync(batch);
+			setGroupNudge(false);
+			const sentKey = queueKey;
+			if (!resolvedIdRef.current) awaitingFirstSendRef.current = true;
+			setPendingSend({ roomKey: sentKey, at: new Date().toISOString(), messages: batch });
+			return mutateAsync(batch, {
+				// Clear the optimistic placeholder once the request settles — on
+				// success the WS user-message event has already cleared it; on failure
+				// this drops the unsent bubble. Keyed to the SENDING room, whatever
+				// room is shown by then.
+				onSettled: () => {
+					awaitingFirstSendRef.current = false;
+					setPendingSend((p) => (p && p.roomKey === sentKey ? null : p));
+				},
+			});
 		},
-		[mutateAsync],
+		[mutateAsync, queueKey],
 	);
 
 	/**
-	 * Post immediately. While a reply is streaming the server aborts it (keeping the
-	 * partial as `interrupted`) and starts a fresh turn — that's the interrupt.
+	 * Post immediately. While a reply is streaming the server aborts it (keeping
+	 * the partial as `interrupted`) and starts a fresh turn — that's the interrupt.
 	 */
 	const send = (text: string, attachments: CommentAttachment[] = []) => {
 		const trimmed = text.trim();
@@ -471,17 +829,14 @@ export function useChat(active: boolean, conversationId?: string) {
 		}));
 	};
 
-	// Flush the queue as one turn the moment the thread goes idle — after a reply
+	// Flush the queue as one turn the moment the room goes idle — after a reply
 	// completes, fails, or is interrupted, so a parked message is never lost to a
-	// turn that went wrong. The ref guards the window between clearing the queue and
-	// `pending` landing, where this effect would otherwise re-enter and double-post.
+	// turn that went wrong.
 	const flushingRef = useRef(false);
 	useEffect(() => {
 		if (streaming || sending || queue.length === 0 || flushingRef.current) return;
 		flushingRef.current = true;
 		setQueues((prev) => ({ ...prev, [queueKey]: [] }));
-		// A rejected flush is already surfaced by the mutation's `onError` toast;
-		// swallow it here so it doesn't surface again as an unhandled rejection.
 		sendBatch(queue.map((m) => ({ text: m.text, attachments: m.attachments })))
 			.catch(() => undefined)
 			.finally(() => {
@@ -494,8 +849,7 @@ export function useChat(active: boolean, conversationId?: string) {
 		send,
 		streaming,
 		sending,
-		// Only while that message is still streaming: a settled reply clears it, and
-		// a stale id from a superseded turn must not label the new one.
+		// Only while that message is still streaming: a settled reply clears it.
 		toolActivity:
 			toolActivity &&
 			messages.some(
@@ -504,16 +858,52 @@ export function useChat(active: boolean, conversationId?: string) {
 				? toolActivity.tool
 				: null,
 		loaded: !query.isPending,
-		unread,
 		// Messages parked for the next turn, plus the two ways to change that queue.
 		queue,
 		enqueue,
 		dequeue,
-		// The server-resolved id of the active thread (the default web thread when
-		// no id was passed) — drives the switcher's selected value.
-		conversationId: query.data?.conversation_id,
-		// >0 once older messages have been compacted into long-term memory; drives
-		// the "chat compacted" marker at the top of the window.
+		// The server-resolved id of the active conversation (null for a fresh DM
+		// that has never been written to).
+		conversationId: query.data?.conversation_id ?? undefined,
+		// >0 once older messages have been compacted into long-term memory.
 		compactedCount: query.data?.compacted_count ?? 0,
+		// The allowance is spent: a reply needing a new container will not start.
+		// Warm reuse still serves, so this warns rather than locking the composer.
+		hoursExhausted: query.data?.hours_exhausted === true,
+		// Group rooms: the roster (author-label lookup), the pending strip, its
+		// cancel, and the local "tag a teammate" nudge. Inert everywhere else.
+		participants: query.data?.participants ?? EMPTY_PARTICIPANTS,
+		pendingTurns,
+		cancelPendingTurn: (memberId: string) => {
+			cancelTurnMutation.mutate(memberId);
+		},
+		groupNudge,
 	};
 }
+
+/**
+ * Warm a container for this project's next chat turn.
+ *
+ * Called when a composer takes focus - the earliest honest signal that a turn is
+ * coming. The chat lane already guarantees the turn a slot and the pool keeps a
+ * project's last member resumable, so this only pays off in one case: a project
+ * holding no container at all, where the turn would otherwise pay a cold
+ * provision while the operator watches. That provision now overlaps the typing.
+ *
+ * Once per project per mount, and fire-and-forget. The server dedupes concurrent
+ * calls and stays silent on a refusal; the send that follows raises capacity and
+ * hours in the conversation itself, so there is nothing here worth reporting.
+ */
+export function useChatPrewarm(projectSlug: string | null | undefined): () => void {
+	const firedFor = useRef<string | null>(null);
+	return useCallback(() => {
+		if (!projectSlug || firedFor.current === projectSlug) return;
+		firedFor.current = projectSlug;
+		void api
+			.post(`/api/projects/${encodeURIComponent(projectSlug)}/chat/prewarm`, {})
+			.catch(() => undefined);
+	}, [projectSlug]);
+}
+
+/** Stable identity for "no participants" so it never re-triggers effects. */
+const EMPTY_PARTICIPANTS: readonly GroupParticipant[] = Object.freeze([]);

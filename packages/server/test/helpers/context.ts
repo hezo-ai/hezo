@@ -22,6 +22,8 @@ export interface ServerTestContext {
 	password: string;
 	/** Salt for the seeded admin's password verifier. */
 	passwordSalt: string;
+	/** The app's real chat manager (over the stub engine); stopped at destroy. */
+	chatSessionManager?: Awaited<ReturnType<typeof createTestApp>>['chatSessionManager'];
 }
 
 /** One request as it arrived on the wire, before the app saw it. */
@@ -132,6 +134,7 @@ export async function createTestContext(): Promise<ServerTestContext> {
 		dataDir,
 		password,
 		passwordSalt,
+		chatSessionManager,
 	} = await createTestApp();
 
 	const { server, port, baseUrl } = await serveTestApp(app);
@@ -149,10 +152,14 @@ export async function createTestContext(): Promise<ServerTestContext> {
 		dataDir,
 		password,
 		passwordSalt,
+		chatSessionManager,
 	};
 }
 
 export async function destroyTestContext(ctx: ServerTestContext): Promise<void> {
+	// Before the db closes: teardown updates session rows, and a live session
+	// left running would race the PGlite close below.
+	await ctx.chatSessionManager?.stop().catch(() => undefined);
 	await new Promise<void>((resolve) => ctx.server.close(() => resolve()));
 	await safeClose(ctx.db);
 	rmSync(ctx.dataDir, { recursive: true, force: true });

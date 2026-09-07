@@ -244,21 +244,6 @@ export type ProgressUpdateDispatchResult =
 	| TryProgressUpdateResult
 	| { queued: true; wakeupId: string };
 
-/**
- * The one thing the idle pass needs from the assistant: park a session whose
- * container is about to go down, while that container is still up.
- *
- * Without it the container is suspended first and the session finds out by its
- * tunnel dying - the *failure* path. That reported "closed unexpectedly", tore
- * the session down as `crashed` instead of parking it as `suspended` (losing the
- * resume-in-place path entirely), and left the provider's PTY session undeleted
- * because the DELETE raced the sandbox already stopping.
- */
-export interface ChatSessionPark {
-	/** No-op unless a live session is pinned to exactly this container. */
-	parkForContainerSuspend(containerId: string): Promise<void>;
-}
-
 export interface JobManagerDeps {
 	db: Db;
 	docker: ContainerEngine;
@@ -280,14 +265,6 @@ export interface JobManagerDeps {
 	storageBackend?: StorageBackend;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
 	telemetry?: { enabled: boolean; endpoint: string };
-	/**
-	 * Park a live assistant session before its container is taken down.
-	 *
-	 * A narrow port rather than the `ChatSessionManager` itself: the idle pass
-	 * needs one verb from it, and the manager is constructed after this one, so
-	 * it is attached with {@link JobManager.setChatSessions} once both exist.
-	 */
-	chatSessions?: ChatSessionPark;
 	/**
 	 * Install staged updates automatically (`--auto-install-updates` /
 	 * `HEZO_AUTO_INSTALL_UPDATES`): restart onto a staged newer binary without
@@ -641,17 +618,6 @@ export class JobManager {
 		}
 
 		return { dispatched: true };
-	}
-
-	/**
-	 * Attach the assistant park hook after construction.
-	 *
-	 * The chat manager is built after this one (it takes no job manager, this
-	 * takes one verb from it), so the edge is closed here rather than by
-	 * reordering two constructors around a dependency neither really has.
-	 */
-	setChatSessions(chatSessions: ChatSessionPark): void {
-		this.deps.chatSessions = chatSessions;
 	}
 
 	private buildContainerDeps(): ContainerDeps {
@@ -3721,13 +3687,8 @@ export class JobManager {
 				suspend: plan.suspend.map((m) => m.id),
 				destroy: plan.destroy.map((m) => m.id),
 			},
-			{ reason: 'idle', parkSession: (id) => this.parkChatSession(id) },
+			{ reason: 'idle' },
 		);
-	}
-
-	/** Best-effort park of any assistant session pinned to a container about to go. */
-	private async parkChatSession(containerId: string): Promise<void> {
-		await this.deps.chatSessions?.parkForContainerSuspend(containerId);
 	}
 
 	/**
@@ -3786,7 +3747,7 @@ export class JobManager {
 							suspend: plan.suspend.map((m) => m.id),
 							destroy: plan.destroy.map((m) => m.id),
 						},
-						{ reason: 'surplus idle', parkSession: (id) => this.parkChatSession(id) },
+						{ reason: 'surplus idle' },
 					);
 				});
 			} catch (err) {

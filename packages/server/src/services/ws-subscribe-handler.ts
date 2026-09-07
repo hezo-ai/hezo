@@ -30,6 +30,41 @@ export async function handleWsSubscribe(
 		return;
 	}
 
+	// A team's chat signal room: boundary events for every DM in that team's
+	// project, for list ordering and unread badges. Ahead of the conversation
+	// match below, whose UUID shape would not take `chat:team:<uuid>` anyway.
+	const chatTeamMatch = room.match(/^chat:team:(.+)$/);
+	if (chatTeamMatch) {
+		const allowed = await deps.canAccessTeam(ws.data.auth, chatTeamMatch[1]);
+		if (!allowed) return;
+		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
+	// One conversation's live stream - message start/delta/complete for that
+	// thread alone (streaming deltas go ONLY here, never to the global room).
+	// Authorized against the conversation's owning team, so this branch already
+	// covers per-project conversations when they arrive. The UUID shape both
+	// excludes `chat:global` structurally and keeps a malformed id from becoming
+	// a Postgres cast error.
+	const chatConvoMatch = room.match(
+		/^chat:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+	);
+	if (chatConvoMatch && deps.db) {
+		const convo = await deps.db.query<{ team_id: string }>(
+			`SELECT team_id FROM chat_conversations WHERE id = $1`,
+			[chatConvoMatch[1]],
+		);
+		const row = convo.rows[0];
+		// An unknown conversation is refused rather than parked in an empty room -
+		// same reasoning as an unknown container below.
+		if (!row) return;
+		const allowed = await deps.canAccessTeam(ws.data.auth, row.team_id);
+		if (!allowed) return;
+		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
 	// The single global base-image build room. Progress of a shared base image
 	// isn't team-scoped, so any authenticated socket may watch it; replay the
 	// current in-flight builds so a mid-build subscriber sees the bar at once.

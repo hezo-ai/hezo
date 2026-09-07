@@ -1,16 +1,17 @@
 // Coverage for the WS-streamed side of use-chat.ts. The component harness
 // stubs WebSocket to a no-op, so the subscribe handlers (message start / delta /
 // complete / compacted) never fire in the widget specs. Here the socket context
-// itself is mocked with a controllable emitter and the hook is driven directly:
-// events are emitted and the hook's derived state (messages, streaming, unread)
-// is asserted, plus the localStorage-persisted unread tally and its
-// private-mode (throwing storage) fallbacks.
+// itself is mocked with a controllable emitter and the hooks are driven
+// directly: events are emitted and the derived state (messages, streaming,
+// suggested replies) is asserted — plus the header monogram's unread tally
+// (`useCeoUnread`), its localStorage persistence, and the private-mode
+// (throwing storage) fallbacks.
 
 import { ChatMessageStatus, WsMessageType } from '@hezo/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { useChat } from '../src/hooks/use-chat';
+import { useCeoUnread, useChat } from '../src/hooks/use-chat';
 import { api } from '../src/lib/api';
 import { queryKeys } from '../src/lib/query-keys';
 
@@ -49,6 +50,13 @@ function Probe({ active }: { active: boolean }) {
 	return null;
 }
 
+let latestUnread: number;
+
+function UnreadProbe({ chatOpen }: { chatOpen: boolean }) {
+	latestUnread = useCeoUnread(chatOpen);
+	return null;
+}
+
 function mount(active = false) {
 	const qc = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
@@ -65,6 +73,30 @@ function mount(active = false) {
 	);
 	return { qc, ...utils };
 }
+
+function mountUnread(chatOpen = false) {
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+	});
+	const utils = render(
+		<QueryClientProvider client={qc}>
+			<UnreadProbe chatOpen={chatOpen} />
+		</QueryClientProvider>,
+	);
+	return { qc, ...utils };
+}
+
+const completeEvent = (id: string, extra: Record<string, unknown> = {}) => ({
+	type: WsMessageType.ChatMessageComplete,
+	conversationId: 'convo-1',
+	messageId: id,
+	status: ChatMessageStatus.Complete,
+	content: 'done',
+	inputTokens: 0,
+	outputTokens: 0,
+	costCents: 0,
+	...extra,
+});
 
 beforeEach(() => {
 	socket.handlers.clear();
@@ -96,6 +128,7 @@ test('start/delta/complete events fold into the conversation cache in order', as
 	act(() => {
 		socket.emit(WsMessageType.ChatMessageStart, {
 			type: WsMessageType.ChatMessageStart,
+			conversationId: 'convo-1',
 			messageId: 'm1',
 			role: 'assistant',
 			channel: 'web',
@@ -108,10 +141,12 @@ test('start/delta/complete events fold into the conversation cache in order', as
 	expect(latest.streaming).toBe(true);
 
 	// Deltas accumulate onto the streaming bubble; a duplicate start for the same
-	// id is ignored (no double bubble).
+	// id is ignored (no double bubble), and another conversation's delta never
+	// lands here.
 	act(() => {
 		socket.emit(WsMessageType.ChatMessageStart, {
 			type: WsMessageType.ChatMessageStart,
+			conversationId: 'convo-1',
 			messageId: 'm1',
 			role: 'assistant',
 			channel: 'web',
@@ -120,11 +155,19 @@ test('start/delta/complete events fold into the conversation cache in order', as
 		});
 		socket.emit(WsMessageType.ChatMessageDelta, {
 			type: WsMessageType.ChatMessageDelta,
+			conversationId: 'convo-1',
 			messageId: 'm1',
 			text: 'lo the',
 		});
 		socket.emit(WsMessageType.ChatMessageDelta, {
 			type: WsMessageType.ChatMessageDelta,
+			conversationId: 'other-convo',
+			messageId: 'm1',
+			text: 'INTRUDER',
+		});
+		socket.emit(WsMessageType.ChatMessageDelta, {
+			type: WsMessageType.ChatMessageDelta,
+			conversationId: 'convo-1',
 			messageId: 'm1',
 			text: 're',
 		});
@@ -136,6 +179,7 @@ test('start/delta/complete events fold into the conversation cache in order', as
 	act(() => {
 		socket.emit(WsMessageType.ChatMessageStart, {
 			type: WsMessageType.ChatMessageStart,
+			conversationId: 'convo-1',
 			messageId: 'u1',
 			role: 'user',
 			channel: 'web',
@@ -146,76 +190,57 @@ test('start/delta/complete events fold into the conversation cache in order', as
 	await waitFor(() => expect(latest.messages).toHaveLength(2));
 	expect(latest.messages[1]).toMatchObject({ id: 'u1', role: 'user', status: 'complete' });
 
-	// Complete finalizes content + status and ends the streaming state.
+	// Complete finalizes content + status, ends the streaming state, and carries
+	// the agent's suggested quick replies onto the stored row.
 	act(() => {
-		socket.emit(WsMessageType.ChatMessageComplete, {
-			type: WsMessageType.ChatMessageComplete,
-			messageId: 'm1',
-			status: ChatMessageStatus.Complete,
-			content: 'Hello there!',
-			inputTokens: 1,
-			outputTokens: 2,
-			costCents: 0,
-		});
+		socket.emit(
+			WsMessageType.ChatMessageComplete,
+			completeEvent('m1', { content: 'Hello there!', suggestedReplies: ['Yes', 'Not yet'] }),
+		);
 	});
 	await waitFor(() =>
-		expect(latest.messages[0]).toMatchObject({ content: 'Hello there!', status: 'complete' }),
+		expect(latest.messages[0]).toMatchObject({
+			content: 'Hello there!',
+			status: 'complete',
+			suggested_replies: ['Yes', 'Not yet'],
+		}),
 	);
 	expect(latest.streaming).toBe(false);
 });
 
-test('a reply completing while the widget is closed badges unread and persists the tally', () => {
-	mount(false);
+test('a CEO reply completing while the dock is closed badges the monogram and persists', () => {
+	mountUnread(false);
 
-	const complete = (id: string) =>
-		socket.emit(WsMessageType.ChatMessageComplete, {
-			type: WsMessageType.ChatMessageComplete,
-			messageId: id,
-			status: ChatMessageStatus.Complete,
-			content: 'done',
-			inputTokens: 0,
-			outputTokens: 0,
-			costCents: 0,
-		});
-
-	act(() => complete('m1'));
-	expect(latest.unread).toBe(1);
+	act(() => socket.emit(WsMessageType.ChatMessageComplete, completeEvent('m1')));
+	expect(latestUnread).toBe(1);
 	expect(localStorage.getItem('hezo_chat_unread')).toBe('1');
 
-	act(() => complete('m2'));
-	expect(latest.unread).toBe(2);
+	act(() => socket.emit(WsMessageType.ChatMessageComplete, completeEvent('m2')));
+	expect(latestUnread).toBe(2);
 	expect(localStorage.getItem('hezo_chat_unread')).toBe('2');
 });
 
-test('a persisted unread tally is restored on mount and cleared when the chat opens', () => {
+test('a persisted unread tally is restored on mount and cleared when the dock opens', () => {
 	localStorage.setItem('hezo_chat_unread', '5');
-	const { qc, rerender } = mount(false);
-	expect(latest.unread).toBe(5);
+	const { qc, rerender } = mountUnread(false);
+	expect(latestUnread).toBe(5);
 
-	// Opening the chat (active=true) reads the thread → tally drops to zero.
+	// Opening the dock reads the stream → tally drops to zero.
 	rerender(
 		<QueryClientProvider client={qc}>
-			<Probe active={true} />
+			<UnreadProbe chatOpen={true} />
 		</QueryClientProvider>,
 	);
-	expect(latest.unread).toBe(0);
+	expect(latestUnread).toBe(0);
 	expect(localStorage.getItem('hezo_chat_unread')).toBeNull();
 });
 
-test('a reply completing while the chat is open does not badge', async () => {
-	mount(true);
+test('a reply completing while the dock is open does not badge', async () => {
+	mountUnread(true);
 	await act(async () => {
-		socket.emit(WsMessageType.ChatMessageComplete, {
-			type: WsMessageType.ChatMessageComplete,
-			messageId: 'm1',
-			status: ChatMessageStatus.Complete,
-			content: 'done',
-			inputTokens: 0,
-			outputTokens: 0,
-			costCents: 0,
-		});
+		socket.emit(WsMessageType.ChatMessageComplete, completeEvent('m1'));
 	});
-	expect(latest.unread).toBe(0);
+	expect(latestUnread).toBe(0);
 	expect(localStorage.getItem('hezo_chat_unread')).toBeNull();
 });
 
@@ -239,22 +264,14 @@ test('a throwing localStorage (private mode) degrades gracefully on read and wri
 	const setSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
 		throw new Error('denied');
 	});
-	mount(false);
-	expect(latest.unread).toBe(0);
+	mountUnread(false);
+	expect(latestUnread).toBe(0);
 
 	// Write side: badging still updates React state even when persistence fails.
 	await act(async () => {
-		socket.emit(WsMessageType.ChatMessageComplete, {
-			type: WsMessageType.ChatMessageComplete,
-			messageId: 'm1',
-			status: ChatMessageStatus.Complete,
-			content: 'done',
-			inputTokens: 0,
-			outputTokens: 0,
-			costCents: 0,
-		});
+		socket.emit(WsMessageType.ChatMessageComplete, completeEvent('m1'));
 	});
-	expect(latest.unread).toBe(1);
+	expect(latestUnread).toBe(1);
 	getSpy.mockRestore();
 	setSpy.mockRestore();
 });

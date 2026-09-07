@@ -64,15 +64,20 @@ export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 
 export interface ActiveContainers {
 	/**
-	 * Ceiling on total **task-run** container memory, in GB.
+	 * Admission ceiling for **task-run** containers, in GB.
 	 *
-	 * The configured total (the operator's setting, else the automatic default)
-	 * **less one container's worth held back for the assistant chat** - see
-	 * {@link taskContainerMemoryBudgetGb}. That reservation is what lets the chat
-	 * stay exempt from {@link usedMemoryGb} without the instance quietly running a
-	 * container over its own configured figure.
+	 * {@link totalBudgetGb} **less one container's worth floating as the chat
+	 * lane** - see {@link taskContainerMemoryBudgetGb}. Task runs admit only up to
+	 * this figure while chat turns admit against the full total, which is what
+	 * guarantees a chat turn a slot however busy the tasks are.
 	 */
 	budgetGb: number;
+	/**
+	 * The configured total all running containers may consume at once, in GB -
+	 * the operator's setting, else the automatic default. The admission ceiling
+	 * for **chat** workloads; task runs use {@link budgetGb}.
+	 */
+	totalBudgetGb: number;
 	/**
 	 * Memory every running container has been promised, in GB, instance-wide.
 	 *
@@ -88,8 +93,9 @@ export interface ActiveContainers {
 	 * many containers fit depends on the mix of their sizes, so the number is not
 	 * stable enough to mean anything to an operator or to gate on.
 	 *
-	 * Excludes the container reserved for the assistant chat, which the budget
-	 * holds back up front rather than charging as it is used - see the query.
+	 * A member held by a chat turn counts like any other busy one: chat is
+	 * metered, not exempt. Suspending an idle member gives its memory back,
+	 * whatever workload last used it.
 	 */
 	usedMemoryGb: number;
 	/**
@@ -169,11 +175,11 @@ export async function getActiveContainers(
 				// belongs to is carried through because that is where its memory cap
 				// lives.
 				//
-				// A member reserved for the assistant chat is left out: the budget is a
-				// *task-run* budget, and the automatic default already holds one
-				// container's worth back for chat. Counting it here as well reserved the
-				// same memory twice, so an instance sized for three containers dispatched
-				// two whenever the chat was open.
+				// A member a chat turn holds counts like any other busy one: chat is
+				// metered, not exempt, and its guarantee is the lane the task-run
+				// ceiling holds back ({@link ActiveContainers.budgetGb}), not an
+				// exclusion here. Excluding it *and* holding the lane back would
+				// reserve the same memory twice.
 				//
 				// The allocation is joined on afterwards rather than selected inside the
 				// UNION: adding a column that is null on one arm and a figure on the other
@@ -183,27 +189,23 @@ export async function getActiveContainers(
 			   FROM (
 			     SELECT id AS project_id, container_id FROM projects
 			      WHERE container_id IS NOT NULL AND container_status = $1::container_status
-			        AND NOT EXISTS (
-			          SELECT 1 FROM container_pool_members m
-			           WHERE m.container_id = projects.container_id AND m.reserved_for_chat
-			        )
 			     UNION
 			     SELECT project_id, container_id FROM container_pool_members
-			      WHERE state IN ('creating', 'idle', 'busy') AND NOT reserved_for_chat
+			      WHERE state IN ('creating', 'idle', 'busy')
 			   ) AS r
 			   LEFT JOIN container_pool_members m ON m.container_id = r.container_id`,
 				[ContainerStatus.Running],
 			),
 			db.query<{ project_id: string }>(
 				// A project is spare-capable if it has an idle pool member a run may
-				// take - never one that is busy, reserved for the chat, or out of disk -
+				// take - never one that is busy or out of disk -
 				// or, while the pool is not yet populated for it, a running container of
 				// its own, which is today's one-container-per-project behaviour.
 				// Each member is judged against its own recorded ceiling rather than a
 				// global constant - the allocation is a setting now, and a project may
 				// override it, so two idle members can legitimately have different room.
 				`SELECT project_id FROM container_pool_members
-			  WHERE state = 'idle' AND NOT reserved_for_chat AND disk_used_bytes < disk_ceiling_bytes
+			  WHERE state = 'idle' AND disk_used_bytes < disk_ceiling_bytes
 			 UNION
 			 SELECT id AS project_id FROM projects
 			  WHERE container_status = $1::container_status
@@ -218,13 +220,14 @@ export async function getActiveContainers(
 				// records no state, so a container known only there cannot be shown to be
 				// idle, and retiring one on a guess would kill a live run.
 				//
-				// The chat's pinned member is excluded here as it is above - it is not in
-				// `usedMemoryGb`, so retiring it frees nothing against the budget and only
-				// interrupts somebody's session.
+				// A member a chat turn released is reclaimable like any other idle one:
+				// warmth is a convenience, and a starved neighbour's real work outranks
+				// it. (The idle-stop pass, by contrast, does wait out a live chat's
+				// window - nothing there is asking for the memory right now.)
 				//
 				// Served by `idx_container_pool_members_idle`.
 				`SELECT project_id, memory_bytes FROM container_pool_members
-			  WHERE state = 'idle' AND NOT reserved_for_chat
+			  WHERE state = 'idle'
 			    AND last_released_at <= now() - ($1 * interval '1 second')`,
 				[CONTAINER_RECLAIM_MIN_IDLE_SEC],
 			),
@@ -266,9 +269,10 @@ export async function getActiveContainers(
 	}
 
 	return {
-		// The reservation is taken here, at the point of use, so an explicitly-set
-		// budget holds a container back for the chat exactly as an automatic one does.
+		// The lane is taken here, at the point of use, so an explicitly-set budget
+		// holds a chat lane back exactly as an automatic one does.
 		budgetGb: taskContainerMemoryBudgetGb(configuredBudgetGb, defaultCapGb),
+		totalBudgetGb: configuredBudgetGb,
 		usedMemoryGb,
 		projectsWithSpareContainer: new Set(spare.rows.map((r) => r.project_id)),
 		reclaimableMemoryGbByProject,
@@ -288,7 +292,17 @@ export async function getActiveContainers(
  * `>=` rather than `>`: at exactly the cap the allowance is spent, and admitting
  * one more container would put the instance over a figure the operator chose.
  */
-async function hoursQuotaExhausted(db: Db): Promise<boolean> {
+/**
+ * Whether the instance has spent its monthly container-hours allowance.
+ *
+ * Exported because admission is no longer the only caller: a chat read asks it
+ * too, so the composer can say the allowance is gone *before* someone types a
+ * message that cannot start a container. One function, so what the surface
+ * warns about and what the pool refuses can never disagree.
+ *
+ * An unset or zero allowance means unmetered, never exhausted.
+ */
+export async function hoursQuotaExhausted(db: Db): Promise<boolean> {
 	const capHours = await getMonthlyContainerHours(db);
 	if (capHours <= 0) return false;
 	return (await monthToDateContainerSeconds(db)) >= capHours * 3600;

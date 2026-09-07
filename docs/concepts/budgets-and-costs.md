@@ -9,9 +9,10 @@ section: Concepts
 Autonomous agents can run up a model bill quickly. Hezo tracks every run's cost and
 lets you cap spend at both the agent and the project level.
 
-A project's **Budget** page has two tabs, because there are two different bills:
+The money tabs live on a project's **Team & Budget** page, beside the **Team** tab that
+holds the roster. There are two of them, because there are two different bills:
 
-- **Spend** - what the agents cost in model tokens.
+- **Budget** - what the agents cost in model tokens.
 - **Hours** - what the containers cost in uptime.
 
 ## Cost tracking
@@ -19,6 +20,12 @@ A project's **Budget** page has two tabs, because there are two different bills:
 Each agent run records what it cost, based on the tokens it used and the pricing for
 the model it ran on. Costs roll up two ways (**per agent** and **per project**), so
 you can see exactly where spend is going from the budget view.
+
+**Chat turns are counted too.** A reply in the assistant chat bills its tokens the
+same way a run does, under the replying agent and its project, and an agent or
+project at its budget limit pauses in chat as well: the thread shows a notice, and
+the conversation carries on with your next message once the window rolls over or
+you raise the limit.
 
 Model pricing ships built in and refreshes daily from
 [pricepertoken.com](https://pricepertoken.com), so rates stay current without any
@@ -74,11 +81,13 @@ Three things are worth knowing about the figure:
 
 - **Concurrent containers add up.** Two containers up for one hour is two container
   hours, which is what a provider charges for.
-- **The assistant chat is counted too**, and reported separately so you can see its
-  share. Its container stops on its own 15 minutes after the last message.
+- **Chat is counted too.** Chat replies run in the same containers as task runs -
+  each reply borrows one for its duration - so their uptime is part of the same
+  figure. A container a chat recently used stays warm for 15 minutes after the
+  last message, then stops on its own.
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
-  Each agent's run time for the month is shown on the **Spend** tab, beside its spend.
+  Each agent's run time for the month is shown on the **Budget** tab, beside its spend.
 
 On a local Docker daemon an hour of uptime costs nothing, so the Hours tab is there to
 show you what the fleet is doing rather than to budget against.
@@ -86,9 +95,10 @@ show you what the fleet is doing rather than to budget against.
 ### The monthly allowance
 
 Where container hours do cost money, you can set a **monthly allowance** from HQ's
-Budget page. Once it is spent:
+Hours tab (under **Team & Budget**). Once it is spent:
 
-- No new container starts.
+- No new container starts - chat replies included, so an exhausted allowance
+  pauses chat too until the month turns or the allowance is raised.
 - Runs that land on a container **already up** carry on - they spend no new hours, and
   stopping them would idle a container you are paying for anyway.
 - Runs that need a new container queue, and say so.

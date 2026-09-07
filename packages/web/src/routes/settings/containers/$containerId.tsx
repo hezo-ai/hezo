@@ -71,11 +71,8 @@ function ContainerDetail() {
 
 			<div className="flex flex-wrap items-center justify-between gap-3 mt-3 mb-4">
 				<div className="flex items-center gap-2 min-w-0">
-					<Badge
-						color={containerBadge(container.state, container.reserved_for_chat).tone}
-						testId="container-detail-state"
-					>
-						{t(containerBadge(container.state, container.reserved_for_chat).label)}
+					<Badge color={containerBadge(container.state).tone} testId="container-detail-state">
+						{t(containerBadge(container.state).label)}
 					</Badge>
 					{!provisioning && (
 						<span className="font-mono text-[12px] text-text-2 truncate">

@@ -2,8 +2,7 @@
  * Pure geometry and array math behind drag-to-reorder in a vertical list (the
  * project rail). Kept out of the hook so it can be unit-tested without a DOM —
  * happy-dom has no layout engine, so anything measured lives in Playwright while
- * the arithmetic is asserted here. Same split as `fab-position.ts` under
- * `use-draggable-fab.ts`.
+ * the arithmetic is asserted here.
  *
  * "Pitch" throughout is the distance between two consecutive item origins: the
  * item's height plus the flex `gap` between them.

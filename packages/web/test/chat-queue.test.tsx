@@ -69,7 +69,7 @@ function settleReply() {
 
 async function openChatMidReply() {
 	const app = await renderApp({ initialPath: '/home' });
-	(await app.findByTestId('chat-launcher')).click();
+	(await app.findByTestId('app-header-chat')).click();
 	await app.findByTestId('chat-input');
 	seedStreaming();
 	await app.findByTestId('chat-header-dots');
@@ -207,7 +207,7 @@ test('a quick tap on the held button queues rather than interrupting', async () 
 
 test('with nothing streaming the button is a plain send and never arms', async () => {
 	const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 	await user.type(input, 'hello');

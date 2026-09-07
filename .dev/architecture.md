@@ -431,51 +431,97 @@ per-task session state for compaction across heartbeats. `chat_sessions` /
 chat) — generically named so the schema is first-class for a chat with any agent:
 a conversation carries `member_id` (the agent) + `team_id` + `project_id`, a session
 the same, and a message an `author_member_id` (the responding agent). `chat_message_attachments`
-links files sent through the chatbox to their message (stored in the HQ asset library
-under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
-automatically-maintained long-term memory (§ 4).
+links files sent through the chatbox to their message (stored under `uploads/chat/` in
+the owning project's asset library - HQ's for the CEO stream, the project's own for a
+DM or group room), and `chat_memories` holds automatically-maintained long-term
+memory in exactly one scope per row (`chat_memories_one_scope`): `member_id` for an
+agent's DM memory (§ 4), `conversation_id` for a group room's shared memory.
+Migration 074 adds the team-chat columns: `chat_conversations.last_message_id`
+(denormalized so unread badges never count rows), the `chat_conversation_reads`
+per-(user, conversation) watermark table behind server-side unread,
+`chat_messages.suggested_replies` (up to three short one-tap replies an agent reply
+offers, parsed from a structured trailer and stored beside the clean body), the
+`budget_exceeded` / `capacity_wait` / `task_created` / `task_completed` /
+`task_blocked` system-row kinds, and the group-room DDL: the recreated
+`chat_conversation_kind` enum gains `'group'` (recreate, not `ADD VALUE` — the new
+value is used in the same transaction), `member_id` goes nullable for groups only
+(`chat_conversations_member_scope`), `is_general` marks each project's built-in room
+(partial unique index, one per project), and `chat_conversation_participants` holds
+room membership.
 
 ### Chat conversations & channels
 
-**Multi-thread conversations, one home surface per thread.** The CEO chat is
-**multi-threaded**, and every thread has exactly **one home surface**: a web thread, a
-Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a Slack
-channel, a Discord DM, a Discord channel — each is its own `chat_conversations` row.
+**One live web stream per member, one home surface per conversation.** The CEO's web
+chat is a **single continuous DM** (decision: single-stream): the "default" web
+conversation resolves to the member's most recently active open web thread
+(`ORDER BY last_activity_at DESC`), there is no thread-creation route
+(`POST /api/chat/conversations` is gone), and migration 074 closed all but the most
+recently active open web thread per member — older ones stay fully readable as
+**History**. Every conversation still has exactly **one home surface**: the web stream,
+a Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a
+Slack channel, a Discord DM, a Discord channel — each its own `chat_conversations` row.
 There is **no mirroring**: nothing started on one surface ever creates or posts into a
-thread on another. The conversation row's `channel` + `external_thread_id` **is the
-inbound routing key** — `findConversationByOrigin(channel, externalThreadId)` resolves an
-open conversation or a new one is created (so closing a thread from the web and DMing
-again starts a fresh thread; there is no bindings table). **The web view is the hub**:
-`listConversations` returns **all** kinds with their `channel` + `kind`, so the chatbox
-lists every thread from every surface, badged by origin — assistant threads fully
-interactive, coworker threads read-only (`POST /api/chat/messages` 409s on them, as it
-does on any closed thread — `CLOSED`, naming the continuing task when there is one).
+conversation on another. The row's `channel` + `external_thread_id` **is the inbound
+routing key** — `findConversationByOrigin(channel, externalThreadId)` resolves an open
+conversation or a new one is created (so closing a conversation from the web and DMing
+again starts a fresh one; there is no bindings table). **The web view is the hub**:
+`listConversations` returns **all** kinds with their `channel` + `kind`, so the dock's
+room switcher lists every conversation from every surface, badged by origin — assistant
+conversations fully interactive, coworker conversations read-only
+(`POST /api/chat/messages` 409s on them, as it does on any closed thread — `CLOSED`,
+naming the continuing task when there is one).
 
-**Convert-to-task.** A web assistant thread can be converted into a task
-(`POST /api/chat/conversations/:id/convert-to-task {project_id, title?}` →
-`ChatSessionManager.convertConversationToTask`): the active window's transcript
-(`loadActiveWindow` + `chatTranscriptLine`, byte-capped with head truncation noted)
-becomes the description of a task created via the normal `createTask` service in the
-**target project's team**, assigned to the CEO by member id (the run-team split — the
-assignment wakeup carries the target team). In-flight work is aborted first
-(`abortConversationRuntime`, shared with close; a partial reply settles as
-`interrupted`), the task is created, and then — atomically — a `system`-role
-`chat_messages` row naming the task is inserted and the row gets
-`converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. The system row
+**Group rooms are mention-driven, and only the operator summons turns.** A
+`kind='group'` conversation has no `member_id`; its roster is
+`chat_conversation_participants`, validated on create/edit against the project team's
+enabled agents (team scoping structurally excludes CEO/Coach). The built-in General
+room is provisioned lazily by the room-list read and its membership synced to the
+roster there — no hire/fire hook, upgrade-safe, and every statement no-ops when
+nothing changed. A send resolves its responders server-side
+(`resolveGroupResponders`): active `@slug` mentions (`extractActiveAgentMentionSlugs`,
+the sole extractor) intersected with the enabled participants, mention order, capped
+at `GROUP_TURN_MENTION_CAP` (3); with no mention, the conversational locus — the last
+agent whose completed reply is in the room; with neither, no turn fires and the
+client shows a local nudge off the empty `pending_member_ids`. The queue runs
+sequentially (`runGroupQueue`), each entry an ordinary worker turn under the acting
+agent's identity — own budget gate, `chat-turn` pool claim, cost rows, no-wake check
+— with `author_member_id` + a denormalized `author_label` on the reply. The queue's
+identity is its preemption token: a newer operator message installs a new queue (DM
+semantics — newest wins), and `ChatGroupPendingTurns` broadcasts render the
+cancellable pending strip (`cancel-turn` flips an unstarted entry). Replies never
+summon teammates — an agent reply naming one only grows a client-side "Ask @x" chip
+that drafts the mention for the operator to send. Group compaction targets the
+room's `chat_memories.conversation_id` row via `update_chat_memory`'s `conversation`
+argument (participant-validated; no revision history — the revisions surface is
+per-member), and the eviction gate checks the ROOM row advanced, so a compaction
+that wrote the wrong scope evicts nothing. Message-level convert
+(`POST …/chat/conversations/:id/convert`, and `convert-message` on the CEO stream
+with an explicit target project authorized against the target team) files one
+message as a task — assignee defaulting to the DM partner, the Captain in a room —
+stamps `origin_chat_conversation_id`, and drops the created receipt; the
+conversation survives.
+
+**Convert-to-task is gone; breadcrumbs replaced it.** Whole-thread convert-and-close
+(`POST /api/chat/conversations/:id/convert-to-task`) was removed with single-stream:
+the CEO files tasks mid-conversation instead, and the server posts breadcrumb system
+rows (`task_created` from `create_task`/`create_tasks` via the task's
+`origin_chat_conversation_id`, `task_completed` / `task_blocked` from the status
+automations) into the originating conversation. Rows converted under the old model keep
+their record: `converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`
+mark a readable History entry whose meta message and banner link the task. The system row
 carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058; the
 CHECK list is widened by 067 for `connector_refused`, the chat's twin of a task run's connector
-refusal warning, and by 068 for `credential_wait`, the twin of a waiting run's
-`[runner] Waiting for …` line): which
+refusal warning, by 068 for `credential_wait`, the twin of a waiting run's
+`[runner] Waiting for …` line, and by 074 for the budget/capacity/breadcrumb kinds): which
 marker a system row is has to be a property of the **message**, since the chatbox would otherwise
 choose by the thread's `converted_task_id` and render a handoff warning written before the
 conversion as the converted-task link. Converted
-threads **stay listed**: the default listing predicate is `closed_at IS NULL OR
-converted_task_id IS NOT NULL`, with a joined `converted_task {identifier, title,
-project_slug}` reference for the switcher marker, locked-composer banner and the meta
-message's link; deleting the task demotes the thread to ordinarily-closed. Lifecycle
-changes (close, convert, auto-title) broadcast `ChatConversationUpdated` with the
-changed fields. The route deliberately has **no MCP twin** — chat is a human-only
-surface; agents create tasks via `create_task`.
+threads **stay listed**: the web listing takes `include_closed=true`, with a joined
+`converted_task {identifier, title, project_slug}` reference for the History marker,
+locked-composer banner and the meta message's link; deleting the task demotes the
+thread to ordinarily-closed. Lifecycle changes (close, auto-title) broadcast
+`ChatConversationUpdated` with the changed fields. The chat routes deliberately have
+**no MCP twins** — chat is a human-only surface; agents create tasks via `create_task`.
 Delivery is **reply-where-asked**: `finalize` delivers a completed reply to the **turn's
 origin surface** (`ConversationContext.channel`, captured per turn) — a web-composed turn
 into a Telegram-DM thread answers on web only, a Telegram message answers in Telegram —
@@ -483,10 +529,11 @@ via the manager's `ChannelHooks.deliver` → the registry adapter. Close parity 
 to the origin surface only: `closeConversation` calls the adapter's optional
 `closeThread` for its own external thread (e.g. archiving the designated supergroup's
 topic), and the platform→app direction runs via `parseClose` →
-`closeConversationByExternalThread`. The warm container (`chat_sessions`) stays a
-**single shared lease** per CEO member — a thread is only message-grouping + rolling
-window + memory scope, and each turn is a stateless one-shot `docker exec` reading a
-per-turn prompt file, so N threads run as N independent execs into the one container.
+`closeConversationByExternalThread`. The `chat_sessions` row stays a **single
+per-member singleton** — a thread is only message-grouping + rolling window + memory
+scope, and each turn is a stateless one-shot `docker exec` into a pool container
+claimed for just that turn, reading a per-turn prompt file — so N threads are N
+independent turns anchored to the one session row.
 
 **Tool activity is broadcast as progress.** Alongside the text deltas, the turn broadcasts
 `ChatMessageToolActivity {messageId, tool}` for each tool the parser reports, and the chatbox
@@ -497,48 +544,45 @@ prompt window nor survives a reload. Without it the dots have no visible cause: 
 its text — or is simply tearing the CLI down — looks exactly like a finished one that has not
 settled yet, which is what made the post-reply wait read as the chat being stuck.
 
-**A session survives its container being suspended.** Because it holds no long-lived
-process — each turn is its own exec and continuity lives in `chat_conversations` /
-`chat_messages` — a container that stops with its filesystem intact takes nothing the
-session needs. `checkHealth` therefore separates two events it used to conflate. A
-**different** container (id changed, or the project has none) means the filesystem is
-gone, so the session is torn down as before. The **same** container, stopped, is a
-suspend: `ChatSessionStatus.Suspended` parks the row, the host-side allocations are
-released, and the next turn resumes into it via `resumeSession` rather than starting
-over, keeping the session id that anchors its messages. This is what makes a managed
-backend usable at all — it suspends sandboxes on its own idle timer, so tearing down
-would end the operator's session every quiet period.
+**Nothing is held between turns.** Every chat turn — the CEO's exactly like a worker
+DM's — claims a pool container as a `'chat-turn'` for the duration of one exec and
+releases it after; the host-side half (`allocateHostSide`: ssh agent socket, egress
+proxy, tunnel, per-turn env and exec command) is built for that turn and given back in
+`teardownTurn`. Those allocations are keyed by a per-turn id, never by the shared
+`chat_sessions` row id: the session is a per-member singleton and a member can run two
+turns at once (the CEO in two conversations, an agent in a DM and a group room, a
+turn's upkeep overlapping the next turn), so a session-keyed allocation would let the
+second turn destroy the first one's live socket and proxy. There is therefore no pinned member, no session health check, no
+suspend/resume parking and no teardown-on-container-loss: a container that dies or is
+reclaimed between turns costs nothing (the next turn simply claims another), and one
+that dies mid-turn fails that turn's bubble like any exec error. The `chat_sessions`
+row is the only thing that persists — the per-member singleton the turn's JWT
+validates against — and boot repair (`reconcileDatabaseOnStartup`) crashes any row
+left `starting`/`running`/`suspended` by a previous process, `suspended` included
+because the release that parked rows there is gone and a leftover would wedge the
+singleton. `suspended` is deliberately **not** accepted by `authMiddleware`.
 
-Resume is not a no-op, which is why the host-side half of `startSession` is extracted as
-`allocateHostSide`: the ssh agent socket and egress proxy allocation live on the Hezo
-side, are released at suspend, and come back on **different ports**, so the exec command
-and env have to be rebuilt around them (two copies of that sequence is what the
-second-call-site rule exists to prevent — a drifted copy would mean a resumed chat
-silently losing commit signing or secret substitution). `suspended` counts as **live**
-everywhere it matters: the singleton index is stated as "not terminal" so a parked
-session still blocks a second one, and a process restart reclaims it as crashed like any
-other live row. It is deliberately **not** accepted by `authMiddleware` — a parked
-session has no host-side half, so no exec of it can legitimately be calling. In the
-container pool the chat's container is pinned (`reserved_for_chat`), which suspend keeps
-and teardown releases: chat is exempt from the container cap, and the pin is the other
-half of that, since a task run taking the container out from under a live session is the
-same interruption by a different route.
-**A session's provider is re-checked before every turn.** `startSession` resolves the
-provider, CLI, credential row and model once, and bakes all four into the container env,
-the exec command and the runtime config files — so a session that outlives an operator
-moving the instance default would keep running on the credential that was default the day
-it started, for as long as it lived. `ensureSession` therefore calls `invocationMovedOn`
-first: `resolveInvocationSelection` re-answers the same precedence (the agent's
-`model_override_*`, else the instance default) **without the master key** — via
-`selectProviderConfig`, the non-secret half of the one credential-selection query — and the
-result is compared as a fingerprint of `provider | runtime | config id | model`. A change
-means `restart()`, so the next turn comes up on the new choice; in-flight turns go with it,
-since they are executing against the credential just replaced. `resolveInvocationSelection`
-is the only copy of that precedence on this side, so a session can never be compared against
-a selection made by a different rule from the one that started it, and `resumeSession` may
-replay its stored inputs only because the check has already cleared them. A probe that
-cannot be answered (nothing verified right now, the database refusing) leaves the working
-session alone rather than tearing it down over an unanswered question.
+**A composer's focus warms the pool.** `POST /projects/:id/chat/prewarm` runs
+`prewarmChatContainer` in the background: an ordinary `chat-turn` acquire, released
+immediately, so what it leaves is an idle member the next turn takes off the ladder's
+first rung. It is guarded per project by its own lock registry (a prewarm is held
+across a whole acquire, which takes the lifecycle lock itself) and declines outright
+when the project already holds an idle, suspended or busy member, since each of those
+already serves the next turn without a cold provision. The lane guarantees a chat turn
+a *slot* and `planSurplusIdleRetirement` keeps a project's last member resumable, so
+the case this exists for is the remaining one: a project holding nothing, where the
+turn would otherwise pay image resolve, clone and install with a person watching.
+Every refusal - full budget, spent allowance, archived project - is a silent no-op,
+because the send that follows raises capacity and hours in the conversation itself.
+HQ routes here like any project, so the CEO room warms through the same path.
+
+**A turn's provider is resolved when it runs.** `buildTurnSession` calls
+`resolveInvocationSelection` (the one copy of the precedence: the agent's
+`model_override_*`, else the instance default) and bakes the result into that turn's
+env and exec command only — so an operator moving the instance default reaches the
+very next turn, with no fingerprint comparison, no `restart()` and nothing to retire.
+`runSendTurn` also resolves once before creating the reply row, so "no credential
+configured" surfaces as the send's error rather than a silently failed bubble.
 
 Long-term memory (`chat_memories`) stays **per-agent** (shared across a member's
 assistant threads); compaction serialises at the member level so concurrent threads never
@@ -709,8 +753,11 @@ ran bills a full bucket of uptime. Enforcement is a monthly allowance
 (`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
 `hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
 memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
-project with a spare container is exempt from both. The cap read short-circuits before the
-ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
+project with a spare container is exempt from both. The same answer gates the acquire
+ladder itself for every workload, chat included (`PoolHoursExhaustedError` on a create,
+resume or reclaim decision). The cap
+read short-circuits before the ledger is scanned, so an instance with no cap pays nothing
+on the dispatch path.
 
 ### Docs, skills & assets
 
@@ -1151,9 +1198,9 @@ alone, whereas HQ — home of the always-on CEO/Coach — should run whenever th
 The live CEO chat (`chat-session-manager.ts`) also provisions it on demand as a fallback. Turns
 are **serialized** (a `turnLock` chain) so concurrent sends can't each spawn a turn — a newer
 message interrupts the in-flight reply (kept as `interrupted`) and only the latest streams. No
-turn survives a process restart, so `reconcileOnStartup` clears orphaned non-terminal
-`chat_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
-`interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
+turn survives a process restart, so `ChatSessionManager.reconcileDatabaseOnStartup` clears
+orphaned non-terminal `chat_messages` (deletes empty `streaming`/`pending` placeholders,
+marks partial ones `interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
 
 **Chatbox message queue (client-side) + the batched turn it flushes.** The composer stays usable
 while a reply streams. Enter (or a tap of the send button) **queues** into a per-thread list held
@@ -1206,11 +1253,23 @@ contends with the reply's exec. It persists idempotently (`UPDATE … SET title 
 so a manual/already-set title is never clobbered) and broadcasts `ChatConversationUpdated` on the
 `chat:global` room, so every open thread switcher/sidebar refetches and updates its label live. One
 title run is in flight per thread at a time (`ConversationRuntime.titling`); a new turn or a close
-preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it. Its exec's
-tokens are not separately priced (matching compaction).
+preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it.
 
-HQ also exposes the standard **assets library** — the one internal-project surface that
-isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator
+**Chat spend is metered like a run's.** Every chat exec — the reply turn, compaction, the
+auto-title run — bills its parser usage to `cost_entries` via `recordRunCost` (member = the
+session's agent, project = its project, `task_id` NULL, descriptions `Chat turn` /
+`Chat memory compaction` / `Chat auto-title`), broadcast to the team room so the Budget page
+refreshes live. `sendTurn` gates **before** the turn: the operator's message persists first
+(a refusal never eats what they typed), then `checkOverBudget` on the session's member +
+project refuses with a `budget_exceeded` system row; an exhausted container-hours allowance
+surfacing from the acquire (`PoolHoursExhaustedError`) maps to the same row, while a full
+memory budget (`PoolCapacityError`) **parks** the turn instead — a `capacity_wait` system
+row, then background acquire retries on the runner's 5s cadence until a container frees or
+the park deadline fails the turn. The budget check fails open on infrastructure errors: a
+broken gate must not brick the operator's control surface.
+
+HQ also exposes the standard **assets library**, alongside its Team & Budget page (the
+Team/Budget/Hours tabs; only Settings stays hidden on the internal project). Files the CEO produces for the operator
 in the live chat (a quick mockup, demo, or export) are saved via `write_project_asset` and
 linked back as `assets/<filename>`, so they are durable and openable over a signed URL rather
 than stranded as loose files in the container's `/workspace`. The CEO scopes such a
@@ -2139,7 +2198,12 @@ and a fresh one be built.
   members matched neither and pinned the budget indefinitely. The warm-start floor now lives
   in the planner, where it is a property of the plan rather than of which pass ran: one
   member is held back and suspended only when nothing else - a busy, suspended or pinned
-  member - could serve the project's next run.
+  member - could serve the project's next run. A project inside the live-chat window (a
+  `starting`/`running` chat session with recent activity - the same predicate
+  `BUSY_PROJECTS_SQL` carries) is excluded from the stale-member scan entirely: chat
+  turns release their member between replies, so a mid-conversation project reads idle
+  here while a person is mid-thought, and retiring the warm member would make their next
+  message pay a cold start.
 - **Cross-project reclaim** (`planCrossProjectReclaim`, the `reclaim` rung of
   `selectPoolMember`). Closes the gap in between: rather than queue behind memory a
   neighbour is demonstrably not using, a blocked acquire retires enough of other projects'
@@ -2235,34 +2299,88 @@ so they are not - one project raising its cap to 4 GB took one "slot" but twice 
 of the 2 GB containers the host was sized for. There is deliberately no derived container
 count anywhere, not even for display: how many fit depends on the mix of their sizes.
 
-The CEO chat's container is **exempt** from the budget, because a queued task run is
-invisible and harmless while a queued chat turn is a person watching a spinner. Reserving up
-front rather than subtracting when a session opens keeps task-run capacity a **stable**
-number - opening the chat never silently slows the fleet.
+Chat containers are **metered, not exempt**: a chat turn's claim is an ordinary busy
+member that counts in `usedMemoryGb`, burns the monthly hours allowance and bills like
+any other uptime. What chat gets instead is a **lane**: task runs admit only up to
+`budgetGb` (the configured total less one container's worth,
+`taskContainerMemoryBudgetGb`) while the `'chat-turn'` workload admits against the full
+`totalBudgetGb`. The gap is the floating chat lane - a queued task run is invisible and
+harmless while a queued chat turn is a person watching a spinner, so however busy the
+tasks are, one container's worth of budget is always reachable by chat and never by
+them. Holding the lane back from task admission rather than excluding chat from the
+count keeps task-run capacity a **stable** number (opening the chat never silently
+shrinks the fleet mid-flight) and makes chat spend visible where every other spend is:
+the Hours tab, the memory arithmetic, `cost_entries`.
 
-**The reservation is taken at the point of use, not baked into the default.** Subtracting a
-container's worth inside `computeDefaultMaxContainerMemoryGb` reserves only for an *automatic*
-budget, so an operator who sets the number by hand gets none at all and a 12 GB budget with a
-4 GB cap admits three task containers *and* a chat container - 16 GB consumed against a figure
-that says 12, which on a local Docker host is memory the machine actually has to find. The
+**The lane is taken at the point of use, not baked into the default.** Subtracting a
+container's worth inside `computeDefaultMaxContainerMemoryGb` holds a lane only for an
+*automatic* budget, so an operator who sets the number by hand would get none at all. The
 auto default therefore returns the whole usable total (floored at
-`minTotalContainerMemoryGb`, two caps, so it can never
-compute a total that admits nothing) and `getActiveContainers` derives the task share from
-whatever the effective total is. Auto-computed instances land on exactly the capacity they
-had before; an explicitly-set one loses a container's worth, which is the point. The exemption is enforced on **both** sides:
-the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
-from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
-two records of one container). Charging it in both places reserves the same memory twice, and
-an instance sized for three containers then dispatches two whenever the chat is open.
+`minTotalContainerMemoryGb`, two caps, so it can never compute a total that admits
+nothing) and `getActiveContainers` derives the task ceiling from whatever the effective
+total is, returning both figures (`budgetGb`, `totalBudgetGb`). The default flat budget
+(`DEFAULT_MAX_CONTAINER_MEMORY_GB`, managed backends and unreadable hosts) is 12 GB: six
+2 GB containers - up to five task runs, with the sixth container's worth floating as
+the chat lane. The **hours** allowance is enforced in the acquire ladder for every
+workload alike (`PoolHoursExhaustedError`, a `PoolCapacityError` subclass so
+capacity-parking callers behave unmodified): any decision that would open new uptime -
+create, resume, reclaim - is refused when the month's allowance is spent; reuse of a
+warm member stays allowed, matching the dispatch gate.
 
-**The chat takes its container through the same ladder a run does**, with
-`acquireRunContainer(..., 'chat')` - the workload changes four things and nothing else: it
-is not gated on the budget (already reserved above), it **pins** the member
-(`reserved_for_chat`) rather than claiming it busy, its release is a no-op because the
-session holds the container across every turn until `teardown` clears the pin, and a pin the
-session already holds is checked *before* the ladder, since `selectPoolMember` excludes
-reserved members by design. It also points `projects.container_id` at what it took, that
-column being the operator's view of the project's container.
+**Every chat turn takes its container through the same ladder a run does**, with
+`acquireRunContainer(..., 'chat-turn')` - CEO and worker alike. The workload changes
+admission only (the full total rather than the task ceiling); the hold is exactly a
+task run's: claimed busy for one exec, released after. There is no pinned member and
+no per-workload rung - `runChatTurn` claims, builds the host side, runs the turn, does
+the post-reply upkeep (auto-title for an untitled CEO thread, then compaction) in the
+still-held container, and gives everything back.
+
+**One turn pipeline** (`runChatTurn`): the CEO's turns and a worker DM's share the
+`TurnSession` shape, so `runTurn`, compaction, prompt composition, the credential lock,
+the no-wake check (per acting member) and cost recording never ask which kind they
+serve. What differs rides on `kind`: the CEO resolves the docs-embedded prompt and
+`AgentEffort.Max` with a cross-project/cross-team JWT; a worker gets the chat-slim
+prompt, its configured effort, and a 24h JWT with `cross_project/cross_team` false,
+asserted at mint against team membership + `admin_status = 'enabled'`. Between turns
+only the `chat_sessions` row survives (one non-terminal row per member, the singleton
+index). The DM stream is one open web conversation per (member, project), created
+lazily; compaction runs while the turn's container is still held, under the shared
+member-memory lock; a DM has no auto-title (it is named by its agent). Worker prompts
+resolve on the
+**chat diet** (`ctx.chatSlim` in the template resolver): the slim
+`CHAT_SHARED_INSTRUCTIONS` replaces the ~80 KB task-run block, the run manifest, the
+repository block and the container-environment block are dropped, and Project
+State/Team/Teammates stay; effort is the agent's configured default via `resolveEffort`
+(Captain/CEO stay Max). Boundary events for a project DM fan to `chat:team:<teamUuid>`
+(gated `canAccessTeam`, resolved through the manager's per-conversation scope map) instead
+of `chat:global`, which stays HQ/CEO-only; deltas stream only on the per-conversation room
+either way.
+
+**The DM route surface** lives under `/api/projects/:projectId/chat/*` behind
+`requireProjectAccessMiddleware`, and every query still binds `project_id` AND `team_id` in
+its WHERE - the params are resolved, never trusted. `GET .../chat/conversations` is the
+roster-shaped DM list (one row per enabled agent, the conversation when one exists, a
+140-char preview of the newest message, and the caller's unread bit); `GET/POST
+.../chat/agents/:agentSlug/{conversation,messages}` mirror the CEO read/send shapes;
+`POST .../chat/assets` stores uploads in that project's own library. The legacy
+`/api/chat/*` routes are constrained to HQ conversations (`team_id = DEFAULT_TEAM_ID` on
+every explicit-id resolution), so an HQ authorization can no longer reach a project DM
+from the global surface. None of these routes have MCP twins. **Server-side unread** is
+the `chat_conversation_reads` watermark: `POST /api/chat/conversations/:id/read` (global,
+authorized against the conversation's own team, admin callers only) upserts
+`last_read_message_id` only on real change and only to a message of that conversation;
+unread = the conversation's denormalized `last_message_id` differs from the watermark and
+the newest message is not the user's own - never a COUNT. **Suggested quick replies**
+ride a structured trailer (`[[suggest: a | b]]`, `parseSuggestedReplies` in
+`@hezo/shared`): parsed at message-complete, stripped from the stored body and the
+external-channel delivery, validated (max 3, each <=80 chars, malformed = dropped whole)
+and stored on `chat_messages.suggested_replies`, carried live on the complete event.
+**Task<->chat breadcrumbs** (`services/chat-breadcrumbs.ts`): the MCP `create_task` /
+`create_tasks` handlers stamp a task filed by a chat turn with the acting conversation
+(resolved structurally - the streaming reply under the caller's session) and drop a
+`task_created` receipt there; `triggerStatusAutomations` posts `task_completed` /
+`task_blocked` receipts back to that conversation, so the REST close and the MCP
+update_task path both emit them.
 
 Routing it through the ladder is the whole point. Reading `projects.container_id` directly
 names the most recently provisioned or resumed container - under a pool, possibly one mid-run
@@ -2373,8 +2491,8 @@ The live set (`listReferencedContainerIds`) is the union of **both** representat
 container - the project row and the pool member - across **every** pool state. A pooled
 project owns several containers at once while `projects.container_id` names only the most
 recently provisioned or resumed one, so a set built from projects alone reads a busy run's
-container, an idle member a task has affinity with, the chat's container and a member pinned
-for unpushed commits as unreferenced. `suspended` matters most: that is the state a container
+container, an idle member a task has affinity with and a member pinned for unpushed
+commits as unreferenced. `suspended` matters most: that is the state a container
 the pool means to resume sits in, and destroying one loses its filesystem.
 
 **Project-wide teardown covers the whole pool too, for the same reason.**
@@ -3054,7 +3172,7 @@ review is the one path that instead embeds the **full** comment history (both sh
 **Containers & worktrees.** One container per project, **run on demand**: the container is
 not required to be up between runs. `runAgent` establishes it at the start of every run via
 `ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
-provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) retires any pool
+provision), chat turns claim through the same ladder, and the `container-idle-stop` cron (1/min) retires any pool
 idle past `CONTAINER_IDLE_TIMEOUT_MIN` (`@hezo/shared`, **2 minutes**) — so a quiet instance
 runs zero containers. That window is a **constant, not a setting** (migration 050 drops the
 old `container_idle_timeout_min` key): its only job is coalescing a burst — covering the gap
@@ -3069,37 +3187,27 @@ dispatch (capacity-skipped wakeups deliberately don't pin containers), and no ch
 recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
 check so a fresh start always gets one full window.
 
-**A live chat session is measured on its own, longer window** — `CHAT_IDLE_TIMEOUT_MIN`
+**A live chat is measured on its own, longer window** — `CHAT_IDLE_TIMEOUT_MIN`
 (`@hezo/shared`, **15 minutes**), interpolated into that one arm of `BUSY_PROJECTS_SQL`. The
 two clocks measure different things: between runs the gap is mechanical, while between chat
-messages it is a person reading a reply, so reclaiming at the run window suspended the
-container out from under an open chatbox and made the next message pay a cold start (~30s on
-a managed backend). It applies only while a session is `starting`/`running`; once it stops,
-the project falls back to the ordinary window at once.
+messages it is a person reading a reply, so reclaiming at the run window would suspend the
+warm container an open chatbox is about to reuse and make the next message pay a cold start
+(~30s on a managed backend). The chat window keeps the project's containers warm while the
+`chat_sessions` row is `starting`/`running` with recent activity; once it goes quiet, the
+project falls back to the ordinary window at once. A turn actually executing needs no
+carve-out — its claim holds the member `busy`, which no retirement plan touches.
 
-**The idle pass parks a live assistant session before it takes the container down**, via the
-narrow `ChatSessionPark` port on `JobManagerDeps` (`ChatSessionManager.parkForContainerSuspend`,
-attached with `jobManager.setChatSessions` in `startup.ts` because the chat manager is
-constructed second). Ordering is the whole point. `checkHealth` already parks a session whose
-container it *finds* stopped, but it polls, so the idle pass won the race every time and the
-session learned about the suspension from its tunnel dying — the unrequested-death path. That
-logged "closed unexpectedly", ended the session as `crashed` rather than parking it as
-`suspended` (so the next message started a fresh conversation instead of resuming in place),
-and the provider's PTY `DELETE` arrived after the sandbox had begun stopping and 400'd,
-leaking the session on the provider. Parking first closes the tunnel deliberately — which
-`RunTunnel` does not report as a death (`fireClosed` is guarded on `closed`) — so the delete
-lands on a reachable sandbox. It is best-effort: a park that throws is logged and the pool is
-retired anyway, since one wedged session must not leave a container billing. Every lifecycle *decision* — ensure-running
+Every lifecycle *decision* — ensure-running
 and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory
 run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
 interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
 by one **global container memory budget** (`max_container_memory_gb` in `system_meta`; when unset,
-the default is computed from host memory as
-`(RAM + swap) - HOST_RESERVED_MEMORY_GB - default_ram_cap_per_container_gb` —
+the default is computed from host memory as `(RAM + swap) - HOST_RESERVED_MEMORY_GB` —
 the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
-budget, since none of them live inside one, and the second subtraction holds back the chat's
-container): dispatch passes a run whose project has a container free to take it (no new
+budget, since none of them live inside one; the chat lane is held back from *task admission*
+at the point of use, not baked into this total): dispatch passes a run whose project has a
+container free to take it (no new
 container needed) and queues one whose next container would not fit the budget
 (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
 `pendingContainerStarts` refcount covers the window before the new member reaches the DB).
@@ -3111,8 +3219,9 @@ the old test held no slot for a container it was about to create, and two such d
 could fit themselves into the same headroom. Dispatch
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
-path is *not* gated: its container is exempt from the budget rather than charged against it
-(reserved up front instead), and starting a chat is never refused — busy agents must not lock the operator out of the control surface. Both
+path skips this dispatch gate and admits in the acquire ladder instead, against the full
+total rather than the task ceiling - the held-back lane is what keeps that admission from
+queueing behind busy agents, who must not lock the operator out of the control surface. Both
 knobs (memory budget, per-container RAM cap) live on the global Settings → Containers
 page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
 computed default), which also hosts the backend switcher. The project's
@@ -5431,6 +5540,12 @@ password** while signed in).
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
   revocation for free, no token store.
+- **Chat-session JWT** — minted per chat turn (`signChatSessionJwt`), validated against
+  the **`chat_sessions` row** (live statuses only; `suspended` is rejected). Its scope is
+  stated at mint time (`ChatSessionScope`) and `verifyToken` derives the claims from the
+  payload, never assumes them: a CEO turn is `cross_project`/`cross_team` true (its
+  job is instance-wide coordination, 30d TTL); a worker or Captain chat turn is bound
+  to its own project team, both false, with a 24h TTL re-minted per turn.
 
 By surface: **REST** is the human/browser API (user JWT only). **MCP** accepts the **agent
 JWT** (internal per-run) and the **API key** (external, instance-scoped). The API key is the

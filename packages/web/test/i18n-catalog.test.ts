@@ -113,7 +113,16 @@ describe('message catalogs', () => {
 	 * keep the reason obvious.
 	 */
 	const IDENTICAL_TO_ENGLISH_OK: Record<string, readonly string[]> = {
-		'nav.budget': ['de', 'fr', 'it', 'nl', 'sv'],
+		// "Team" and "Budget" are both the German words, ampersand and all; the
+		// other languages differ at least in case or conjunction (Team & budget,
+		// Team e budget, Équipe et budget, ...).
+		'nav.budget': ['de'],
+		// "Team" is the ordinary loanword in all four; French (Équipe), Spanish
+		// (Equipo), Polish (Zespół) and the rest differ.
+		'budget.tab.team': ['de', 'it', 'nl', 'sv'],
+		// "Budget" genuinely is the word in these five, as `nav.budget` recorded
+		// before it was reworded to "Team & Budget".
+		'budget.tab.spend': ['de', 'fr', 'it', 'nl', 'sv'],
 		'nav.documents': ['fr'],
 		'nav.home': ['it'],
 		'theme.system': ['de', 'sv'],
@@ -122,6 +131,8 @@ describe('message catalogs', () => {
 		// el chat, la chat, de chat, o chat. French (Discussion), Polish (Czat) and
 		// Swedish (Chatt) all differ, as `settings.chatbox` already records for de.
 		'settings.chat': ['de', 'es', 'it', 'nl', 'pt-BR'],
+		// Same loanword, same five languages, as `settings.chat` above records.
+		'chat.section.title': ['de', 'es', 'it', 'nl', 'pt-BR'],
 		// Both catalogs already write "agent" for the singular throughout
 		// (`agents.hire.action`), so the plural heading is the same word too.
 		'settings.groups.agents': ['fr', 'nl'],
@@ -133,6 +144,12 @@ describe('message catalogs', () => {
 		'settings.groups.maintenance': ['fr'],
 		'settings.instance': ['fr'],
 		'taskView.conversation': ['fr'],
+		// Dutch writes "Project" identically, as containers.column.project below
+		// records; every other language differs (Projekt, Proyecto, Projet, ...).
+		'chat.convert.projectLabel': ['nl'],
+		// "Dashboard" is the ordinary loanword in these three; the others differ
+		// (Panel, Tableau de bord, Pulpit, Painel, Översikt, ...).
+		'appearance.landing.dashboard': ['de', 'it', 'nl'],
 		// Dutch really does write "containers" - the loanword, plural and all.
 		// Every other language differs (Container, Conteneurs, Contêineres, ...).
 		'settings.concurrency': ['nl'],
@@ -150,7 +167,6 @@ describe('message catalogs', () => {
 		// The singular differs ("1 rol"), and every other language does too
 		// (Rollen, rôles, ruoli, papéis, ...).
 		'marketplace.roleCountOther': ['es'],
-		'containers.badge.assistant': ['fr'],
 		'setup.step.password': ['it'],
 		// German writes "Name" for a person's name, identically. Dutch (Naam),
 		// Swedish (Namn) and the rest all differ.
@@ -161,9 +177,6 @@ describe('message catalogs', () => {
 		// category list does differ (Bilder, Imágenes, Archiwa, Ljud, ...).
 		'attachments.category.audio': ['de', 'es', 'it', 'nl'],
 		'attachments.category.video': ['de', 'it', 'nl', 'sv'],
-		// Dutch writes the same loanword, capital and all (German/Polish/Swedish
-		// spell it Projekt, so only nl coincides).
-		'chat.convert.projectLabel': ['nl'],
 		// Dutch "week" is spelt exactly like the English; Dag and Maand beside it
 		// differ, as does every other language (Woche, Semaine, Settimana, ...).
 		// The per-agent hours table that carried four more of these is gone - its

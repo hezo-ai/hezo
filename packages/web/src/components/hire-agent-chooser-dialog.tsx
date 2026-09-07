@@ -1,11 +1,9 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronRight, type LucideIcon, MessageSquare, SquarePen, Store } from 'lucide-react';
-import { useState } from 'react';
 import { useLaunchChat } from '../contexts/chat-launch-context';
-import { useChatConversations } from '../hooks/use-chat';
+import { CEO_ROOM } from '../hooks/use-chat';
 import { useProjectMeta } from '../hooks/use-projects';
-import { toast } from '../hooks/use-toast';
 import { type MessageKey, useI18n } from '../lib/i18n';
 import { DialogContent } from './ui/dialog';
 
@@ -86,13 +84,8 @@ export function HireAgentChooserDialog({
 	const launchChat = useLaunchChat();
 	const project = useProjectMeta(projectId);
 	const projectName = project?.name ?? projectId;
-	// `false`: the query behind this hook is for the chat's own switcher and stays
-	// disabled here. Only the create mutation is used.
-	const { createThread } = useChatConversations(false);
-	const [busy, setBusy] = useState(false);
 
-	async function choose(id: HireOption['id']) {
-		if (busy) return;
+	function choose(id: HireOption['id']) {
 		if (id === 'marketplace') {
 			onOpenChange(false);
 			navigate({ to: '/marketplace', search: { forProject: projectId } });
@@ -103,24 +96,15 @@ export function HireAgentChooserDialog({
 			navigate({ to: '/projects/$projectId/agents/hire', params: { projectId } });
 			return;
 		}
-		// The CEO chat is a global HQ surface with no per-project scope, so the thread
-		// title and the draft both name the project explicitly - that is how the CEO
-		// knows which team the hire is for.
-		setBusy(true);
-		try {
-			const res = await createThread(t('agents.hire.ceoThreadTitle', { project: projectName }));
-			onOpenChange(false);
-			launchChat({
-				conversationId: res.conversation.id,
-				draft: t('agents.hire.ceoDraft', { project: projectName }),
-			});
-		} catch {
-			// `createThread` already toasts its own failure; this only covers the
-			// case where the thread was never created, so there is nothing to open.
-			toast.error(t('agents.hire.ceoThreadFailed'));
-		} finally {
-			setBusy(false);
-		}
+		// The CEO stream is a global HQ surface with no per-project scope, so the
+		// draft names the project explicitly - that is how the CEO knows which team
+		// the hire is for. Nothing is created here: the dock opens on the live
+		// stream with the draft waiting, and sending it is the operator's move.
+		onOpenChange(false);
+		launchChat({
+			room: CEO_ROOM,
+			draft: t('agents.hire.ceoDraft', { project: projectName }),
+		});
 	}
 
 	return (
@@ -140,7 +124,6 @@ export function HireAgentChooserDialog({
 							<button
 								key={opt.id}
 								type="button"
-								disabled={busy}
 								onClick={() => choose(opt.id)}
 								data-testid={`hire-option-${opt.id}`}
 								className="group flex w-full items-start gap-3 rounded-lg border border-border bg-surface p-3.5 text-left shadow-xs transition-[border-color] duration-150 cursor-pointer outline-none hover:border-accent-solid focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent disabled:opacity-45 disabled:pointer-events-none"

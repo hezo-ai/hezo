@@ -9,7 +9,7 @@ function getNav(container: HTMLElement): HTMLElement {
 	return nav as HTMLElement;
 }
 
-test('the project menu leads with Dashboard, lists the project pages, and has a Team section of agents', async () => {
+test('the project menu leads with Dashboard, lists the project pages, and closes with chat cards', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, queryByTestId, router } = await renderApp({
@@ -41,25 +41,20 @@ test('the project menu leads with Dashboard, lists the project pages, and has a 
 	// reachable without first opening Settings.
 	expect(within(nav).getByRole('link', { name: 'Connectors' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Skills' })).toBeTruthy();
-	// Activity is top-level too, and sits last — after Settings.
-	const activity = within(nav).getByRole('link', { name: 'Activity' });
-	expect(activity.getAttribute('href')).toMatch(/\/activity$/);
-	const hrefs = [...nav.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
-	const settingsIndex = hrefs.findIndex((href) => href.endsWith('/settings'));
-	const activityIndex = hrefs.findIndex((href) => href.endsWith('/activity'));
-	expect(settingsIndex).toBeGreaterThan(-1);
-	expect(activityIndex).toBeGreaterThan(settingsIndex);
+	// Team & Budget carries the roster (its Team tab) and the money tabs. The
+	// old Team link section and the Activity page are gone.
+	const teamBudget = within(nav).getByRole('link', { name: 'Team & Budget' });
+	expect(teamBudget.getAttribute('href')).toMatch(/\/budget\/team$/);
+	expect(within(nav).queryByRole('link', { name: 'Activity' })).toBeNull();
+	expect(within(nav).queryByRole('link', { name: 'Team' })).toBeNull();
 	// Git, Custom Prompt and Containers do nest under Settings — hidden until it
 	// (or one of them) is the active route.
 	expect(within(nav).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Containers' })).toBeNull();
 
-	// A Team section lists the team's agents (presented as the project's own).
-	expect(within(nav).getByRole('link', { name: 'Team' })).toBeTruthy();
-	await waitFor(() => expect(within(nav).getByRole('link', { name: /Captain/ })).toBeTruthy(), {
-		timeout: 20_000,
-	});
+	// The chat launcher cards close the menu out (one per roster agent).
+	await findByTestId('project-sidebar-chat', undefined, { timeout: 20_000 });
 
 	// No cross-project landing affordances.
 	expect(within(nav).queryByRole('link', { name: 'All Projects' })).toBeNull();
@@ -87,11 +82,10 @@ test('Git, Custom Prompt and Container nest under Settings, disclosed when Setti
 	expect(within(getNav(container)).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Containers' })).toBeNull();
-	// Connectors, Skills and Activity are not part of that disclosure — they
-	// render on a non-settings page because they sit at the top level.
+	// Connectors and Skills are not part of that disclosure — they render on a
+	// non-settings page because they sit at the top level.
 	expect(within(getNav(container)).getByRole('link', { name: 'Connectors' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Skills' })).toBeTruthy();
-	expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy();
 
 	// Selecting Settings discloses Git, Custom Prompt and Container beneath it.
 	await router.navigate({
@@ -117,64 +111,11 @@ test('Git, Custom Prompt and Container nest under Settings, disclosed when Setti
 	expect(within(getNav(container)).getByRole('link', { name: 'Containers' })).toBeTruthy();
 });
 
-test('the Team section is always expanded — no collapse/expand toggle', async () => {
-	let ws!: SeededWorkspace;
-	let projectSlug = '';
-	const { container, findByTestId, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Operations' });
-			projectSlug = project.slug;
-		},
-	});
-
-	await router.navigate({
-		to: '/projects/$projectId/tasks',
-		params: { projectId: projectSlug },
-	});
-	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
-	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeTruthy(), {
-		timeout: 20_000,
-	});
-
-	// The agent list is permanently visible — the collapse/expand affordance is gone.
-	expect(within(getNav(container)).queryByRole('button', { name: 'Collapse' })).toBeNull();
-	expect(within(getNav(container)).queryByRole('button', { name: 'Expand' })).toBeNull();
-});
-
-test('HQ agents appear in the Team section as global members linking to the HQ project', async () => {
-	let ws!: SeededWorkspace;
-	let projectSlug = '';
-	const { container, findByTestId, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Operations' });
-			projectSlug = project.slug;
-		},
-	});
-
-	await router.navigate({
-		to: '/projects/$projectId/tasks',
-		params: { projectId: projectSlug },
-	});
-	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
-
-	// The CEO (an HQ agent) surfaces as a virtual member linking to its HQ page.
-	const nav = getNav(container);
-	await waitFor(() => expect(within(nav).getByRole('link', { name: /CEO/ })).toBeTruthy(), {
-		timeout: 20_000,
-	});
-	const link = within(nav).getByRole('link', { name: /CEO/ });
-	expect(link.getAttribute('href')).toBe('/projects/hq/agents/ceo');
-});
-
-test('Team agents use a pulsing live dot for running and no dot when idle', async () => {
+test('member cards on the Team tab use a pulsing live dot for running and no dot when idle', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	let runningTitle = '';
-	const { container, findByTestId, router } = await renderApp({
+	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -191,31 +132,26 @@ test('Team agents use a pulsing live dot for running and no dot when idle', asyn
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/tasks',
+		to: '/projects/$projectId/budget/team',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
-	const nav = getNav(container);
+	const grid = await findByTestId('team-member-grid', undefined, { timeout: 20_000 });
 
 	// The "idle"/"running" text suffixes are gone — status is a dot now.
-	await waitFor(() => expect(within(nav).getByRole('link', { name: /Captain/ })).toBeTruthy(), {
-		timeout: 20_000,
-	});
-	expect(within(nav).queryByText('idle')).toBeNull();
-	expect(within(nav).queryByText('running')).toBeNull();
+	expect(within(grid).queryByText('idle')).toBeNull();
+	expect(within(grid).queryByText('running')).toBeNull();
 
 	// The running agent shows a pulsing cyan "live" dot; idle agents show none.
-	await waitFor(() => expect(within(nav).getByRole('img', { name: 'Running' })).toBeTruthy(), {
+	await waitFor(() => expect(within(grid).getByRole('img', { name: 'Running' })).toBeTruthy(), {
 		timeout: 20_000,
 	});
-	const runningDot = within(nav).getByRole('img', { name: 'Running' });
+	const runningDot = within(grid).getByRole('img', { name: 'Running' });
 	expect(runningDot.className).toContain('bg-live');
 	expect(runningDot.className).toContain('animate-pulse');
-	expect(within(nav).queryByRole('img', { name: 'Idle' })).toBeNull();
+	expect(within(grid).queryByRole('img', { name: 'Idle' })).toBeNull();
 
 	// The running agent keeps the bold-name emphasis.
-	const runningLink = within(nav).getByRole('link', { name: new RegExp(runningTitle) });
-	expect(within(runningLink).getByText(runningTitle).className).toContain('font-semibold');
+	expect(within(grid).getByText(runningTitle).className).toContain('font-semibold');
 });
 
 test("the project menu persists across the project's team pages and disappears off-project", async () => {
@@ -236,10 +172,10 @@ test("the project menu persists across the project's team pages and disappears o
 	});
 	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 
-	// The Team header links to the agents page, nested under the project.
-	await user.click(within(getNav(container)).getByRole('link', { name: 'Team' }));
+	// Team & Budget lands on the Team tab, nested under the project.
+	await user.click(within(getNav(container)).getByRole('link', { name: 'Team & Budget' }));
 	await waitFor(() =>
-		expect(router.state.location.pathname).toBe(`/projects/${projectSlug}/agents`),
+		expect(router.state.location.pathname).toBe(`/projects/${projectSlug}/budget/team`),
 	);
 	// The menu stays — the route still carries the project.
 	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });

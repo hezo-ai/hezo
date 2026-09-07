@@ -50,8 +50,6 @@ export interface PoolMember {
 	 * built to the wrong size and treated the same way.
 	 */
 	memoryBytes: number | null;
-	/** The chat's pinned container, which a task run may never take. */
-	reservedForChat: boolean;
 }
 
 export type PoolDecision =
@@ -70,7 +68,11 @@ export type PoolDecision =
 export interface PoolCapacity {
 	/** Memory already promised to running containers instance-wide, in GB. */
 	usedMemoryGb: number;
-	/** Total memory all running containers may consume. Host memory locally; a spend guard remotely. */
+	/**
+	 * The admission ceiling for the requesting workload, in GB. Task runs state
+	 * the total less the floating chat lane; chat workloads state the full total.
+	 * Host memory locally; a spend guard remotely.
+	 */
 	budgetGb: number;
 	/** What one more container in *this* project would consume, in GB. */
 	requestMemoryGb: number;
@@ -130,9 +132,9 @@ export interface PoolCapacity {
  *
  * `requiredMemoryBytes` is separate from `capacity.requestMemoryGb` because they
  * answer different questions. The capacity figure is what a *new* container
- * costs the budget, and the chat workload deliberately states zero there to
- * exempt itself; this is what every container must have been built to, which is
- * the project's cap for every workload alike.
+ * costs the budget the requesting workload admits against; this is what every
+ * container must have been built to, which is the project's cap for every
+ * workload alike.
  */
 export function selectPoolMember(
 	taskId: string | null,
@@ -171,20 +173,16 @@ export function selectPoolMember(
 }
 
 /**
- * Whether a member may serve a *task* run.
+ * Whether a member may serve a run.
  *
- * Three exclusions, each for its own reason:
- * - **busy**: one run per container, the rule the pool exists for.
- * - **reservedForChat**: a queued task run is invisible and harmless, while a
- *   queued chat turn is a person watching a spinner - so chat's container is
- *   never taken from it. Note this excludes it from being *handed to a run*, not
- *   from being stopped when the whole project goes idle (see
- *   {@link planIdleShutdown}).
+ * Two exclusions, each for its own reason:
+ * - **busy**: one run per container, the rule the pool exists for - and what a
+ *   chat turn holds while its reply execs, so nothing can take it mid-answer.
  * - **atDiskCeiling**: a container out of disk fails its run partway through,
  *   which is worse than paying for a fresh one.
  */
 function usable(member: PoolMember): boolean {
-	return member.state !== 'busy' && !member.reservedForChat && !member.atDiskCeiling;
+	return member.state !== 'busy' && !member.atDiskCeiling;
 }
 
 /**
@@ -226,14 +224,6 @@ export interface IdleRetirementPlan {
 }
 
 export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirementPlan {
-	// Deliberately *not* filtered by `reservedForChat`. The reservation means "no
-	// task run may take this container" - it does not mean "never stop it". By the
-	// time this runs the project has already been judged idle by a predicate that
-	// includes its chat session (a live or recently-active session makes the
-	// project busy and it is never a candidate), so a chat container reaching here
-	// is one whose session has gone quiet. Suspending it is correct: the session
-	// parks, and resume starts it again with a fresh host-side half. Treating the
-	// reservation as a pin here would keep the container running forever.
 	const idle = members.filter((m) => m.state === 'idle');
 	if (idle.length === 0) return { suspend: [], destroy: [] };
 
@@ -295,16 +285,12 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
  *
  * `staleMemberIds` are the members the caller has established sat idle past the
  * window - the clock lives in SQL, where it can be indexed, so this stays pure.
- * The chat's pinned member is never touched: it is excluded from the memory
- * budget already, so retiring it frees nothing and only interrupts a session.
  */
 export function planSurplusIdleRetirement(
 	members: readonly PoolMember[],
 	staleMemberIds: ReadonlySet<string>,
 ): IdleRetirementPlan {
-	const stale = members.filter(
-		(m) => m.state === 'idle' && !m.reservedForChat && staleMemberIds.has(m.id),
-	);
+	const stale = members.filter((m) => m.state === 'idle' && staleMemberIds.has(m.id));
 	if (stale.length === 0) return { suspend: [], destroy: [] };
 
 	// Unchanged: work that reached no durable remote is suspended, never
@@ -315,11 +301,9 @@ export function planSurplusIdleRetirement(
 	// Three things already guarantee a warm start, and any one of them is enough:
 	// a busy member (about to become idle itself), a suspended member (a ~1s
 	// resume through the ladder's resume rung), or a pinned member this plan is
-	// about to suspend. The chat's own member does not count - `usable` excludes
-	// it from the ladder, so it is no route to serving a task run.
+	// about to suspend.
 	const resumableAlready =
-		pinned.length > 0 ||
-		members.some((m) => !m.reservedForChat && (m.state === 'busy' || m.state === 'suspended'));
+		pinned.length > 0 || members.some((m) => m.state === 'busy' || m.state === 'suspended');
 	if (resumableAlready) return { suspend: pinned, destroy: disposable };
 
 	// Nothing else can serve the next run, so the first stale member is held back

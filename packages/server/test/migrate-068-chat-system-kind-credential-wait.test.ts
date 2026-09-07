@@ -1,4 +1,3 @@
-import { ChatSystemMessageKind } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
@@ -6,9 +5,9 @@ const TARGET = '068_chat_system_kind_credential_wait.sql';
 
 // Seeds a chat thread at schema 067 carrying one row of each kind the CHECK
 // admitted before this migration, applies it, and asserts: every seeded row and
-// its kind survived, the new kind inserts, an unknown kind still fails, and -
-// the drift guard - every value of the shared enum inserts, so the enum and the
-// constraint cannot part ways without failing here.
+// its kind survived, the new kind inserts, an unknown kind still fails, and
+// every kind the shared enum named AT this migration inserts. The live-enum
+// drift guard lives in the newest kind migration's test.
 describe('068_chat_system_kind_credential_wait migration', () => {
 	let h: DataPreservationHarness;
 	let conversationId: string;
@@ -93,8 +92,18 @@ describe('068_chat_system_kind_credential_wait migration', () => {
 		).rejects.toThrow();
 	});
 
-	it('admits every kind the shared enum names', async () => {
-		for (const kind of Object.values(ChatSystemMessageKind)) {
+	it('admits every kind the enum named at this migration', async () => {
+		// Frozen at 068's own snapshot rather than iterating the live shared enum:
+		// migrations are append-only, so kinds added later belong to a later CHECK
+		// restatement - the live-enum drift guard lives in the NEWEST kind
+		// migration's test, which is the one whose constraint must match the code.
+		const kindsAt068 = [
+			'converted_task',
+			'handoff_not_delivered',
+			'connector_refused',
+			'credential_wait',
+		] as const;
+		for (const kind of kindsAt068) {
 			await expect(
 				h.db.query(
 					`INSERT INTO chat_messages (conversation_id, role, channel, status, content, system_kind)

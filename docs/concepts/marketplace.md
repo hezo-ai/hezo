@@ -56,8 +56,8 @@ add: **the whole team**, or **just the roles you choose** from a checklist. So y
 the Security Engineer, or the Content Editor and the Trend Researcher, into a project that already
 has its own team. The Captain isn't on the list - every project already has one.
 
-You can also reach this from the other direction. **Hire agent** on a project's Team page
-offers **Browse the marketplace** as one of its three ways to hire; taking it opens the catalog
+You can also reach this from the other direction. **Hire agent** on a project's Team tab
+(under **Team & Budget**) offers **Browse the marketplace** as one of its three ways to hire; taking it opens the catalog
 with that project already chosen, and the add dialog starts on **just the roles you choose**
 rather than on the whole team - you asked for a teammate, not a second roster. The project stays
 changeable in the dialog if you picked the wrong one.
@@ -93,7 +93,7 @@ version, and you can bring an existing team up to date by adding it to the proje
 
 Once you've shaped a team - refined its roster, adjusted reporting lines, tuned each role's
 prompt and settings - you can package that whole state as a **team bundle** and share it. On the
-Team page, the **Export team** button (next to **Hire agent**) opens a short dialog that explains
+Team tab, the **Export team** button (next to **Hire agent**) opens a short dialog that explains
 what's about to happen, then downloads a single JSON file describing your team.
 
 The bundle captures the team name, description, and summary; every role, from the Captain to each

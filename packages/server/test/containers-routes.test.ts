@@ -22,7 +22,6 @@ interface ContainerRow {
 	project_slug: string;
 	project_name: string;
 	state: string;
-	reserved_for_chat: boolean;
 	has_unpushed_commits: boolean;
 	disk_used_bytes: number;
 	memory_bytes: number | null;

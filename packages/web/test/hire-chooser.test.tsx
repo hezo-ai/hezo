@@ -1,6 +1,4 @@
 import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
-import { queryClient } from '@hezo/web/lib/query-client';
-import { queryKeys } from '@hezo/web/lib/query-keys';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -43,8 +41,8 @@ test('Hire agent opens the chooser instead of dropping straight into the form', 
 	expect(document.body.querySelector('[data-testid="hire-chooser"]')?.textContent).toContain(
 		'Storefront',
 	);
-	// Picking nothing has not navigated anywhere.
-	expect(router.state.location.pathname).toBe(`/projects/${project.slug}/agents`);
+	// Picking nothing has not navigated anywhere (past the Team-tab redirect).
+	expect(router.state.location.pathname).toBe(`/projects/${project.slug}/budget/team`);
 });
 
 test('"Write the role yourself" opens the form, whose back link returns to the chooser', async () => {
@@ -70,10 +68,10 @@ test('"Write the role yourself" opens the form, whose back link returns to the c
 		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/agents/hire`);
 	});
 
-	// Back to the fork rather than to the team page: a wrong turn costs one click.
+	// Back to the fork rather than to the Team tab: a wrong turn costs one click.
 	await user.click(await findByTestId('hire-back-to-chooser'));
 	await waitFor(() => {
-		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/agents`);
+		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/budget/team`);
 	});
 	// `?hire` is what reopens it, so the operator lands back on the three options.
 	await waitFor(() => {
@@ -131,39 +129,18 @@ test('HQ is not staffed from the web app', async () => {
 	await findByTestId('hire-unavailable');
 });
 
-test('"Ask the CEO" opens a new thread with the message written but not sent', async () => {
+test('"Ask the CEO" opens the CEO stream with the message written but not sent', async () => {
 	let project = { slug: '', name: '' };
-	const created: Array<{ title?: string }> = [];
 	let sends = 0;
-	const THREAD_ID = 'hire-thread-1';
 
-	// The component harness runs no ChatSessionManager, so the chat endpoints 503.
-	// Answer just the thread-creation call and seed the history cache the widget
-	// reads (staleTime Infinity, so a seeded thread never refetches).
+	// Single-stream: nothing is created — the dock opens on the CEO's live DM
+	// with the draft waiting. Count message posts so a regression to auto-sending
+	// (or to creating anything) is caught.
 	const passthrough = globalThis.fetch;
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 		const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 		if (method === 'POST' && url.includes('/api/chat/messages')) sends += 1;
-		if (method === 'POST' && url.includes('/api/chat/conversations')) {
-			created.push(JSON.parse(String(init?.body ?? '{}')));
-			return new Response(
-				JSON.stringify({
-					data: {
-						conversation: {
-							id: THREAD_ID,
-							channel: 'web',
-							external_thread_id: null,
-							kind: 'assistant',
-							title: 'Hire for Storefront',
-							last_activity_at: new Date().toISOString(),
-							closed_at: null,
-						},
-					},
-				}),
-				{ status: 201, headers: { 'Content-Type': 'application/json' } },
-			);
-		}
 		return passthrough(input as RequestInfo, init);
 	}) as typeof globalThis.fetch;
 
@@ -172,24 +149,6 @@ test('"Ask the CEO" opens a new thread with the message written but not sent', a
 			initialPath: '/',
 			seed: async () => {
 				project = await seedBlankProject();
-				queryClient.setQueryData(queryKeys.chatConversations(), {
-					conversations: [
-						{
-							id: THREAD_ID,
-							channel: 'web',
-							external_thread_id: null,
-							kind: 'assistant',
-							title: 'Hire for Storefront',
-							last_activity_at: new Date().toISOString(),
-							closed_at: null,
-						},
-					],
-				});
-				queryClient.setQueryData(queryKeys.chatConversation(THREAD_ID), {
-					conversation_id: THREAD_ID,
-					messages: [],
-					compacted_count: 0,
-				});
 			},
 		});
 		await router.navigate({
@@ -200,21 +159,17 @@ test('"Ask the CEO" opens a new thread with the message written but not sent', a
 		await user.click(await findByTestId('hire-agent'));
 		await user.click(await findByTestId('hire-option-ceo'));
 
-		// The thread is named for the project, since the CEO chat is global and has
-		// no per-project scope of its own.
-		await waitFor(() => expect(created.length).toBe(1));
-		expect(created[0].title).toBe('Hire for Storefront');
-
-		// The chat opens on that thread with the opening line written for the
-		// operator - and deliberately NOT sent, so they can say what they actually
-		// need before the CEO has to ask.
+		// The dock opens on the pinned CEO stream with the opening line written for
+		// the operator - naming the project, since the CEO chat is global and has no
+		// per-project scope of its own - and deliberately NOT sent, so they can say
+		// what they actually need before the CEO has to ask.
 		await findByTestId('chat-panel');
+		const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
+		expect(select.value).toBe('ceo');
 		const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 		await waitFor(() => {
 			expect(input.value).toContain('add an agent to the Storefront project');
 		});
-		const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
-		expect(select.value).toBe(THREAD_ID);
 
 		// Nothing was posted: the draft is the operator's to send. This is the whole
 		// point of prefilling rather than auto-sending, so it is the assertion that

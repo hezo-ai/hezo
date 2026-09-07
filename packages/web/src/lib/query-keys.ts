@@ -70,6 +70,26 @@ export const queryKeys = {
 	],
 	/** The list of CEO chat conversation threads (the switcher). */
 	chatConversations: () => ['chat', 'conversations'],
+	/** The caller's HQ ui-state settings blob (home of the landing preference). */
+	landingPreference: () => ['ui-state', 'landing'],
+	/** A project's DM room list (menu chat cards + dock switcher), by route slug. */
+	projectChatRooms: (projectId: string) => ['projects', projectId, 'chat', 'rooms'],
+	/** One agent DM's history, keyed by route slugs so socket invalidation matches. */
+	agentChatRoom: (projectId: string, agentSlug: string) => [
+		'projects',
+		projectId,
+		'chat',
+		'agents',
+		agentSlug,
+	],
+	/** One group room's history. Rooms have no slug; the conversation id is their identity. */
+	groupChatRoom: (projectId: string, conversationId: string) => [
+		'projects',
+		projectId,
+		'chat',
+		'groups',
+		conversationId,
+	],
 	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],
 	/** Bundled OAuth-provider descriptors for the generic OAuth-broker form. */
@@ -371,7 +391,6 @@ export const queryKeys = {
 		],
 		costs: (slug: string, params: KeyParam) => ['projects', slug, 'costs', params],
 		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
-		auditLog: (slug: string, filters: KeyParam) => ['projects', slug, 'audit-log', filters],
 		agentHours: (slug: string, bucket: string) => ['projects', slug, 'agent-hours', bucket],
 		containerHours: (slug: string, bucket: string) => ['projects', slug, 'container-hours', bucket],
 		githubOrgs: (slug: string) => ['projects', slug, 'github', 'orgs'],

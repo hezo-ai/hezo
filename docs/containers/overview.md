@@ -187,12 +187,12 @@ flags.
 Two global limits in **Settings -> Containers** bound what a burst of agent activity can
 consume:
 
-- **Total container memory** - how much memory all project containers may use at once. The
-  assistant chat's container runs on top of it, so a chat turn never waits behind
-  background work. A run whose container will not fit in what is left waits in the queue
-  and starts as memory frees up; the assistant chat always starts. There is no separate
-  limit on the *number* of containers: how many fit follows from this budget and the cap
-  below.
+- **Total container memory** - how much memory all containers may use at once, the
+  assistant chat's included. One container's worth of the budget is off limits to task
+  runs and kept for chat, so a chat turn never waits behind background work. A run whose
+  container will not fit in what is left waits in the queue and starts as memory frees
+  up. There is no separate limit on the *number* of containers: how many fit follows from
+  this budget and the cap below.
 
   The budget is shared across every project, and no project can sit on a share of it that
   it is not using. A container belongs to the project it was built for and is never handed

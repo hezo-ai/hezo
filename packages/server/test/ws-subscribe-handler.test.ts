@@ -193,6 +193,64 @@ describe('handleWsSubscribe', () => {
 		expect(wsManager.getRoomSize(`project-runs:${projectId}`)).toBe(0);
 	});
 
+	it('subscribes a team member to a chat conversation room', async () => {
+		const { userId, teamId, projectId } = await seedTeamWithProject(db);
+		const member = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'A') RETURNING id`,
+			[teamId],
+		);
+		const convo = await db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id) VALUES ($1, $2, $3) RETURNING id`,
+			[member.rows[0].id, teamId, projectId],
+		);
+		const room = wsRoom.chatConversation(convo.rows[0].id);
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+
+		await handleWsSubscribe(ws, room, deps());
+
+		expect(wsManager.getRoomSize(room)).toBe(1);
+	});
+
+	it('rejects a chat conversation subscribe for a user without team access', async () => {
+		const { teamId, projectId } = await seedTeamWithProject(db);
+		const member = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'A') RETURNING id`,
+			[teamId],
+		);
+		const convo = await db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id) VALUES ($1, $2, $3) RETURNING id`,
+			[member.rows[0].id, teamId, projectId],
+		);
+		const room = wsRoom.chatConversation(convo.rows[0].id);
+		const outsider = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name) VALUES ('Other') RETURNING id",
+		);
+		const ws = createMockWs({ type: AuthType.Admin, userId: outsider.rows[0].id });
+
+		await handleWsSubscribe(ws, room, deps());
+
+		expect(wsManager.getRoomSize(room)).toBe(0);
+	});
+
+	it('ignores a chat conversation subscribe for an unknown conversation', async () => {
+		const { userId } = await seedTeamWithProject(db);
+		const room = wsRoom.chatConversation('00000000-0000-0000-0000-000000000000');
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+
+		await expect(handleWsSubscribe(ws, room, deps())).resolves.toBeUndefined();
+		expect(wsManager.getRoomSize(room)).toBe(0);
+	});
+
+	it('a malformed chat room name is not a query error', async () => {
+		const { userId } = await seedTeamWithProject(db);
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+		// Not a UUID: must fall through the conversation branch without throwing.
+		await expect(handleWsSubscribe(ws, 'chat:not-a-uuid', deps())).resolves.toBeUndefined();
+		expect(wsManager.getRoomSize('chat:not-a-uuid')).toBe(0);
+	});
+
 	it('subscribes a the admin to team room when canAccessTeam passes', async () => {
 		const { userId, teamId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Admin, userId });

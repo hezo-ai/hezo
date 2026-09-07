@@ -471,7 +471,8 @@ test('each metric tile links to the page that owns its number', async () => {
 
 	for (const [testId, path] of [
 		['dashboard-metric-needs-you', 'inbox'],
-		['dashboard-metric-active-agents', 'agents'],
+		// The roster lives on the Team & Budget page's Team tab now.
+		['dashboard-metric-active-agents', 'budget/team'],
 		['dashboard-metric-open-tasks', 'tasks'],
 		['dashboard-metric-goals', 'goals'],
 		['dashboard-metric-spend', 'budget'],

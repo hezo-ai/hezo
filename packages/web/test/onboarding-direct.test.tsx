@@ -6,13 +6,13 @@ function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// First-run entry point: the home welcome card's "New project" button opens the
+// First-run entry point: the landing's quiet "set a project up yourself" link opens the
 // CreateProjectWithTeamDialog, which is the single doorway to BOTH project
 // creation flows — "Create now" (direct) and "Plan with the CEO" (intake).
 test('the welcome card opens the dialog exposing both creation flows', async () => {
 	const { findByTestId, user } = await renderApp({ initialPath: '/home', seed: async () => {} });
 
-	const create = await findByTestId('home-welcome-create', undefined, { timeout: 15_000 });
+	const create = await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 });
 	await user.click(create);
 
 	// The dialog opens on its entry step: the two submit buttons are gated behind a
@@ -42,7 +42,7 @@ test('the direct flow creates a project in its own new team and opens its task l
 		seed: async () => {},
 	});
 
-	const create = await findByTestId('home-welcome-create', undefined, { timeout: 15_000 });
+	const create = await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 });
 	await user.click(create);
 
 	await user.type(await findByPlaceholderText('e.g. Marketing Site'), projectName);
@@ -85,7 +85,7 @@ test('the CEO-assisted flow opens the HQ intake thread instead of creating immed
 		seed: async () => {},
 	});
 
-	const create = await findByTestId('home-welcome-create', undefined, { timeout: 15_000 });
+	const create = await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 });
 	await user.click(create);
 
 	await user.type(await findByPlaceholderText('e.g. Marketing Site'), projectName);

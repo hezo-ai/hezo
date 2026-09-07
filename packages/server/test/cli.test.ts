@@ -303,7 +303,6 @@ describe('resolveConfig', () => {
 					containers: { skipMountCheck: true, agentBaseImage: 'ghcr.io/me/agent:1' },
 					egress: { debug: true },
 					updates: { disabled: true },
-					chat: { healthIntervalMs: 250 },
 				}),
 				EMPTY_ENV,
 			);
@@ -320,7 +319,6 @@ describe('resolveConfig', () => {
 			expect(config.containers.agentBaseImage).toBe('ghcr.io/me/agent:1');
 			expect(config.egress.debug).toBe(true);
 			expect(config.updates.disabled).toBe(true);
-			expect(config.chat.healthIntervalMs).toBe(250);
 		});
 	});
 });

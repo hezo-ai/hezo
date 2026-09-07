@@ -2,10 +2,10 @@ import { expect, test } from './fixtures';
 import { waitForPageLoad } from './helpers';
 
 // Kept in Playwright by decision-tree items 1 & 2 (real CSS layout +
-// viewport-conditional behavior): the CEO chat panel is a near-full-screen sheet
-// on mobile and an anchored ~380px panel from md up. happy-dom doesn't run media
+// viewport-conditional behavior): the chat dock is a near-full-screen sheet on
+// mobile and an anchored ~420px panel from md up. happy-dom doesn't run media
 // queries against a real layout pass, so boundingBox must come from Chromium.
-test.describe('CEO chat widget — responsive layout', () => {
+test.describe('chat dock — responsive layout', () => {
 	test('mobile is a near-full-screen sheet; desktop is an anchored panel', async ({
 		sharedPage,
 		sharedWorkspace,
@@ -16,8 +16,8 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		// The launcher mounts with the app shell; allow for cold-start boot latency.
-		const launcher = page.getByTestId('chat-launcher');
+		// The launcher is the CEO monogram in the app header.
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 
@@ -38,6 +38,7 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(overlayBox?.width ?? 0).toBeGreaterThan(370);
 
 		// Desktop: the same open panel re-lays out to the anchored ~420px width.
+		// There is no expand mode - the anchored panel is the whole desktop chat.
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await expect(panel).toBeVisible();
 		const desktopBox = await panel.boundingBox();
@@ -49,102 +50,6 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await expect(overlay).toBeHidden();
 	});
 
-	test('expanding fills the viewport but never covers the nav bar', async ({
-		sharedPage,
-		sharedWorkspace,
-	}) => {
-		const page = sharedPage;
-
-		await page.setViewportSize({ width: 1280, height: 800 });
-		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
-		await waitForPageLoad(page);
-
-		const launcher = page.getByTestId('chat-launcher');
-		await expect(launcher).toBeVisible({ timeout: 15000 });
-		await launcher.click();
-
-		const panel = page.getByTestId('chat-panel');
-		await expect(panel).toBeVisible();
-
-		// Anchored by default: a narrow corner panel.
-		const anchored = await panel.boundingBox();
-		expect(anchored?.width ?? 0).toBeLessThan(440);
-
-		// Expand → fills the viewport width…
-		await page.getByTestId('chat-expand').click();
-		await expect(panel).toHaveAttribute('data-expanded', 'true');
-		const expandedBox = await panel.boundingBox();
-		expect(expandedBox).not.toBeNull();
-		expect(expandedBox?.width ?? 0).toBeGreaterThan(1000);
-
-		// …but its top stays at or below the header's bottom — the nav stays visible.
-		const header = await page.getByTestId('app-header').boundingBox();
-		const headerBottom = (header?.y ?? 0) + (header?.height ?? 0);
-		expect(headerBottom).toBeGreaterThan(0);
-		expect(expandedBox?.y ?? 0).toBeGreaterThanOrEqual(headerBottom - 1);
-
-		// A modal scrim now occludes the page content below the nav: full viewport
-		// width, starting at the header's bottom (the nav itself stays uncovered).
-		const overlay = page.getByTestId('chat-overlay');
-		await expect(overlay).toBeVisible();
-		const overlayBox = await overlay.boundingBox();
-		expect(overlayBox?.width ?? 0).toBeGreaterThan(1200);
-		expect(overlayBox?.y ?? 0).toBeGreaterThanOrEqual(headerBottom - 1);
-
-		// Collapse restores the anchored corner panel and removes the scrim.
-		await page.getByTestId('chat-expand').click();
-		await expect(panel).toHaveAttribute('data-expanded', 'false');
-		await expect(overlay).toBeHidden();
-		const restored = await panel.boundingBox();
-		expect(restored?.width ?? 0).toBeLessThan(440);
-	});
-
-	test('expanded desktop mode shows threads as a left sidebar; the dropdown is hidden', async ({
-		sharedPage,
-		sharedWorkspace,
-	}) => {
-		// Real CSS layout + viewport-conditional (decision-tree items 1 & 2): the thread
-		// rail is `hidden md:flex` and only appears in expanded desktop mode, so its
-		// presence and left-edge position must come from a real layout pass.
-		const page = sharedPage;
-
-		await page.setViewportSize({ width: 1280, height: 800 });
-		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
-		await waitForPageLoad(page);
-
-		const launcher = page.getByTestId('chat-launcher');
-		await expect(launcher).toBeVisible({ timeout: 15000 });
-		await launcher.click();
-
-		const panel = page.getByTestId('chat-panel');
-		await expect(panel).toBeVisible();
-
-		// Anchored/collapsed: the top dropdown switcher is the control; no rail.
-		await expect(page.getByTestId('chat-thread-select')).toBeVisible();
-		await expect(page.getByTestId('chat-thread-rail')).toBeHidden();
-
-		// Expand → the switcher becomes a left rail and the dropdown is hidden.
-		await page.getByTestId('chat-expand').click();
-		await expect(panel).toHaveAttribute('data-expanded', 'true');
-		const rail = page.getByTestId('chat-thread-rail');
-		await expect(rail).toBeVisible();
-		await expect(page.getByTestId('chat-thread-select')).toBeHidden();
-
-		// The rail hugs the panel's left edge and is a narrow column (not full width).
-		const panelBox = await panel.boundingBox();
-		const railBox = await rail.boundingBox();
-		expect(railBox).not.toBeNull();
-		expect(Math.abs((railBox?.x ?? 0) - (panelBox?.x ?? 0))).toBeLessThan(4);
-		expect(railBox?.width ?? 0).toBeLessThan(300);
-		expect(railBox?.width ?? 0).toBeGreaterThan(150);
-
-		// Collapse restores the dropdown and removes the rail.
-		await page.getByTestId('chat-expand').click();
-		await expect(panel).toHaveAttribute('data-expanded', 'false');
-		await expect(page.getByTestId('chat-thread-select')).toBeVisible();
-		await expect(rail).toBeHidden();
-	});
-
 	test('Escape closes the chat', async ({ sharedPage, sharedWorkspace }) => {
 		const page = sharedPage;
 
@@ -152,7 +57,7 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('chat-launcher');
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 		await expect(page.getByTestId('chat-panel')).toBeVisible();
@@ -162,29 +67,10 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await expect(launcher).toBeVisible();
 	});
 
-	test('the expand toggle is desktop-only — hidden on mobile', async ({
-		sharedPage,
-		sharedWorkspace,
-	}) => {
-		const page = sharedPage;
-
-		await page.setViewportSize({ width: 375, height: 800 });
-		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
-		await waitForPageLoad(page);
-
-		const launcher = page.getByTestId('chat-launcher');
-		await expect(launcher).toBeVisible({ timeout: 15000 });
-		await launcher.click();
-		await expect(page.getByTestId('chat-panel')).toBeVisible();
-
-		// The mobile panel is already near-full-screen, so the control is hidden.
-		await expect(page.getByTestId('chat-expand')).toBeHidden();
-	});
-
 	// Kept in Playwright by decision-tree item 1 (real CSS layout): this is a
 	// scroll-position regression, and scrollTop/scrollHeight/clientHeight only
 	// carry real values under Chromium's layout engine — happy-dom returns 0.
-	test('collapsing the panel keeps the latest message pinned to the bottom', async ({
+	test('opening pins the newest message to the bottom of an overflowing list', async ({
 		sharedPage,
 		sharedWorkspace,
 	}) => {
@@ -208,20 +94,7 @@ test.describe('CEO chat widget — responsive layout', () => {
 			};
 		});
 
-		// The widget swaps the scrollable message list for an HQ-container notice
-		// unless HQ is healthy. Force the instance (is_internal) project to
-		// "running" so the list renders regardless of the env's container state.
-		await page.route('**/api/projects', async (route) => {
-			if (route.request().method() !== 'GET') return route.fallback();
-			const response = await route.fetch();
-			const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
-			const data = Array.isArray(body.data)
-				? body.data.map((p) => (p.is_internal ? { ...p, container_status: 'running' } : p))
-				: body.data;
-			await route.fulfill({ response, json: { ...body, data } });
-		});
-
-		// A real CEO reply needs the HQ container + a live LLM, so mock the read
+		// A real CEO reply needs a container + a live LLM, so mock the read
 		// endpoint to get a deterministic conversation that overflows the panel.
 		await page.route('**/api/chat/conversation', (route) =>
 			route.fulfill({ json: { data: { conversation_id: 'conv-seed', messages: seeded } } }),
@@ -230,13 +103,12 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('chat-launcher');
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 
 		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
-		await expect(panel).toHaveAttribute('data-expanded', 'false');
 
 		const list = page.getByTestId('chat-messages');
 		const distanceFromBottom = () =>
@@ -250,24 +122,6 @@ test.describe('CEO chat widget — responsive layout', () => {
 
 		// Opening pins to the bottom — the newest reply is visible.
 		await expect.poll(distanceFromBottom).toBeLessThanOrEqual(8);
-
-		// Put the list in a not-at-bottom state before toggling. This is what an
-		// in-flight (streaming) reply leaves behind between tokens — and it's also
-		// what defeats Chromium's scroll anchoring, which on its own restores a
-		// *symmetric* expand→collapse to the bottom and so would mask the bug.
-		await list.evaluate((el) => el.scrollTo({ top: 0, behavior: 'instant' }));
-		await expect.poll(distanceFromBottom).toBeGreaterThan(100);
-
-		// Expand to the full-viewport sheet, then collapse back to the corner panel.
-		await page.getByTestId('chat-expand').click();
-		await expect(panel).toHaveAttribute('data-expanded', 'true');
-		await page.getByTestId('chat-expand').click();
-		await expect(panel).toHaveAttribute('data-expanded', 'false');
-
-		// Regression guard: each resize must re-pin the list to the bottom so the
-		// newest reply stays visible. Without the fix the resize doesn't scroll and
-		// the list is left where it was (top), hiding the latest message.
-		await expect.poll(distanceFromBottom, { timeout: 5000 }).toBeLessThanOrEqual(8);
 		await expect(page.getByText(LAST_MARKER)).toBeInViewport();
 	});
 });
@@ -276,7 +130,7 @@ test.describe('CEO chat widget — responsive layout', () => {
 // viewport): "did this token wrap or did it widen the panel" is a question only a
 // real layout pass answers — happy-dom reports scrollWidth/clientWidth as 0 and
 // never re-flows text at 375px.
-test.describe('CEO chat widget — long unbreakable content', () => {
+test.describe('chat dock — long unbreakable content', () => {
 	// No spaces, far wider than the ~420px anchored panel: the pasted-link case
 	// that used to push the whole message list into horizontal scroll.
 	const LONG_URL =
@@ -311,7 +165,7 @@ test.describe('CEO chat widget — long unbreakable content', () => {
 			},
 		];
 
-		// The widget swaps the scrollable message list for an HQ-container notice
+		// The dock swaps the scrollable message list for an HQ-container notice
 		// unless HQ is healthy — force the instance project to "running".
 		await page.route('**/api/projects', async (route) => {
 			if (route.request().method() !== 'GET') return route.fallback();
@@ -330,7 +184,7 @@ test.describe('CEO chat widget — long unbreakable content', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('chat-launcher');
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 		await expect(page.getByTestId('chat-panel')).toBeVisible();
@@ -377,7 +231,7 @@ test.describe('CEO chat widget — long unbreakable content', () => {
 // auto-grows by measuring its own `scrollHeight` and writing back an inline
 // height. happy-dom reports `scrollHeight` as 0, so the grow/collapse can only
 // be observed against Chromium's real layout pass.
-test.describe('CEO chat widget — composer auto-grow', () => {
+test.describe('chat dock — composer auto-grow', () => {
 	test('the composer grows with multi-line input and collapses after submit', async ({
 		sharedPage,
 		sharedWorkspace,
@@ -388,7 +242,7 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('chat-launcher');
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 		await expect(page.getByTestId('chat-panel')).toBeVisible();
@@ -411,8 +265,8 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 	});
 
 	// Regression: the content height depends on the composer's width too, so a
-	// width change (expand/collapse, viewport) must re-fit. Otherwise the box keeps
-	// a stale height — too tall after widening, or clipping the top line after
+	// width change (viewport breakpoint) must re-fit. Otherwise the box keeps a
+	// stale height — too tall after widening, or clipping the top line after
 	// narrowing. Real layout (re-wrap + scrollHeight/clientHeight), so Playwright.
 	test('the composer re-fits when the panel width changes, never clipping its content', async ({
 		sharedPage,
@@ -424,7 +278,7 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('chat-launcher');
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 		await expect(page.getByTestId('chat-panel')).toBeVisible();
@@ -440,75 +294,93 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		const heightOf = async () => (await input.boundingBox())?.height ?? 0;
 
 		// A long line with no explicit newlines wraps to several visual rows inside
-		// the narrow (~420px) anchored panel.
+		// the ~420px anchored panel - long enough to re-wrap measurably at the
+		// narrower mobile width, short enough to stay under the composer's
+		// max-height cap there (past the cap it scrolls by design, which would
+		// read as "clipped" and fail the guard for the wrong reason).
 		await input.fill(
 			'This is a long single-line message with no explicit newlines that wraps across multiple visual rows inside the narrow anchored composer panel.',
 		);
 		await expect.poll(heightOf).toBeGreaterThan(60);
-		const narrowHeight = await heightOf();
+		const desktopHeight = await heightOf();
 		expect(await isClipped()).toBe(false);
 
-		// Expanding widens the composer: the same text now fits in fewer rows, so the
-		// box must shrink rather than keep its taller height.
-		await page.getByTestId('chat-expand').click();
-		await expect(page.getByTestId('chat-panel')).toHaveAttribute('data-expanded', 'true');
-		await expect.poll(heightOf).toBeLessThan(narrowHeight - 10);
+		// The mobile sheet is narrower (~359px): the same text re-wraps to more
+		// rows, so the box must re-fit — without it the top line clips, which is
+		// exactly what `isClipped` catches (a stale height leaves scrollHeight
+		// above clientHeight). The clip check, not a row-count delta, is the
+		// assertion: how many extra rows the re-wrap costs depends on font
+		// metrics, so a numeric height bound would flake across renderers.
+		await page.setViewportSize({ width: 375, height: 800 });
+		await expect(page.getByTestId('chat-panel')).toBeVisible();
+		await expect.poll(heightOf).toBeGreaterThanOrEqual(desktopHeight);
 		expect(await isClipped()).toBe(false);
 
-		// Collapsing narrows it again: the text re-wraps to more rows, so the box must
-		// grow back — without this re-fit the top line would be clipped.
-		await page.getByTestId('chat-expand').click();
-		await expect(page.getByTestId('chat-panel')).toHaveAttribute('data-expanded', 'false');
-		await expect.poll(heightOf).toBeGreaterThan(narrowHeight - 5);
+		// Back to desktop: wider again, the box re-fits down and still fits.
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await expect.poll(heightOf).toBeLessThanOrEqual(desktopHeight + 1);
 		expect(await isClipped()).toBe(false);
 	});
 });
 
 // Kept in Playwright by decision-tree item 2 (viewport-conditional behavior):
-// the chat closes on navigation only in the presentations that BLOCK the page,
+// the chat closes on navigation only in the presentation that BLOCKS the page,
 // and which presentation is live depends on the viewport. happy-dom implements
 // matchMedia but reports a fixed 1024px width, so the component tier can only
-// reach the desktop branches (covered in
+// reach the desktop branch (covered in
 // packages/web/test/overlay-close-on-navigate.test.tsx); the mobile
 // full-screen sheet needs Chromium at a real mobile viewport.
-test.describe('CEO chat widget — dismissal on navigation', () => {
-	test('mobile: following "View container" leaves no sheet over the page', async ({
+test.describe('chat dock — dismissal on navigation', () => {
+	test('mobile: following an in-chat link leaves no sheet over the page', async ({
 		sharedPage,
 		sharedWorkspace,
 	}) => {
 		const page = sharedPage;
 
-		// Put HQ mid-provision so the chat renders its blocked panel, whose only
-		// affordance is the link out to the container page.
-		await page.route('**/api/projects', async (route) => {
-			const res = await route.fetch();
-			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
-			await route.fulfill({
-				response: res,
-				body: JSON.stringify({
-					...json,
-					data: json.data.map((p) =>
-						p.is_internal === true ? { ...p, container_status: 'creating' } : p,
-					),
-				}),
-			});
-		});
+		// A system row whose text names a run: RunLinkedText renders it as a
+		// client-side link - the in-sheet affordance that navigates. (The old HQ
+		// container gate is gone; a chat turn claims its own pool container, so
+		// nothing in the sheet blocks on container state any more.)
+		const seeded = [
+			{
+				id: 'seed-user',
+				conversation_id: 'conv-nav',
+				role: 'user',
+				channel: 'web',
+				status: 'complete',
+				content: 'Where did that run end up?',
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, 0)).toISOString(),
+			},
+			{
+				id: 'seed-wait',
+				conversation_id: 'conv-nav',
+				role: 'system',
+				system_kind: 'credential_wait',
+				channel: 'web',
+				status: 'complete',
+				content: `Waiting for [growth-analyst/HM-336](/projects/${sharedWorkspace.projectSlug}/agents/growth-analyst/executions/run-nav-1).`,
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, 1)).toISOString(),
+			},
+		];
+		await page.route('**/api/chat/conversation', (route) =>
+			route.fulfill({ json: { data: { conversation_id: 'conv-nav', messages: seeded } } }),
+		);
 
 		await page.setViewportSize({ width: 375, height: 800 });
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('chat-launcher');
+		const launcher = page.getByTestId('app-header-chat');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 
 		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
-		await panel.getByTestId('hq-container-notice-link').click();
+		await panel.getByTestId('run-link').click();
 
 		// The sheet and its scrim both go, and the page it navigated to is what the
 		// reader is actually left looking at.
-		await expect(page).toHaveURL(/\/settings\/containers$/);
+		await expect(page).toHaveURL(/\/executions\/run-nav-1$/);
 		await expect(panel).toBeHidden();
 		await expect(page.getByTestId('chat-overlay')).toBeHidden();
 		await expect(launcher).toBeVisible();
