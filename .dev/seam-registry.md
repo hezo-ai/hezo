@@ -36,6 +36,8 @@ rather than here, is how a codebase ends up with two of everything.
 | "Who holds this rotating credential, and how do I name them?" | `credentialLockHolder` / `describeCredentialHolder` / `credentialWaitNotice` (`services/agent-runner.ts`) - a `CredentialLockHolder` record, rendered as a run link (`formatRunLink`, `@hezo/shared`) that `RunLinkedText` (web) turns into the link; never a bare label |
 | Text the server writes that names a run (a log line, a chat notice) | `formatRunLink` / `splitRunLinks` (`@hezo/shared`) on the way out, `RunLinkedText` (`packages/web/src/components/`) on the way in |
 | "Did this release stop reading something an instance still sets?" | `REMOVED_ENV_VARS` / `detectRemovedEnvVars` (`config/removed-env.ts`) |
+| "What does a manual dispatch that did not start answer with?" | `DISPATCH_OUTCOMES` (`routes/queued-wakeups.ts`) server-side, `queuedDispatchMessageKey` (`packages/web/src/lib/manual-dispatch.ts`) for the sentence naming the wait - the two halves are split so the queued copy reaches the reader translated |
+| "Is this approval a run-failure notice, and how does it present?" | `isAgentErrorApproval` / `AGENT_ERROR_ROW` (`packages/web/src/lib/inbox-row-kind.ts`) - the inbox, the project dashboard and home all ask it there |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |

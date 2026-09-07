@@ -256,14 +256,24 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 			created_at: string;
 			requested_by_name: string | null;
 			payload_task_identifier: string | null;
+			payload_kind: string | null;
+			payload_run_comment_public_id: string | null;
 		}>(
 			`SELECT a.id, a.type, a.created_at,
 			        ${agentDisplayNameSql('ma', 'm')} AS requested_by_name,
-			        pi.identifier AS payload_task_identifier
+			        pi.identifier AS payload_task_identifier,
+			        a.payload->>'type' AS payload_kind,
+			        prc.public_id AS payload_run_comment_public_id
 			 FROM approvals a
 			 LEFT JOIN members m ON m.id = a.requested_by_member_id
 			 LEFT JOIN member_agents ma ON ma.id = a.requested_by_member_id
 			 LEFT JOIN tasks pi ON pi.id = (a.payload->>'task_id')::uuid
+			 -- The run's entry in the task thread, so a failure notice can link to
+			 -- the run rather than the top of the task. Same join the approvals
+			 -- route carries; the two queries state the same fact.
+			 LEFT JOIN task_comments prc ON prc.task_id = pi.id
+			   AND prc.content_type = 'run'
+			   AND prc.content->>'run_id' = a.payload->>'run_id'
 			 WHERE a.team_id = $1
 			   AND a.status = $2::approval_status
 			   AND a.archived_at IS NULL

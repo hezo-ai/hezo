@@ -1,4 +1,4 @@
-import { waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp, taskHeadingQuery } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
@@ -105,8 +105,18 @@ async function setup(opts: {
 	/** Seed a failed pool member, which is what "the container has an error"
 	 * means now that a project is not bound to one container. */
 	containerFailed?: boolean;
+	/** What the retry route answers with. Defaults to an immediate dispatch. */
+	retryResponse?: Record<string, unknown>;
 }) {
-	const { seeded, retryCalls, comments, runs, taskOverride, containerFailed = false } = opts;
+	const {
+		seeded,
+		retryCalls,
+		comments,
+		runs,
+		taskOverride,
+		containerFailed = false,
+		retryResponse = { dispatched: true },
+	} = opts;
 	return renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -179,7 +189,7 @@ async function setup(opts: {
 				const retryMatch = url.match(/\/api\/projects\/[^/]+\/tasks\/[^/]+\/runs\/([^/]+)\/retry/);
 				if (method === 'POST' && retryMatch) {
 					retryCalls.push(retryMatch[1]);
-					return new Response(JSON.stringify({ data: { dispatched: true } }), {
+					return new Response(JSON.stringify({ data: retryResponse }), {
 						status: 200,
 						headers: { 'Content-Type': 'application/json' },
 					});
@@ -431,4 +441,52 @@ test('failed run-entry comment disables Retry while the container has an error',
 
 	await user.click(retryButton).catch(() => {});
 	expect(retryCalls).toEqual([]);
+});
+
+// The retry route creates its wakeup before it attempts dispatch, and the
+// capacity guard leaves that row queued - so a retry the instance cannot start
+// immediately is pending, not failed. It used to be announced under the error
+// title while the queued-agents row appeared underneath saying the opposite.
+test('a retry queued at the container limit reads as a notice, not an error', async () => {
+	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const retryCalls: string[] = [];
+
+	const { findByTestId, user, router } = await setup({
+		seeded,
+		retryCalls,
+		comments: ({ task, agent }) => [
+			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
+		],
+		runs: ({ task, agent, teamId }) => ({
+			[FAILED_RUN_ID]: runResponse(FAILED_RUN_ID, agent, teamId, task.id, 'failed'),
+		}),
+		taskOverride: { last_run_status: 'failed', last_run_id: FAILED_RUN_ID },
+		retryResponse: {
+			queued: true,
+			wakeup_id: 'eeee0000-0000-0000-0000-000000000111',
+			reason: 'instance_at_capacity',
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const retryButton = (await findByTestId('retry-failed-run', undefined, {
+		timeout: 20_000,
+	})) as HTMLButtonElement;
+	await waitFor(() => expect(retryButton.disabled).toBe(false), { timeout: 20_000 });
+	await user.click(retryButton);
+
+	await waitFor(() => expect(retryCalls).toEqual([FAILED_RUN_ID]));
+
+	// Scoped to this toast's own title: the store is module-level, so earlier
+	// specs in this file may have left toasts in the DOM, and Radix renders a
+	// second announcement copy of each.
+	const titles = (await screen.findAllByText(/queued and will start when the next container/))
+		.map((d) => d.previousElementSibling?.textContent)
+		.filter((t): t is string => !!t);
+	expect(titles).toContain('Heads up');
+	expect(titles).not.toContain('Something went wrong');
 });

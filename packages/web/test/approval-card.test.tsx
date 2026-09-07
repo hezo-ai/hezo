@@ -266,13 +266,90 @@ test('the global inbox shows the team name on each card (showTeam)', async () =>
 
 // The run pipeline files a Strategy row with an `agent_error` payload when it
 // has given up on an agent (retry budget spent, or the provider refusing for
-// hours). It is a notice, not a proposal: the card offers the task and a
-// Dismiss, never Approve/Deny, and its history badge reads "Dismissed".
-test('an agent-error notice offers the task and Dismiss instead of Approve/Deny', async () => {
-	const seeded: { identifier: string } = { identifier: '' };
-	const { findAllByTestId, findByTestId, findByText, queryByRole, user } = await renderTeamInbox(
-		async ({ ws, project }) => {
+// hours). It is a notice, not a proposal: the whole card is one control that
+// opens the run that failed and clears the row, never Approve/Deny.
+test('an agent-error notice opens the failed run and clears itself', async () => {
+	const RUN_ID = 'dddd0000-0000-0000-0000-000000000111';
+	const seeded: { identifier: string; runCommentPublicId: string } = {
+		identifier: '',
+		runCommentPublicId: '',
+	};
+	const { findAllByTestId, findByText, queryByTestId, queryByRole, router, user, ref } =
+		await renderTeamInbox(async ({ ws, project }) => {
 			const task = await seedTask(ws, project, { title: 'Refused task' });
+			seeded.identifier = task.identifier;
+			// The run's own entry in the thread. The approvals route finds it by
+			// `content->>'run_id'`, and it is what the card anchors to.
+			const { db } = getTestContext();
+			const runComment = await db.query<{ public_id: string }>(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'run', $3::jsonb)
+				 RETURNING public_id`,
+				[task.id, ws.agents[0].id, JSON.stringify({ run_id: RUN_ID, agent_id: ws.agents[0].id })],
+			);
+			seeded.runCommentPublicId = runComment.rows[0].public_id;
+			await insertApproval(ws, {
+				type: 'strategy',
+				requestedByMemberId: ws.agents[0].id,
+				payload: {
+					type: 'agent_error',
+					member_id: ws.agents[0].id,
+					run_id: RUN_ID,
+					task_id: task.id,
+					last_error: null,
+					message: 'The model provider has been refusing this agent runs for over 120 minutes.',
+				},
+			});
+		});
+
+	await findByText(/refusing this agent runs/, undefined, { timeout: 15_000 });
+	const cards = await findAllByTestId('approval-card');
+	const card = cards.find((c) =>
+		/refusing this agent runs/.test(c.textContent ?? ''),
+	) as HTMLElement;
+	expect(card).toBeTruthy();
+
+	// Its type is `strategy`, but "strategy" describes a proposal awaiting a
+	// decision - the badge has to say the agent stopped.
+	expect(card.textContent).toContain('run failed');
+	expect(card.textContent).not.toContain('strategy');
+
+	expect(within(card).queryByRole('button', { name: 'Approve' })).toBeNull();
+	expect(within(card).queryByRole('button', { name: 'Deny' })).toBeNull();
+	// The card is the control, so it carries no buttons of its own.
+	expect(queryByTestId('approval-open-task')).toBeNull();
+	expect(queryByTestId('approval-dismiss')).toBeNull();
+
+	await user.click(card);
+
+	// The project segment is the task's own project, never the approval's team
+	// slug - a route param resolves against `projects.slug`, and the two are
+	// independently assigned.
+	await waitFor(() =>
+		expect(router.state.location.pathname).toBe(
+			`/projects/${ref.projectSlug}/tasks/${seeded.identifier.toLowerCase()}`,
+		),
+	);
+	expect(router.state.location.hash).toBe(`comment-${seeded.runCommentPublicId}`);
+
+	// Opening it is what closes it, so nothing is left in Unread behind you.
+	await router.navigate({
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ref.projectSlug },
+	});
+	await waitFor(() => expect(queryByRole('button', { name: 'Dismiss' })).toBeNull());
+	await user.click(await findByText('All'));
+	await findByText(/refusing this agent runs/, undefined, { timeout: 15_000 });
+	await findByText('Dismissed');
+});
+
+// A run with no anchoring `run` comment still opens the task; it just cannot
+// name a row to land on.
+test('an agent-error notice with no run entry opens the task without an anchor', async () => {
+	const seeded: { identifier: string } = { identifier: '' };
+	const { findAllByTestId, findByText, router, user, ref } = await renderTeamInbox(
+		async ({ ws, project }) => {
+			const task = await seedTask(ws, project, { title: 'Anchorless task' });
 			seeded.identifier = task.identifier;
 			await insertApproval(ws, {
 				type: 'strategy',
@@ -283,37 +360,23 @@ test('an agent-error notice offers the task and Dismiss instead of Approve/Deny'
 					run_id: null,
 					task_id: task.id,
 					last_error: null,
-					message: 'The model provider has been refusing this agent runs for over 120 minutes.',
+					message: 'A run left no entry to open.',
 				},
 			});
 		},
 	);
 
-	await findByText(/refusing this agent runs/, undefined, { timeout: 15_000 });
+	await findByText(/left no entry to open/, undefined, { timeout: 15_000 });
 	const cards = await findAllByTestId('approval-card');
-	const card = cards.find((c) =>
-		/refusing this agent runs/.test(c.textContent ?? ''),
-	) as HTMLElement;
-	expect(card).toBeTruthy();
+	const card = cards.find((c) => /left no entry to open/.test(c.textContent ?? '')) as HTMLElement;
+	await user.click(card);
 
-	expect(within(card).queryByRole('button', { name: 'Approve' })).toBeNull();
-	expect(within(card).queryByRole('button', { name: 'Deny' })).toBeNull();
-
-	const openTask = await findByTestId('approval-open-task');
-	expect(openTask.textContent).toContain(`Open task ${seeded.identifier}`);
-	expect(openTask.closest('a')?.getAttribute('href')).toMatch(
-		new RegExp(`/tasks/${seeded.identifier.toLowerCase()}$`),
+	await waitFor(() =>
+		expect(router.state.location.pathname).toBe(
+			`/projects/${ref.projectSlug}/tasks/${seeded.identifier.toLowerCase()}`,
+		),
 	);
-
-	await user.click(await findByTestId('approval-dismiss'));
-
-	// Dismissing clears it from Unread, and history shows it as dismissed with no actions.
-	await waitFor(() => expect(queryByRole('button', { name: 'Dismiss' })).toBeNull());
-	await user.click(await findByText('All'));
-	await findByText(/refusing this agent runs/, undefined, { timeout: 15_000 });
-	await findByText('Dismissed');
-	expect(queryByRole('button', { name: 'Approve' })).toBeNull();
-	expect(queryByRole('button', { name: 'Dismiss' })).toBeNull();
+	expect(router.state.location.hash).toBe('');
 });
 
 test('an agent-error notice for a task-less run has Dismiss and no task link', async () => {
