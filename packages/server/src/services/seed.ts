@@ -2,6 +2,7 @@ import { runtimeConfig } from '../config/runtime';
 import type { Db } from '../db/database';
 import {
 	deleteSystemMeta,
+	getInstanceLocale,
 	instanceLocaleIsConfigured,
 	setInstanceLocale,
 } from '../lib/system-meta';
@@ -136,9 +137,18 @@ export async function consumeSeedProject(
 	const { description } = seed.project;
 	let intake: ProjectIntakeResult | null;
 	try {
+		// The instance locale is what the seed (or the setup request) wrote, and
+		// it is the language the admin reads: the CEO is asked to answer in it.
+		const { language } = await getInstanceLocale(db);
 		intake = await createProjectIntake(
 			db,
-			{ name: deriveProjectName(description), description, initialProjectPlan: null },
+			{
+				origin: 'seed',
+				name: deriveProjectName(description),
+				description,
+				initialProjectPlan: null,
+				adminLanguage: language,
+			},
 			wsManager,
 		);
 	} catch (err) {

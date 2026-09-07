@@ -33,6 +33,7 @@ beforeEach(async () => {
 describe('createProjectIntake (service)', () => {
 	it('attaches the initial project plan as a second CEO comment', async () => {
 		const result = await createProjectIntake(db, {
+			origin: 'form',
 			name: 'Planned App',
 			description: 'An app with a plan',
 			initialProjectPlan: '# The Plan\n\nDo the thing.',
@@ -77,6 +78,7 @@ describe('createProjectIntake (service)', () => {
 
 	it('records a clone baseline line when a source team id is supplied', async () => {
 		const result = await createProjectIntake(db, {
+			origin: 'form',
 			name: 'Cloned App',
 			description: 'desc',
 			initialProjectPlan: null,
@@ -101,6 +103,7 @@ describe('getOpenProjectIntakeForHome / getOpenProjectIntakeTasks', () => {
 
 	it('surfaces the first open intake enriched with the CEO greeting + identity', async () => {
 		const created = await createProjectIntake(db, {
+			origin: 'form',
 			name: 'Home App',
 			description: 'home desc',
 			initialProjectPlan: null,
@@ -122,6 +125,7 @@ describe('getOpenProjectIntakeForHome / getOpenProjectIntakeTasks', () => {
 
 	it('excludes intakes once their task reaches a terminal status', async () => {
 		const created = await createProjectIntake(db, {
+			origin: 'form',
 			name: 'Done App',
 			description: 'will be closed',
 			initialProjectPlan: null,
@@ -138,6 +142,7 @@ describe('getOpenProjectIntakeForHome / getOpenProjectIntakeTasks', () => {
 describe('completeProjectIntakeAfterProvisioning', () => {
 	it('posts a setup-complete comment and moves the intake to Done', async () => {
 		const created = await createProjectIntake(db, {
+			origin: 'form',
 			name: 'Ship It',
 			description: 'desc',
 			initialProjectPlan: null,
@@ -174,6 +179,7 @@ describe('completeProjectIntakeAfterProvisioning', () => {
 
 	it('is a no-op when the intake is already terminal (idempotent)', async () => {
 		const created = await createProjectIntake(db, {
+			origin: 'form',
 			name: 'Already Closed',
 			description: 'desc',
 			initialProjectPlan: null,

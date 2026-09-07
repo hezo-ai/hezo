@@ -1275,8 +1275,16 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    the `seed.project` block of the config file at the first unlock, once (§ *Hosted first
    run*). No form was submitted and no team type chosen, so the intake's `name` is a
    placeholder derived from the brief's first sentence and the CEO is asked to propose the
-   real one. From the greeting on it is the CEO-assisted path above: no wakeup, the admin's
-   first reply is the CEO's first run.
+   real one. `CreateProjectIntakeInput.origin` (`'form' | 'seed'`, required) selects a row of
+   `ORIGIN_PROSE` in `services/project-intake.ts`: the greeting's opener and closing ask, the
+   task body's context paragraph, the baseline line (a seed has none chosen, never "Blank"),
+   and steps 2-3. The seed row says the brief was written at signup on hezo.ai, quotes it as a
+   blockquote between two stated rules so a heading or a step inside it cannot read as the
+   CEO's instructions, names the admin's language from the instance locale and asks for the
+   reply in it, and tells the CEO the working title never reaches `create_project` unchanged
+   (`toSlug` would mangle a non-Latin one). The form row is the dialog's prose, byte for
+   byte. From the greeting on it is the CEO-assisted path above: no wakeup, the admin's first
+   reply is the CEO's first run.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned

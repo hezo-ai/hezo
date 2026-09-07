@@ -469,6 +469,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 	const intake = await createProjectIntake(
 		db,
 		{
+			origin: 'form',
 			name: body.name.trim(),
 			description: body.description.trim(),
 			initialProjectPlan: body.initial_project_plan?.trim() || null,
