@@ -295,6 +295,16 @@ export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolea
  * needs it - rather than paying for headroom every project holds and none uses.
  */
 export const DEFAULT_CONTAINER_DISK_GB = 5;
+/**
+ * vCPU a sandbox is created with.
+ *
+ * Beside the disk and memory defaults because it is the same kind of fact: what
+ * one container is provisioned with, fixed rather than configurable, and the
+ * third of the three numbers anything costing a container has to know. The
+ * engine that asks the provider for it reads it from here.
+ */
+export const DEFAULT_CONTAINER_VCPU = 2;
+
 /** Below this a checkout plus `node_modules` does not reliably fit. */
 export const CONTAINER_DISK_GB_MIN = 2;
 export const CONTAINER_DISK_GB_MAX = 1024;
