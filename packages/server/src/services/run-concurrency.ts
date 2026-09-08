@@ -11,7 +11,7 @@ import {
 	getMaxContainerMemoryGb,
 	getMonthlyContainerHours,
 } from '../lib/system-meta';
-import { monthToDateContainerSeconds } from './container-hours';
+import { currentWindowContainerSeconds } from './container-hours';
 
 import type { ContainerEngine } from './sandbox/types';
 
@@ -291,7 +291,7 @@ export async function getActiveContainers(
 async function hoursQuotaExhausted(db: Db): Promise<boolean> {
 	const capHours = await getMonthlyContainerHours(db);
 	if (capHours <= 0) return false;
-	return (await monthToDateContainerSeconds(db)) >= capHours * 3600;
+	return (await currentWindowContainerSeconds(db)) >= capHours * 3600;
 }
 
 /** Per-project memory caps for the given projects; absent means "inherits the default". */

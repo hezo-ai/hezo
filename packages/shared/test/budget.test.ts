@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	centsToDollars,
+	containerHoursWindowStart,
 	dollarsToCents,
 	minMonthlyCents,
 	minWeeklyCents,
@@ -105,5 +106,83 @@ describe('normalizeBudgetWindowsUp', () => {
 			monthly_budget_cents: 3042,
 		};
 		expect(normalizeBudgetWindowsUp(coherent)).toEqual(coherent);
+	});
+});
+
+describe('containerHoursWindowStart', () => {
+	const at = (iso: string) => new Date(iso);
+
+	it('is the first of the calendar month when nothing is anchored', () => {
+		expect(containerHoursWindowStart(undefined, at('2026-09-20T13:00:00Z')).toISOString()).toBe(
+			'2026-09-01T00:00:00.000Z',
+		);
+	});
+
+	it('is this month occurrence of the anchor once it has come round', () => {
+		expect(containerHoursWindowStart(20, at('2026-09-25T00:00:00Z')).toISOString()).toBe(
+			'2026-09-20T00:00:00.000Z',
+		);
+	});
+
+	it('is last month occurrence before the anchor comes round again', () => {
+		expect(containerHoursWindowStart(20, at('2026-09-05T00:00:00Z')).toISOString()).toBe(
+			'2026-08-20T00:00:00.000Z',
+		);
+	});
+
+	// The anchor day itself belongs to the window it opens.
+	it('opens the new window on the anchor day itself', () => {
+		expect(containerHoursWindowStart(20, at('2026-09-20T00:00:00Z')).toISOString()).toBe(
+			'2026-09-20T00:00:00.000Z',
+		);
+	});
+
+	// **The clamp.** February has no 31st, so a window anchored there opens on
+	// the last day it does have rather than rolling into March.
+	it('clamps an anchor the month is too short to hold', () => {
+		expect(containerHoursWindowStart(31, at('2026-02-28T12:00:00Z')).toISOString()).toBe(
+			'2026-02-28T00:00:00.000Z',
+		);
+		expect(containerHoursWindowStart(31, at('2028-02-29T12:00:00Z')).toISOString()).toBe(
+			'2028-02-29T00:00:00.000Z',
+		);
+	});
+
+	// **Always from the anchor, never from where the last window landed.** Taken
+	// off a clamped window, the 31st becomes the 28th and stays there for ever.
+	it('comes back to the anchor day after a short month', () => {
+		expect(containerHoursWindowStart(31, at('2026-03-31T00:00:00Z')).toISOString()).toBe(
+			'2026-03-31T00:00:00.000Z',
+		);
+		expect(containerHoursWindowStart(31, at('2026-03-30T00:00:00Z')).toISOString()).toBe(
+			'2026-02-28T00:00:00.000Z',
+		);
+	});
+
+	it('steps back into the previous year in January', () => {
+		expect(containerHoursWindowStart(15, at('2026-01-05T00:00:00Z')).toISOString()).toBe(
+			'2025-12-15T00:00:00.000Z',
+		);
+	});
+
+	// A stored value outside the range reads as the nearest day rather than
+	// wedging the instance: the cap is a ceiling, not a reason to refuse to run.
+	it('holds a nonsense anchor to a real day of the month', () => {
+		expect(containerHoursWindowStart(0, at('2026-09-05T00:00:00Z')).toISOString()).toBe(
+			'2026-09-01T00:00:00.000Z',
+		);
+		expect(containerHoursWindowStart(99, at('2026-09-05T00:00:00Z')).toISOString()).toBe(
+			'2026-08-31T00:00:00.000Z',
+		);
+	});
+
+	// Whatever the anchor, the window it names has already begun.
+	it('never opens a window that has not started', () => {
+		for (const day of [1, 15, 28, 29, 30, 31]) {
+			for (const now of ['2026-01-01', '2026-02-28', '2026-03-01', '2026-12-31']) {
+				const when = at(`${now}T12:00:00Z`);
+				expect(containerHoursWindowStart(day, when).getTime()).toBeLessThanOrEqual(when.getTime());
+			}
+		}
 	});
 });
