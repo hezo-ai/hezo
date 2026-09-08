@@ -270,6 +270,16 @@ export interface PolicyConfig {
 		defaultRamCapPerContainerGb?: number;
 		defaultContainerDiskGb?: number;
 		monthlyContainerHours?: number;
+		/**
+		 * The day of the month the hours window resets on, 1-31.
+		 *
+		 * Unset, the window is the calendar month, which is what a local or
+		 * self-hosted instance wants and what this has always done. A control
+		 * plane billing on the day a tenant subscribed pins their own anniversary
+		 * here, so the pool a tenant is capped against covers the period they are
+		 * charged for rather than a calendar month cutting across it.
+		 */
+		containerHoursAnchorDay?: number;
 		/** Which container backend runs agent containers. A name, not a number. */
 		backend?: SandboxBackend;
 	};

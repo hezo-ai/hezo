@@ -1,5 +1,7 @@
 import type { LocaleSettings } from '@hezo/shared';
 import {
+	CONTAINER_HOURS_ANCHOR_MAX_DAY,
+	CONTAINER_HOURS_ANCHOR_MIN_DAY,
 	parseIssuerPublicKeys,
 	parseLocaleSettingsPatch,
 	parseProjectBrief,
@@ -134,6 +136,11 @@ export const policySchema = z
 				// A deployment can therefore pin "no hours limit" as deliberately as
 				// it pins a number.
 				monthlyContainerHours: z.int().min(0).optional(),
+				containerHoursAnchorDay: z
+					.int()
+					.min(CONTAINER_HOURS_ANCHOR_MIN_DAY)
+					.max(CONTAINER_HOURS_ANCHOR_MAX_DAY)
+					.optional(),
 				// Not a number, unlike its neighbours. A deployment whose containers
 				// run somewhere the instance's own host cannot provide has to be able
 				// to say so: leaving this to the operator lets them switch onto a

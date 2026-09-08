@@ -192,6 +192,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. |
 | `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
+| `policy.pinned.containerHoursAnchorDay` | - | The day of the month that allowance resets on, `1`-`31`. Unset, it resets on the 1st. |
 | `policy.pinned.backend` | - | Fixes which container backend runs agent containers (`docker` or `daytona`). |
 | `policyFile` | - | Path to a JSON file holding the `policy` block. The file wins over an inline block, and is re-read when it changes. |
 
@@ -207,6 +208,15 @@ module.exports = {
   },
 };
 ```
+
+**Pin `containerHoursAnchorDay` when you bill on a day other than the 1st.**
+Left unset the allowance resets on the first of the calendar month, which is what
+a self-hosted instance wants. A deployment that bills on the day each instance
+subscribed pins that day here instead, so the hours an instance is capped against
+cover the period it is charged for rather than a calendar month cutting across
+it. A day later than a short month holds - the 31st in February - resets on that
+month's last day, and returns to the anchor the month after; it never walks
+backwards.
 
 **`pinned.backend` is the exception: it takes effect on restart.** The engine
 containers run on is chosen once at startup, so re-pinning it while the instance
