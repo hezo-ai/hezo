@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.62.2 - 2026-09-09
+
+### Other
+
+- Stop a dead provision holding the container memory budget for ever ([#1099](https://github.com/hezo-ai/hezo/pull/1099))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.62.1...0.62.2
+
 ## 0.62.1 - 2026-09-09
 
 ### Bug Fixes
