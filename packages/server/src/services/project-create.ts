@@ -17,10 +17,10 @@ import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import {
+	budgetAllowsContainerStart,
 	type ContainerDeps,
 	type ProjectRow,
 	provisionContainer,
-	refuseStartOverBudget,
 } from './containers';
 import { enqueueSetupReviewForNewAgents } from './description-tasks';
 import { getMarketplaceTeam } from './marketplace';
@@ -636,8 +636,21 @@ export async function createProjectWithTeam(
 			// takes an allocation from runs that are already queued for one, to save a
 			// cold start on a project that has not been asked to do anything yet - and
 			// the first run that needs it provisions it anyway.
-			refuseStartOverBudget(deps, project.id as string, team.slug)
-				.then(() => provisionContainer(deps, project as unknown as ProjectRow, team.slug))
+			//
+			// Asked rather than caught, so an instance sitting at its budget does not
+			// log an error per project created. The budget refusing a warm-up is the
+			// budget working; only a provision that was allowed and then broke is a
+			// fault worth a stack trace.
+			budgetAllowsContainerStart(deps, project.id as string)
+				.then(async (allowed) => {
+					if (!allowed) {
+						log.debug(
+							`Skipped warming a container for ${team.slug}: the instance is at its container memory budget`,
+						);
+						return;
+					}
+					await provisionContainer(deps, project as unknown as ProjectRow, team.slug);
+				})
 				.catch((e) => log.error('Failed to provision container for new project:', e)),
 		);
 	}

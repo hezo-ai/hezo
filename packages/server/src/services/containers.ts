@@ -939,8 +939,27 @@ export async function refuseStartOverBudget(
 	projectId: string,
 	projectSlug: string,
 ): Promise<void> {
-	if (!(await isContainerCapacityBlockedInDb(deps.db, deps.docker, projectId))) return;
+	if (await budgetAllowsContainerStart(deps, projectId)) return;
 	throw new PoolCapacityError(projectSlug);
+}
+
+/**
+ * The same question, asked by a caller that has somewhere better to go.
+ *
+ * Two paths only *warm* a container - creating a project, and the startup pass
+ * replacing one the engine has lost - and for both the budget saying no is an
+ * outcome, not a fault: the next run that needs the container provisions it
+ * through the ladder, which knows how to wait. Reaching that conclusion by
+ * catching {@link PoolCapacityError} logged a stack trace per refusal, so an
+ * instance merely running at its budget filled its log with errors describing
+ * the budget working. Control flow gets a boolean; the exception stays for the
+ * callers that must return a container or fail.
+ */
+export async function budgetAllowsContainerStart(
+	deps: ContainerDeps,
+	projectId: string,
+): Promise<boolean> {
+	return !(await isContainerCapacityBlockedInDb(deps.db, deps.docker, projectId));
 }
 
 /**

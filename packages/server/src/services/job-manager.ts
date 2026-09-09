@@ -51,6 +51,7 @@ import {
 import { checkOverBudget } from './budget';
 import type { ContainerLogStreamer } from './container-logs';
 import {
+	budgetAllowsContainerStart,
 	type ContainerDeps,
 	type ContainerExitReason,
 	type ContainerTransition,
@@ -66,7 +67,6 @@ import {
 	PoolCapacityError,
 	provisionContainer,
 	reconcilePoolMembers,
-	refuseStartOverBudget,
 	type StaleIdleMember,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
@@ -1402,8 +1402,14 @@ export class JobManager {
 					// away: every project the crash left marked running is a candidate, so
 					// an ungated loop re-charges the whole fleet against a budget that may
 					// have shrunk since. Skipping is safe - the next run for this project
-					// provisions it through the ladder, which knows how to wait.
-					await refuseStartOverBudget(this.buildContainerDeps(), row.id, row.slug);
+					// provisions it through the ladder, which knows how to wait, and it is
+					// reported as the outcome it is rather than as a failed restart.
+					if (!(await budgetAllowsContainerStart(this.buildContainerDeps(), row.id))) {
+						log.info(
+							`Left project ${ref(row.slug, row.id)} without a replacement container: the instance is at its container memory budget`,
+						);
+						continue;
+					}
 					await provisionContainer(
 						this.buildContainerDeps(),
 						{
