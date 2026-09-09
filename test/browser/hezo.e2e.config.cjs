@@ -6,7 +6,12 @@ module.exports = {
 	// Telemetry defaults on; a CI run crossing the daily cron window would fire a
 	// real outbound report. Tests never phone home.
 	telemetry: { enabled: false },
+	// The browser suite *is* the deployer of this instance, so it configures it the
+	// way a managed deployment does. Nothing asserts on the "managed by" notice
+	// this puts on the settings page; `managedBy` is required by the schema and is
+	// answered honestly here rather than worked around.
 	policy: {
+		managedBy: 'the Hezo browser suite',
 		pinned: {
 			// **These containers are not real, so the budget that bounds them must not
 			// be.** The suite creates a fresh project per spec and expects each to get
