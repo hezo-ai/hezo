@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.62.1 - 2026-09-09
+
+### Bug Fixes
+
+- **config:** reload the policy on any directory event, not on a name Bun drops ([#1097](https://github.com/hezo-ai/hezo/pull/1097))
+
+### Refactors
+
+- **shared:** export the vCPU a sandbox is created with ([#1096](https://github.com/hezo-ai/hezo/pull/1096))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.62.0...0.62.1
+
 ## 0.62.0 - 2026-09-08
 
 ### Features
