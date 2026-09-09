@@ -18,6 +18,7 @@ import {
 	isContainerCapacityBlockedInDb,
 	reclaimableForOthers,
 } from '../src/services/run-concurrency';
+import { listAllContainers } from '../src/services/sandbox/pool-db';
 import { createStubDocker } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 import { seedMonthToDateSeconds } from './helpers/uptime';
@@ -79,14 +80,23 @@ describe('container capacity', () => {
 			 * tests should have to opt into, not one they trip over.
 			 */
 			idle_for_min: number;
+			/**
+			 * How long ago this member was created. Defaults comfortably past the
+			 * reclaim age floor, the opposite choice from `idle_for_min` above: age is
+			 * a second, independent floor, and defaulting it to *now* would make every
+			 * case that only means to exercise the idle clock silently fail the age one
+			 * instead. A case testing the age floor sets it explicitly.
+			 */
+			age_min: number;
 		}> = {},
 	): Promise<void> {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes,
-			    disk_ceiling_bytes, memory_bytes, last_released_at)
+			    disk_ceiling_bytes, memory_bytes, last_released_at, created_at)
 			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7,
-			         now() - ($8 || ' minutes')::interval)`,
+			         now() - ($8 || ' minutes')::interval,
+			         now() - ($9 || ' minutes')::interval)`,
 			[
 				projectId,
 				containerId,
@@ -96,6 +106,7 @@ describe('container capacity', () => {
 				over.disk_ceiling_bytes ?? poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
 				over.memory_bytes === undefined ? 2 * 1024 ** 3 : over.memory_bytes,
 				over.idle_for_min ?? 0,
+				over.age_min ?? 60,
 			],
 		);
 	}
@@ -107,6 +118,32 @@ describe('container capacity', () => {
 		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '6');
 	});
 	afterEach(() => db.close());
+
+	it('the listing’s charged rows sum to exactly what the gate charges', async () => {
+		// **The drift guard between two copies of one predicate.** The gate applies
+		// it as SQL inside `getActiveContainers`; the Containers page applies it as
+		// `containerCountsTowardBudget` to mark which rows are spending the budget it
+		// reports. Nothing can make those one expression - one is a WHERE clause -
+		// so this pins them together instead. Let them drift and the page confidently
+		// explains a total that is not the one deciding whether runs start.
+		const project = await seedProject({ id: 'ctr-run', status: ContainerStatus.Running });
+		await addMember(project, 'ctr-run', { state: 'busy' });
+		await addMember(project, 'ctr-warm', { state: 'idle' });
+		await addMember(project, 'ctr-coming', { state: 'creating' });
+		await addMember(project, 'ctr-off', { state: 'suspended' });
+		await addMember(project, 'ctr-broken', { state: 'error' });
+		await addMember(project, 'ctr-chat', { state: 'busy', reserved_for_chat: true });
+
+		const listed = await listAllContainers(db);
+		const chargedGb = listed
+			.filter((row) => row.counts_toward_budget)
+			.reduce((sum, row) => sum + (row.memory_bytes ?? 0) / 1024 ** 3, 0);
+
+		expect(chargedGb).toBe((await getActiveContainers(db, engine)).usedMemoryGb);
+		// And it is a real subset - a test that charged everything would pass the
+		// equality above while telling the operator nothing.
+		expect(listed.filter((row) => row.counts_toward_budget)).toHaveLength(3);
+	});
 
 	it('sums every container, not projects that have one', async () => {
 		// The whole point of the change. One project holding two containers is two
@@ -395,6 +432,21 @@ describe('container capacity', () => {
 			const hoarder = await seedProject();
 			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
 			await addMember(hoarder, 'ctr-fresh');
+
+			const starved = await seedProject();
+			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);
+		});
+
+		it('still blocks while the idle container is younger than the reclaim age floor', async () => {
+			// The gate's promise is that an admitted dispatch can actually get a
+			// container, and `planCrossProjectReclaim` is what has to keep it. The
+			// planner refuses a victim this young whatever its idle clock says, so
+			// counting it as headroom here admitted a run that then found nothing to
+			// reclaim, failed on PoolCapacityError and re-queued as at-capacity - a
+			// wasted dispatch wearing the label of the wait it was not doing.
+			const hoarder = await seedProject();
+			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
+			await addMember(hoarder, 'ctr-young', { idle_for_min: 10, age_min: 1 });
 
 			const starved = await seedProject();
 			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);

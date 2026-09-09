@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
+import { setMonthlyContainerHours } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
@@ -23,6 +24,7 @@ import {
 	seedRunningContainerProject,
 	setContainerCapacityForTest,
 } from './helpers/capacity';
+import { seedMonthToDateSeconds } from './helpers/uptime';
 
 // The runner's data dir must be the harness's own, not a fixed path: the
 // container engine resolves a run's files through the project's workspace under
@@ -227,6 +229,46 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+		});
+
+		it('does not let a start already in flight carry a run past the hours cap', async () => {
+			// The one route past a cap an operator deliberately set. `hasSpareContainer`
+			// and "a start is already pending for this project" used to share one
+			// short-circuit that returned before the hours check - but they are not the
+			// same case. A spare container is already running and already billing, so
+			// exempting it is right; a pending start is a *new* container coming up,
+			// and each admitted dispatch takes its own pending slot and brings up its
+			// own. So the exemption was granted to exactly the case that spends hours.
+			//
+			// Asserted against the verdict rather than through a dispatch, so the
+			// answer cannot be the memory arm agreeing by accident.
+			const manager = createJobManager();
+			const gate = manager as unknown as {
+				pendingContainerStarts: Map<string, number>;
+				isContainerCapacityBlocked(
+					id: string | null,
+				): Promise<{ blocked: boolean; hoursExhausted?: boolean }>;
+			};
+			await stopProjectContainers(db, projectId);
+			// Room to spare, so memory can never be what blocks this.
+			await setContainerCapacityForTest(db, 10);
+			gate.pendingContainerStarts.set(projectId, 1);
+
+			try {
+				// With hours untouched the pending start is admitted, as it always was.
+				expect((await gate.isContainerCapacityBlocked(projectId)).blocked).toBe(false);
+
+				await setMonthlyContainerHours(db, 1);
+				await seedMonthToDateSeconds(db, 2 * 3600);
+
+				const verdict = await gate.isContainerCapacityBlocked(projectId);
+				expect(verdict.blocked).toBe(true);
+				expect(verdict.hoursExhausted).toBe(true);
+			} finally {
+				await setMonthlyContainerHours(db, 0);
+				await db.query('DELETE FROM container_uptime_entries');
+				await clearContainerCapacityForTest(db);
+			}
 		});
 
 		it('records instance_at_capacity on a task wakeup when the container limit is reached', async () => {

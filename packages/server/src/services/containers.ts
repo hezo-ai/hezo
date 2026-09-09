@@ -45,6 +45,7 @@ import { ensureProjectRepos } from './repo-sync';
 import {
 	CAPACITY_PARK_QUEUED_REASON,
 	getActiveContainers,
+	isContainerCapacityBlockedInDb,
 	projectContainerMemoryGb,
 	reclaimableForOthers,
 } from './run-concurrency';
@@ -57,6 +58,7 @@ import {
 	clearProjectContainerIfNamed,
 	decidePoolAcquisition,
 	ensurePoolMemberUptimeOpen,
+	failWedgedProvision,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
 	loadPoolMembers,
@@ -877,6 +879,7 @@ export async function ensureProjectContainerRunning(
 			}
 			if (info) {
 				// Container exists but is stopped — start it in place.
+				await refuseStartOverBudget(deps, proj.id, proj.slug);
 				await docker.startContainer(proj.container_id);
 				// The pool is told too, not just `projects`: its member still reads
 				// `suspended`, and a member the pool believes is down bills nothing while
@@ -901,8 +904,62 @@ export async function ensureProjectContainerRunning(
 		}
 
 		// No container id, or the stored id no longer exists in Docker — provision.
+		await refuseStartOverBudget(deps, proj.id, proj.slug);
 		return provisionContainer(deps, proj, proj.team_slug);
 	});
+}
+
+/**
+ * Refuse to bring a container up for a project the budget has no room for.
+ *
+ * **The gate belongs here, not at the call sites.** `ensureProjectContainerRunning`
+ * has four callers - repo setup, the HQ warm-up, the git-state route and its own
+ * provision fallback - and exactly one of them used to check first. The other
+ * three each charged a full allocation against a budget that had already refused
+ * it, and the charge is what the run dispatcher then reads: a container started
+ * here is indistinguishable from one the ladder admitted, so the memory it takes
+ * is memory every queued run is told it cannot have.
+ *
+ * Only the paths that actually bring a container up call this. A container the
+ * engine already reports as running costs nothing new, and gating it would refuse
+ * an answer the caller can see is true.
+ *
+ * The chat's container never arrives through here - it is acquired through the
+ * pool with its own reservation - so this cannot queue a person behind a task run.
+ *
+ * Exported for the two paths that provision without going through
+ * `ensureProjectContainerRunning` at all - creating a project, and the startup
+ * pass that replaces a container the engine has lost. The pool ladder's own
+ * provision rung deliberately does **not** call this: it has already decided,
+ * having reclaimed the memory it is about to use, and re-asking here would refuse
+ * a start on the strength of a figure the reclaim has not landed in yet.
+ */
+export async function refuseStartOverBudget(
+	deps: ContainerDeps,
+	projectId: string,
+	projectSlug: string,
+): Promise<void> {
+	if (await budgetAllowsContainerStart(deps, projectId)) return;
+	throw new PoolCapacityError(projectSlug);
+}
+
+/**
+ * The same question, asked by a caller that has somewhere better to go.
+ *
+ * Two paths only *warm* a container - creating a project, and the startup pass
+ * replacing one the engine has lost - and for both the budget saying no is an
+ * outcome, not a fault: the next run that needs the container provisions it
+ * through the ladder, which knows how to wait. Reaching that conclusion by
+ * catching {@link PoolCapacityError} logged a stack trace per refusal, so an
+ * instance merely running at its budget filled its log with errors describing
+ * the budget working. Control flow gets a boolean; the exception stays for the
+ * callers that must return a container or fail.
+ */
+export async function budgetAllowsContainerStart(
+	deps: ContainerDeps,
+	projectId: string,
+): Promise<boolean> {
+	return !(await isContainerCapacityBlockedInDb(deps.db, deps.docker, projectId));
 }
 
 /**
@@ -1974,11 +2031,11 @@ export async function isProjectIdleForContainerStop(
  * The chat's pinned member is excluded - it is not counted against the budget, so
  * retiring it frees nothing. Served by `idx_container_pool_members_idle`.
  */
-const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
+const STALE_MEMBER_SQL = (state: 'idle' | 'suspended', extraSql: string, limitSql: string) => `
 	SELECT m.container_id, m.project_id, p.slug, p.team_id
 	  FROM container_pool_members m
 	  JOIN projects p ON p.id = m.project_id
-	 WHERE m.state = 'idle'
+	 WHERE m.state = '${state}'
 	   AND NOT m.reserved_for_chat
 	   AND m.last_released_at < now() - ($1 * interval '1 minute')
 	   ${extraSql}
@@ -1999,7 +2056,7 @@ export async function findStaleIdleMembers(
 	timeoutMin: number,
 	limit: number,
 ): Promise<StaleIdleMember[]> {
-	const res = await db.query<StaleIdleMember>(STALE_IDLE_MEMBER_SQL('', 'LIMIT $2'), [
+	const res = await db.query<StaleIdleMember>(STALE_MEMBER_SQL('idle', '', 'LIMIT $2'), [
 		timeoutMin,
 		limit,
 	]);
@@ -2017,10 +2074,53 @@ export async function findStaleIdleMembersInProject(
 	projectId: string,
 	timeoutMin: number,
 ): Promise<StaleIdleMember[]> {
-	const res = await db.query<StaleIdleMember>(STALE_IDLE_MEMBER_SQL('AND m.project_id = $2', ''), [
-		timeoutMin,
-		projectId,
-	]);
+	const res = await db.query<StaleIdleMember>(
+		STALE_MEMBER_SQL('idle', 'AND m.project_id = $2', ''),
+		[timeoutMin, projectId],
+	);
+	return res.rows;
+}
+
+/**
+ * Suspended members whose project has not asked for them in a very long time.
+ *
+ * **A suspended member costs no memory, which is exactly why nothing was looking
+ * for it.** Every other retirement pass filters on `idle`, and deliberately: the
+ * budget does not count a stopped container, so retiring one frees nothing the
+ * budget can see and costs its project a full cold provision on its next run.
+ * `planSurplusIdleRetirement` goes further and *keeps* one, because a suspended
+ * member is the cheapest warm start there is - about a second through the
+ * ladder's resume rung, against minutes for a clone.
+ *
+ * That trade is worth making for a project that is still working, and worthless
+ * for one that has been quiet for weeks. What it costs in the meantime is
+ * invisible from here: a container is pinned to its project for life, so this
+ * memory is reachable by nobody else, and on a managed backend the sandbox holds
+ * **disk quota** - which is what actually bounds the fleet there, and which
+ * Hezo's memory budget cannot see at all. A create past that quota fails, and the
+ * containers holding it may not have been wanted since last month.
+ *
+ * **Why sweeping this is not deleting the user's data.** A container's contents
+ * are already declared non-durable - removing one says so in as many words - and
+ * work that reached no remote is pinned by `has_unpushed_commits` and excluded
+ * here, exactly as both idle planners exclude it. What is destroyed is a clone
+ * and an installed toolchain, rebuilt on demand by the next run. It is a cache
+ * with a project's name on it, not a record.
+ *
+ * Clocked on `last_released_at` rather than on when the suspend was written: the
+ * two are minutes apart, it counts from the earlier of them, and it is the column
+ * `idx_container_pool_members_idle` already indexes for precisely this shape of
+ * question.
+ */
+export async function findDormantSuspendedMembers(
+	db: Db,
+	dormantMin: number,
+	limit: number,
+): Promise<StaleIdleMember[]> {
+	const res = await db.query<StaleIdleMember>(
+		STALE_MEMBER_SQL('suspended', 'AND NOT m.has_unpushed_commits', 'LIMIT $2'),
+		[dormantMin, limit],
+	);
 	return res.rows;
 }
 
@@ -2701,6 +2801,30 @@ const POOL_LIVENESS_CHECK_INTERVAL_MS = 15_000;
  */
 const POOL_LIVENESS_STAMP_TTL_MS = POOL_LIVENESS_CHECK_INTERVAL_MS * 20;
 
+/**
+ * How long a member may sit in `creating` before the provision that wrote it is
+ * judged dead.
+ *
+ * Boot fails an interrupted provision outright, because none can outlive the
+ * process. This covers the case boot cannot see: the process stays up and the
+ * provisioning call wedges anyway - a control-plane request that never returns, a
+ * clone against an unreachable remote. The row is charged against the instance
+ * budget the whole time and nothing else in the tree revisits `creating`, so
+ * without a ceiling it consumes its allocation until an operator intervenes.
+ *
+ * Far longer than a cold start needs. A provision resolves an image, creates and
+ * starts a sandbox, installs the CA, probes the run user and clones the whole
+ * repository, and the slowest of those is bounded by the size of somebody's
+ * repository rather than by anything here. The cost of being wrong in the
+ * generous direction is one Failed row an operator can remove; in the mean
+ * direction it is a provision killed while it was still working.
+ *
+ * Judging it is safe at any age: a provision that completes after this fired
+ * upserts its member straight back to `idle`, so a live container is never
+ * stranded by the verdict.
+ */
+const PROVISION_WEDGED_AFTER_MS = 15 * 60_000;
+
 const lastPoolLivenessCheckAt = new Map<string, number>();
 
 function dueForPoolLivenessCheck(containerId: string, now: number, intervalMs: number): boolean {
@@ -2743,7 +2867,7 @@ function dueForPoolLivenessCheck(containerId: string, now: number, intervalMs: n
  */
 export async function reconcilePoolMembers(
 	deps: ContainerDeps,
-): Promise<{ dropped: number; transitions: ContainerTransition[] }> {
+): Promise<{ dropped: number; wedged: number; transitions: ContainerTransition[] }> {
 	const { db, docker } = deps;
 	const now = Date.now();
 	for (const [id, at] of lastPoolLivenessCheckAt) {
@@ -2755,12 +2879,25 @@ export async function reconcilePoolMembers(
 		POOL_RECONCILE_MIN_AGE_SECONDS,
 		POOL_RECONCILE_LIMIT,
 	);
-	const result = { dropped: 0, transitions: [] as ContainerTransition[] };
+	const result = { dropped: 0, wedged: 0, transitions: [] as ContainerTransition[] };
 	if (stale.length === 0) return result;
 
 	const interval = deps.poolLivenessIntervalMs ?? POOL_LIVENESS_CHECK_INTERVAL_MS;
 	for (const member of stale) {
 		if (!dueForPoolLivenessCheck(member.containerId, now, interval)) continue;
+
+		// Ahead of the engine round trip, and deliberately: a provision this old is
+		// dead whatever the backend says about the sandbox, and asking first would
+		// let the one answer that ends this loop early - a throw, which every
+		// unreachable-backend case produces - keep the row charged for good.
+		if (member.state === 'creating' && now - member.updatedAtMs > PROVISION_WEDGED_AFTER_MS) {
+			await failWedgedProvision(db, member.containerId);
+			result.wedged++;
+			log.warn(
+				`pool member ${member.containerId.slice(0, 12)} has been provisioning for ${Math.round((now - member.updatedAtMs) / 60_000)}m — failed, its budget returned`,
+			);
+			continue;
+		}
 
 		let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
 		try {

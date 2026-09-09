@@ -5,6 +5,7 @@ import {
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
 	CAPTAIN_AGENT_SLUG,
+	CONTAINER_DORMANT_RETIRE_MIN,
 	CONTAINER_IDLE_TIMEOUT_MIN,
 	CommentContentType,
 	ContainerStatus,
@@ -50,6 +51,7 @@ import {
 import { checkOverBudget } from './budget';
 import type { ContainerLogStreamer } from './container-logs';
 import {
+	budgetAllowsContainerStart,
 	type ContainerDeps,
 	type ContainerExitReason,
 	type ContainerTransition,
@@ -57,10 +59,12 @@ import {
 	ensureProjectContainerRunning,
 	executeRetirementPlan,
 	failProjectRuns,
+	findDormantSuspendedMembers,
 	findIdleContainerCandidates,
 	findStaleIdleMembers,
 	findStaleIdleMembersInProject,
 	isProjectIdleForContainerStop,
+	PoolCapacityError,
 	provisionContainer,
 	reconcilePoolMembers,
 	type StaleIdleMember,
@@ -95,7 +99,12 @@ import {
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
 import { recordHandbackOutcome } from './run-handback';
-import { markPoolMemberRunning, reclaimBusyPoolMembers } from './sandbox/pool-db';
+import {
+	failInterruptedProvisions,
+	markPoolMemberRunning,
+	reclaimBusyPoolMembers,
+	releaseClaimIfRunGone,
+} from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -1023,6 +1032,19 @@ export class JobManager {
 			log.info(`Returned ${reclaimed.length} claimed container(s) to the pool after restart`);
 		}
 
+		// The same leak one state earlier. A provision writes its member as
+		// `creating` and promotes it minutes later, so a member still creating now
+		// belongs to a call that ended with the previous process. It is charged
+		// against the instance budget exactly like a running container and no other
+		// pass in the tree looks at `creating`, so left alone it consumes its whole
+		// allocation until an operator removes it by hand.
+		const failedProvisions = await failInterruptedProvisions(db);
+		if (failedProvisions.length > 0) {
+			log.info(
+				`Failed ${failedProvisions.length} container provision(s) interrupted by the restart`,
+			);
+		}
+
 		for (const run of stranded.rows) {
 			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 				id: run.id,
@@ -1173,6 +1195,23 @@ export class JobManager {
 			return;
 		}
 		for (const c of containers) {
+			// **Ask before executing.** A tunnel client is a process, so a container
+			// that is not running has none by definition and there is nothing here to
+			// sweep. Asking it anyway meant an exec against a stopped sandbox, which
+			// every managed backend refuses - one `SANDBOX_NOT_RUNNING` warning per
+			// stopped container, on every boot, for a pass that had nothing to do.
+			// That is a log an operator learns to scroll past, which is the real cost.
+			//
+			// One extra round trip on a startup pass that already makes one per
+			// container, and it replaces the call it guards for every stopped one.
+			let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
+			try {
+				info = await docker.inspectContainer(c.Id);
+			} catch (err) {
+				log.warn(`Stale-tunnel sweep could not inspect container ${c.Id}:`, err);
+				continue;
+			}
+			if (!info?.State.Running) continue;
 			await docker
 				.killTunnelClients(c.Id)
 				.catch((err) => log.warn(`Stale-tunnel sweep failed for container ${c.Id}:`, err));
@@ -1244,7 +1283,16 @@ export class JobManager {
 		);
 		const hqProjectId = hq.rows[0]?.id;
 		if (!hqProjectId) return;
-		await ensureProjectContainerRunning(this.buildContainerDeps(), hqProjectId);
+		try {
+			await ensureProjectContainerRunning(this.buildContainerDeps(), hqProjectId);
+		} catch (err) {
+			// Warming HQ is a head start, not a requirement, so the budget refusing it
+			// is an outcome rather than a fault - the first chat or project creation
+			// provisions it through the ladder, which knows how to wait. Reported at
+			// info so a boot that is merely full does not read as a broken one.
+			if (!(err instanceof PoolCapacityError)) throw err;
+			log.info('HQ container warm-up skipped: the instance is at its container memory budget');
+		}
 	}
 
 	/**
@@ -1349,6 +1397,19 @@ export class JobManager {
 				const info = await docker.inspectContainer(row.container_id);
 
 				if (info === null) {
+					// A replacement is a brand new container, charged on top of whatever
+					// this pass has already brought up. Boot is exactly when that sum runs
+					// away: every project the crash left marked running is a candidate, so
+					// an ungated loop re-charges the whole fleet against a budget that may
+					// have shrunk since. Skipping is safe - the next run for this project
+					// provisions it through the ladder, which knows how to wait, and it is
+					// reported as the outcome it is rather than as a failed restart.
+					if (!(await budgetAllowsContainerStart(this.buildContainerDeps(), row.id))) {
+						log.info(
+							`Left project ${ref(row.slug, row.id)} without a replacement container: the instance is at its container memory budget`,
+						);
+						continue;
+					}
 					await provisionContainer(
 						this.buildContainerDeps(),
 						{
@@ -1662,15 +1723,29 @@ export class JobManager {
 		// container while holding no pending-start slot, and two of them could fit
 		// themselves into the same headroom. One query, one answer, used by both.
 		const hasSpareContainer = projectId !== null && projectsWithSpareContainer.has(projectId);
-		if (projectId && (hasSpareContainer || this.pendingContainerStarts.has(projectId))) {
-			return { blocked: false, hasSpareContainer };
-		}
-		// Hours before memory, and only for dispatches that would START a container -
-		// the short-circuit above has already let through everything that would not.
-		// Kept ahead of the memory arithmetic because no amount of reclaiming buys an
-		// hour back, so there is nothing for the acquire path's reclaim rung to do.
+		// A container genuinely free to take the run spends nothing new - not memory,
+		// and not hours either, since the container it will use is already up and
+		// already billing for every minute it stays that way.
+		if (hasSpareContainer) return { blocked: false, hasSpareContainer };
+		// **Hours next, and ahead of the pending-start exemption below.** The two
+		// used to share one short-circuit, which let a start already in flight carry
+		// further dispatches past this cap: each admitted dispatch takes its own
+		// pending slot and brings up its own container, so what was waved through as
+		// "no new container" was a new container, and the hours it spends are hours
+		// the allowance does not have. That was the one route past a cap an operator
+		// had deliberately set.
+		//
+		// Ahead of the memory arithmetic as before, because no amount of reclaiming
+		// buys an hour back - there is nothing for the acquire path's reclaim rung
+		// to do about this one, so parking the run behind it would never clear.
 		if (active.hoursExhausted) {
 			return { blocked: true, hasSpareContainer, hoursExhausted: true };
+		}
+		// Memory only. A start in flight for this project has not reached the DB, and
+		// a second dispatch behind it is charged through `pendingGb` below rather
+		// than being made to wait on a row that does not exist yet.
+		if (projectId && this.pendingContainerStarts.has(projectId)) {
+			return { blocked: false, hasSpareContainer };
 		}
 		// A lazy start already in flight has not reached the DB yet, so its memory
 		// has to be added here or two dispatches would both see room for the same
@@ -3803,6 +3878,75 @@ export class JobManager {
 		if (retired > 0) {
 			log.debug(`Surplus idle pass: retired ${retired} container(s) held by working projects`);
 		}
+		await this.retireDormantContainers();
+	}
+
+	/**
+	 * Dispose of containers whose project stopped asking for them weeks ago.
+	 *
+	 * **The one thing no other pass does.** Every retirement above filters on
+	 * `idle`, because the memory budget does not count a stopped container, so
+	 * retiring one frees nothing it can measure. `planSurplusIdleRetirement` even
+	 * keeps one on purpose - a suspended member is the cheapest warm start the
+	 * pool has. The result was that the last container of a project which went
+	 * quiet was held for ever, by design, with nothing to end it.
+	 *
+	 * What that costs is invisible to the budget. A container is pinned to its
+	 * project for life, so a dormant one is memory no other project can ever
+	 * reach; and on a managed backend it holds **disk quota**, which is what
+	 * actually bounds the fleet there and which the budget does not model at all.
+	 * A create past that quota is refused, and the containers holding it may not
+	 * have been wanted since last month.
+	 *
+	 * Rides the idle cron rather than taking one of its own: it is the same
+	 * question one clock further out, the batch is bounded like every other pass,
+	 * and members whose work reached no remote are excluded by the query, exactly
+	 * as both idle planners exclude them.
+	 */
+	private async retireDormantContainers(): Promise<void> {
+		const { db, docker } = this.deps;
+		if (!(await docker.ping())) return;
+		const { loadPoolMembers } = await import('./sandbox/pool-db');
+
+		const dormant = await findDormantSuspendedMembers(
+			db,
+			CONTAINER_DORMANT_RETIRE_MIN,
+			IDLE_STOP_BATCH_LIMIT,
+		);
+		let retired = 0;
+		for (const member of dormant) {
+			try {
+				await withContainerLifecycleLock(member.project_id, async () => {
+					// Re-read under the lock. A run that arrived between the scan and here
+					// resumes this very container through the ladder's resume rung, and
+					// destroying it underneath that run is the failure this guard exists
+					// to prevent.
+					if (this.pendingContainerStarts.has(member.project_id)) return;
+					const fresh = await loadPoolMembers(db, member.project_id);
+					const still = fresh.find((m) => m.id === member.container_id);
+					if (!still || still.state !== 'suspended' || still.hasUnpushedCommits) return;
+
+					await destroyContainer(
+						this.buildContainerDeps(),
+						member.project_id,
+						member.slug,
+						member.team_id,
+						member.container_id,
+					);
+					retired++;
+				});
+			} catch (err) {
+				log.error(
+					`Dormant container retirement failed for project ${ref(member.slug, member.project_id)}:`,
+					err,
+				);
+			}
+		}
+		if (retired > 0) {
+			log.info(
+				`Retired ${retired} dormant container(s) whose projects had been quiet for over a week`,
+			);
+		}
 	}
 
 	/**
@@ -3868,6 +4012,16 @@ export class JobManager {
 				reason,
 				containerId,
 			);
+			// Last, and only now: the runs that could still have been holding this
+			// container are terminal, so a claim still standing belongs to none of
+			// them. Ordered after the failure on purpose - asked any earlier, the
+			// run it is checking for would still read `running` and the claim would
+			// be kept for a run this transition is in the middle of ending.
+			if (await releaseClaimIfRunGone(this.deps.db, containerId)) {
+				log.info(
+					`Released the claim on container ${ref(projectSlug, containerId.slice(0, 12))} — the run holding it had already ended`,
+				);
+			}
 		}
 	}
 

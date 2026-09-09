@@ -2,6 +2,11 @@ import { ContainerStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LocalAssetStore } from '../src/assets/drivers/local';
 import { signProjectIconUrl } from '../src/lib/project-icon-urls';
+import {
+	deleteSystemMeta,
+	MAX_CONTAINER_MEMORY_GB_KEY,
+	setSystemMeta,
+} from '../src/lib/system-meta';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
 import { blobBytes } from './helpers';
@@ -378,6 +383,39 @@ describe('PATCH /api/projects/:projectId', () => {
 		});
 		expect(good.status).toBe(200);
 		expect((await good.json()).data.memory_limit_gib).toBe(4);
+	});
+
+	it('refuses a per-project cap that fits the total but not the task budget', async () => {
+		// The check mirrors the dispatch gate, and the gate compares against what
+		// task runs may have - the configured total less the chat's reservation.
+		// Compared against the total instead, a cap between the two saved cleanly and
+		// then failed every dispatch: this one project's runs queued at capacity for
+		// good while every other project on the instance ran normally.
+		//
+		// The budget is set here rather than inherited, because the automatic default
+		// derives from the host's own memory - a test asserting on it would pass or
+		// fail according to how much RAM the machine running it happens to have.
+		await setSystemMeta(ctx.db, MAX_CONTAINER_MEMORY_GB_KEY, '6');
+		try {
+			// Total 6, chat reserve 2, so task runs may have 4.
+			const bad = await ctx.app.request(`/api/projects/${projectSlug}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ memory_limit_gib: 5 }),
+			});
+			expect(bad.status).toBe(400);
+			expect((await bad.json()).error.message).toContain('could never');
+
+			// And the boundary still opens: exactly the task budget is schedulable.
+			const good = await ctx.app.request(`/api/projects/${projectSlug}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ memory_limit_gib: 4 }),
+			});
+			expect(good.status).toBe(200);
+		} finally {
+			await deleteSystemMeta(ctx.db, MAX_CONTAINER_MEMORY_GB_KEY);
+		}
 	});
 
 	it('validates the merged budget trio and rejects an inconsistent window', async () => {

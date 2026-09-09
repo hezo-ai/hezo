@@ -26,6 +26,15 @@ export interface ContainerSummary {
 	 * today. Null when the allocation was never recorded.
 	 */
 	memory_bytes: number | null;
+	/**
+	 * Whether this container is spending the instance memory budget right now.
+	 *
+	 * Not derivable from {@link memory_bytes}, which is the allocation the
+	 * container was built with and carries on reporting while it is stopped. A
+	 * stopped container shows 4 GB and spends none of it, so a column of
+	 * allocations adds up to a figure the budget never sees.
+	 */
+	counts_toward_budget: boolean;
 	last_task_id: string | null;
 	last_task_identifier: string | null;
 	run_id: string | null;
@@ -47,8 +56,22 @@ export interface ContainerSummary {
  */
 const CONTAINERS_POLL_MS = 5_000;
 
+/**
+ * The list, with the memory budget it is being measured against.
+ *
+ * The budget arrives from the server rather than being summed here, and it has
+ * to: what the gate charges is not the sum of the column this page renders -
+ * stopped and failed containers keep their allocation and spend none of it - so
+ * a client-side total would be a second, wrong answer to the question the page
+ * exists to settle.
+ */
+export interface ContainersView {
+	containers: ContainerSummary[];
+	budget: { used_gb: number; total_gb: number };
+}
+
 export function useContainers() {
-	return useQuery<ContainerSummary[]>({
+	return useQuery<ContainersView>({
 		queryKey: queryKeys.containers(),
 		queryFn: () => api.get('/api/containers'),
 		refetchInterval: CONTAINERS_POLL_MS,

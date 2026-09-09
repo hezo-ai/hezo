@@ -287,6 +287,40 @@ describe('stale tunnel-client sweep', () => {
 		expect(swept).toEqual(['pool-member-a', 'pool-member-b']);
 	});
 
+	it('does not ask a stopped container to kill anything', async () => {
+		// A tunnel client is a process, so a container that is not running has none
+		// and there is nothing here to sweep. Asking anyway meant an exec against a
+		// stopped sandbox, which every managed backend refuses - one warning per
+		// stopped container on every boot, from a pass with no work to do. A log an
+		// operator learns to scroll past is the real cost, so the pass asks first.
+		const swept: string[] = [];
+		const docker = createStubDocker({
+			listContainersByLabel: async () => [{ Id: 'up' }, { Id: 'down' }, { Id: 'gone' }] as never,
+			inspectContainer: async (id: string) =>
+				id === 'gone'
+					? null
+					: ({
+							Id: id,
+							State: {
+								Status: id === 'up' ? 'running' : 'exited',
+								Running: id === 'up',
+								Pid: id === 'up' ? 1 : 0,
+								ExitCode: 0,
+							},
+							Config: { Image: 'x' },
+						} as never),
+			killTunnelClients: async (containerId: string) => {
+				swept.push(containerId);
+			},
+		});
+		const manager = createJobManager({ docker });
+		await manager.reconcileOnStartup();
+		manager.shutdown();
+		// The stopped one and the one the engine has forgotten are both skipped
+		// outright rather than swept and then apologised for.
+		expect(swept).toEqual(['up']);
+	});
+
 	it('does not sweep when the backend is unreachable', async () => {
 		let swept = 0;
 		const docker = createStubDocker({

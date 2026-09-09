@@ -2113,6 +2113,35 @@ locally, because there a container disappearing is normal rather than anomalous 
 stops, archives and reaps sandboxes on its own schedule, and enforces quota by refusing or
 removing them.
 
+**A state that charges the budget needs something that ends it.** The reconcile pass answers
+"is this container still there", and two members used to be charged indefinitely because
+nothing ever asked a different question about them.
+
+- **`creating`.** A provision writes its member the moment the engine returns an id and
+  promotes it minutes later, after the CA install, the run-user probe and the whole clone.
+  That call cannot outlive the process, so at boot any `creating` row belongs to a provision
+  nobody is running: `failInterruptedProvisions` moves the lot to `error`, beside the `busy`
+  reclaim that has always run there. For the case boot cannot see - the process stays up and
+  the provisioning call wedges anyway - `reconcilePoolMembers` carries a ceiling
+  (`PROVISION_WEDGED_AFTER_MS`) and fails a member that has been coming up longer than any
+  cold start takes. **That verdict is taken ahead of the engine round trip**, which is the one
+  deliberate exception to the definite-answer rule above: a throw ends the loop early, so
+  asked in the other order the shape most likely to strand a provision - an unreachable
+  backend - would also be the one that could never be cleared. It is safe at any age because a
+  provision that completes anyway upserts itself back to `idle`. Before this, a wedged
+  `creating` row was reachable by nothing at all: the ladder skips it, both idle passes filter
+  on `idle`, cross-project reclaim filters on `idle`, and every branch of the reconcile pass
+  walked past it - while `getActiveContainers` charged it in full and the uptime ledger billed
+  it around the clock. The only cure was an operator pressing Remove.
+- **`busy` after the run has ended.** The reconcile pass deliberately leaves a claim for its
+  run to return, because releasing one under a live run hands its container to whoever asks
+  next. That is right while the run is live, and left nothing to act once it was not:
+  `runAgent`'s teardown is the only other release, and it never fires for a run this process is
+  no longer executing. `handleContainerTransition` therefore calls `releaseClaimIfRunGone`
+  **after** `failProjectRuns`, and the release is conditioned in SQL on no `running` row still
+  naming the container - so a live run keeps its claim exactly as before, and one that has
+  ended stops costing a container until the next restart.
+
 **A container found stopped-but-present is a suspended member, not a lost one**, and this is
 the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
 that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
@@ -2178,6 +2207,77 @@ and a fresh one be built.
   `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a project mid-burst is not stripped of a container it
   is about to reuse, and `CONTAINER_RECLAIM_MIN_AGE_SEC` so a container the instance only
   just paid a cold provision for is not retired to fund another cold provision elsewhere.
+
+- **Dormant retirement** (`retireDormantContainers`, riding the same cron one clock further
+  out). The two passes above filter on `idle`, and both are right to: a `suspended` member is
+  charged nothing, so retiring one frees nothing the budget can measure, and
+  `planSurplusIdleRetirement` deliberately *keeps* one because it is the cheapest warm start
+  the pool has - about a second through the resume rung against minutes for a clone. The
+  consequence was that the last container of a project which went quiet was held for ever, by
+  design, with nothing able to end it. What that costs is invisible from inside the budget: a
+  container is pinned to its project for life, so a dormant one is memory nobody else can
+  reach, and on a managed backend it holds **disk quota** - the constraint that actually
+  bounds the fleet there (§ Daytona), and the one `projectMemoryFitsBudget` does not model.
+  So `CONTAINER_DORMANT_RETIRE_MIN` disposes of it after a week of silence, which is long
+  enough that a project pausing for a weekend keeps its warm start and short enough that a
+  retired project stops holding provider quota indefinitely. Work that reached no durable
+  remote is excluded by the query, exactly as both planners exclude it, and so is the chat's
+  pinned member; the clock is `last_released_at`, which `idx_container_pool_members_idle`
+  already indexes. **This is the one pass that destroys rather than frees**, and it qualifies
+  under the never-sweep-the-user's-data rule because a container's contents are already
+  declared non-durable at the point an operator removes one: what goes is a clone and an
+  installed toolchain, rebuilt on demand.
+
+**The gate counts as headroom exactly what the planner would actually retire.** The dispatch
+gate admits a run on the strength of another project's reclaimable idle memory, and
+`planCrossProjectReclaim` is what has to make good on it - so `getActiveContainers` applies
+*both* reclaim floors, not just the idle one. Applying only `CONTAINER_RECLAIM_MIN_IDLE_SEC`,
+the gate counted a container the planner then refused on age: the run was admitted, found
+nothing to reclaim, failed on `PoolCapacityError`, parked and requeued under the same
+at-capacity label an operator was already staring at. Two formulas answering one question is
+the bug; the floors belong in one place.
+
+**A pending start exempts memory, never hours.** `JobManager.isContainerCapacityBlocked`
+short-circuits on two conditions that look alike and are not. A project with a spare
+container is exempt from both arms, correctly: the container it will use is already up and
+already billing. A start already *in flight* is a new container coming up, and each admitted
+dispatch takes its own pending slot and brings up its own - so sharing one short-circuit
+gave the exemption to precisely the case that spends hours, and an operator's monthly cap
+had a way past it. The hours check now sits between the two, ahead of the pending exemption
+and still ahead of the memory arithmetic (no amount of reclaiming buys an hour back, so a
+run parked on hours would never clear).
+
+**The stale-tunnel sweep asks before it executes.** A tunnel client is a process, so a
+container that is not running has none. Sweeping by label alone meant an exec against every
+stopped sandbox, which a managed backend refuses - a `SANDBOX_NOT_RUNNING` warning per
+stopped container on every boot, from a pass with nothing to do. It inspects first and skips
+anything not running, which costs one round trip on a startup pass that already made one per
+container and saves the call it replaces.
+
+**The Containers page reports the budget rather than inviting the reader to derive it.**
+`GET /api/containers` returns the list *and* `getActiveContainers`'s own `usedMemoryGb` /
+`budgetGb`, and each row carries `counts_toward_budget`. Both exist because the page's
+Memory column is an *allocation* - what the container was built with, which a stopped
+container keeps reporting - so summing the visible column produces a number the gate never
+sees, and an operator reconciling "at its active-container limit" against a page of
+apparently-free containers had no way to find the three rows that were charged. The
+per-row predicate is {@link containerCountsTowardBudget} in `@hezo/shared`; the gate's copy
+is a SQL `WHERE` clause and cannot call it, so a test sums the listing's charged rows and
+pins the total against `usedMemoryGb`. That test is the only thing keeping the two honest.
+
+**Every path that brings a container up is gated, not just the ladder.**
+`ensureProjectContainerRunning` refuses over budget (`refuseStartOverBudget`), and so do the
+two paths that provision without it - creating a project, and the startup pass replacing a
+container the engine has lost. It used to be checked by one of its four callers, leaving repo
+setup, the HQ warm-up and the startup restart to charge a full allocation against a budget that
+had already refused it; `markPoolMemberRunning` moves a member from `suspended` (uncharged) to
+`idle` (charged) with no arithmetic of its own, and a container started that way is
+indistinguishable from one the ladder admitted. A container the engine *already* reports as
+running is exempt, because it costs nothing new - and so is the ladder's own provision rung,
+which has already decided, having reclaimed the memory it is about to use. The per-project and
+instance-wide cap validators compare against the **task** budget (`taskContainerMemoryBudgetGb`)
+for the same reason: against the configured total they accepted a cap between the two, which
+saved cleanly and was then refused by every dispatch.
   Between them they stop two starved projects reclaiming from each other in a loop. A
   candidate is **suspended rather than destroyed** whenever taking it would leave its
   project with nothing resumable, as well as when it holds unpushed commits: both free

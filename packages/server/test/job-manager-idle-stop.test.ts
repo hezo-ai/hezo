@@ -603,3 +603,117 @@ describe('surplus idle containers in a working project', () => {
 		expect(removes).toEqual(['b']);
 	});
 });
+
+/**
+ * The last container of a project that went quiet, which every other pass leaves
+ * alone by design.
+ *
+ * `suspended` costs no memory, so no retirement pass looks at it and
+ * `planSurplusIdleRetirement` deliberately keeps one for a ~1s warm resume. That
+ * is the right trade for a project still working and the wrong one for a project
+ * silent for weeks: the container is pinned to that project for life, so nobody
+ * else can ever have it, and on a managed backend it holds disk quota - the thing
+ * that actually bounds the fleet there, and the one the memory budget cannot see.
+ */
+describe('dormant suspended containers', () => {
+	const CAP_BYTES = 2 * 1024 ** 3;
+	/** Comfortably past CONTAINER_DORMANT_RETIRE_MIN (one week). */
+	const DORMANT_MIN = 20_000;
+
+	const seedMember = async (
+		containerId: string,
+		state: 'idle' | 'busy' | 'suspended',
+		over: { unpushed?: boolean; chat?: boolean; idleMin?: number } = {},
+	): Promise<void> => {
+		await db.query(
+			`INSERT INTO container_pool_members
+			   (project_id, container_id, state, memory_bytes, has_unpushed_commits,
+			    reserved_for_chat, last_released_at)
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6,
+			         now() - ($7 || ' minutes')::interval)`,
+			[
+				projectId,
+				containerId,
+				state,
+				CAP_BYTES,
+				over.unpushed ?? false,
+				over.chat ?? false,
+				over.idleMin ?? 60,
+			],
+		);
+	};
+
+	const sweep = async (): Promise<{ stops: string[]; removes: string[] }> => {
+		const stops: string[] = [];
+		const removes: string[] = [];
+		const manager = createManager(stops, removes);
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+		return { stops, removes };
+	};
+
+	const remaining = async (): Promise<string[]> => {
+		const r = await db.query<{ container_id: string }>(
+			`SELECT container_id FROM container_pool_members WHERE project_id = $1
+			  ORDER BY container_id`,
+			[projectId],
+		);
+		return r.rows.map((row) => row.container_id);
+	};
+
+	beforeEach(async () => {
+		await db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
+	});
+
+	it('retires a suspended container its project has not wanted in weeks', async () => {
+		await seedMember('long-gone', 'suspended', { idleMin: DORMANT_MIN });
+
+		const { removes } = await sweep();
+
+		expect(removes).toEqual(['long-gone']);
+		expect(await remaining()).toEqual([]);
+	});
+
+	it('keeps a recently suspended container, which is the cheapest warm start there is', async () => {
+		// The whole reason nothing retired these. A project between runs resumes in
+		// about a second; disposing of it there just buys a cold clone on Monday.
+		await seedMember('warm', 'suspended', { idleMin: 60 });
+
+		const { removes } = await sweep();
+
+		expect(removes).toEqual([]);
+		expect(await remaining()).toEqual(['warm']);
+	});
+
+	it('never retires one holding commits that reached no durable remote, however dormant', async () => {
+		// The same pin both idle planners honour. Dormancy is not a reason to
+		// destroy the only copy of somebody's work - that container waits for a run
+		// that can push it, for as long as it takes.
+		await seedMember('has-work', 'suspended', { idleMin: DORMANT_MIN, unpushed: true });
+
+		const { removes } = await sweep();
+
+		expect(removes).toEqual([]);
+		expect(await remaining()).toEqual(['has-work']);
+	});
+
+	it('never retires the container pinned for the assistant chat', async () => {
+		await seedMember('chat-pin', 'suspended', { idleMin: DORMANT_MIN, chat: true });
+
+		const { removes } = await sweep();
+
+		expect(removes).toEqual([]);
+		expect(await remaining()).toEqual(['chat-pin']);
+	});
+
+	it('leaves a dormant container that is busy or idle to the passes that own it', async () => {
+		// This pass answers for `suspended` only. An idle member is the surplus
+		// pass's business and a busy one belongs to a run.
+		await seedMember('still-busy', 'busy', { idleMin: DORMANT_MIN });
+
+		const { removes } = await sweep();
+
+		expect(removes).not.toContain('still-busy');
+		expect(await remaining()).toContain('still-busy');
+	});
+});

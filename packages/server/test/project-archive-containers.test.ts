@@ -216,16 +216,17 @@ describe('archiving a project retires its containers', () => {
 		const p = await newProject('Listing');
 		await giveContainers(p.projectId, ['arch-d-1', 'arch-d-2']);
 
-		const before = await ctx.app.request('/api/containers', { headers: authHeader(ctx.token) });
-		const beforeRows = (await before.json()).data as Array<{ project_id: string }>;
-		expect(beforeRows.filter((r) => r.project_id === p.projectId)).toHaveLength(2);
+		const listed = async (): Promise<Array<{ project_id: string }>> => {
+			const res = await ctx.app.request('/api/containers', { headers: authHeader(ctx.token) });
+			return ((await res.json()).data as { containers: Array<{ project_id: string }> }).containers;
+		};
+
+		expect((await listed()).filter((r) => r.project_id === p.projectId)).toHaveLength(2);
 
 		await archive(p.projectSlug);
 		await waitForBackground();
 
-		const after = await ctx.app.request('/api/containers', { headers: authHeader(ctx.token) });
-		const afterRows = (await after.json()).data as Array<{ project_id: string }>;
-		expect(afterRows.filter((r) => r.project_id === p.projectId)).toHaveLength(0);
+		expect((await listed()).filter((r) => r.project_id === p.projectId)).toHaveLength(0);
 	});
 });
 

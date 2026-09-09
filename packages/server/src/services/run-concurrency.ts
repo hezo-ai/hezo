@@ -1,4 +1,5 @@
 import {
+	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -222,11 +223,20 @@ export async function getActiveContainers(
 				// `usedMemoryGb`, so retiring it frees nothing against the budget and only
 				// interrupts somebody's session.
 				//
+				// **Both floors, matching `planCrossProjectReclaim` exactly.** This
+				// figure is the gate's promise that a dispatch admitted here can
+				// actually get a container, and the planner is what has to keep it.
+				// Counting a member the planner would refuse admits a run that then
+				// finds nothing to reclaim, fails on `PoolCapacityError` and re-parks
+				// under the same at-capacity label the operator is already looking at -
+				// a wasted dispatch that reads exactly like the bug it is not.
+				//
 				// Served by `idx_container_pool_members_idle`.
 				`SELECT project_id, memory_bytes FROM container_pool_members
 			  WHERE state = 'idle' AND NOT reserved_for_chat
-			    AND last_released_at <= now() - ($1 * interval '1 second')`,
-				[CONTAINER_RECLAIM_MIN_IDLE_SEC],
+			    AND last_released_at <= now() - ($1 * interval '1 second')
+			    AND created_at <= now() - ($2 * interval '1 second')`,
+				[CONTAINER_RECLAIM_MIN_IDLE_SEC, CONTAINER_RECLAIM_MIN_AGE_SEC],
 			),
 		]);
 	// One query for the overrides rather than one per container: the set of
@@ -371,15 +381,40 @@ export async function isContainerCapacityBlockedInDb(
 	engine: Pick<ContainerEngine, 'containerHostMemory'>,
 	projectId: string,
 ): Promise<boolean> {
+	return (await containerCapacityVerdictInDb(db, engine, projectId)).blocked;
+}
+
+/**
+ * The same gate, saying **why**.
+ *
+ * Memory and hours are different waits and clear on different clocks - one ends
+ * when a container is released, the other when the month turns or the operator
+ * raises the cap - so a caller that tells a person what their run is waiting for
+ * needs to know which fired. Flattened to a boolean, an instance that had merely
+ * spent its monthly allowance reported itself as being at its container limit,
+ * on a page that was simultaneously showing free containers.
+ *
+ * The scheduler has always distinguished them; this is the stateless surface
+ * catching up, so both now name the same two waits from one piece of arithmetic.
+ */
+export async function containerCapacityVerdictInDb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+	projectId: string,
+): Promise<{ blocked: boolean; hoursExhausted: boolean }> {
 	const active = await getActiveContainers(db, engine);
 	// A project with a container free to take the run starts nothing, so neither
 	// gate applies to it - the hours it is about to spend are already being spent.
-	if (active.projectsWithSpareContainer.has(projectId)) return false;
+	if (active.projectsWithSpareContainer.has(projectId)) {
+		return { blocked: false, hoursExhausted: false };
+	}
 	// Hours before memory: the allowance is spent whatever the memory picture is,
 	// and reclaiming a neighbour's idle container cannot buy any back.
-	if (active.hoursExhausted) return true;
+	if (active.hoursExhausted) return { blocked: true, hoursExhausted: true };
 	const headroomGb = active.budgetGb + reclaimableForOthers(active, projectId);
-	return active.usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > headroomGb;
+	const blocked =
+		active.usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > headroomGb;
+	return { blocked, hoursExhausted: false };
 }
 
 /**
