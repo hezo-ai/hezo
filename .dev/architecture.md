@@ -2237,6 +2237,23 @@ nothing to reclaim, failed on `PoolCapacityError`, parked and requeued under the
 at-capacity label an operator was already staring at. Two formulas answering one question is
 the bug; the floors belong in one place.
 
+**A pending start exempts memory, never hours.** `JobManager.isContainerCapacityBlocked`
+short-circuits on two conditions that look alike and are not. A project with a spare
+container is exempt from both arms, correctly: the container it will use is already up and
+already billing. A start already *in flight* is a new container coming up, and each admitted
+dispatch takes its own pending slot and brings up its own - so sharing one short-circuit
+gave the exemption to precisely the case that spends hours, and an operator's monthly cap
+had a way past it. The hours check now sits between the two, ahead of the pending exemption
+and still ahead of the memory arithmetic (no amount of reclaiming buys an hour back, so a
+run parked on hours would never clear).
+
+**The stale-tunnel sweep asks before it executes.** A tunnel client is a process, so a
+container that is not running has none. Sweeping by label alone meant an exec against every
+stopped sandbox, which a managed backend refuses - a `SANDBOX_NOT_RUNNING` warning per
+stopped container on every boot, from a pass with nothing to do. It inspects first and skips
+anything not running, which costs one round trip on a startup pass that already made one per
+container and saves the call it replaces.
+
 **The Containers page reports the budget rather than inviting the reader to derive it.**
 `GET /api/containers` returns the list *and* `getActiveContainers`'s own `usedMemoryGb` /
 `budgetGb`, and each row carries `counts_toward_budget`. Both exist because the page's

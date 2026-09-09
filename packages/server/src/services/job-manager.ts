@@ -1195,6 +1195,23 @@ export class JobManager {
 			return;
 		}
 		for (const c of containers) {
+			// **Ask before executing.** A tunnel client is a process, so a container
+			// that is not running has none by definition and there is nothing here to
+			// sweep. Asking it anyway meant an exec against a stopped sandbox, which
+			// every managed backend refuses - one `SANDBOX_NOT_RUNNING` warning per
+			// stopped container, on every boot, for a pass that had nothing to do.
+			// That is a log an operator learns to scroll past, which is the real cost.
+			//
+			// One extra round trip on a startup pass that already makes one per
+			// container, and it replaces the call it guards for every stopped one.
+			let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
+			try {
+				info = await docker.inspectContainer(c.Id);
+			} catch (err) {
+				log.warn(`Stale-tunnel sweep could not inspect container ${c.Id}:`, err);
+				continue;
+			}
+			if (!info?.State.Running) continue;
 			await docker
 				.killTunnelClients(c.Id)
 				.catch((err) => log.warn(`Stale-tunnel sweep failed for container ${c.Id}:`, err));
@@ -1700,15 +1717,29 @@ export class JobManager {
 		// container while holding no pending-start slot, and two of them could fit
 		// themselves into the same headroom. One query, one answer, used by both.
 		const hasSpareContainer = projectId !== null && projectsWithSpareContainer.has(projectId);
-		if (projectId && (hasSpareContainer || this.pendingContainerStarts.has(projectId))) {
-			return { blocked: false, hasSpareContainer };
-		}
-		// Hours before memory, and only for dispatches that would START a container -
-		// the short-circuit above has already let through everything that would not.
-		// Kept ahead of the memory arithmetic because no amount of reclaiming buys an
-		// hour back, so there is nothing for the acquire path's reclaim rung to do.
+		// A container genuinely free to take the run spends nothing new - not memory,
+		// and not hours either, since the container it will use is already up and
+		// already billing for every minute it stays that way.
+		if (hasSpareContainer) return { blocked: false, hasSpareContainer };
+		// **Hours next, and ahead of the pending-start exemption below.** The two
+		// used to share one short-circuit, which let a start already in flight carry
+		// further dispatches past this cap: each admitted dispatch takes its own
+		// pending slot and brings up its own container, so what was waved through as
+		// "no new container" was a new container, and the hours it spends are hours
+		// the allowance does not have. That was the one route past a cap an operator
+		// had deliberately set.
+		//
+		// Ahead of the memory arithmetic as before, because no amount of reclaiming
+		// buys an hour back - there is nothing for the acquire path's reclaim rung
+		// to do about this one, so parking the run behind it would never clear.
 		if (active.hoursExhausted) {
 			return { blocked: true, hasSpareContainer, hoursExhausted: true };
+		}
+		// Memory only. A start in flight for this project has not reached the DB, and
+		// a second dispatch behind it is charged through `pendingGb` below rather
+		// than being made to wait on a row that does not exist yet.
+		if (projectId && this.pendingContainerStarts.has(projectId)) {
+			return { blocked: false, hasSpareContainer };
 		}
 		// A lazy start already in flight has not reached the DB yet, so its memory
 		// has to be added here or two dispatches would both see room for the same
