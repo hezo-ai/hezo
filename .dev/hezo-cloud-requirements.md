@@ -1,7 +1,8 @@
 # What Hezo Cloud needs from this repo
 
 **Inbound requirements from the `hezo-ai/cloud` control plane.** Nine tasks, two
-of them optional. Everything here is **additive and inert unless hosted config
+of them optional, plus **H33**, which is a defect in shipped work rather than a
+new ask. Everything here is **additive and inert unless hosted config
 is present** — self-hosted behaviour must stay byte-identical. **H27, H28 and H29
 are the recorded exceptions**: product changes the hosted launch flow asked for
 that alter what a self-hosted instance does too, each stated as such below.
@@ -532,6 +533,58 @@ missing. Bad-parse behaviour is already right — `reload()` short-circuits on
 **AC:** renaming a new policy file into place changes a pinned setting with no
 restart; a malformed file keeps the previous value and logs; the watcher
 survives the inode swap; nothing is watched when `policyFile` is unset.
+
+---
+
+## H33 — reload the policy on any directory event, not on a name Bun does not report
+
+**H15 shipped and the watcher never fires on the runtime a release runs.** The
+control plane writes `/etc/hezo/policy.json` as `<file>.tmp` then `rename()`,
+which is the pattern H15's own docblock is built around — and `watchPolicyFile`
+then filtered the directory's events by the policy file's name. Node reports the
+destination's name for a rename. **Bun reports only the source's**, as a single
+event, so the filter dropped every policy change a deployment ever made.
+
+Measured with the writer's exact sequence — write `.tmp`, `chmod`, `rename` —
+ten times, waiting past the 150 ms debounce each round:
+
+| Writer | Node 24 | Bun 1.3.11 |
+|---|---|---|
+| `.tmp` + `rename` (what a deployment writes) | 10/10 | **0/10** |
+| `.tmp` + `rename`, then an in-place rewrite | 10/10 | 7/10 |
+| in-place write only | 10/10 | 10/10 |
+
+Delivery is not quite deterministic — one destination-named event appeared in
+thirty rounds — which is why the hosting plane's end-to-end tier saw a plan
+change land occasionally and read it as a race for three rounds before anyone
+measured it.
+
+**The consequence for a hosted tenant.** A tier change, an hour pack and a
+billing hold all reach the instance's disk and none of them reaches the running
+process: the container-hours pool, the container ceiling and the two memory pins
+a hold sets take effect only at the next restart. The hold is the one that
+costs — a tenant who has stopped paying keeps their full container budget until
+their box happens to restart.
+
+**Why no writer can work around it.** In-place writing is the only shape Bun
+reports reliably, and it gives up the atomicity this watcher's own docblock
+depends on: a reader can catch a half-written file, and a bad parse then keeps
+the *previous* value until the next change, which for a deployment that skips
+unchanged writes is indefinitely.
+
+**The fix**: drop the name filter and reload on any event in the watched
+directory. The read is a small JSON file behind the existing debounce, and a
+spurious reload is already harmless — `readPolicyFile` returns `null` on a bad
+read or parse and `reload()` keeps the last good value. Measured with the filter
+removed: **10/10 on both runtimes, and every reload read the value just
+written**, the rename having completed before the debounce expires.
+
+**AC:** a rename into place changes a pinned setting with no restart **on the
+Bun runtime**, change after change; a write to a neighbouring file in the same
+directory leaves the policy where it is. The Node coverage in
+`test/policy-watch.test.ts` was green throughout and could not have caught this,
+so the new test belongs in the Bun-native tier — this is exactly the
+"runtime-sensitive code gets a test on the production runtime" rule.
 
 ---
 

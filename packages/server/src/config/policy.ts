@@ -22,7 +22,7 @@
 
 import type { FSWatcher } from 'node:fs';
 import { readFileSync, watch } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { logger } from '../logger';
 import { setPolicy } from './runtime';
 import { policySchema } from './schema';
@@ -73,8 +73,20 @@ export function loadPolicy(path: string | undefined): PolicyConfig | null | unde
  * bound to that file's inode, and the atomic `rename()` the writer is told to
  * use replaces the *directory entry* while leaving the old inode untouched - so
  * a file watch never fires for the one write pattern this is built around. The
- * directory entry is what changes, so the directory is what is watched, and
- * events for anything else in it are filtered out by name.
+ * directory entry is what changes, so the directory is what is watched.
+ *
+ * **Every event in that directory reloads, and none is filtered by name.** The
+ * name a rename reports is the runtime's business and not the same on both: Node
+ * reports the destination, so a filter on it worked; Bun reports only the
+ * *source*, so on the runtime this ships as a compiled binary a name filter
+ * dropped every policy change a deployment ever made. Measured against Bun
+ * 1.3.11 and Node side by side, ten renames each: with the filter, 10/10 and
+ * 0/10; without it, 10/10 on both, each reload reading the value just written.
+ *
+ * Reloading on a neighbouring file's event costs one small JSON read behind the
+ * debounce, and a read that fails or does not validate already keeps the last
+ * good value - so the cost of being wrong in this direction is nothing, and in
+ * the other it is a deployment whose limits never move.
  *
  * Coalesced on a short timer: one rename fires more than once, and a deployment
  * that writes then chmods fires more again. Re-reading four times is harmless
@@ -86,7 +98,6 @@ export function watchPolicyFile(path: string | undefined): { close: () => void }
 	if (!path) return { close: () => {} };
 
 	const directory = dirname(path);
-	const name = basename(path);
 	let watcher: FSWatcher | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -102,9 +113,7 @@ export function watchPolicyFile(path: string | undefined): { close: () => void }
 	};
 
 	try {
-		watcher = watch(directory, (_event, changed) => {
-			// The name is absent on some platforms. Reload rather than miss a change.
-			if (changed !== null && changed !== name) return;
+		watcher = watch(directory, () => {
 			if (timer) clearTimeout(timer);
 			timer = setTimeout(reload, RELOAD_DEBOUNCE_MS);
 		});
