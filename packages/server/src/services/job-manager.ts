@@ -61,8 +61,10 @@ import {
 	findStaleIdleMembers,
 	findStaleIdleMembersInProject,
 	isProjectIdleForContainerStop,
+	PoolCapacityError,
 	provisionContainer,
 	reconcilePoolMembers,
+	refuseStartOverBudget,
 	type StaleIdleMember,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
@@ -95,7 +97,12 @@ import {
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
 import { recordHandbackOutcome } from './run-handback';
-import { markPoolMemberRunning, reclaimBusyPoolMembers } from './sandbox/pool-db';
+import {
+	failInterruptedProvisions,
+	markPoolMemberRunning,
+	reclaimBusyPoolMembers,
+	releaseClaimIfRunGone,
+} from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -1023,6 +1030,19 @@ export class JobManager {
 			log.info(`Returned ${reclaimed.length} claimed container(s) to the pool after restart`);
 		}
 
+		// The same leak one state earlier. A provision writes its member as
+		// `creating` and promotes it minutes later, so a member still creating now
+		// belongs to a call that ended with the previous process. It is charged
+		// against the instance budget exactly like a running container and no other
+		// pass in the tree looks at `creating`, so left alone it consumes its whole
+		// allocation until an operator removes it by hand.
+		const failedProvisions = await failInterruptedProvisions(db);
+		if (failedProvisions.length > 0) {
+			log.info(
+				`Failed ${failedProvisions.length} container provision(s) interrupted by the restart`,
+			);
+		}
+
 		for (const run of stranded.rows) {
 			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 				id: run.id,
@@ -1244,7 +1264,16 @@ export class JobManager {
 		);
 		const hqProjectId = hq.rows[0]?.id;
 		if (!hqProjectId) return;
-		await ensureProjectContainerRunning(this.buildContainerDeps(), hqProjectId);
+		try {
+			await ensureProjectContainerRunning(this.buildContainerDeps(), hqProjectId);
+		} catch (err) {
+			// Warming HQ is a head start, not a requirement, so the budget refusing it
+			// is an outcome rather than a fault - the first chat or project creation
+			// provisions it through the ladder, which knows how to wait. Reported at
+			// info so a boot that is merely full does not read as a broken one.
+			if (!(err instanceof PoolCapacityError)) throw err;
+			log.info('HQ container warm-up skipped: the instance is at its container memory budget');
+		}
 	}
 
 	/**
@@ -1349,6 +1378,13 @@ export class JobManager {
 				const info = await docker.inspectContainer(row.container_id);
 
 				if (info === null) {
+					// A replacement is a brand new container, charged on top of whatever
+					// this pass has already brought up. Boot is exactly when that sum runs
+					// away: every project the crash left marked running is a candidate, so
+					// an ungated loop re-charges the whole fleet against a budget that may
+					// have shrunk since. Skipping is safe - the next run for this project
+					// provisions it through the ladder, which knows how to wait.
+					await refuseStartOverBudget(this.buildContainerDeps(), row.id, row.slug);
 					await provisionContainer(
 						this.buildContainerDeps(),
 						{
@@ -3868,6 +3904,16 @@ export class JobManager {
 				reason,
 				containerId,
 			);
+			// Last, and only now: the runs that could still have been holding this
+			// container are terminal, so a claim still standing belongs to none of
+			// them. Ordered after the failure on purpose - asked any earlier, the
+			// run it is checking for would still read `running` and the claim would
+			// be kept for a run this transition is in the middle of ending.
+			if (await releaseClaimIfRunGone(this.deps.db, containerId)) {
+				log.info(
+					`Released the claim on container ${ref(projectSlug, containerId.slice(0, 12))} — the run holding it had already ended`,
+				);
+			}
 		}
 	}
 

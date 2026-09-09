@@ -78,6 +78,15 @@ and the confirmation says so.
 A container that fails while it is being set up stays in the list as **Failed**, with the
 reason and whatever its output captured, so you can read what went wrong and remove it.
 
+A container that never finishes being set up is failed for you. Setting one up takes at
+most a few minutes, so one that has been **Starting** for far longer is not slow, it is
+stuck: Hezo marks it Failed and stops counting it against the memory your other containers
+share. This matters because a container that is still starting is holding its full memory
+allocation, so one stuck container can be the reason runs elsewhere sit queued waiting for
+capacity. Restarting Hezo does the same for anything that was mid-setup when it stopped,
+since that setup cannot survive the restart. You can still remove the Failed container
+whenever you like; Hezo builds a fresh one the next time a run needs it.
+
 **A run's log opens by naming the container it was given**, along with the memory and disk
 that container was built with. The identifier is a link to that container's page, so a run
 that behaved oddly leads straight to the container that served it rather than to a guess

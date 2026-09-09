@@ -5,6 +5,7 @@ import { useCancelQueuedWakeup } from '../../hooks/use-cancel-queued-wakeup';
 import type { ExecutionLock } from '../../hooks/use-execution-locks';
 import type { QueuedDispatchState, QueuedWakeup } from '../../hooks/use-queued-wakeups';
 import { useRunQueuedWakeup } from '../../hooks/use-run-queued-wakeup';
+import { type MessageKey, useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
 import { TerminateRunButton } from '../terminate-run-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
@@ -174,14 +175,26 @@ function RunningAgentRow({
 }
 
 /**
- * Human-readable reason the run-now action is unavailable, or null when it can
- * run. Mirrors the gating order of `JobManager.dispatchWakeupNow` on the server.
+ * Why the run-now action is unavailable, or null when it can run. Mirrors the
+ * gating order of `JobManager.dispatchWakeupNow` on the server.
+ *
+ * Returns the key rather than the sentence: these read to a person in whatever
+ * language the instance is set to, and they were the last four run-gating
+ * strings still hardcoded in English.
+ *
+ * The container limit and the container-hours allowance are separate answers
+ * because they are separate waits - one ends when a container frees up, the
+ * other when the month turns. Reported as one, an instance that had merely spent
+ * its allowance claimed to be at its container limit.
  */
-function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState): string | null {
-	if (dispatch.task_busy) return 'This task already has a run in progress';
-	if (dispatch.instance_at_capacity) return 'Hezo is at its active-container limit';
-	if (wakeup.agent_busy) return 'This agent is currently running on another task in this project';
-	if (wakeup.run_now_blocked === 'blocked_by_dependency') return 'Blocked by an open dependency';
+function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState): MessageKey | null {
+	if (dispatch.task_busy) return 'tasks.runNow.blocked.taskBusy';
+	if (dispatch.hours_exhausted) return 'tasks.runNow.blocked.hoursExhausted';
+	if (dispatch.instance_at_capacity) return 'tasks.runNow.blocked.instanceAtCapacity';
+	if (wakeup.agent_busy) return 'tasks.runNow.blocked.agentBusy';
+	if (wakeup.run_now_blocked === 'blocked_by_dependency') {
+		return 'tasks.runNow.blocked.dependency';
+	}
 	return null;
 }
 
@@ -198,10 +211,12 @@ function QueuedAgentRow({
 	agent: Agent | undefined;
 	dispatch: QueuedDispatchState;
 }) {
+	const { t } = useI18n();
 	const [open, setOpen] = useState(false);
 	const cancelMutation = useCancelQueuedWakeup({ projectId, taskId });
 	const runMutation = useRunQueuedWakeup({ projectId, taskId });
-	const blockReason = runNowBlockReason(wakeup, dispatch);
+	const blockReasonKey = runNowBlockReason(wakeup, dispatch);
+	const blockReason = blockReasonKey ? t(blockReasonKey) : null;
 
 	return (
 		<div

@@ -79,14 +79,23 @@ describe('container capacity', () => {
 			 * tests should have to opt into, not one they trip over.
 			 */
 			idle_for_min: number;
+			/**
+			 * How long ago this member was created. Defaults comfortably past the
+			 * reclaim age floor, the opposite choice from `idle_for_min` above: age is
+			 * a second, independent floor, and defaulting it to *now* would make every
+			 * case that only means to exercise the idle clock silently fail the age one
+			 * instead. A case testing the age floor sets it explicitly.
+			 */
+			age_min: number;
 		}> = {},
 	): Promise<void> {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes,
-			    disk_ceiling_bytes, memory_bytes, last_released_at)
+			    disk_ceiling_bytes, memory_bytes, last_released_at, created_at)
 			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7,
-			         now() - ($8 || ' minutes')::interval)`,
+			         now() - ($8 || ' minutes')::interval,
+			         now() - ($9 || ' minutes')::interval)`,
 			[
 				projectId,
 				containerId,
@@ -96,6 +105,7 @@ describe('container capacity', () => {
 				over.disk_ceiling_bytes ?? poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
 				over.memory_bytes === undefined ? 2 * 1024 ** 3 : over.memory_bytes,
 				over.idle_for_min ?? 0,
+				over.age_min ?? 60,
 			],
 		);
 	}
@@ -395,6 +405,21 @@ describe('container capacity', () => {
 			const hoarder = await seedProject();
 			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
 			await addMember(hoarder, 'ctr-fresh');
+
+			const starved = await seedProject();
+			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);
+		});
+
+		it('still blocks while the idle container is younger than the reclaim age floor', async () => {
+			// The gate's promise is that an admitted dispatch can actually get a
+			// container, and `planCrossProjectReclaim` is what has to keep it. The
+			// planner refuses a victim this young whatever its idle clock says, so
+			// counting it as headroom here admitted a run that then found nothing to
+			// reclaim, failed on PoolCapacityError and re-queued as at-capacity - a
+			// wasted dispatch wearing the label of the wait it was not doing.
+			const hoarder = await seedProject();
+			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
+			await addMember(hoarder, 'ctr-young', { idle_for_min: 10, age_min: 1 });
 
 			const starved = await seedProject();
 			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);

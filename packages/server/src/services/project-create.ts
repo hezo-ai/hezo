@@ -16,7 +16,12 @@ import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
-import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
+import {
+	type ContainerDeps,
+	type ProjectRow,
+	provisionContainer,
+	refuseStartOverBudget,
+} from './containers';
 import { enqueueSetupReviewForNewAgents } from './description-tasks';
 import { getMarketplaceTeam } from './marketplace';
 import { snapshotTeamAsTemplate } from './team-template-snapshot';
@@ -626,9 +631,14 @@ export async function createProjectWithTeam(
 
 	if (opts.provisionContainer !== false) {
 		trackBackground(
-			provisionContainer(deps, project as unknown as ProjectRow, team.slug).catch((e) =>
-				log.error('Failed to provision container for new project:', e),
-			),
+			// Warming the new project's container is a convenience, so it yields to
+			// the budget rather than competing with it. Starting one here at capacity
+			// takes an allocation from runs that are already queued for one, to save a
+			// cold start on a project that has not been asked to do anything yet - and
+			// the first run that needs it provisions it anyway.
+			refuseStartOverBudget(deps, project.id as string, team.slug)
+				.then(() => provisionContainer(deps, project as unknown as ProjectRow, team.slug))
+				.catch((e) => log.error('Failed to provision container for new project:', e)),
 		);
 	}
 

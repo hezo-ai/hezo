@@ -3,7 +3,10 @@ import type { PgliteDb } from '../src/db/drivers/pglite';
 import { reconcilePoolMembers } from '../src/services/containers';
 import {
 	claimPoolMember,
+	failInterruptedProvisions,
+	INTERRUPTED_PROVISION_ERROR,
 	projectHasStrandedCommits,
+	releaseClaimIfRunGone,
 	setPoolMemberUnpushedFlag,
 } from '../src/services/sandbox/pool-db';
 import { createTestDbWithMigrations } from './helpers/db';
@@ -218,6 +221,42 @@ describe('reconcilePoolMembers', () => {
 		const result = await reconcile(engine(['live-busy']));
 		expect(result.dropped).toBe(1);
 		expect(await remaining()).toEqual(['live-busy']);
+	});
+
+	it('fails a provision that has been coming up for longer than any cold start takes', async () => {
+		// Boot catches a provision the restart interrupted. This is the case boot
+		// cannot see: the process stays up and the provisioning call wedges anyway.
+		// Nothing else in the tree revisits `creating` - the ladder skips it, both
+		// idle passes filter on `idle`, and every branch of this pass used to
+		// `continue` past it - so it stayed charged against the budget for good.
+		await seed('ctr-wedged', 'creating', 3600);
+		const result = await reconcile(engine(['ctr-wedged']));
+		expect(result.wedged).toBe(1);
+		expect(await stateOf('ctr-wedged')).toBe('error');
+		// The budget is the point: `error` is not charged, and the interval the
+		// `creating` upsert opened stops billing container-hours around the clock.
+		expect(await openIntervals()).toEqual([]);
+	});
+
+	it('fails a wedged provision even when the backend will not answer for it', async () => {
+		// The verdict is taken ahead of the engine round trip on purpose. An
+		// unreachable backend throws, and every throw ends this loop early - so
+		// asked in the other order, the one shape most likely to strand a provision
+		// is also the one that could never be cleaned up.
+		await seed('ctr-unanswerable', 'creating', 3600);
+		const result = await reconcile(engine([], ['ctr-unanswerable']));
+		expect(result.wedged).toBe(1);
+		expect(await stateOf('ctr-unanswerable')).toBe('error');
+	});
+
+	it('leaves a provision that is still plausibly running alone', async () => {
+		// A cold start resolves an image, creates and starts a sandbox, installs the
+		// CA and clones the repository. Judging one dead early fails a run that was
+		// working, which is the worse direction to be wrong in.
+		await seed('ctr-coming-up', 'creating', 120);
+		const result = await reconcile(engine(['ctr-coming-up']));
+		expect(result.wedged).toBe(0);
+		expect(await stateOf('ctr-coming-up')).toBe('creating');
 	});
 
 	it('opens a missing interval for a container it finds running', async () => {
@@ -477,5 +516,163 @@ describe('claimPoolMember', () => {
 	it('refuses a member that is still coming up', async () => {
 		await seed('coming-up', 'creating');
 		expect(await claimPoolMember(db, 'coming-up', null)).toBe(false);
+	});
+});
+
+/**
+ * The two leaks that used to cost a container until the next restart, or past it.
+ *
+ * Both are the same shape: a member left in a state that charges the instance
+ * memory budget, describing work that has already ended, with nothing in the tree
+ * that revisits it. What is asserted here is the budget consequence - that the
+ * row stops being charged - not merely that a column changed.
+ */
+describe('reclaiming budget from members whose work has ended', () => {
+	let db: PgliteDb;
+	let projectId: string;
+
+	const chargedContainers = async (): Promise<string[]> => {
+		const r = await db.query<{ container_id: string }>(
+			`SELECT container_id FROM container_pool_members
+			  WHERE state IN ('creating', 'idle', 'busy') AND NOT reserved_for_chat
+			  ORDER BY container_id`,
+		);
+		return r.rows.map((x) => x.container_id);
+	};
+
+	const stateOf = async (containerId: string): Promise<string> => {
+		const r = await db.query<{ state: string }>(
+			'SELECT state::text AS state FROM container_pool_members WHERE container_id = $1',
+			[containerId],
+		);
+		return r.rows[0].state;
+	};
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('leak', 'leak') RETURNING id",
+		);
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'leak', 'leak', 'LK') RETURNING id`,
+			[team.rows[0].id],
+		);
+		projectId = project.rows[0].id;
+	});
+	afterAll(() => db.close());
+	beforeEach(async () => {
+		await db.query('DELETE FROM heartbeat_runs');
+		await db.query('DELETE FROM container_pool_members');
+	});
+
+	describe('failInterruptedProvisions', () => {
+		it('stops charging for a provision the restart interrupted', async () => {
+			// A `creating` member is written the moment the engine returns an id and
+			// promoted minutes later by the same call. That call cannot outlive the
+			// process, so at boot the state describes a provision nobody is running -
+			// and it was charged the full allocation for the life of the instance,
+			// because nothing else in the tree looks at `creating` at all.
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'ctr-wedged', 'creating'), ($1, 'ctr-live', 'idle')`,
+				[projectId],
+			);
+			expect(await chargedContainers()).toEqual(['ctr-live', 'ctr-wedged']);
+
+			expect(await failInterruptedProvisions(db)).toEqual(['ctr-wedged']);
+
+			expect(await chargedContainers()).toEqual(['ctr-live']);
+			expect(await stateOf('ctr-wedged')).toBe('error');
+		});
+
+		it('records why, so the operator is not left reading an empty Failed row', async () => {
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'ctr-x', 'creating')`,
+				[projectId],
+			);
+			await failInterruptedProvisions(db);
+			const r = await db.query<{ last_error: string | null }>(
+				'SELECT last_error FROM container_pool_members WHERE container_id = $1',
+				['ctr-x'],
+			);
+			expect(r.rows[0].last_error).toBe(INTERRUPTED_PROVISION_ERROR);
+		});
+
+		it('leaves every other state alone', async () => {
+			// Boot has its own pass for `busy`, and `suspended`/`error`/`idle` all
+			// describe a container the pool has an accurate view of.
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'ctr-i', 'idle'), ($1, 'ctr-b', 'busy'),
+				        ($1, 'ctr-s', 'suspended'), ($1, 'ctr-e', 'error')`,
+				[projectId],
+			);
+			expect(await failInterruptedProvisions(db)).toEqual([]);
+			expect(await stateOf('ctr-i')).toBe('idle');
+			expect(await stateOf('ctr-b')).toBe('busy');
+			expect(await stateOf('ctr-s')).toBe('suspended');
+			expect(await stateOf('ctr-e')).toBe('error');
+		});
+	});
+
+	describe('releaseClaimIfRunGone', () => {
+		const seedRun = async (containerId: string, status: string): Promise<void> => {
+			const member = await db.query<{ id: string; team_id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 SELECT team_id, 'agent'::member_type, 'a' FROM projects WHERE id = $1
+				 RETURNING id, team_id`,
+				[projectId],
+			);
+			await db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, status, container_id)
+				 VALUES ($1, $2, $3::heartbeat_run_status, $4)`,
+				[member.rows[0].team_id, member.rows[0].id, status, containerId],
+			);
+		};
+
+		it('gives back a claim whose run has already ended', async () => {
+			// The reconcile pass finds the container stopped and deliberately leaves
+			// the claim for the run to return; `runAgent`'s teardown is the only other
+			// thing that returns one, and it never fires for a run this process is no
+			// longer executing. The member then read `busy` - and stayed charged -
+			// until the next restart.
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'ctr-orphan', 'busy')`,
+				[projectId],
+			);
+			await seedRun('ctr-orphan', 'failed');
+
+			expect(await releaseClaimIfRunGone(db, 'ctr-orphan')).toBe(true);
+			expect(await stateOf('ctr-orphan')).toBe('suspended');
+			expect(await chargedContainers()).toEqual([]);
+		});
+
+		it('keeps the claim while a run is still running on it', async () => {
+			// The whole reason the reconcile pass declines to release: doing it under
+			// a live run hands its container to whoever asks next, and the run dies on
+			// its next call against a sandbox that is gone.
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'ctr-live-run', 'busy')`,
+				[projectId],
+			);
+			await seedRun('ctr-live-run', 'running');
+
+			expect(await releaseClaimIfRunGone(db, 'ctr-live-run')).toBe(false);
+			expect(await stateOf('ctr-live-run')).toBe('busy');
+		});
+
+		it('does not disturb a member that is not claimed', async () => {
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'ctr-idle', 'idle')`,
+				[projectId],
+			);
+			expect(await releaseClaimIfRunGone(db, 'ctr-idle')).toBe(false);
+			expect(await stateOf('ctr-idle')).toBe('idle');
+		});
 	});
 });

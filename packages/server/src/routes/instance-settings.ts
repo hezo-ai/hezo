@@ -307,14 +307,22 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		// The same admission rule from the other side: raising the inherited cap
 		// above the budget would make every project that inherits it unschedulable.
 		const cap = body.default_ram_cap_per_container_gb as number;
-		const budget = await getMaxContainerMemoryGb(db, c.get('docker'));
+		const total = await getMaxContainerMemoryGb(db, c.get('docker'));
+		// **Against the task budget, and the task budget the new cap implies.** The
+		// chat's reservation is one container at the cap in force, so raising the cap
+		// raises the reservation and lowers what is left for task runs by the same
+		// step. Compared against the configured total instead, a cap of exactly the
+		// total was accepted and left a task budget of zero - an instance that
+		// queues every run forever, with the setting that did it reading as valid.
+		const budget = taskContainerMemoryBudgetGb(total, cap);
 		if (!projectMemoryFitsBudget(cap, budget)) {
 			return err(
 				c,
 				'INVALID_REQUEST',
-				`default_ram_cap_per_container_gb of ${cap} GB exceeds the instance memory budget of ` +
-					`${budget} GB - a container that size could never start. Raise ` +
-					`max_container_memory_gb first.`,
+				`default_ram_cap_per_container_gb of ${cap} GB leaves ${budget} GB for task ` +
+					`containers, so a container that size could never start. A cap of ${cap} GB ` +
+					`needs max_container_memory_gb to be at least ` +
+					`${minTotalContainerMemoryGb(cap)} GB - raise it first.`,
 				400,
 			);
 		}

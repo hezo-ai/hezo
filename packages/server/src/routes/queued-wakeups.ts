@@ -9,8 +9,8 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import type { DispatchNowResult } from '../services/job-manager';
 import {
+	containerCapacityVerdictInDb,
 	getBusyAgentIdsInProject,
-	isContainerCapacityBlockedInDb,
 	isTaskBusyInDb,
 } from '../services/run-concurrency';
 import { recordWakeupCancelled, resolveActorName } from '../services/task-events';
@@ -64,10 +64,18 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 
 	let taskBusy = false;
 	let instanceAtCapacity = false;
+	let hoursExhausted = false;
 	if (await isTaskBusyInDb(db, taskId)) {
 		taskBusy = true;
-	} else if (projectId && (await isContainerCapacityBlockedInDb(db, c.get('docker'), projectId))) {
-		instanceAtCapacity = true;
+	} else if (projectId) {
+		// Kept apart all the way to the client. Both waits used to arrive here as
+		// one boolean, so an instance that had spent its monthly container-hours
+		// told every reader it was at its container limit - while the Containers
+		// page it sits beside showed containers doing nothing. The two clear on
+		// different clocks and only one of them is about containers at all.
+		const verdict = await containerCapacityVerdictInDb(db, c.get('docker'), projectId);
+		instanceAtCapacity = verdict.blocked && !verdict.hoursExhausted;
+		hoursExhausted = verdict.hoursExhausted;
 	}
 
 	// agent_busy is per-agent (each wakeup has its own member), so it lives on
@@ -92,6 +100,7 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 		dispatch: {
 			task_busy: taskBusy,
 			instance_at_capacity: instanceAtCapacity,
+			hours_exhausted: hoursExhausted,
 		},
 	});
 });

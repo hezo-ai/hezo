@@ -45,6 +45,7 @@ import { ensureProjectRepos } from './repo-sync';
 import {
 	CAPACITY_PARK_QUEUED_REASON,
 	getActiveContainers,
+	isContainerCapacityBlockedInDb,
 	projectContainerMemoryGb,
 	reclaimableForOthers,
 } from './run-concurrency';
@@ -57,6 +58,7 @@ import {
 	clearProjectContainerIfNamed,
 	decidePoolAcquisition,
 	ensurePoolMemberUptimeOpen,
+	failWedgedProvision,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
 	loadPoolMembers,
@@ -877,6 +879,7 @@ export async function ensureProjectContainerRunning(
 			}
 			if (info) {
 				// Container exists but is stopped — start it in place.
+				await refuseStartOverBudget(deps, proj.id, proj.slug);
 				await docker.startContainer(proj.container_id);
 				// The pool is told too, not just `projects`: its member still reads
 				// `suspended`, and a member the pool believes is down bills nothing while
@@ -901,8 +904,43 @@ export async function ensureProjectContainerRunning(
 		}
 
 		// No container id, or the stored id no longer exists in Docker — provision.
+		await refuseStartOverBudget(deps, proj.id, proj.slug);
 		return provisionContainer(deps, proj, proj.team_slug);
 	});
+}
+
+/**
+ * Refuse to bring a container up for a project the budget has no room for.
+ *
+ * **The gate belongs here, not at the call sites.** `ensureProjectContainerRunning`
+ * has four callers - repo setup, the HQ warm-up, the git-state route and its own
+ * provision fallback - and exactly one of them used to check first. The other
+ * three each charged a full allocation against a budget that had already refused
+ * it, and the charge is what the run dispatcher then reads: a container started
+ * here is indistinguishable from one the ladder admitted, so the memory it takes
+ * is memory every queued run is told it cannot have.
+ *
+ * Only the paths that actually bring a container up call this. A container the
+ * engine already reports as running costs nothing new, and gating it would refuse
+ * an answer the caller can see is true.
+ *
+ * The chat's container never arrives through here - it is acquired through the
+ * pool with its own reservation - so this cannot queue a person behind a task run.
+ *
+ * Exported for the two paths that provision without going through
+ * `ensureProjectContainerRunning` at all - creating a project, and the startup
+ * pass that replaces a container the engine has lost. The pool ladder's own
+ * provision rung deliberately does **not** call this: it has already decided,
+ * having reclaimed the memory it is about to use, and re-asking here would refuse
+ * a start on the strength of a figure the reclaim has not landed in yet.
+ */
+export async function refuseStartOverBudget(
+	deps: ContainerDeps,
+	projectId: string,
+	projectSlug: string,
+): Promise<void> {
+	if (!(await isContainerCapacityBlockedInDb(deps.db, deps.docker, projectId))) return;
+	throw new PoolCapacityError(projectSlug);
 }
 
 /**
@@ -2701,6 +2739,30 @@ const POOL_LIVENESS_CHECK_INTERVAL_MS = 15_000;
  */
 const POOL_LIVENESS_STAMP_TTL_MS = POOL_LIVENESS_CHECK_INTERVAL_MS * 20;
 
+/**
+ * How long a member may sit in `creating` before the provision that wrote it is
+ * judged dead.
+ *
+ * Boot fails an interrupted provision outright, because none can outlive the
+ * process. This covers the case boot cannot see: the process stays up and the
+ * provisioning call wedges anyway - a control-plane request that never returns, a
+ * clone against an unreachable remote. The row is charged against the instance
+ * budget the whole time and nothing else in the tree revisits `creating`, so
+ * without a ceiling it consumes its allocation until an operator intervenes.
+ *
+ * Far longer than a cold start needs. A provision resolves an image, creates and
+ * starts a sandbox, installs the CA, probes the run user and clones the whole
+ * repository, and the slowest of those is bounded by the size of somebody's
+ * repository rather than by anything here. The cost of being wrong in the
+ * generous direction is one Failed row an operator can remove; in the mean
+ * direction it is a provision killed while it was still working.
+ *
+ * Judging it is safe at any age: a provision that completes after this fired
+ * upserts its member straight back to `idle`, so a live container is never
+ * stranded by the verdict.
+ */
+const PROVISION_WEDGED_AFTER_MS = 15 * 60_000;
+
 const lastPoolLivenessCheckAt = new Map<string, number>();
 
 function dueForPoolLivenessCheck(containerId: string, now: number, intervalMs: number): boolean {
@@ -2743,7 +2805,7 @@ function dueForPoolLivenessCheck(containerId: string, now: number, intervalMs: n
  */
 export async function reconcilePoolMembers(
 	deps: ContainerDeps,
-): Promise<{ dropped: number; transitions: ContainerTransition[] }> {
+): Promise<{ dropped: number; wedged: number; transitions: ContainerTransition[] }> {
 	const { db, docker } = deps;
 	const now = Date.now();
 	for (const [id, at] of lastPoolLivenessCheckAt) {
@@ -2755,12 +2817,25 @@ export async function reconcilePoolMembers(
 		POOL_RECONCILE_MIN_AGE_SECONDS,
 		POOL_RECONCILE_LIMIT,
 	);
-	const result = { dropped: 0, transitions: [] as ContainerTransition[] };
+	const result = { dropped: 0, wedged: 0, transitions: [] as ContainerTransition[] };
 	if (stale.length === 0) return result;
 
 	const interval = deps.poolLivenessIntervalMs ?? POOL_LIVENESS_CHECK_INTERVAL_MS;
 	for (const member of stale) {
 		if (!dueForPoolLivenessCheck(member.containerId, now, interval)) continue;
+
+		// Ahead of the engine round trip, and deliberately: a provision this old is
+		// dead whatever the backend says about the sandbox, and asking first would
+		// let the one answer that ends this loop early - a throw, which every
+		// unreachable-backend case produces - keep the row charged for good.
+		if (member.state === 'creating' && now - member.updatedAtMs > PROVISION_WEDGED_AFTER_MS) {
+			await failWedgedProvision(db, member.containerId);
+			result.wedged++;
+			log.warn(
+				`pool member ${member.containerId.slice(0, 12)} has been provisioning for ${Math.round((now - member.updatedAtMs) / 60_000)}m — failed, its budget returned`,
+			);
+			continue;
+		}
 
 		let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
 		try {

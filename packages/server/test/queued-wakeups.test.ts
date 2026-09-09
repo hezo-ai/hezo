@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
+import { setMonthlyContainerHours } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -17,6 +18,7 @@ import {
 	seedRunningContainerProject,
 	setContainerCapacityForTest,
 } from './helpers/capacity';
+import { seedMonthToDateSeconds } from './helpers/uptime';
 
 let app: Hono<Env>;
 let db: Db;
@@ -152,6 +154,7 @@ interface WakeupRow {
 interface DispatchState {
 	task_busy: boolean;
 	instance_at_capacity: boolean;
+	hours_exhausted: boolean;
 }
 
 beforeAll(async () => {
@@ -260,6 +263,31 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.instance_at_capacity).toBe(false);
 		await clearContainerCapacityForTest(db);
+	});
+
+	it('reports a spent container-hours allowance as its own wait, not as the container limit', async () => {
+		// The two are different waits on different clocks: memory frees when a
+		// container is released, hours only when the month turns or the operator
+		// raises the cap. Flattened into one boolean, an instance that had merely
+		// spent its allowance told every reader it was at its container limit -
+		// beside a Containers page showing containers sitting idle.
+		await clearWakeups(taskId);
+		await clearRuns();
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await setMonthlyContainerHours(db, 1);
+		await seedMonthToDateSeconds(db, 2 * 3600);
+		await insertQueuedWakeup(agentB, taskId);
+
+		try {
+			const { body } = await listQueued(taskId);
+			expect(body.data.dispatch.hours_exhausted).toBe(true);
+			expect(body.data.dispatch.instance_at_capacity).toBe(false);
+		} finally {
+			await setMonthlyContainerHours(db, 0);
+			await db.query('DELETE FROM container_uptime_entries');
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await clearWakeups(taskId);
+		}
 	});
 
 	it('flags run_now_blocked per source when the task has an open dependency', async () => {

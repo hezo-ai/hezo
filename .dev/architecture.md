@@ -2113,6 +2113,35 @@ locally, because there a container disappearing is normal rather than anomalous 
 stops, archives and reaps sandboxes on its own schedule, and enforces quota by refusing or
 removing them.
 
+**A state that charges the budget needs something that ends it.** The reconcile pass answers
+"is this container still there", and two members used to be charged indefinitely because
+nothing ever asked a different question about them.
+
+- **`creating`.** A provision writes its member the moment the engine returns an id and
+  promotes it minutes later, after the CA install, the run-user probe and the whole clone.
+  That call cannot outlive the process, so at boot any `creating` row belongs to a provision
+  nobody is running: `failInterruptedProvisions` moves the lot to `error`, beside the `busy`
+  reclaim that has always run there. For the case boot cannot see - the process stays up and
+  the provisioning call wedges anyway - `reconcilePoolMembers` carries a ceiling
+  (`PROVISION_WEDGED_AFTER_MS`) and fails a member that has been coming up longer than any
+  cold start takes. **That verdict is taken ahead of the engine round trip**, which is the one
+  deliberate exception to the definite-answer rule above: a throw ends the loop early, so
+  asked in the other order the shape most likely to strand a provision - an unreachable
+  backend - would also be the one that could never be cleared. It is safe at any age because a
+  provision that completes anyway upserts itself back to `idle`. Before this, a wedged
+  `creating` row was reachable by nothing at all: the ladder skips it, both idle passes filter
+  on `idle`, cross-project reclaim filters on `idle`, and every branch of the reconcile pass
+  walked past it - while `getActiveContainers` charged it in full and the uptime ledger billed
+  it around the clock. The only cure was an operator pressing Remove.
+- **`busy` after the run has ended.** The reconcile pass deliberately leaves a claim for its
+  run to return, because releasing one under a live run hands its container to whoever asks
+  next. That is right while the run is live, and left nothing to act once it was not:
+  `runAgent`'s teardown is the only other release, and it never fires for a run this process is
+  no longer executing. `handleContainerTransition` therefore calls `releaseClaimIfRunGone`
+  **after** `failProjectRuns`, and the release is conditioned in SQL on no `running` row still
+  naming the container - so a live run keeps its claim exactly as before, and one that has
+  ended stops costing a container until the next restart.
+
 **A container found stopped-but-present is a suspended member, not a lost one**, and this is
 the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
 that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
@@ -2178,6 +2207,29 @@ and a fresh one be built.
   `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a project mid-burst is not stripped of a container it
   is about to reuse, and `CONTAINER_RECLAIM_MIN_AGE_SEC` so a container the instance only
   just paid a cold provision for is not retired to fund another cold provision elsewhere.
+
+**The gate counts as headroom exactly what the planner would actually retire.** The dispatch
+gate admits a run on the strength of another project's reclaimable idle memory, and
+`planCrossProjectReclaim` is what has to make good on it - so `getActiveContainers` applies
+*both* reclaim floors, not just the idle one. Applying only `CONTAINER_RECLAIM_MIN_IDLE_SEC`,
+the gate counted a container the planner then refused on age: the run was admitted, found
+nothing to reclaim, failed on `PoolCapacityError`, parked and requeued under the same
+at-capacity label an operator was already staring at. Two formulas answering one question is
+the bug; the floors belong in one place.
+
+**Every path that brings a container up is gated, not just the ladder.**
+`ensureProjectContainerRunning` refuses over budget (`refuseStartOverBudget`), and so do the
+two paths that provision without it - creating a project, and the startup pass replacing a
+container the engine has lost. It used to be checked by one of its four callers, leaving repo
+setup, the HQ warm-up and the startup restart to charge a full allocation against a budget that
+had already refused it; `markPoolMemberRunning` moves a member from `suspended` (uncharged) to
+`idle` (charged) with no arithmetic of its own, and a container started that way is
+indistinguishable from one the ladder admitted. A container the engine *already* reports as
+running is exempt, because it costs nothing new - and so is the ladder's own provision rung,
+which has already decided, having reclaimed the memory it is about to use. The per-project and
+instance-wide cap validators compare against the **task** budget (`taskContainerMemoryBudgetGb`)
+for the same reason: against the configured total they accepted a cap between the two, which
+saved cleanly and was then refused by every dispatch.
   Between them they stop two starved projects reclaiming from each other in a loop. A
   candidate is **suspended rather than destroyed** whenever taking it would leave its
   project with nothing resumable, as well as when it holds unpushed commits: both free
