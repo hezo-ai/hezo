@@ -2237,6 +2237,17 @@ nothing to reclaim, failed on `PoolCapacityError`, parked and requeued under the
 at-capacity label an operator was already staring at. Two formulas answering one question is
 the bug; the floors belong in one place.
 
+**The Containers page reports the budget rather than inviting the reader to derive it.**
+`GET /api/containers` returns the list *and* `getActiveContainers`'s own `usedMemoryGb` /
+`budgetGb`, and each row carries `counts_toward_budget`. Both exist because the page's
+Memory column is an *allocation* - what the container was built with, which a stopped
+container keeps reporting - so summing the visible column produces a number the gate never
+sees, and an operator reconciling "at its active-container limit" against a page of
+apparently-free containers had no way to find the three rows that were charged. The
+per-row predicate is {@link containerCountsTowardBudget} in `@hezo/shared`; the gate's copy
+is a SQL `WHERE` clause and cannot call it, so a test sums the listing's charged rows and
+pins the total against `usedMemoryGb`. That test is the only thing keeping the two honest.
+
 **Every path that brings a container up is gated, not just the ladder.**
 `ensureProjectContainerRunning` refuses over budget (`refuseStartOverBudget`), and so do the
 two paths that provision without it - creating a project, and the startup pass replacing a

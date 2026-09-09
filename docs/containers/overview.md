@@ -75,6 +75,15 @@ including the output it captured on the way down if it failed. The only action t
 next time a run needs it. Removing a container that is running a task ends that task's run,
 and the confirmation says so.
 
+**The page also shows what your containers are spending**, as a bar above the list: how
+much of the instance memory budget is in use, out of what the budget allows. Only
+containers that are running spend it. A stopped or failed one keeps the memory
+allocation it was built with, and its row still shows that figure, but it costs you
+nothing until it starts again - so those rows show the allocation struck through and do
+not count toward the total. Adding up the Memory column will not give you the number in
+the bar, and is not meant to. When an agent run says it is waiting for container
+capacity, this bar is where you find out why.
+
 A container that fails while it is being set up stays in the list as **Failed**, with the
 reason and whatever its output captured, so you can read what went wrong and remove it.
 

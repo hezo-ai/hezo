@@ -18,6 +18,7 @@ import {
 	isContainerCapacityBlockedInDb,
 	reclaimableForOthers,
 } from '../src/services/run-concurrency';
+import { listAllContainers } from '../src/services/sandbox/pool-db';
 import { createStubDocker } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 import { seedMonthToDateSeconds } from './helpers/uptime';
@@ -117,6 +118,32 @@ describe('container capacity', () => {
 		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '6');
 	});
 	afterEach(() => db.close());
+
+	it('the listing’s charged rows sum to exactly what the gate charges', async () => {
+		// **The drift guard between two copies of one predicate.** The gate applies
+		// it as SQL inside `getActiveContainers`; the Containers page applies it as
+		// `containerCountsTowardBudget` to mark which rows are spending the budget it
+		// reports. Nothing can make those one expression - one is a WHERE clause -
+		// so this pins them together instead. Let them drift and the page confidently
+		// explains a total that is not the one deciding whether runs start.
+		const project = await seedProject({ id: 'ctr-run', status: ContainerStatus.Running });
+		await addMember(project, 'ctr-run', { state: 'busy' });
+		await addMember(project, 'ctr-warm', { state: 'idle' });
+		await addMember(project, 'ctr-coming', { state: 'creating' });
+		await addMember(project, 'ctr-off', { state: 'suspended' });
+		await addMember(project, 'ctr-broken', { state: 'error' });
+		await addMember(project, 'ctr-chat', { state: 'busy', reserved_for_chat: true });
+
+		const listed = await listAllContainers(db);
+		const chargedGb = listed
+			.filter((row) => row.counts_toward_budget)
+			.reduce((sum, row) => sum + (row.memory_bytes ?? 0) / 1024 ** 3, 0);
+
+		expect(chargedGb).toBe((await getActiveContainers(db, engine)).usedMemoryGb);
+		// And it is a real subset - a test that charged everything would pass the
+		// equality above while telling the operator nothing.
+		expect(listed.filter((row) => row.counts_toward_budget)).toHaveLength(3);
+	});
 
 	it('sums every container, not projects that have one', async () => {
 		// The whole point of the change. One project holding two containers is two

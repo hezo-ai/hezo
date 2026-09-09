@@ -8,6 +8,7 @@
 
 import {
 	ContainerUptimeEndReason,
+	containerCountsTowardBudget,
 	DEFAULT_CONTAINER_DISK_GB,
 	poolDiskCeilingBytes,
 } from '@hezo/shared';
@@ -607,6 +608,16 @@ export interface ContainerListing {
 	 * Null for a container whose allocation was never recorded.
 	 */
 	memory_bytes: number | null;
+	/**
+	 * Whether this container is charging the instance memory budget right now.
+	 *
+	 * Derived rather than stored, from {@link containerCountsTowardBudget}. The
+	 * page shows every container's allocation, and an operator adding those up
+	 * gets a figure that bears no relation to the budget the instance reports -
+	 * a stopped container carries a 4 GB allocation and spends none of it. This
+	 * is the field that lets the page say which rows the limit is actually about.
+	 */
+	counts_toward_budget: boolean;
 	last_task_id: string | null;
 	last_task_identifier: string | null;
 	/** The run currently executing on it, when one is. */
@@ -757,6 +768,7 @@ function toContainerListing(row: ContainerListingRow): ContainerListing {
 		disk_used_bytes: Number(row.disk_used_bytes),
 		disk_ceiling_bytes: Number(row.disk_ceiling_bytes),
 		memory_bytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
+		counts_toward_budget: containerCountsTowardBudget(row.state, row.reserved_for_chat),
 	};
 }
 

@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
 import { destroyContainer } from '../services/containers';
+import { getActiveContainers } from '../services/run-concurrency';
 import { getContainerListing, listAllContainers } from '../services/sandbox/pool-db';
 
 /**
@@ -35,7 +36,22 @@ export function buildContainerRoutes(): Hono<Env> {
 		const denied = requireSuperuser(c);
 		if (denied) return denied;
 		const db = c.get('db');
-		return ok(c, await listAllContainers(db));
+		// The budget rides along with the list because the page cannot derive it.
+		// Each row carries the memory its container was *built* with, so an operator
+		// adding the column up gets a number far above the configured limit whenever
+		// anything is stopped - and then has no way to reconcile that with a task
+		// page saying the instance is at its container limit. The figures come from
+		// `getActiveContainers`, the same call the dispatch gate makes, so the page
+		// reports the arithmetic that actually decides whether a run starts rather
+		// than a second one that agrees with it by inspection.
+		const [containers, active] = await Promise.all([
+			listAllContainers(db),
+			getActiveContainers(db, c.get('docker')),
+		]);
+		return ok(c, {
+			containers,
+			budget: { used_gb: active.usedMemoryGb, total_gb: active.budgetGb },
+		});
 	});
 
 	routes.get('/containers/:containerId', async (c) => {

@@ -279,6 +279,34 @@ export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolea
 }
 
 /**
+ * Whether a container is charging the instance memory budget right now.
+ *
+ * **The same predicate the capacity gate applies in SQL**, stated once here so
+ * the Containers page can mark which rows are actually spending the budget it
+ * reports. Without it an operator reads a page of six containers each labelled
+ * with its allocation, adds them up, gets a figure far over the configured limit,
+ * and has no way to tell that half of them cost nothing - which is exactly how a
+ * stopped container comes to be blamed for a full instance.
+ *
+ * A container is charged for what it was **built** to hold, whatever it is doing
+ * with it, so the question is only about its state: a stopped one is released
+ * memory, a starting one has already been promised it. The chat's container is
+ * exempt because the budget holds a container's worth back for it up front rather
+ * than charging it as it is used.
+ *
+ * `run-concurrency.ts` cannot call this - its copy is a SQL predicate on the same
+ * two columns - so a test sums the rows this returns true for and pins the total
+ * against the gate's own figure. That test is what keeps the two from drifting.
+ */
+export function containerCountsTowardBudget(
+	state: 'creating' | 'idle' | 'busy' | 'suspended' | 'error',
+	reservedForChat: boolean,
+): boolean {
+	if (reservedForChat) return false;
+	return state === 'creating' || state === 'idle' || state === 'busy';
+}
+
+/**
  * Disk, in GB, allocated to each project container.
  *
  * The sibling of the per-container RAM cap: an instance-wide default, overridable

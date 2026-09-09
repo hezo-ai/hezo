@@ -38,10 +38,19 @@ let projectA: { id: string; slug: string };
 let projectB: { id: string; slug: string };
 let teamAId: string;
 
-async function list(as = token): Promise<{ status: number; rows: ContainerRow[] }> {
+async function list(as = token): Promise<{
+	status: number;
+	rows: ContainerRow[];
+	budget: { used_gb: number; total_gb: number };
+}> {
 	const res = await app.request('/api/containers', { headers: authHeader(as) });
-	if (res.status !== 200) return { status: res.status, rows: [] };
-	return { status: res.status, rows: (await res.json()).data as ContainerRow[] };
+	const empty = { used_gb: 0, total_gb: 0 };
+	if (res.status !== 200) return { status: res.status, rows: [], budget: empty };
+	const data = (await res.json()).data as {
+		containers: ContainerRow[];
+		budget: { used_gb: number; total_gb: number };
+	};
+	return { status: res.status, rows: data.containers, budget: data.budget };
 }
 
 async function addMember(

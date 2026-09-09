@@ -50,6 +50,55 @@ function BaseImageBuild() {
 }
 
 /**
+ * What the instance is spending against its container memory budget.
+ *
+ * **The page's most-asked question, which it used not to answer at all.** Every
+ * row carries the memory its container was *built* with, and keeps reporting it
+ * while the container is stopped - so an operator reading the Memory column adds
+ * up six containers at 4 GB, gets 24 against a limit of 16, and concludes the
+ * instance is over. It is not: a stopped container spends nothing. Three of those
+ * six were charged, and there was no way to tell which from this page.
+ *
+ * That gap is what made a wedged instance unreadable. A task page saying "at its
+ * active-container limit" beside a Containers page apparently showing free
+ * containers has only one honest resolution, and it is this figure.
+ *
+ * The numbers come from the server, computed by the same call the dispatch gate
+ * makes. Summing the visible column here would produce a second answer that
+ * disagrees with the one deciding whether runs start.
+ */
+function BudgetSummary({ used, total }: { used: number; total: number }) {
+	const { t } = useI18n();
+	const full = total > 0 && used >= total;
+
+	return (
+		<div
+			data-testid="containers-budget"
+			className="mb-4 flex flex-col gap-2 rounded-lg border border-border bg-surface-1 px-4 py-3"
+		>
+			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+				<span className="font-medium">{t('containers.budget.label')}</span>
+				<span
+					data-testid="containers-budget-figure"
+					className={`ml-auto shrink-0 tabular-nums ${full ? 'text-warning' : 'text-text-2'}`}
+				>
+					{t('containers.budget.used', { used, total })}
+				</span>
+			</div>
+			<Progress
+				value={used}
+				max={total}
+				label={t('containers.budget.label')}
+				barClassName={full ? 'bg-warning' : 'bg-info'}
+			/>
+			<p className="text-[11px] text-text-3">
+				{full ? t('containers.budget.fullHelp') : t('containers.budget.help')}
+			</p>
+		</div>
+	);
+}
+
+/**
  * Every container the instance is running, across every project.
  *
  * The list exists because a project stopped having "a" container: it holds as
@@ -60,7 +109,8 @@ function BaseImageBuild() {
 function ContainersList() {
 	const { t } = useI18n();
 	const navigate = useNavigate();
-	const { data: containers, isLoading } = useContainers();
+	const { data, isLoading } = useContainers();
+	const containers = data?.containers;
 
 	const columns: Column<ContainerSummary>[] = [
 		{
@@ -145,11 +195,28 @@ function ContainersList() {
 			header: t('containers.column.memory'),
 			width: '90px',
 			hideOnMobile: true,
-			render: (row) => (
-				<span className="text-text-2">
-					{row.memory_bytes === null ? '-' : formatGib(row.memory_bytes)}
-				</span>
-			),
+			// Dimmed and struck when the container is not spending it. The figure is
+			// still the truth about the container - it is what a run on it would get -
+			// but printed identically for a stopped one it invited the reader to add
+			// the column up and compare the total with the budget, which is the one
+			// arithmetic this page must not suggest.
+			render: (row) =>
+				row.memory_bytes === null ? (
+					<span className="text-text-2">-</span>
+				) : (
+					<span
+						className={row.counts_toward_budget ? 'text-text-2' : 'text-text-3 line-through'}
+						title={
+							row.counts_toward_budget
+								? t('containers.memory.counted')
+								: t('containers.memory.notCounted')
+						}
+						data-testid={`container-memory-${row.container_id}`}
+						data-counted={row.counts_toward_budget ? 'yes' : 'no'}
+					>
+						{formatGib(row.memory_bytes)}
+					</span>
+				),
 		},
 		{
 			key: 'age',
@@ -163,6 +230,7 @@ function ContainersList() {
 	return (
 		<div data-testid="containers-list">
 			<BaseImageBuild />
+			{data && <BudgetSummary used={data.budget.used_gb} total={data.budget.total_gb} />}
 			{!isLoading && containers?.length === 0 ? (
 				<EmptyState
 					icon={<Box className="size-6" />}
