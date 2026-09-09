@@ -2012,11 +2012,11 @@ export async function isProjectIdleForContainerStop(
  * The chat's pinned member is excluded - it is not counted against the budget, so
  * retiring it frees nothing. Served by `idx_container_pool_members_idle`.
  */
-const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
+const STALE_MEMBER_SQL = (state: 'idle' | 'suspended', extraSql: string, limitSql: string) => `
 	SELECT m.container_id, m.project_id, p.slug, p.team_id
 	  FROM container_pool_members m
 	  JOIN projects p ON p.id = m.project_id
-	 WHERE m.state = 'idle'
+	 WHERE m.state = '${state}'
 	   AND NOT m.reserved_for_chat
 	   AND m.last_released_at < now() - ($1 * interval '1 minute')
 	   ${extraSql}
@@ -2037,7 +2037,7 @@ export async function findStaleIdleMembers(
 	timeoutMin: number,
 	limit: number,
 ): Promise<StaleIdleMember[]> {
-	const res = await db.query<StaleIdleMember>(STALE_IDLE_MEMBER_SQL('', 'LIMIT $2'), [
+	const res = await db.query<StaleIdleMember>(STALE_MEMBER_SQL('idle', '', 'LIMIT $2'), [
 		timeoutMin,
 		limit,
 	]);
@@ -2055,10 +2055,53 @@ export async function findStaleIdleMembersInProject(
 	projectId: string,
 	timeoutMin: number,
 ): Promise<StaleIdleMember[]> {
-	const res = await db.query<StaleIdleMember>(STALE_IDLE_MEMBER_SQL('AND m.project_id = $2', ''), [
-		timeoutMin,
-		projectId,
-	]);
+	const res = await db.query<StaleIdleMember>(
+		STALE_MEMBER_SQL('idle', 'AND m.project_id = $2', ''),
+		[timeoutMin, projectId],
+	);
+	return res.rows;
+}
+
+/**
+ * Suspended members whose project has not asked for them in a very long time.
+ *
+ * **A suspended member costs no memory, which is exactly why nothing was looking
+ * for it.** Every other retirement pass filters on `idle`, and deliberately: the
+ * budget does not count a stopped container, so retiring one frees nothing the
+ * budget can see and costs its project a full cold provision on its next run.
+ * `planSurplusIdleRetirement` goes further and *keeps* one, because a suspended
+ * member is the cheapest warm start there is - about a second through the
+ * ladder's resume rung, against minutes for a clone.
+ *
+ * That trade is worth making for a project that is still working, and worthless
+ * for one that has been quiet for weeks. What it costs in the meantime is
+ * invisible from here: a container is pinned to its project for life, so this
+ * memory is reachable by nobody else, and on a managed backend the sandbox holds
+ * **disk quota** - which is what actually bounds the fleet there, and which
+ * Hezo's memory budget cannot see at all. A create past that quota fails, and the
+ * containers holding it may not have been wanted since last month.
+ *
+ * **Why sweeping this is not deleting the user's data.** A container's contents
+ * are already declared non-durable - removing one says so in as many words - and
+ * work that reached no remote is pinned by `has_unpushed_commits` and excluded
+ * here, exactly as both idle planners exclude it. What is destroyed is a clone
+ * and an installed toolchain, rebuilt on demand by the next run. It is a cache
+ * with a project's name on it, not a record.
+ *
+ * Clocked on `last_released_at` rather than on when the suspend was written: the
+ * two are minutes apart, it counts from the earlier of them, and it is the column
+ * `idx_container_pool_members_idle` already indexes for precisely this shape of
+ * question.
+ */
+export async function findDormantSuspendedMembers(
+	db: Db,
+	dormantMin: number,
+	limit: number,
+): Promise<StaleIdleMember[]> {
+	const res = await db.query<StaleIdleMember>(
+		STALE_MEMBER_SQL('suspended', 'AND NOT m.has_unpushed_commits', 'LIMIT $2'),
+		[dormantMin, limit],
+	);
 	return res.rows;
 }
 

@@ -5,6 +5,7 @@ import {
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
 	CAPTAIN_AGENT_SLUG,
+	CONTAINER_DORMANT_RETIRE_MIN,
 	CONTAINER_IDLE_TIMEOUT_MIN,
 	CommentContentType,
 	ContainerStatus,
@@ -57,6 +58,7 @@ import {
 	ensureProjectContainerRunning,
 	executeRetirementPlan,
 	failProjectRuns,
+	findDormantSuspendedMembers,
 	findIdleContainerCandidates,
 	findStaleIdleMembers,
 	findStaleIdleMembersInProject,
@@ -3838,6 +3840,75 @@ export class JobManager {
 		}
 		if (retired > 0) {
 			log.debug(`Surplus idle pass: retired ${retired} container(s) held by working projects`);
+		}
+		await this.retireDormantContainers();
+	}
+
+	/**
+	 * Dispose of containers whose project stopped asking for them weeks ago.
+	 *
+	 * **The one thing no other pass does.** Every retirement above filters on
+	 * `idle`, because the memory budget does not count a stopped container, so
+	 * retiring one frees nothing it can measure. `planSurplusIdleRetirement` even
+	 * keeps one on purpose - a suspended member is the cheapest warm start the
+	 * pool has. The result was that the last container of a project which went
+	 * quiet was held for ever, by design, with nothing to end it.
+	 *
+	 * What that costs is invisible to the budget. A container is pinned to its
+	 * project for life, so a dormant one is memory no other project can ever
+	 * reach; and on a managed backend it holds **disk quota**, which is what
+	 * actually bounds the fleet there and which the budget does not model at all.
+	 * A create past that quota is refused, and the containers holding it may not
+	 * have been wanted since last month.
+	 *
+	 * Rides the idle cron rather than taking one of its own: it is the same
+	 * question one clock further out, the batch is bounded like every other pass,
+	 * and members whose work reached no remote are excluded by the query, exactly
+	 * as both idle planners exclude them.
+	 */
+	private async retireDormantContainers(): Promise<void> {
+		const { db, docker } = this.deps;
+		if (!(await docker.ping())) return;
+		const { loadPoolMembers } = await import('./sandbox/pool-db');
+
+		const dormant = await findDormantSuspendedMembers(
+			db,
+			CONTAINER_DORMANT_RETIRE_MIN,
+			IDLE_STOP_BATCH_LIMIT,
+		);
+		let retired = 0;
+		for (const member of dormant) {
+			try {
+				await withContainerLifecycleLock(member.project_id, async () => {
+					// Re-read under the lock. A run that arrived between the scan and here
+					// resumes this very container through the ladder's resume rung, and
+					// destroying it underneath that run is the failure this guard exists
+					// to prevent.
+					if (this.pendingContainerStarts.has(member.project_id)) return;
+					const fresh = await loadPoolMembers(db, member.project_id);
+					const still = fresh.find((m) => m.id === member.container_id);
+					if (!still || still.state !== 'suspended' || still.hasUnpushedCommits) return;
+
+					await destroyContainer(
+						this.buildContainerDeps(),
+						member.project_id,
+						member.slug,
+						member.team_id,
+						member.container_id,
+					);
+					retired++;
+				});
+			} catch (err) {
+				log.error(
+					`Dormant container retirement failed for project ${ref(member.slug, member.project_id)}:`,
+					err,
+				);
+			}
+		}
+		if (retired > 0) {
+			log.info(
+				`Retired ${retired} dormant container(s) whose projects had been quiet for over a week`,
+			);
 		}
 	}
 

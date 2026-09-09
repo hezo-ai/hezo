@@ -2208,6 +2208,26 @@ and a fresh one be built.
   is about to reuse, and `CONTAINER_RECLAIM_MIN_AGE_SEC` so a container the instance only
   just paid a cold provision for is not retired to fund another cold provision elsewhere.
 
+- **Dormant retirement** (`retireDormantContainers`, riding the same cron one clock further
+  out). The two passes above filter on `idle`, and both are right to: a `suspended` member is
+  charged nothing, so retiring one frees nothing the budget can measure, and
+  `planSurplusIdleRetirement` deliberately *keeps* one because it is the cheapest warm start
+  the pool has - about a second through the resume rung against minutes for a clone. The
+  consequence was that the last container of a project which went quiet was held for ever, by
+  design, with nothing able to end it. What that costs is invisible from inside the budget: a
+  container is pinned to its project for life, so a dormant one is memory nobody else can
+  reach, and on a managed backend it holds **disk quota** - the constraint that actually
+  bounds the fleet there (§ Daytona), and the one `projectMemoryFitsBudget` does not model.
+  So `CONTAINER_DORMANT_RETIRE_MIN` disposes of it after a week of silence, which is long
+  enough that a project pausing for a weekend keeps its warm start and short enough that a
+  retired project stops holding provider quota indefinitely. Work that reached no durable
+  remote is excluded by the query, exactly as both planners exclude it, and so is the chat's
+  pinned member; the clock is `last_released_at`, which `idx_container_pool_members_idle`
+  already indexes. **This is the one pass that destroys rather than frees**, and it qualifies
+  under the never-sweep-the-user's-data rule because a container's contents are already
+  declared non-durable at the point an operator removes one: what goes is a clone and an
+  installed toolchain, rebuilt on demand.
+
 **The gate counts as headroom exactly what the planner would actually retire.** The dispatch
 gate admits a run on the strength of another project's reclaimable idle memory, and
 `planCrossProjectReclaim` is what has to make good on it - so `getActiveContainers` applies

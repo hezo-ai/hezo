@@ -455,6 +455,30 @@ export function splitRunLinks(text: string): RunLinkSegment[] {
 export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
 
 /**
+ * How long a **suspended** container is kept for a warm resume before it is
+ * retired outright.
+ *
+ * A third clock, and a much slower one, because it answers a third question.
+ * {@link CONTAINER_IDLE_TIMEOUT_MIN} asks "is this project between runs" and
+ * stops the container; this asks "is this project still a going concern" and
+ * disposes of it. In between, a stopped container is the cheapest warm start the
+ * pool has - about a second to resume, against minutes to clone - and it is
+ * charged nothing, so keeping it costs the instance nothing the budget measures.
+ *
+ * Long enough to be unambiguous. A week of silence from a project is not a lull
+ * between runs; whatever it does next will pay a cold start anyway, on an image
+ * and a checkout that have both moved on. Set it much shorter and it becomes a
+ * second idle timeout, throwing away warm containers a working project would have
+ * resumed on Monday.
+ *
+ * What makes the retirement worth doing at all is the cost the memory budget
+ * cannot see: a container is pinned to its project for life, so a dormant one is
+ * unreachable by anybody else, and on a managed backend it holds disk quota -
+ * which is what actually bounds how many containers the account can have.
+ */
+export const CONTAINER_DORMANT_RETIRE_MIN = 7 * 24 * 60;
+
+/**
  * The same window, for a project whose **assistant chat session is live**.
  *
  * Longer because the two are measuring different things. Between agent runs the
