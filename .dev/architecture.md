@@ -4088,12 +4088,13 @@ stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
-global `medium`. Each runtime maps it natively: `claude_code` appends
+global `high`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `antigravity`
-sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has no
-`minimal`, which maps to `low`); `opencode` writes `reasoning.effort` onto the run's model in
-its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
-directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
+passes `--effort`, folding the five-level ladder onto the `low|medium|high` it accepts; `kimi`
+sets `KIMI_MODEL_THINKING_EFFORT` (it has no `minimal`, which maps to `low`); `opencode`
+writes `reasoning.effort` onto the run's model in its per-run `opencode.json` (see below);
+`grok` steers effort through the portable prompt directive alone. It's also exposed as
+`HEZO_AGENT_EFFORT`.
 
 ### Runtime adapters
 
