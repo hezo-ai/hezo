@@ -173,7 +173,7 @@ describe.each(SCRIPTS)('agent prompt delivery (%s)', (_name, script) => {
 	});
 
 	// Pins which side of MAX_SINGLE_ARG_BYTES the kernel refuses, and so pins the
-	// `<` in `assertPromptDeliverable`: measured on Linux, an argument of exactly
+	// `<` in `assertPromptAcceptable`: measured on Linux, an argument of exactly
 	// MAX_SINGLE_ARG_BYTES fails (the cap counts the NUL terminator) and one byte
 	// less succeeds. An off-by-one here either rejects runs that would have worked
 	// or lets through the exact size that dies in the exec.

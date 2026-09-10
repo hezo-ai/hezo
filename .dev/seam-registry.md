@@ -12,6 +12,8 @@ rather than here, is how a codebase ends up with two of everything.
 | Guidance for a subset of seeded roles | `agents/_partials/<group>/` |
 | Validating an authored prompt | `checkPromptStyle` (`@hezo/shared`), plus `services/prompt-style-guard.ts` for the duplicates-`SHARED_INSTRUCTIONS` half |
 | How a CLI receives the prompt, and where its system half goes | `RUNTIME_PROMPT_DELIVERY` / `RUNTIME_SYSTEM_PROMPT_FILE` (`@hezo/shared`) |
+| What a CLI itself refuses, whatever the delivery | `RUNTIME_PROMPT_MAX_CHARS` (`@hezo/shared`), enforced by `assertPromptAcceptable` (`services/agent-runner.ts`) |
+| How much task-scoped text a run prompt may carry | `PromptBudget` / `PROMPT_SECTION_CEILINGS` (`services/prompt-budget.ts`) - one budget per prompt, spent in priority order; never a per-caller cap |
 | A container backend | `ContainerEngine` (`services/sandbox/types.ts`), always reached via `SandboxBackendHolder.engine` |
 | "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
 | An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |
@@ -42,7 +44,7 @@ rather than here, is how a codebase ends up with two of everything.
 | "What does a manual dispatch that did not start answer with?" | `DISPATCH_OUTCOMES` (`routes/queued-wakeups.ts`) server-side, `queuedDispatchMessageKey` (`packages/web/src/lib/manual-dispatch.ts`) for the sentence naming the wait - the two halves are split so the queued copy reaches the reader translated |
 | "Is this approval a run-failure notice, and how does it present?" | `isAgentErrorApproval` / `AGENT_ERROR_ROW` (`packages/web/src/lib/inbox-row-kind.ts`) - the inbox, the project dashboard and home all ask it there |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
-| Paging (lists and large content) | `mcp/paging.ts` |
+| Paging (lists and large content), and excerpting one field | `mcp/paging.ts` - `excerpt()` lives here rather than in `mcp/tools.ts`, which imports from `agent-runner` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
 | "Did the deployer fix this setting, rather than the operator?" | `pinnedSetting` / `isPinned` (`lib/system-meta.ts`), which every pinnable getter routes through - never a direct `runtimeConfig().policy` read at a call site, and never a branch on `managedBy` |

@@ -3181,15 +3181,27 @@ with its assignee and status. The downward half exists so a manager can see what
 delegated: `SHARED_INSTRUCTIONS` tells it to route fresh feedback to an in-flight sub-task
 rather than absorbing the deliverable, and without the list that rule depends on the agent
 remembering its own earlier fan-out. It also injects the **latest 3 comments** inline (the
-comment that woke the run tagged) as a head-start — small enough to carry on every run, while
-the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
-`list_comments` for the full thread before acting, since instructions posted after a task is
-created routinely change it. A comment-sourced wakeup additionally renders a handoff that
-quotes the triggering comment verbatim: `## Mention Handoff` (`mention`), `## Reply Received`
-(`reply`), or `## New Comment on Your Task` (the opt-in assignee `comment` wake, previously the
-one comment source that surfaced no reference to what triggered it). The Coach's `task_done`
-review is the one path that instead embeds the **full** comment history (both share
-`loadCommentHistory`/`renderCommentHistory`).
+comment that woke the run tagged) as a head-start, while the `SHARED_INSTRUCTIONS` "read the
+thread before you act" rule still directs the agent to `list_comments` for the full thread
+before acting, since instructions posted after a task is created routinely change it. A
+comment-sourced wakeup additionally renders a handoff quoting the triggering comment:
+`## Mention Handoff` (`mention`), `## Reply Received` (`reply`, which quotes **two** bodies —
+the reply and the comment it answers, which can be older than the head-start window reaches), or
+`## New Comment on Your Task` (the opt-in assignee `comment` wake). A body a handoff has quoted
+is back-referenced rather than repeated in the thread block. The Coach's `task_done` review takes
+a wider window of the same thread (both share `loadCommentHistory`/`renderCommentHistory`).
+
+**The task-scoped half of every run prompt is budgeted** — `PROMPT_BUDGET_CHARS` in
+`services/prompt-budget.ts`, spent in priority order through one `PromptBudget`, with a ceiling
+per section. **The ceilings shape a normal prompt; the budget exists only so the sections cannot
+sum past it**, which is the failure mode capping each field individually does not prevent — the
+total stays an arithmetic coincidence that reopens whenever a section is added, and two were.
+Every cut section states its source length and names the tool call that serves the rest
+(`get_comment`, `get_task`, `list_comments`, `list_task_runs`), so a bound is a size hint rather
+than a silent drop. `RUNTIME_PROMPT_MAX_CHARS` (`@hezo/shared`) records what a CLI itself refuses
+— Codex enforces 1 MiB client-side, on every provider — and `assertPromptAcceptable` fails the run
+by name against it. That check is a **backstop, not the bound**: with the budget in place it
+should never fire, and if it does, a section escaped the budget.
 
 ### Workspaces, worktrees & git
 
@@ -4199,7 +4211,7 @@ is ~111 KB — so `arg` only works for a runtime whose system prompt travels out
 home the CLI auto-loads, and when set the resolved system prompt is written there by the
 runtime's own MCP injector while the prompt file carries the task body alone. Kimi Code is the
 only entry (`$KIMI_CODE_HOME/AGENTS.md`, which the CLI concatenates into its system prompt with
-no size cap — it warns past 32 KB and carries on). `assertPromptDeliverable` still guards what
+no size cap — it warns past 32 KB and carries on). `assertPromptAcceptable` still guards what
 is left: an `arg`-mode prompt over the cap fails the run with an error naming the runtime, the
 size and the limit, rather than being truncated or rerouted.
 

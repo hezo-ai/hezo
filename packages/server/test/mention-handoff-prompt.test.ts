@@ -312,7 +312,7 @@ describe('mention handoff prompt (integration)', () => {
 		);
 	});
 
-	it('injects the full comment verbatim — no truncation, no code stripping', async () => {
+	it('loads the comment whole and unaltered — no code stripping, no reformatting', async () => {
 		const longBody = `Here is a proposal:\n\`\`\`\n${'payload'.repeat(100)}\n\`\`\`\nand ${'x'.repeat(700)} tail`;
 		const { triggeringTaskId, commentId } = await createTriggeringTaskWithComment(longBody);
 
@@ -323,8 +323,9 @@ describe('mention handoff prompt (integration)', () => {
 		});
 		expect(ctx).not.toBeNull();
 		const comment = ctx?.excerpt ?? '';
-		// The whole comment is present: the fenced code block survives and the long
-		// tail is not cut off at 500 chars.
+		// The loader alters nothing: the fenced code block survives and the long tail
+		// is intact. Fitting it into a prompt is the budget's job downstream, and
+		// this body is well inside `PROMPT_SECTION_CEILINGS.wakingComment`.
 		expect(comment).toContain('payload'.repeat(100));
 		expect(comment).toContain('x'.repeat(700));
 		expect(comment).toContain('```');
@@ -642,7 +643,7 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	it('loads exactly the latest N comments in chronological order (drops older ones)', async () => {
 		const total = RECENT_COMMENTS_LIMIT + 3;
 		const task = await createTaskWithNComments(total);
-		const recent = await loadCommentHistory(
+		const { comments: recent } = await loadCommentHistory(
 			db,
 			task.id,
 			masterKeyManager,
@@ -664,7 +665,7 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	it('renders the Recent Comments block with the list_comments pointer and omits older comments', async () => {
 		const total = RECENT_COMMENTS_LIMIT + 3;
 		const task = await createTaskWithNComments(total);
-		const recent = await loadCommentHistory(
+		const { comments: recent } = await loadCommentHistory(
 			db,
 			task.id,
 			masterKeyManager,
@@ -701,7 +702,7 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 
 	it('points a returning agent at what is new rather than the whole thread', async () => {
 		const task = await createTaskWithNComments(RECENT_COMMENTS_LIMIT + 3);
-		const recent = await loadCommentHistory(
+		const { comments: recent } = await loadCommentHistory(
 			db,
 			task.id,
 			masterKeyManager,
@@ -775,7 +776,7 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		expect(wakeCtx?.excerpt).toContain('no emdashes');
 		expect(wakeCtx?.commentId).toBe(commentId);
 
-		const recent = await loadCommentHistory(
+		const { comments: recent } = await loadCommentHistory(
 			db,
 			task.id,
 			masterKeyManager,
@@ -836,7 +837,7 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 			comment_id: commentId,
 		};
 		const mentionCtx = await loadMentionContext(db, architectMemberId, teamId, payload);
-		const recent = await loadCommentHistory(
+		const { comments: recent } = await loadCommentHistory(
 			db,
 			task.id,
 			masterKeyManager,

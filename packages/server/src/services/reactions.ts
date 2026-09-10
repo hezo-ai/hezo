@@ -121,20 +121,17 @@ export async function removeCommentReaction(params: MutateReactionParams): Promi
  * Loads every reaction on every comment of a task in one query, keyed by
  * comment id, so a comments-list response can include reactions without an
  * N+1.
+ *
+ * For a caller rendering a bounded window of a thread, reach for
+ * {@link loadReactionsForComments} instead: this one's cost grows with the
+ * task's whole history regardless of how few rows the caller is about to draw.
  */
 export async function loadReactionsForTask(
 	db: Db,
 	taskId: string,
 	viewerMemberId: string | null = null,
 ): Promise<Map<string, ReactionGroup[]>> {
-	const rows = await db.query<{
-		comment_id: string;
-		kind: string;
-		member_id: string;
-		slug: string | null;
-		display_name: string | null;
-		created_at: string;
-	}>(
+	const rows = await db.query<ReactionRow>(
 		`SELECT cr.comment_id, cr.kind, cr.member_id, ma.slug, m.display_name, cr.created_at
 		 FROM comment_reactions cr
 		 JOIN task_comments ic ON ic.id = cr.comment_id
@@ -144,8 +141,46 @@ export async function loadReactionsForTask(
 		 ORDER BY cr.created_at ASC`,
 		[taskId],
 	);
+	return groupReactions(rows.rows, viewerMemberId);
+}
+
+/**
+ * The same grouping for an explicit set of comments, so a caller drawing a
+ * window of a thread pays for that window rather than for the whole task.
+ */
+export async function loadReactionsForComments(
+	db: Db,
+	commentIds: string[],
+	viewerMemberId: string | null = null,
+): Promise<Map<string, ReactionGroup[]>> {
+	if (commentIds.length === 0) return new Map();
+	const rows = await db.query<ReactionRow>(
+		`SELECT cr.comment_id, cr.kind, cr.member_id, ma.slug, m.display_name, cr.created_at
+		 FROM comment_reactions cr
+		 JOIN members m ON m.id = cr.member_id
+		 LEFT JOIN member_agents ma ON ma.id = cr.member_id
+		 WHERE cr.comment_id = ANY($1::uuid[])
+		 ORDER BY cr.created_at ASC`,
+		[commentIds],
+	);
+	return groupReactions(rows.rows, viewerMemberId);
+}
+
+interface ReactionRow {
+	comment_id: string;
+	kind: string;
+	member_id: string;
+	slug: string | null;
+	display_name: string | null;
+	created_at: string;
+}
+
+function groupReactions(
+	rows: ReactionRow[],
+	viewerMemberId: string | null,
+): Map<string, ReactionGroup[]> {
 	const byComment = new Map<string, Map<string, ReactionMember[]>>();
-	for (const r of rows.rows) {
+	for (const r of rows) {
 		let groups = byComment.get(r.comment_id);
 		if (!groups) {
 			groups = new Map();

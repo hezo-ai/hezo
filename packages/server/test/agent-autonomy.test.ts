@@ -356,8 +356,7 @@ describe('agent-runner: retry context in task prompt', () => {
 			previous_failure: {
 				run_id: 'failed-run-id',
 				exit_code: 1,
-				stdout_tail: 'Running tests...\nTest suite failed',
-				stderr_tail: 'Error: Cannot find module ./auth-handler',
+				log_tail: 'Running tests...\nError: Cannot find module ./auth-handler',
 			},
 		};
 
@@ -546,7 +545,7 @@ describe('agent-runner: mention handoff prompt', () => {
 			max_retries: 2,
 			previous_failure: {
 				exit_code: 1,
-				stderr_tail: 'oops',
+				log_tail: 'oops',
 			},
 		};
 
@@ -589,10 +588,11 @@ describe('agent-runner: mention context loader', () => {
 			{ mentionContext: ctx },
 		);
 
-		// The code block is rendered verbatim (no stripping, no truncation).
+		// The code block is rendered verbatim: nothing strips or reformats it, and at
+		// 1200 chars it is well inside the waking-comment ceiling, so it is not cut.
 		expect(prompt).toContain('x'.repeat(1200));
 		expect(prompt).not.toContain('[code omitted]');
-		expect(prompt).toContain('their full comment:');
+		expect(prompt).toContain('what they wrote:');
 	});
 });
 

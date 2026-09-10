@@ -30,6 +30,7 @@ import {
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
+	RUNTIME_PROMPT_MAX_CHARS,
 	RUNTIME_PROMPT_NOTES,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
@@ -155,8 +156,15 @@ import {
 } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
+import {
+	budgetedSection,
+	omittedRowsNote,
+	overflowNote,
+	PromptBudget,
+	type PromptSection,
+} from './prompt-budget';
 import { condemnRejectedProviderCredential } from './provider-credential-health';
-import { loadReactionsForTask, type ReactionGroup } from './reactions';
+import { loadReactionsForComments, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
 import { CAPACITY_PARK_QUEUED_REASON, projectContainerMemoryGb } from './run-concurrency';
@@ -512,30 +520,53 @@ export function getPromptRelPath(heartbeatRunId: string): string {
 }
 
 /**
- * Refuse a prompt that cannot physically reach its CLI.
+ * Refuse a prompt this runtime will not accept - for either of the two reasons a
+ * prompt gets refused, which are different facts about different actors.
  *
  * An `'arg'`-delivery runtime receives the prompt as one argv element, and Linux
  * caps a single element at MAX_ARG_STRLEN. Past it the exec dies with a bare
  * `Argument list too long` from `sh`, before the CLI starts and with nothing in
- * the run log naming the cause. Fail here instead, loudly and by name - never by
- * truncating the prompt or quietly rerouting it (see AGENTS.md § One mechanism,
- * no silent fallbacks).
+ * the run log naming the cause.
+ *
+ * Separately, a CLI may publish an input ceiling of its own
+ * (RUNTIME_PROMPT_MAX_CHARS) and refuse the turn itself. That failure is quieter
+ * still: the container starts, the CLI runs, and it exits non-zero having
+ * written its reason to stderr rather than to the event stream the parser reads,
+ * so the run row records an exit code and no cause.
+ *
+ * Both fail here, loudly and by name - never by truncating the prompt or quietly
+ * rerouting it (see AGENTS.md § One mechanism, no silent fallbacks). Keeping a
+ * prompt small enough to pass is `PROMPT_BUDGET_CHARS`'s job, upstream of this.
  *
  * Called by both prompt writers (the task runner and the chat session manager);
  * `buildRuntimeInvocation` cannot host it, since it knows the prompt's path but
  * not its text.
  */
-export function assertPromptDeliverable(runtime: AgentRuntime, prompt: string): void {
-	if (RUNTIME_PROMPT_DELIVERY[runtime] !== 'arg') return;
+export function assertPromptAcceptable(runtime: AgentRuntime, prompt: string): void {
 	const bytes = Buffer.byteLength(prompt, 'utf8');
-	if (bytes < MAX_SINGLE_ARG_BYTES) return;
-	throw new Error(
-		`prompt is ${bytes} bytes, but ${AGENT_RUNTIME_LABELS[runtime]} takes it as a single ` +
-			`command-line argument, which Linux caps at ${MAX_SINGLE_ARG_BYTES} bytes ` +
-			`(MAX_ARG_STRLEN). The exec would fail with "Argument list too long" before the CLI ` +
-			`started. Shorten the task description and its recent comments, or move this agent ` +
-			`to a runtime that reads the prompt from a file or stdin.`,
-	);
+	if (RUNTIME_PROMPT_DELIVERY[runtime] === 'arg' && bytes >= MAX_SINGLE_ARG_BYTES) {
+		throw new Error(
+			`prompt is ${bytes} bytes, but ${AGENT_RUNTIME_LABELS[runtime]} takes it as a single ` +
+				`command-line argument, which Linux caps at ${MAX_SINGLE_ARG_BYTES} bytes ` +
+				`(MAX_ARG_STRLEN). The exec would fail with "Argument list too long" before the CLI ` +
+				`started. Shorten the task description and its recent comments, or move this agent ` +
+				`to a runtime that reads the prompt from a file or stdin.`,
+		);
+	}
+	const maxChars = RUNTIME_PROMPT_MAX_CHARS[runtime];
+	// Compared in bytes against a ceiling the CLI counts in characters. UTF-8
+	// bytes are never fewer than the characters they encode, so this can only
+	// refuse a prompt the CLI would have taken - never wave through one it will
+	// reject. The safe direction, and on prose the gap is a fraction of a percent.
+	if (maxChars !== null && bytes > maxChars) {
+		throw new Error(
+			`prompt is ${bytes} bytes, over the ${maxChars}-character input limit ` +
+				`${AGENT_RUNTIME_LABELS[runtime]} enforces before it starts a turn. The CLI would ` +
+				`exit non-zero with the reason on stderr and nothing on its event stream. This is a ` +
+				`backstop: the run prompt is budgeted well under this, so a prompt reaching it means ` +
+				`a section escaped PROMPT_BUDGET_CHARS.`,
+		);
+	}
 }
 
 // Basename of Kimi Code's per-session wire log, written under
@@ -1119,7 +1150,7 @@ async function buildRunContext(
 		// Every task run gets the latest few comments inline as a head-start, plus
 		// where to start reading from, so catching up has an end rather than being
 		// a walk back through everything the task has ever accumulated.
-		const recentComments = await loadCommentHistory(
+		const { comments: recentComments } = await loadCommentHistory(
 			deps.db,
 			(task as TaskInfo).id,
 			deps.masterKeyManager,
@@ -2494,7 +2525,7 @@ export async function runAgent(
 
 			// Before the write, so an undeliverable prompt fails the run by name rather
 			// than as a bare `Argument list too long` from the exec's shell.
-			assertPromptDeliverable(context.runtimeType, context.taskPrompt);
+			assertPromptAcceptable(context.runtimeType, context.taskPrompt);
 
 			// Through SandboxFiles rather than a host write: the container reads this
 			// file, so on a backend whose container is not on this machine the write
@@ -3948,8 +3979,11 @@ export async function loadMentionContext(
 	);
 	if (row.rows.length === 0) return null;
 
-	// The full comment body is injected verbatim into the handoff — no truncation,
-	// no code-fence stripping — so the agent sees exactly what was said.
+	// Loaded whole and unaltered — no code-fence stripping, nothing reformatted —
+	// so what the handoff quotes is what was actually said. How much of it the
+	// prompt can afford is the budget's call at render time, not this query's:
+	// `wakingComment` is the widest ceiling there is, because this text is the ask
+	// the run was woken for.
 	const excerpt = extractCommentText(row.rows[0].content).trim();
 
 	const tickets = await db.query<MentionOpenTicket>(
@@ -4012,12 +4046,20 @@ export async function loadAgentAttachmentsForComments(
 		content_type: string;
 		byte_size: number;
 	}>(
-		`SELECT ca.comment_id, a.id, a.original_filename, a.content_type, a.byte_size
-		 FROM comment_attachments ca
-		 JOIN assets a ON a.id = ca.asset_id
-		 WHERE ca.comment_id = ANY($1::uuid[])
-		 ORDER BY ca.created_at ASC`,
-		[commentIds],
+		// Bounded because every row costs a line of prompt AND an asset-URL signing,
+		// so an unbounded fan-out spends crypto per attachment in prompt assembly.
+		// The cap is per comment, not per page, so one heavily-attached row cannot
+		// crowd the others out of their attachments.
+		`SELECT comment_id, id, original_filename, content_type, byte_size FROM (
+		   SELECT ca.comment_id, a.id, a.original_filename, a.content_type, a.byte_size,
+		          row_number() OVER (PARTITION BY ca.comment_id ORDER BY ca.created_at ASC) AS rn
+		   FROM comment_attachments ca
+		   JOIN assets a ON a.id = ca.asset_id
+		   WHERE ca.comment_id = ANY($1::uuid[])
+		 ) ranked
+		 WHERE rn <= $2
+		 ORDER BY comment_id, rn`,
+		[commentIds, PROMPT_ATTACHMENTS_PER_COMMENT_LIMIT],
 	);
 	const out = new Map<string, AgentAttachment[]>();
 	for (const row of rows.rows) {
@@ -4056,60 +4098,82 @@ export interface RenderableComment {
 	attachments: AgentAttachment[];
 }
 
+/** A bounded window onto a task's thread, plus how many rows the filter actually matched. */
+export interface ThreadPage {
+	comments: RenderableComment[];
+	/** Rows matching the category filter, before `limit`. What the window is a window onto. */
+	total: number;
+}
+
 /**
- * Load a task's comments for injection into a run prompt. With `opts.limit` set, returns the
- * newest N comments in chronological (oldest-first) order — used for the "Recent Comments"
- * head-start block in every task run. With no limit, returns the full thread oldest-first —
- * used by the Coach review. Each row is enriched with its reactions and signed attachment
- * download URLs.
+ * Load a task's comments for injection into a run prompt: the newest `limit` rows, returned in
+ * chronological (oldest-first) order, with each row's reactions and signed attachment URLs.
+ *
+ * `limit` is required. Both callers page - the run prompt takes a head-start window and the Coach
+ * review takes a review window - because a prompt builder that reads a whole thread is a list
+ * bounded in neither row count nor row width, and a task that has accumulated a few thousand rows
+ * then costs a full table read before anything is rendered. `total` is what lets a caller say what
+ * it left behind rather than dropping it silently.
  */
 export async function loadCommentHistory(
 	db: Db,
 	taskId: string,
 	masterKeyManager: MasterKeyManager,
 	assetOrigin: string,
-	opts: { limit?: number; categories?: readonly ThreadRowCategory[] } = {},
-): Promise<RenderableComment[]> {
+	opts: { limit: number; categories?: readonly ThreadRowCategory[] },
+): Promise<ThreadPage> {
 	const { limit, categories } = opts;
 	const params: unknown[] = [taskId];
 	// Without a category filter the newest few rows on a busy task are routinely
 	// three run markers, which reads as an empty thread and sends the agent off to
 	// walk the whole history looking for the part that was actually said.
 	const category = categories ? commentCategoryPredicate('ic', categories, params) : null;
-	const limitSql = limit != null ? ` LIMIT $${params.push(limit)}` : '';
+	const limitSql = ` LIMIT $${params.push(limit)}`;
 	const rows = await db.query<{
 		id: string;
 		content_type: string;
 		content: Record<string, unknown>;
 		author_name: string;
 		created_at: string;
+		total: string;
 	}>(
 		`SELECT ic.id, ic.content_type, ic.content,
 		        COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
-		        ic.created_at::text
+		        ic.created_at::text,
+		        count(*) OVER () AS total
 		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 		 WHERE ic.task_id = $1${category ? ` AND ${category}` : ''}
-		 ORDER BY ic.created_at ${limit != null ? 'DESC' : 'ASC'}${limitSql}`,
+		 ORDER BY ic.created_at DESC${limitSql}`,
 		params,
 	);
-	// The limited query pulls the newest N (DESC); flip back to chronological for rendering.
-	const ordered = limit != null ? [...rows.rows].reverse() : rows.rows;
+	// The query pulls the newest N (DESC); flip back to chronological for rendering.
+	const ordered = [...rows.rows].reverse();
+	// Counted in the same scan rather than by a second query, so a caller that has
+	// to say what it dropped pays no extra round trip to find out.
+	const total = Number(rows.rows[0]?.total ?? 0);
 
-	const reactionsByComment = await loadReactionsForTask(db, taskId);
+	const ids = ordered.map((c) => c.id);
+	// Both are scoped to the rows actually being rendered. `loadReactionsForTask`
+	// used to fetch every reaction on the task to decorate three comments, which
+	// on a thread of a few thousand rows is most of a table read thrown away.
+	const reactionsByComment = await loadReactionsForComments(db, ids);
 	const attachmentsByComment = await loadAgentAttachmentsForComments(
 		db,
-		ordered.map((c) => c.id),
+		ids,
 		masterKeyManager,
 		assetOrigin,
 	);
 
-	return ordered.map((c) => ({
-		...c,
-		reactions: reactionsByComment.get(c.id),
-		attachments: attachmentsByComment.get(c.id) ?? [],
-	}));
+	return {
+		total,
+		comments: ordered.map((c) => ({
+			...c,
+			reactions: reactionsByComment.get(c.id),
+			attachments: attachmentsByComment.get(c.id) ?? [],
+		})),
+	};
 }
 
 /** Where an agent's catch-up read should start, and how much is waiting there. */
@@ -4167,22 +4231,47 @@ export async function loadCatchUpSinceLastRun(
 
 /**
  * Serialize loaded comments into the `[timestamp] Author (type): text` block shared by the
- * Coach review's full history and the task prompt's Recent Comments. When `wakingCommentId`
+ * Coach review's history and the task prompt's Recent Comments. When `wakingCommentId`
  * matches a row, that line is tagged so the agent can see which comment triggered the run.
+ *
+ * Each body is spent against the run's {@link PromptBudget}: a thread row is triage, so it takes
+ * the width the tool surface already chose for triage, and a cut row carries its true length and
+ * the `get_comment` call that serves the rest. Without a budget the block is a list bounded in
+ * row count and not in row width, which is how one comment could put a prompt past what its CLI
+ * would accept.
+ *
+ * A body already quoted whole by a handoff above collapses to a back-reference. It has to say
+ * where that text is: several thousand characters separate the two, and a bare id and length
+ * reads as a comment being withheld rather than one already shown.
  */
 export function renderCommentHistory(
 	comments: RenderableComment[],
-	opts: { wakingCommentId?: string } = {},
+	opts: {
+		wakingCommentId?: string;
+		budget?: PromptBudget;
+		section?: PromptSection;
+		shownAbove?: ReadonlySet<string>;
+	} = {},
 ): string {
+	const section = opts.section ?? 'recentComment';
 	return comments
 		.map((c) => {
-			const text =
-				c.content_type === 'text' ? extractCommentText(c.content) : JSON.stringify(c.content);
 			const tag =
 				opts.wakingCommentId && c.id === opts.wakingCommentId
 					? '  ← the comment that woke you'
 					: '';
-			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}${tag}`;
+			const head = `[${c.created_at}] ${c.author_name} (${c.content_type})`;
+			if (opts.shownAbove?.has(c.id)) {
+				return `${head}: _[quoted in full above]_${tag}`;
+			}
+			const raw =
+				c.content_type === 'text' ? extractCommentText(c.content) : JSON.stringify(c.content);
+			const cut = opts.budget?.take(section, raw);
+			const text = cut ? cut.text : raw;
+			const overflow = cut?.truncated
+				? `\n  ${overflowNote(cut.text.length, cut.length, `get_comment(comment_id: "${c.id}")`)}`
+				: '';
+			const base = `${head}: ${text}${tag}${overflow}`;
 			const reactionLine = formatReactionLine(c.reactions);
 			const attachmentLines = c.attachments.map(
 				(a) =>
@@ -4242,6 +4331,26 @@ export interface BuildTaskPromptContext {
 
 /** How many of a task's most recent comments to inline in every run prompt as a head-start. */
 export const RECENT_COMMENTS_LIMIT = 3;
+
+/**
+ * How much of a completed task's thread the Coach's review carries inline.
+ *
+ * The review reads the thread for where agents struggled, so it wants more of it
+ * than a head-start block does - but it is still a window, and the prompt names
+ * `list_comments` for the rest. Sized so a full window of rows at
+ * `PROMPT_SECTION_CEILINGS.reviewComment` cannot on its own exhaust the budget,
+ * leaving room for the description and run log beside it.
+ */
+export const COACH_REVIEW_COMMENTS_LIMIT = 20;
+
+/** Runs listed in the Coach's Agent Runs block; `list_task_runs` serves the rest. */
+export const COACH_REVIEW_RUNS_LIMIT = 20;
+
+/**
+ * Attachments rendered per comment. A prompt line each, and a signed URL each,
+ * so this bounds both the text and the signing work.
+ */
+export const PROMPT_ATTACHMENTS_PER_COMMENT_LIMIT = 10;
 
 /** One due goal handed to the Captain in a progress-update run. */
 export interface ProgressUpdateGoal {
@@ -4415,15 +4524,29 @@ export function buildTaskPrompt(
 	const openSubTasks = ctx.openSubTasks ?? [];
 	const parts = systemPromptParts(systemPrompt);
 
+	// Spent in the order the run reads: what woke it, then the task's own brief,
+	// then the head-start thread. A section takes the lesser of its ceiling and
+	// what is left, so the assembled task half is bounded whatever any one field
+	// holds - the property that per-field caps alone never gave.
+	const budget = new PromptBudget();
+	// Bodies a handoff quotes whole, so the thread block below back-references them
+	// instead of rendering the same text a second time. A reply wake puts TWO in
+	// here: the reply and the comment it answers.
+	const quotedAbove = new Set<string>();
+
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
-		parts.push(...renderReplyHandoff(task, replyContext));
+		parts.push(...renderReplyHandoff(task, replyContext, budget));
+		quotedAbove.add(replyContext.replyCommentId);
+		quotedAbove.add(replyContext.originalCommentId);
 	} else if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
-		parts.push(...renderMentionHandoff(task, mentionContext));
+		parts.push(...renderMentionHandoff(task, mentionContext, budget));
+		quotedAbove.add(mentionContext.triggeringCommentId);
 	} else if (commentWakeContext && wakeupPayload?.source === WakeupSource.Comment) {
-		parts.push(...renderCommentWakeHandoff(task, commentWakeContext));
+		parts.push(...renderCommentWakeHandoff(task, commentWakeContext, budget));
+		quotedAbove.add(commentWakeContext.commentId);
 	}
 
-	parts.push(`## Current Task: ${task.identifier} — ${task.title}`);
+	parts.push(`## Current Task: ${task.identifier} — ${budget.take('taskTitle', task.title).text}`);
 	parts.push(`**Priority:** ${task.priority}`);
 	parts.push(`**Status:** ${task.status}`);
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
@@ -4440,30 +4563,44 @@ export function buildTaskPrompt(
 	}
 	parts.push('');
 
+	const taskRead = `get_task(task_id: "${task.identifier}")`;
 	if (task.rules) {
 		parts.push('### Rules for this task');
-		parts.push(task.rules);
+		parts.push(...budgetedSection(budget.take('taskRules', task.rules), taskRead));
 		parts.push('');
 	}
 
 	parts.push('### Description');
-	parts.push(task.description || 'No description provided.');
+	parts.push(
+		...budgetedSection(budget.take('taskDescription', task.description), taskRead, [
+			'No description provided.',
+		]),
+	);
 
 	if (task.progress_summary) {
 		parts.push('');
 		parts.push('### Progress Summary');
-		parts.push(task.progress_summary);
+		parts.push(
+			...budgetedSection(budget.take('taskProgressSummary', task.progress_summary), taskRead),
+		);
 	}
 
 	if (recentComments && recentComments.length > 0) {
 		parts.push('');
 		parts.push(`### Recent Comments (latest ${RECENT_COMMENTS_LIMIT})`);
-		parts.push(renderCommentHistory(recentComments, { wakingCommentId: ctx.wakingCommentId }));
+		parts.push(
+			renderCommentHistory(recentComments, {
+				wakingCommentId: ctx.wakingCommentId,
+				budget,
+				section: 'recentComment',
+				shownAbove: quotedAbove,
+			}),
+		);
 		parts.push('');
 		parts.push(
 			ctx.catchUp
-				? `These are only the most recent comments, and they are shown here in full. Before you start, catch up on the rest with \`list_comments(task_id: "${task.identifier}", since: "${ctx.catchUp.since}")\` — see "Since your last run" below. Note \`list_comments\` excerpts long comments: a row with \`text_truncated: true\` is showing only the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`
-				: 'These are only the most recent comments, and they are shown here in full. Before you start, call `list_comments` to read the thread — earlier comments may carry instructions that change this task. Note `list_comments` excerpts long comments: a row with `text_truncated: true` is showing only the first `excerpt_chars` of its body in `content.text`, so read that comment with `get_comment` before acting on it rather than assuming the excerpt is the whole thing.',
+				? `These are only the most recent comments, and a long one is shown here as its opening only — the line under it gives the body's full length and the \`get_comment\` call that serves the rest. Before you start, catch up on the others with \`list_comments(task_id: "${task.identifier}", since: "${ctx.catchUp.since}")\` — see "Since your last run" below. \`list_comments\` excerpts the same way: a row with \`text_truncated: true\` is showing only the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`
+				: `These are only the most recent comments, and a long one is shown here as its opening only — the line under it gives the body's full length and the \`get_comment\` call that serves the rest. Before you start, call \`list_comments\` to read the thread — earlier comments may carry instructions that change this task. \`list_comments\` excerpts the same way: a row with \`text_truncated: true\` is showing only the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`,
 		);
 	}
 
@@ -4490,8 +4627,14 @@ export function buildTaskPrompt(
 			const signal = typeof pf.exit_code === 'number' ? signalFromExitCode(pf.exit_code) : null;
 			parts.push(`**Exit code:** ${pf.exit_code}${signal ? ` (killed by ${signal.name})` : ''}`);
 		}
-		if (pf.stderr_tail) parts.push(`**Error output:**\n\`\`\`\n${pf.stderr_tail}\n\`\`\``);
-		if (pf.stdout_tail) parts.push(`**Last output:**\n\`\`\`\n${pf.stdout_tail}\n\`\`\``);
+		// `log_tail` is the field the retry payload actually carries
+		// (`orphan-detector.ts`), already bounded where it is written. This block
+		// used to read `stderr_tail`/`stdout_tail`, which nothing has ever written -
+		// so a retry prompt told the agent to analyse an error and then showed it
+		// nothing, while the tail that was there went unread.
+		if (typeof pf.log_tail === 'string' && pf.log_tail.length > 0) {
+			parts.push(`**Output from the failed attempt:**\n\`\`\`\n${pf.log_tail}\n\`\`\``);
+		}
 	}
 
 	parts.push('');
@@ -4500,18 +4643,44 @@ export function buildTaskPrompt(
 	return parts.join('\n');
 }
 
-function renderCommentWakeHandoff(task: TaskInfo, ctx: CommentWakeContext): string[] {
-	const excerptBlock = ctx.excerpt
-		? ctx.excerpt
-				.split('\n')
-				.map((line) => `> ${line}`)
-				.join('\n')
-		: '> (empty)';
+/**
+ * Quote one comment into a handoff, spending it against the run's budget.
+ *
+ * The comment id is rendered whether or not the quote was cut, because it is the
+ * only handle the agent has on the comment: without it the `get_comment` the
+ * overflow line names is a call it cannot make, and a cut quote becomes a dead
+ * end rather than a size hint.
+ */
+function quoteCommentForHandoff(
+	budget: PromptBudget,
+	section: PromptSection,
+	text: string,
+	commentId: string,
+): string[] {
+	const cut = budget.take(section, text);
+	const block =
+		cut.text.length > 0
+			? cut.text
+					.split('\n')
+					.map((line) => `> ${line}`)
+					.join('\n')
+			: '> (empty)';
+	const call = `get_comment(comment_id: "${commentId}")`;
+	return cut.truncated
+		? [block, '', overflowNote(cut.text.length, cut.length, call)]
+		: [block, '', `_(comment id \`${commentId}\`)_`];
+}
+
+function renderCommentWakeHandoff(
+	task: TaskInfo,
+	ctx: CommentWakeContext,
+	budget: PromptBudget,
+): string[] {
 	return [
 		'## New Comment on Your Task',
-		`${ctx.authorName} commented on ${task.identifier}, which woke this run — their full comment:`,
+		`${ctx.authorName} commented on ${task.identifier}, which woke this run — what they wrote:`,
 		'',
-		excerptBlock,
+		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.commentId),
 		'',
 		'Read it carefully: it may add or change the instructions for this task. Then review the rest of the thread (see Recent Comments below, and `list_comments` for the full history) before you act.',
 		'',
@@ -4520,24 +4689,18 @@ function renderCommentWakeHandoff(task: TaskInfo, ctx: CommentWakeContext): stri
 	];
 }
 
-function renderMentionHandoff(task: TaskInfo, ctx: MentionContext): string[] {
+function renderMentionHandoff(task: TaskInfo, ctx: MentionContext, budget: PromptBudget): string[] {
 	const ticketList =
 		ctx.openTickets.length === 0
 			? 'none'
 			: ctx.openTickets
 					.map((t) => `- ${t.identifier} — ${t.title} (${t.status}, ${t.priority})`)
 					.join('\n');
-	const excerptBlock = ctx.excerpt
-		? ctx.excerpt
-				.split('\n')
-				.map((line) => `> ${line}`)
-				.join('\n')
-		: '> (empty)';
 	return [
 		'## Mention Handoff',
-		`You were mentioned by ${ctx.authorName} in ${task.identifier} — their full comment:`,
+		`You were mentioned by ${ctx.authorName} in ${task.identifier} — what they wrote:`,
 		'',
-		excerptBlock,
+		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.triggeringCommentId),
 		'',
 		'### Your open tasks',
 		ticketList,
@@ -4556,6 +4719,15 @@ export interface ReplyContext {
 	responderSlug: string | null;
 	replyExcerpt: string;
 	originalExcerpt: string;
+	/** The reply itself. */
+	replyCommentId: string;
+	/**
+	 * The comment being replied to. Carried for two reasons that need the same
+	 * field: it is the `get_comment` handle when the quote is cut, and it is not
+	 * the waking comment, so a thread block that dedupes only against the wake
+	 * would render this one twice - once here in full and once in the history.
+	 */
+	originalCommentId: string;
 	referencedTasks: Array<{ identifier: string; title: string; status: string }>;
 }
 
@@ -4616,23 +4788,13 @@ export async function loadReplyContext(
 		responderSlug: reply.rows[0].author_slug,
 		replyExcerpt: replyText.trim(),
 		originalExcerpt: originalText.trim(),
+		replyCommentId,
+		originalCommentId: triggeringCommentId,
 		referencedTasks,
 	};
 }
 
-function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext): string[] {
-	const replyBlock = ctx.replyExcerpt
-		? ctx.replyExcerpt
-				.split('\n')
-				.map((line) => `> ${line}`)
-				.join('\n')
-		: '> (empty)';
-	const originalBlock = ctx.originalExcerpt
-		? ctx.originalExcerpt
-				.split('\n')
-				.map((line) => `> ${line}`)
-				.join('\n')
-		: '> (empty)';
+function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext, budget: PromptBudget): string[] {
 	const referenced =
 		ctx.referencedTasks.length === 0
 			? 'none'
@@ -4640,14 +4802,30 @@ function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext): string[] {
 	const responderLabel = ctx.responderSlug
 		? `${ctx.responderName} (@${ctx.responderSlug})`
 		: ctx.responderName;
+	// The reply is spent first: it is what woke this run and what the run has to
+	// act on. The original is context for reading it, and takes the narrower
+	// ceiling - it can also be an old comment the thread block below never reaches,
+	// which is why it is quoted here at all.
+	const replyLines = quoteCommentForHandoff(
+		budget,
+		'wakingComment',
+		ctx.replyExcerpt,
+		ctx.replyCommentId,
+	);
+	const originalLines = quoteCommentForHandoff(
+		budget,
+		'replyOriginal',
+		ctx.originalExcerpt,
+		ctx.originalCommentId,
+	);
 	return [
 		'## Reply Received',
 		`${responderLabel} replied on ${task.identifier} to a comment of yours. Your original comment:`,
 		'',
-		originalBlock,
+		...originalLines,
 		'',
 		'### Their reply',
-		replyBlock,
+		...replyLines,
 		'',
 		'### Tasks referenced by the reply',
 		referenced,
@@ -4757,24 +4935,33 @@ async function loadRunSummaries(db: Db, taskId: string, teamId: string): Promise
 		log_length: number;
 		agent_title: string | null;
 		agent_slug: string | null;
+		total: string;
 	}>(
 		`SELECT hr.id, hr.status, hr.exit_code, hr.started_at,
 		        ${runLogLengthSql('hr.id')} AS log_length,
-		        ma.title AS agent_title, ma.slug AS agent_slug
+		        ma.title AS agent_title, ma.slug AS agent_slug,
+		        count(*) OVER () AS total
 		 FROM heartbeat_runs hr
 		 LEFT JOIN member_agents ma ON ma.id = hr.member_id
 		 WHERE hr.task_id = $1 AND hr.team_id = $2
-		 ORDER BY hr.started_at ASC`,
-		[taskId, teamId],
+		 ORDER BY hr.started_at DESC
+		 LIMIT $3`,
+		[taskId, teamId, COACH_REVIEW_RUNS_LIMIT],
 	);
-	return r.rows
-		.map((run) => {
-			const agent = run.agent_title ? `${run.agent_title} (${run.agent_slug})` : 'unknown agent';
-			const exit = run.exit_code === null ? '—' : String(run.exit_code);
-			const started = run.started_at ?? '—';
-			return `- ${agent} — status ${run.status}, exit ${exit}, started ${started}, log ${run.log_length} chars (run ${run.id})`;
-		})
-		.join('\n');
+	// The window count rides the same scan, so the overflow line costs no second query.
+	const total = Number(r.rows[0]?.total ?? 0);
+	const lines = [...r.rows].reverse().map((run) => {
+		const agent = run.agent_title ? `${run.agent_title} (${run.agent_slug})` : 'unknown agent';
+		const exit = run.exit_code === null ? '—' : String(run.exit_code);
+		const started = run.started_at ?? '—';
+		return `- ${agent} — status ${run.status}, exit ${exit}, started ${started}, log ${run.log_length} chars (run ${run.id})`;
+	});
+	if (total > r.rows.length) {
+		lines.unshift(
+			omittedRowsNote(r.rows.length, total, `list_task_runs(task_id: "${taskId}")`) + '\n',
+		);
+	}
+	return lines.join('\n');
 }
 
 export async function buildCoachReviewPrompt(
@@ -4785,10 +4972,13 @@ export async function buildCoachReviewPrompt(
 	masterKeyManager: MasterKeyManager,
 	assetOrigin: string,
 ): Promise<string> {
-	// The whole thread goes into this prompt server-side, so it never meets the
-	// tool-result cap. Run markers are dropped because `loadRunSummaries` below
-	// reports the same executions with their outcome attached.
-	const comments = await loadCommentHistory(db, task.id, masterKeyManager, assetOrigin, {
+	// A window, not the thread. This prompt never meets the tool-result cap, which
+	// is exactly why it needs a bound of its own: the two paths that reached a CLI's
+	// input ceiling in production were both this one, on tasks whose thread was
+	// larger than any prompt a runtime would take. Run markers are dropped because
+	// `loadRunSummaries` below reports the same executions with their outcome.
+	const thread = await loadCommentHistory(db, task.id, masterKeyManager, assetOrigin, {
+		limit: COACH_REVIEW_COMMENTS_LIMIT,
 		categories: DEFAULT_THREAD_ROW_CATEGORIES,
 	});
 	const runLog = await loadRunSummaries(db, task.id, teamId);
@@ -4807,7 +4997,25 @@ export async function buildCoachReviewPrompt(
 		[teamId, task.id],
 	);
 
-	const commentLog = renderCommentHistory(comments);
+	// Spent thread-first: the review's question is what happened on this task, and
+	// the thread is the evidence for it. The description is the brief, which the
+	// thread is usually restating anyway.
+	const budget = new PromptBudget();
+	const commentLog = renderCommentHistory(thread.comments, {
+		budget,
+		section: 'reviewComment',
+	});
+	const omitted =
+		thread.total > thread.comments.length
+			? omittedRowsNote(
+					thread.comments.length,
+					thread.total,
+					`list_comments(task_id: "${task.identifier}")`,
+				)
+			: null;
+	const description = budget.take('taskDescription', task.description);
+	const rules = budget.take('taskRules', task.rules);
+	const progress = budget.take('taskProgressSummary', task.progress_summary);
 
 	const agentList = involvedAgents.rows
 		.map((a) => `- ${a.title} (slug: ${a.slug}, id: ${a.id})`)
@@ -4820,14 +5028,25 @@ export async function buildCoachReviewPrompt(
 		`**Priority:** ${task.priority}`,
 		'',
 		'### Description',
-		task.description || 'No description provided.',
+		...budgetedSection(description, `get_task(task_id: "${task.identifier}")`, [
+			'No description provided.',
+		]),
 		'',
-		...(task.rules ? ['### Rules', task.rules, ''] : []),
-		...(task.progress_summary ? ['### Progress Summary', task.progress_summary, ''] : []),
+		...(task.rules
+			? ['### Rules', ...budgetedSection(rules, `get_task(task_id: "${task.identifier}")`), '']
+			: []),
+		...(task.progress_summary
+			? [
+					'### Progress Summary',
+					...budgetedSection(progress, `get_task(task_id: "${task.identifier}")`),
+					'',
+				]
+			: []),
 		'### Agents Involved',
 		agentList || 'No agents identified.',
 		'',
 		'### Comment History',
+		...(omitted ? [omitted, ''] : []),
 		commentLog || 'No comments on this task.',
 		'',
 		...(runLog ? ['### Agent Runs', runLog, ''] : []),
