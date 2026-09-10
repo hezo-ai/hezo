@@ -1,11 +1,16 @@
-import { INJECTED_TEXT_CAPS } from '@hezo/shared';
+import { AgentRuntime, INJECTED_TEXT_CAPS, RUNTIME_PROMPT_MAX_CHARS } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { getToolDefs } from '../src/mcp/server';
-import { buildCoachReviewPrompt, type TaskInfo } from '../src/services/agent-runner';
+import {
+	assertPromptAcceptable,
+	buildCoachReviewPrompt,
+	COACH_REVIEW_COMMENTS_LIMIT,
+	type TaskInfo,
+} from '../src/services/agent-runner';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -283,6 +288,52 @@ describe('Coach review prompt builder', () => {
 		);
 		expect(prompt).toContain('attachment: crash.log');
 		expect(prompt).toContain(`download: http://127.0.0.1:47081/api/assets/${assetId}?exp=`);
+	});
+
+	// The Coach review is where this actually broke in production: two of the four
+	// runs that ever hit a CLI's input ceiling were `task_done` reviews, on threads
+	// larger than any prompt a runtime accepts. This path used to load the whole
+	// thread with no limit, so its cost was the task's entire history.
+	it('bounds a thread far larger than any runtime would accept, and says what it left out', async () => {
+		const taskRow = await db.query<TaskInfo>(
+			`SELECT id, identifier, title, description, status::text AS status,
+			        priority::text AS priority, project_id, rules, progress_summary,
+			        parent_task_id, created_by_run_id
+			 FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+
+		// Shaped like the real one: a long thread carrying several half-megabyte
+		// bodies. Whole, this is several times the tightest runtime ceiling.
+		const rows = COACH_REVIEW_COMMENTS_LIMIT + 12;
+		for (let i = 0; i < rows; i++) {
+			await db.query(
+				`INSERT INTO task_comments (task_id, content_type, content)
+				 VALUES ($1, 'text'::comment_content_type, $2::jsonb)`,
+				[taskId, JSON.stringify({ text: `body ${i} ${'Z'.repeat(500_000)}` })],
+			);
+		}
+
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYS',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
+
+		const codexCap = RUNTIME_PROMPT_MAX_CHARS[AgentRuntime.Codex] as number;
+		expect(prompt.length).toBeLessThan(codexCap);
+		expect(() => assertPromptAcceptable(AgentRuntime.Codex, prompt)).not.toThrow();
+		// Rows dropped and bodies cut both name their recovery, so the Coach can
+		// reach anything the window left behind.
+		expect(prompt).toContain('list_comments(task_id:');
+		expect(prompt).toContain('get_comment(comment_id:');
+		expect(prompt).toMatch(/of 5000\d\d characters - read the rest with/);
+		// The newest rows are the ones kept - a review reads back from the end.
+		expect(prompt).toContain(`body ${rows - 1}`);
+		expect(prompt).not.toContain(`body 0 `);
 	});
 
 	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {

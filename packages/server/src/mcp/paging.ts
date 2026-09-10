@@ -302,3 +302,54 @@ export function fitSerializedWindow<T>(opts: {
 	}
 	return result;
 }
+
+export interface Excerpt {
+	excerpt: string | null;
+	truncated: boolean;
+	length: number;
+}
+
+/**
+ * How much of the budget a boundary must preserve to be worth cutting at.
+ * Below this the boundary is ignored and the excerpt runs to the full budget,
+ * so a tidy cut never costs more than half the text the caller asked for.
+ */
+const EXCERPT_BOUNDARY_FLOOR = 0.5;
+
+/** Index of the last paragraph break in `s`, or -1 when there is none. */
+function lastParagraphBreak(s: string): number {
+	const re = /\n[ \t]*\n/g;
+	let idx = -1;
+	for (let m = re.exec(s); m !== null; m = re.exec(s)) idx = m.index;
+	return idx;
+}
+
+/**
+ * Excerpt the leading `maxChars` of `text`, cut at a paragraph break where one
+ * is available and at a word boundary otherwise.
+ *
+ * `maxChars` is the budget to fill, NOT a ceiling applied after some other rule.
+ * An earlier version cut at the FIRST paragraph break and only then applied
+ * `maxChars` (it even sliced `firstPara` rather than `text`, so it could never
+ * look past that break), which meant a 9400-character comment whose opening
+ * line was followed by a blank line came back as 73 characters - grammatically
+ * complete prose that read as a finished short comment rather than an excerpt,
+ * and was acted on as one: an agent concluded a review had never been submitted
+ * and asked for it to be redone. A boundary is now preferred only when it keeps
+ * most of the budget; otherwise the excerpt runs to the budget.
+ *
+ * Returns `null` excerpt for null input.
+ */
+export function excerpt(text: string | null | undefined, maxChars: number): Excerpt {
+	if (text == null) return { excerpt: null, truncated: false, length: 0 };
+	const length = text.length;
+	if (length === 0) return { excerpt: '', truncated: false, length: 0 };
+	if (length <= maxChars) return { excerpt: text, truncated: false, length };
+	const slice = text.slice(0, maxChars);
+	const floor = maxChars * EXCERPT_BOUNDARY_FLOOR;
+	const para = lastParagraphBreak(slice);
+	if (para > floor) return { excerpt: slice.slice(0, para), truncated: true, length };
+	const lastSpace = slice.lastIndexOf(' ');
+	const cut = lastSpace > floor ? slice.slice(0, lastSpace) : slice;
+	return { excerpt: cut, truncated: true, length };
+}

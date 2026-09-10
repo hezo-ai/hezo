@@ -282,8 +282,17 @@ for the rules the Coach adds over time. When that room does run out, the Coach c
 rules it has added rather than dropping the lesson, and it never touches the role's own
 instructions above them.
 
-Your task **descriptions** and **rules** are not capped. They aren't injected the same way, and long
-ones are shortened only where they appear in list views, never when they're stored.
+Your task **descriptions** and **rules** are not capped. Write them as long as the work needs: they
+are stored whole, and nothing refuses the write.
+
+What is bounded is how much of them an agent is *handed* at once. A run prompt carries the opening of
+a long description, a long set of rules and the most recent comments, and says how much more there is
+and which tool serves the rest - the same way a list view shortens them. Nothing is lost, and an
+agent that needs the whole thing reads it with `get_task`, a page at a time if it is very long.
+
+That bound is the difference between a task an agent can pick up and one whose runs fail. Every
+coding CLI refuses a prompt past some size, and a thread that has grown for weeks will reach it -
+so the prompt carries a working window rather than everything, and the agent pages for the rest.
 
 ## Custom Prompt
 

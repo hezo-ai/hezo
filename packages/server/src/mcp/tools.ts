@@ -185,6 +185,7 @@ import { ProjectProgressError, updateProjectProgress } from '../services/project
 import { authoredPromptError, authoredPromptWarning } from '../services/prompt-style-guard';
 import {
 	addCommentReaction,
+	loadReactionsForComments,
 	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
@@ -224,6 +225,8 @@ import {
 	type ContentWindow,
 	DEFAULT_LIST_LIMIT,
 	decodeCursor,
+	type Excerpt,
+	excerpt,
 	fitSerializedWindow,
 	type KeysetRow,
 	keysetOrderBy,
@@ -848,57 +851,6 @@ function isRasterImageMime(mime: string): boolean {
 	return mime.startsWith('image/') && !isTextAssetMime(mime);
 }
 
-export interface Excerpt {
-	excerpt: string | null;
-	truncated: boolean;
-	length: number;
-}
-
-/**
- * How much of the budget a boundary must preserve to be worth cutting at.
- * Below this the boundary is ignored and the excerpt runs to the full budget,
- * so a tidy cut never costs more than half the text the caller asked for.
- */
-const EXCERPT_BOUNDARY_FLOOR = 0.5;
-
-/** Index of the last paragraph break in `s`, or -1 when there is none. */
-function lastParagraphBreak(s: string): number {
-	const re = /\n[ \t]*\n/g;
-	let idx = -1;
-	for (let m = re.exec(s); m !== null; m = re.exec(s)) idx = m.index;
-	return idx;
-}
-
-/**
- * Excerpt the leading `maxChars` of `text`, cut at a paragraph break where one
- * is available and at a word boundary otherwise.
- *
- * `maxChars` is the budget to fill, NOT a ceiling applied after some other rule.
- * An earlier version cut at the FIRST paragraph break and only then applied
- * `maxChars` (it even sliced `firstPara` rather than `text`, so it could never
- * look past that break), which meant a 9400-character comment whose opening
- * line was followed by a blank line came back as 73 characters - grammatically
- * complete prose that read as a finished short comment rather than an excerpt,
- * and was acted on as one: an agent concluded a review had never been submitted
- * and asked for it to be redone. A boundary is now preferred only when it keeps
- * most of the budget; otherwise the excerpt runs to the budget.
- *
- * Returns `null` excerpt for null input.
- */
-export function excerpt(text: string | null | undefined, maxChars: number): Excerpt {
-	if (text == null) return { excerpt: null, truncated: false, length: 0 };
-	const length = text.length;
-	if (length === 0) return { excerpt: '', truncated: false, length: 0 };
-	if (length <= maxChars) return { excerpt: text, truncated: false, length };
-	const slice = text.slice(0, maxChars);
-	const floor = maxChars * EXCERPT_BOUNDARY_FLOOR;
-	const para = lastParagraphBreak(slice);
-	if (para > floor) return { excerpt: slice.slice(0, para), truncated: true, length };
-	const lastSpace = slice.lastIndexOf(' ');
-	const cut = lastSpace > floor ? slice.slice(0, lastSpace) : slice;
-	return { excerpt: cut, truncated: true, length };
-}
-
 /**
  * Spread an Excerpt into a row under `<field>_excerpt`/`_truncated`/`_length`.
  */
@@ -1465,10 +1417,26 @@ export function registerTools(
 	tool(
 		server,
 		'get_task',
-		"Get task details, including the task's declared blockers (upstream - what this task is waiting on) and dependents (downstream - tasks that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this task is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tasks will be auto-unblocked when this task is marked terminal - you do not need to @-mention them, the auto-wake handles it.",
+		"Get task details, including the task's declared blockers (upstream - what this task is waiting on) and dependents (downstream - tasks that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this task is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tasks will be auto-unblocked when this task is marked terminal - you do not need to @-mention them, the auto-wake handles it. This is the single-item read that serves a task's whole `description`, which list_tasks and your run prompt both show as an excerpt. A description too large for one read comes back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null.",
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
+			offset: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'Byte offset to start reading `description` from (default 0). To page a description too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of `description` to return in this window (default and ceiling is the read budget, so a normal-size description comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
@@ -1496,11 +1464,31 @@ export function registerTools(
 				 ORDER BY d.created_at ASC`,
 				[taskId],
 			);
-			return {
+			const base = {
 				...(task as Record<string, unknown>),
 				blockers: blockers.rows,
 				dependents: dependents.rows,
 			};
+			const description = task.description;
+			if (typeof description !== 'string') return base;
+			// Windowed for the same reason get_comment's body is: a description has no
+			// length ceiling - it is human-authored and refusing the write would be
+			// hostile - so the surfaces that show it excerpt it, and this is the read
+			// they point at. Without a window that pointer is false past the result
+			// cap, which is the one thing an overflow line must never be.
+			return windowContent({
+				text: description,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Description is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_task again with offset: ${end}; repeat until next_offset is null.`,
+				// `w` spreads before `description` so the window's own `content` field
+				// cannot shadow the task's columns; the body lands back on `description`,
+				// the field every other surface reads it from.
+				build: (w: ContentWindow) => ({ ...base, ...w, description: w.content }),
+			});
 		},
 		db,
 	);
@@ -3155,11 +3143,9 @@ export function registerTools(
 			const row = r.rows[0];
 			const commentId = row.id as string;
 			const viewerMemberId = await resolveReactorMemberId(db, auth, scope.teamId);
-			const reactionsByComment = await loadReactionsForTask(
-				db,
-				row.task_id as string,
-				viewerMemberId,
-			);
+			// Scoped to the one comment being read, not its whole task: a single-item
+			// read should not cost a scan of every reaction on a thread.
+			const reactionsByComment = await loadReactionsForComments(db, [commentId], viewerMemberId);
 			const attachmentsByComment = await loadAgentAttachmentsForComments(
 				db,
 				[commentId],

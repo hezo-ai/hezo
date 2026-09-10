@@ -1002,10 +1002,13 @@ describe('buildTaskPrompt — retry block', () => {
 		const prompt = buildTaskPrompt('SYS', makeTask(), {
 			retry_count: 2,
 			max_retries: 3,
+			// The shape `orphan-detector` actually writes. This used to seed
+			// `stderr_tail`/`stdout_tail`, which no writer has ever produced, so the
+			// assertions passed against a payload production never sends.
 			previous_failure: {
+				run_id: 'failed-run-id',
 				exit_code: 1,
-				stderr_tail: 'TypeError: boom',
-				stdout_tail: 'partial output',
+				log_tail: 'TypeError: boom\npartial output',
 			},
 		});
 		expect(prompt).toContain('## Retry Attempt 2/3');

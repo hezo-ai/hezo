@@ -611,9 +611,9 @@ describe('prompt builders (direct)', () => {
 		expect(prompt).toContain('(nothing yet)');
 	});
 
-	it('buildTaskPrompt renders the retry block with exit code and output tails', () => {
+	it('buildTaskPrompt renders the retry block with exit code and the failed run log tail', () => {
 		const prompt = buildTaskPrompt('SYS', makeTask(), {
-			previous_failure: { exit_code: 3, stderr_tail: 'boom', stdout_tail: 'last words' },
+			previous_failure: { exit_code: 3, log_tail: 'boom\nlast words' },
 			retry_count: 2,
 			max_retries: 5,
 		});
@@ -623,9 +623,19 @@ describe('prompt builders (direct)', () => {
 		expect(prompt).toContain('last words');
 	});
 
+	it('buildTaskPrompt renders no output block when the retry payload carries no log tail', () => {
+		const prompt = buildTaskPrompt('SYS', makeTask(), {
+			previous_failure: { exit_code: 3, log_tail: null },
+			retry_count: 2,
+			max_retries: 5,
+		});
+		expect(prompt).toContain('## Retry Attempt 2/5');
+		expect(prompt).not.toContain('Output from the failed attempt');
+	});
+
 	it('buildTaskPrompt omits the exit-code line for a null exit code and falls back on an empty description', () => {
 		const prompt = buildTaskPrompt('SYS', makeTask({ description: '' }), {
-			previous_failure: { exit_code: null, stderr_tail: 'err only' },
+			previous_failure: { exit_code: null, log_tail: 'err only' },
 			retry_count: 1,
 			max_retries: 3,
 		});
@@ -673,6 +683,8 @@ describe('prompt builders (direct)', () => {
 					responderSlug: null,
 					replyExcerpt: '',
 					originalExcerpt: '',
+					replyCommentId: 'cmt-reply',
+					originalCommentId: 'cmt-orig',
 					referencedTasks: [],
 				},
 			},
