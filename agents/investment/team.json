@@ -68,6 +68,10 @@
 	],
 	"changelog": [
 		{
+			"version": 24,
+			"notes": "Catalyst Monitor and Report Writer now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
+		},
+		{
 			"version": 23,
 			"notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
 		},
@@ -218,7 +222,7 @@
 			"role_description": "Sweeps filings, news, and the trade press daily, keeps the stock documents current, and notifies the admin of material events.",
 			"summary": "The Catalyst Monitor runs the standing daily watch: sweeping each watched stock's regulatory filings, news, and industry trade press, keeping each stock document current with targeted edits, and notifying the admin of material events. As the team's earliest detection point, they flag stale progress metrics and material dilutive events to the Equity Analyst. They report to the Captain.",
 			"team_context": "You report to the @captain. You run the standing daily watch task: sweep each watched stock's three channels (the listing jurisdiction's filings, news and press releases, and the industry trade press), make targeted edits to the stock documents in the assets library with dated changelogs, and @admin material events - selectively. Flag stale progress metrics and material dilutive events to the @equity-analyst; you are the team's earliest detection point. Keep the watch task open. Research and analysis only.",
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 1440,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,
@@ -262,7 +266,7 @@
 			"role_description": "Produces the periodic portfolio and watchlist reviews, maintains the portfolio document and per-stock summary reports, and hands all output to the Captain for review.",
 			"summary": "The Report Writer produces the periodic portfolio and watchlist review, maintains the portfolio overview document, and keeps a one-page summary report per stock in the assets library. Every figure is cross-referenced against its live source document at writing time, and all output passes through the Captain's review before reaching the admin. They report to the Captain.",
 			"team_context": "You report to the @captain, who reviews all your output before it reaches the admin - never deliver a report or portfolio.md update directly. You write the periodic portfolio and watchlist review, maintain portfolio.md (its membership list changes only on explicit admin instruction), and keep the per-stock summary reports current. Cross-reference every figure against the live stock documents at writing time. Research and analysis only.",
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,

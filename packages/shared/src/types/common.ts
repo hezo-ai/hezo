@@ -82,7 +82,7 @@ export const EFFORT_ORDER: Record<AgentEffort, number> = {
 	[AgentEffort.Max]: 4,
 };
 
-export const DEFAULT_EFFORT: AgentEffort = AgentEffort.Medium;
+export const DEFAULT_EFFORT: AgentEffort = AgentEffort.High;
 
 export function isAgentEffort(value: unknown): value is AgentEffort {
 	return typeof value === 'string' && value in EFFORT_ORDER;

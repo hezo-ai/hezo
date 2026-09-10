@@ -57,7 +57,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'coach',
 			reports_to_slug: null,
 			sort_order: 10,
-			default_effort: AgentEffort.Medium,
+			default_effort: AgentEffort.High,
 			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,

@@ -158,7 +158,9 @@ describe('prepareHireProposal — success branches', () => {
 			role_description: 'does senior things',
 			system_prompt: 'You are a senior bot.',
 			reports_to: CAPTAIN_AGENT_SLUG,
-			default_effort: 'high',
+			// Deliberately not the default: this test proves a supplied effort is
+			// honoured, which a value equal to DEFAULT_EFFORT could not.
+			default_effort: 'low',
 			heartbeat_interval_min: 60,
 			daily_budget_cents: 100,
 			weekly_budget_cents: 1000,
@@ -170,7 +172,7 @@ describe('prepareHireProposal — success branches', () => {
 		const p = r.payload;
 		expect(p.role_description).toBe('does senior things');
 		expect(p.reports_to).toBe(CAPTAIN_AGENT_SLUG);
-		expect(p.default_effort).toBe('high');
+		expect(p.default_effort).toBe('low');
 		expect(p.heartbeat_interval_min).toBe(60);
 		expect(p.touches_code).toBe(true);
 		expect(p.system_prompt).toContain('You are a senior bot.');
