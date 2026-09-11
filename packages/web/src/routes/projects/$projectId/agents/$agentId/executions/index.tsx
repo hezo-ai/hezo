@@ -46,8 +46,9 @@ function ExecutionRow({
 	isInstanceAgent: boolean;
 	filter: RunOutcomeFilter;
 }) {
+	const { t } = useI18n();
 	const elapsed = useElapsedDuration(run.started_at ?? '', run.finished_at);
-	const trigger = formatTriggerReason(run, projectId);
+	const trigger = formatTriggerReason(run, projectId, t);
 	const projectLabel = run.project_name ?? run.project_slug;
 
 	// The title band carries the task title and, for an instance agent, which

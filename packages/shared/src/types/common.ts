@@ -82,7 +82,7 @@ export const EFFORT_ORDER: Record<AgentEffort, number> = {
 	[AgentEffort.Max]: 4,
 };
 
-export const DEFAULT_EFFORT: AgentEffort = AgentEffort.Medium;
+export const DEFAULT_EFFORT: AgentEffort = AgentEffort.High;
 
 export function isAgentEffort(value: unknown): value is AgentEffort {
 	return typeof value === 'string' && value in EFFORT_ORDER;
@@ -890,6 +890,7 @@ export const WakeupSource = {
 	Automation: 'automation',
 	CredentialProvided: 'credential_provided',
 	AssetDeletionResolved: 'asset_deletion_resolved',
+	ApprovalResolved: 'approval_resolved',
 	Comment: 'comment',
 	Reply: 'reply',
 	Heartbeat: 'heartbeat',
@@ -2340,6 +2341,12 @@ export const RUNTIMES_WITH_GUIDED_SIGN_IN: readonly AgentRuntime[] = [
  * the sign-in failed either way, and the operator reads them from the same
  * place. `internal` is the one whose message is a diagnostic rather than a
  * sentence, so it is shown alongside a fixed lead rather than replaced by one.
+ *
+ * `credential_rejected` is the sign-in that produced something the provider then
+ * refused. It is distinct from `code_rejected`, which is the operator's code
+ * being refused: here the exchange worked and what came out of it does not
+ * authenticate, so the fault is in the credential rather than in anything the
+ * operator typed.
  */
 export type SubscriptionLoginFailure =
 	| 'unsupported'
@@ -2348,6 +2355,7 @@ export type SubscriptionLoginFailure =
 	| 'completion_timeout'
 	| 'code_rejected'
 	| 'exited_without_credential'
+	| 'credential_rejected'
 	| 'cancelled'
 	| 'internal'
 	| 'poll_failed'
@@ -2627,6 +2635,36 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, PromptDelivery> = {
 	// It stays on `arg` and keeps its system half in $KIMI_CODE_HOME/AGENTS.md
 	// (RUNTIME_SYSTEM_PROMPT_FILE) so the argv element stays small.
 	[AgentRuntime.Kimi]: 'arg',
+};
+
+/**
+ * A CLI's own ceiling on the prompt it will accept, independent of how the
+ * prompt is delivered to it. `null` where the CLI publishes none.
+ *
+ * Distinct from MAX_SINGLE_ARG_BYTES, which is the operating system refusing to
+ * carry an argument: this is a vendor declining to start a turn. A prompt can
+ * be perfectly deliverable and still be rejected here, which is what made this
+ * class of failure hard to read - the run reached the container, spawned the
+ * CLI, and died before its first line of output with the reason on stderr.
+ *
+ * A backstop, not a bound. What keeps a prompt under these numbers is
+ * `PROMPT_BUDGET_CHARS` on the task-scoped half plus the write-time ceilings on
+ * the rest; if one of these ever fires, a section escaped the budget and the
+ * operator should be told which runtime refused and by how much, rather than
+ * left with an exit code.
+ */
+export const RUNTIME_PROMPT_MAX_CHARS: Record<AgentRuntime, number | null> = {
+	[AgentRuntime.ClaudeCode]: null,
+	// `MAX_USER_INPUT_TEXT_CHARS` (`codex-rs/protocol/src/user_input.rs`), checked
+	// by the app-server before any HTTP call: "Conservative cap so one user
+	// message cannot monopolize a large context window." Being client-side, it
+	// applies on every provider Codex is pointed at, not just OpenAI's. Verified
+	// against the pinned CODEX_VERSION; a bump is the moment to re-read it.
+	[AgentRuntime.Codex]: 1_048_576,
+	[AgentRuntime.Antigravity]: null,
+	[AgentRuntime.OpenCode]: null,
+	[AgentRuntime.Grok]: null,
+	[AgentRuntime.Kimi]: null,
 };
 
 /**

@@ -1,11 +1,12 @@
 import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
-import { Link } from '@tanstack/react-router';
-import { Check, ExternalLink, Loader2, Pencil, X } from 'lucide-react';
+import { Link, useNavigate } from '@tanstack/react-router';
+import { Check, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { useI18n } from '../lib/i18n';
+import { AGENT_ERROR_ROW, isAgentErrorApproval } from '../lib/inbox-row-kind';
 import { approvalTypeColor } from '../lib/status-meta';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Avatar, getInitials } from './ui/avatar';
@@ -15,14 +16,13 @@ import { Button } from './ui/button';
 const linkClass = 'font-medium text-accent hover:underline';
 
 /**
- * A Strategy row the run pipeline files when it has given up on an agent - the
- * retry budget is spent, or the model provider has refused its runs for hours.
- * It is a notice, not a proposal: there is nothing to approve or deny, only a
- * task to open and a card to clear. Every surface that treats it differently
- * from a real strategy proposal asks this one question.
+ * The project a task link must route through. Never `team_slug`: a route param
+ * resolves against `projects.slug`, and the two are independently assigned - the
+ * internal team ships as `default` while its project ships as `hq`, so a link
+ * built from the team slug resolves to nothing.
  */
-function isAgentErrorNotice(approval: Approval): boolean {
-	return approval.type === ApprovalType.Strategy && approval.payload.type === 'agent_error';
+function taskLinkProjectSlug(approval: Approval): string | null {
+	return approval.payload_task_project_slug ?? approval.payload_project_slug ?? null;
 }
 
 function EntityLink({
@@ -44,7 +44,6 @@ function EntityLink({
 
 function ApprovalMessage({ approval }: { approval: Approval }) {
 	const p = approval.payload;
-	const teamSlug = approval.team_slug;
 
 	switch (approval.type) {
 		case ApprovalType.DesignatedRepoRequest: {
@@ -72,7 +71,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 		case ApprovalType.Hire: {
 			const title = (p.title as string) ?? 'a new agent';
 			const taskId = approval.payload_task_identifier;
-			const taskProjectSlug = approval.payload_project_slug;
+			const taskProjectSlug = taskLinkProjectSlug(approval);
 			return (
 				<span>
 					Proposing to hire <span className="font-medium">{title}</span>
@@ -91,12 +90,9 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 									{taskId}
 								</EntityLink>
 							) : (
-								<EntityLink
-									to="/projects/$projectId/tasks/$taskId"
-									params={{ projectId: teamSlug, taskId: taskId.toLowerCase() }}
-								>
-									{taskId}
-								</EntityLink>
+								// No project to route through, so the identifier stays text -
+								// a link built from the team slug resolves to nothing.
+								taskId
 							)}
 							)
 						</>
@@ -209,11 +205,19 @@ function CardBody({
 						className="w-2 h-2 rounded-full bg-inverse shrink-0"
 					/>
 				)}
-				<Badge variant="dot" color={approvalTypeColor(approval.type)}>
-					{approval.type.replace('_', ' ')}
-				</Badge>
+				{isAgentErrorApproval(approval) ? (
+					<Badge variant="dot" color={AGENT_ERROR_ROW.color}>
+						{t(AGENT_ERROR_ROW.label)}
+					</Badge>
+				) : (
+					// Every underscore, not the first: `designated_repo_request` read
+					// as "designated repo_request".
+					<Badge variant="dot" color={approvalTypeColor(approval.type)}>
+						{approval.type.replace(/_/g, ' ')}
+					</Badge>
+				)}
 				{resolved &&
-					(isAgentErrorNotice(approval) ? (
+					(isAgentErrorApproval(approval) ? (
 						// A notice has one way out - Dismiss - so its history badge says
 						// that, whichever status the row was closed with.
 						<Badge color="neutral">{t('approval.agentError.dismissed')}</Badge>
@@ -272,6 +276,7 @@ function resolveOauthDestination(approval: Approval) {
 
 export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) {
 	const { t } = useI18n();
+	const navigate = useNavigate();
 	const resolveApproval = useResolveApproval();
 	const [modalOpen, setModalOpen] = useState(false);
 	const unread = approval.status === ApprovalStatus.Pending;
@@ -324,8 +329,50 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 		);
 	}
 
-	if (isAgentErrorNotice(approval)) {
+	if (isAgentErrorApproval(approval)) {
 		const taskId = approval.payload_task_identifier;
+		const projectSlug = taskLinkProjectSlug(approval);
+
+		// The whole card is the control, the way a mention row is: one click
+		// clears the notice and lands on the run that failed. A separate "Open
+		// task" button would be a second copy of the card's own destination.
+		//
+		// Resolving on open is what closing this row means - an approval has no
+		// read state, only pending and resolved. Nothing is lost by it: the
+		// give-up path files a fresh notice on the next failure, and a recovered
+		// agent's notices are closed for it.
+		if (taskId && projectSlug) {
+			return (
+				<button
+					type="button"
+					className={`${linkCardClass}${highlight} w-full text-left`}
+					data-testid="approval-card"
+					data-unread={true}
+					onClick={() => {
+						resolveApproval.mutate({
+							approvalId: approval.id,
+							status: ApprovalStatus.Approved,
+							projectSlug: approval.payload_project_slug ?? undefined,
+						});
+						navigate({
+							to: '/projects/$projectId/tasks/$taskId',
+							params: { projectId: projectSlug, taskId: taskId.toLowerCase() },
+							// Without an anchor the thread opens at its top, which in
+							// conversation view leaves the failed run folded out of sight.
+							...(approval.payload_run_comment_public_id
+								? { hash: `comment-${approval.payload_run_comment_public_id}` }
+								: {}),
+						});
+					}}
+				>
+					<CardBody approval={approval} showTeam={showTeam} unread />
+				</button>
+			);
+		}
+
+		// A run that died before it had a task leaves nothing to open, so this is
+		// the one shape that still carries a button - otherwise the row has no way
+		// out of the inbox at all.
 		return (
 			<div
 				className={`${baseCardClass}${highlight}`}
@@ -334,22 +381,6 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 			>
 				<CardBody approval={approval} showTeam={showTeam} unread />
 				<div className="flex gap-2 mt-3 flex-wrap">
-					{taskId && (
-						<Link
-							to="/projects/$projectId/tasks/$taskId"
-							params={{
-								// The run was scoped to the task's project team, so the
-								// approval's team is the task's project.
-								projectId: approval.payload_project_slug ?? approval.team_slug,
-								taskId: taskId.toLowerCase(),
-							}}
-						>
-							<Button size="sm" variant="secondary" data-testid="approval-open-task">
-								<ExternalLink className="w-3 h-3" />
-								{t('approval.agentError.openTask', { task: taskId })}
-							</Button>
-						</Link>
-					)}
 					{/* Dismiss closes the row through the one resolve route so the pending
 					    count drops and the give-up path may file a fresh notice next time.
 					    There is no third status to close a row with; `approved` runs no

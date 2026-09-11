@@ -1,6 +1,7 @@
 import {
 	AgentAdminStatus,
 	ApprovalStatus,
+	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DEFAULT_MONTHLY_BUDGET_CENTS,
 	DocumentType,
@@ -86,7 +87,7 @@ export const hireHandler: ApprovalHandler = {
 				JSON.stringify(buildAgentAvatarSpec({ slug, title, gender, seed: memberId })),
 				(payload.role_description as string) ?? '',
 				reportsToId,
-				(payload.default_effort as string) ?? 'medium',
+				(payload.default_effort as string) ?? DEFAULT_EFFORT,
 				(payload.heartbeat_interval_min as number) ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 				(payload.daily_budget_cents as number) ?? 0,
 				(payload.weekly_budget_cents as number) ?? 0,

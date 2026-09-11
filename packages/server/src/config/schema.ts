@@ -1,4 +1,12 @@
-import { parseIssuerPublicKeys, SANDBOX_BACKENDS } from '@hezo/shared';
+import type { LocaleSettings } from '@hezo/shared';
+import {
+	CONTAINER_HOURS_ANCHOR_MAX_DAY,
+	CONTAINER_HOURS_ANCHOR_MIN_DAY,
+	parseIssuerPublicKeys,
+	parseLocaleSettingsPatch,
+	parseProjectBrief,
+	SANDBOX_BACKENDS,
+} from '@hezo/shared';
 import { z } from 'zod';
 import type { HezoConfig } from './types';
 
@@ -127,6 +135,11 @@ export const policySchema = z
 				// A deployment can therefore pin "no hours limit" as deliberately as
 				// it pins a number.
 				monthlyContainerHours: z.int().min(0).optional(),
+				containerHoursAnchorDay: z
+					.int()
+					.min(CONTAINER_HOURS_ANCHOR_MIN_DAY)
+					.max(CONTAINER_HOURS_ANCHOR_MAX_DAY)
+					.optional(),
 				// Not a number, unlike its neighbours. A deployment whose containers
 				// run somewhere the instance's own host cannot provide has to be able
 				// to say so: leaving this to the operator lets them switch onto a
@@ -186,6 +199,61 @@ export const ssoSchema = z
 	})
 	.strict();
 
+/**
+ * What a first run starts from. Every key is optional, unlike `sso`, because
+ * a provisioner may know the language and not the project, or the reverse;
+ * an empty block is a legal way of saying "nothing".
+ *
+ * Both values pass through the validators the running instance applies to the
+ * same data - the locale through the one behind `PATCH
+ * /api/instance-settings/locale`, the brief through the one the signup form
+ * and the plane apply - so a file cannot carry a value the instance would
+ * refuse at a later step. The brief's cap counts code points, not UTF-16
+ * units: zod's `.max()` would count an emoji twice and refuse a brief the
+ * plane accepted.
+ */
+const localeSettingsSchema = z
+	.object({
+		language: z.string(),
+		date_format: z.string(),
+		number_format: z.string(),
+	})
+	.strict()
+	.transform((value, ctx): LocaleSettings => {
+		const parsed = parseLocaleSettingsPatch(value);
+		if (!parsed.ok) {
+			ctx.addIssue({ code: 'custom', message: parsed.error });
+			return z.NEVER;
+		}
+		// The object above requires all three axes, so a patch that validated is
+		// whole; the check only narrows the validator's partial for the type.
+		const { language, date_format, number_format } = parsed.value;
+		if (!language || !date_format || !number_format) {
+			ctx.addIssue({
+				code: 'custom',
+				message: 'language, date_format and number_format are required',
+			});
+			return z.NEVER;
+		}
+		return { language, date_format, number_format };
+	});
+
+const projectBriefSchema = z.string().transform((value, ctx) => {
+	const parsed = parseProjectBrief(value);
+	if (!parsed.ok) {
+		ctx.addIssue({ code: 'custom', message: parsed.error });
+		return z.NEVER;
+	}
+	return parsed.value;
+});
+
+export const seedSchema = z
+	.object({
+		locale: localeSettingsSchema.optional(),
+		project: z.object({ description: projectBriefSchema }).strict().optional(),
+	})
+	.strict();
+
 export const configFileSchema = z
 	.object({
 		port: z.int().min(1).max(65535).optional(),
@@ -207,6 +275,7 @@ export const configFileSchema = z
 		policy: policySchema.optional(),
 		policyFile: z.string().min(1).optional(),
 		sso: ssoSchema.optional(),
+		seed: seedSchema.optional(),
 	})
 	.strict();
 

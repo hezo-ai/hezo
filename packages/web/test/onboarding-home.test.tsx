@@ -1,3 +1,4 @@
+import { createProjectIntake } from '@hezo/server/src/services/project-intake';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -56,6 +57,29 @@ test('renders the CEO intake panel once an open intake exists', async () => {
 	await findByTestId('home-project-intake', undefined, { timeout: 20_000 });
 	// The conversation composer is present so the admin can reply (and approve) in-thread.
 	await findByTestId('home-project-intake-input', undefined, { timeout: 20_000 });
+});
+
+// A brief seeded from signup opens the same panel, with the greeting that
+// names where the brief came from instead of thanking the admin for a form
+// they never filled in.
+test('renders the seeded greeting when the intake came from signup', async () => {
+	const { findByTestId, findByText } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			const { db } = getTestContext();
+			const intake = await createProjectIntake(db, {
+				origin: 'seed',
+				name: 'A newsletter for our climbing gym',
+				description: 'A newsletter for our climbing gym. Weekly route updates and events.',
+				initialProjectPlan: null,
+				adminLanguage: 'de',
+			});
+			expect(intake).not.toBeNull();
+		},
+	});
+
+	await findByTestId('home-project-intake', undefined, { timeout: 20_000 });
+	await findByText(/wrote at signup on hezo\.ai/, undefined, { timeout: 20_000 });
 });
 
 // The admin's intake reply must wake the CEO. Since plain comments no longer

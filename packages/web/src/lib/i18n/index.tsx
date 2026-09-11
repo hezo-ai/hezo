@@ -270,11 +270,12 @@ export function Trans({ k, vars }: { k: MessageKey; vars?: Record<string, ReactN
  * the shell only has to pass the value through, and so the provider never
  * issues a second `/api/status` request of its own.
  *
- * **Gated on `configured`.** Until the operator has actually chosen a locale,
+ * **Gated on `configured`.** Until a locale has actually been chosen,
  * `/api/status` reports the *default* (en / mdy / dot-comma) - a placeholder,
- * not a decision. Adopting it would overwrite the browser detection that
- * pre-answers the onboarding language step, so a German browser would land on
- * an English form. Only a real, stored choice outranks detection.
+ * not a decision. Adopting it would overwrite the browser detection the first
+ * gate renders in, so a German browser would meet an English master-key screen
+ * and then record English as the instance's language. Only a real, stored
+ * choice outranks detection.
  *
  * Safe to call on every render: `status.locale` is a fresh object per fetch,
  * but `applyServerLocale` compares by value and keeps the previous state when

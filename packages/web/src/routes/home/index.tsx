@@ -16,7 +16,13 @@ import { useLandingPreference } from '../../hooks/use-landing-preference';
 import { useProjectIntake } from '../../hooks/use-project-intake';
 import { type ProjectWithTeam, useAllVisibleProjects } from '../../hooks/use-projects';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
-import { inboxRowKind, inboxRowLead } from '../../lib/inbox-row-kind';
+import { useI18n } from '../../lib/i18n';
+import {
+	AGENT_ERROR_ROW,
+	inboxRowKind,
+	inboxRowLead,
+	isAgentErrorApproval,
+} from '../../lib/inbox-row-kind';
 
 function formatMoney(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`;
@@ -154,6 +160,14 @@ function NeedsYouRowShell({
 }
 
 function NeedsYouAction({ approval }: { approval: Approval }) {
+	const { t } = useI18n();
+	// A run-failure notice is a `strategy` row, so the type alone would call it a
+	// strategy decision - and send the reader to the inbox they are already
+	// looking at, rather than to the run that stopped.
+	const notice = isAgentErrorApproval(approval);
+	const taskId = approval.payload_task_identifier;
+	// Never `team_slug`: a route param resolves against `projects.slug`.
+	const projectSlug = approval.payload_task_project_slug ?? approval.payload_project_slug;
 	return (
 		<NeedsYouRowShell
 			tag="action"
@@ -173,19 +187,36 @@ function NeedsYouAction({ approval }: { approval: Approval }) {
 					/>
 				) : undefined
 			}
-			project={approval.payload_project_slug}
+			project={projectSlug}
 			createdAt={approval.created_at}
 			actionLink={
-				<Link
-					to="/projects/$projectId/inbox"
-					params={{ projectId: approval.payload_project_slug ?? '' }}
-					className={ACTION_LINK_CLASS}
-				>
-					{approvalActionLabel(approval.type)}
-				</Link>
+				projectSlug ? (
+					notice && taskId ? (
+						<Link
+							to="/projects/$projectId/tasks/$taskId"
+							params={{ projectId: projectSlug, taskId: taskId.toLowerCase() }}
+							{...(approval.payload_run_comment_public_id
+								? { hash: `comment-${approval.payload_run_comment_public_id}` }
+								: {})}
+							className={ACTION_LINK_CLASS}
+						>
+							{approvalActionLabel(approval.type)}
+						</Link>
+					) : (
+						<Link
+							to="/projects/$projectId/inbox"
+							params={{ projectId: projectSlug }}
+							className={ACTION_LINK_CLASS}
+						>
+							{approvalActionLabel(approval.type)}
+						</Link>
+					)
+				) : null
 			}
 		>
-			{approvalText(approval)}
+			{notice
+				? t(AGENT_ERROR_ROW.text, { who: approval.requested_by_name ?? 'An agent' })
+				: approvalText(approval)}
 		</NeedsYouRowShell>
 	);
 }
@@ -365,6 +396,7 @@ function ProjectsDashboard({
 }
 
 function HomePage() {
+	const { t } = useI18n();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
 	const [createOpen, setCreateOpen] = useState(false);
 	const { preference: landingPreference, loaded: landingLoaded } = useLandingPreference();
@@ -395,7 +427,11 @@ function HomePage() {
 	const { data: intake } = useProjectIntake(noProjectsYet);
 
 	if (projectsLoading) {
-		return <div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">Loading...</div>;
+		return (
+			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">
+				{t('common.loading')}
+			</div>
+		);
 	}
 
 	const hasProject = projects.length > 0;
@@ -410,7 +446,9 @@ function HomePage() {
 	return (
 		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			<div className="mb-5 flex items-baseline justify-between gap-3">
-				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">Home</h1>
+				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">
+					{t('nav.home')}
+				</h1>
 			</div>
 
 			{chatLanding && <CeoLandingChat onCreateProject={() => setCreateOpen(true)} />}

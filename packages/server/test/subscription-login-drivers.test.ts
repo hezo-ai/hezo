@@ -1,12 +1,14 @@
 import { AgentRuntime, RUNTIMES_WITH_GUIDED_SIGN_IN } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { parseOsc8Links, stripTerminalNoise } from '../src/services/sandbox/proc-scripts';
+import { parseOsc8Links } from '../src/services/sandbox/proc-scripts';
+import { renderTerminalScreen } from '../src/services/sandbox/terminal-screen';
 import { SUBSCRIPTION_LOGIN_DRIVERS } from '../src/services/subscription-login-drivers';
 
 /**
- * The fixtures below are **recorded verbatim** from the real CLIs at the
- * versions an unpinned image build installs, captured with the streams
- * separated and no TTY (Codex) and under a PTY (Claude Code).
+ * The fixtures below are **recorded** from the real CLIs at the versions the
+ * agent image pins, captured with the streams separated and no TTY (Codex) and
+ * under a PTY (Claude Code). Where one carried a credential the value is
+ * substituted and the escape structure kept.
  *
  * They are the whole point of this file: a parser written against prose in a
  * vendor doc is a guess, and the failure mode of a wrong guess is a sign-in that
@@ -57,17 +59,34 @@ const CLAUDE_SETUP_TOKEN_PTY = [
 	'Paste code here if prompted >',
 ].join('\r\n');
 
+/**
+ * A token value of the length and alphabet `claude setup-token` mints, made up
+ * here: a fixture carrying a real one would be a live credential in the repo.
+ */
+const CLAUDE_SYNTHETIC_TOKEN = `sk-ant-oat01-${'A1b2C3d4E5f6G7h8J9k0'.repeat(5).slice(0, 95)}`;
+
+/**
+ * The token printed into the CLI's box, as the repaint leaves it in the stream:
+ * one pass paints the character at column 9, a later pass rewrites the prefix
+ * and jumps the cursor from column 8 to column 10 rather than repainting a cell
+ * that has not changed.
+ *
+ * Recorded from claude-code 2.1.238 under the login PTY. The escape structure is
+ * as captured; only the credential is substituted.
+ */
+const CLAUDE_TOKEN_REPAINT =
+	`${ESC}[1C${ESC}[1BYour${ESC}[7GOAuth${ESC}[13Gtoken${ESC}[19G(valid${ESC}[26Gfor${ESC}[30G1${ESC}[32Gyear):\r\n` +
+	`${ESC}[9G${CLAUDE_SYNTHETIC_TOKEN[7]}\r` +
+	`${ESC}[2G${CLAUDE_SYNTHETIC_TOKEN.slice(0, 7)}${ESC}[10G${CLAUDE_SYNTHETIC_TOKEN.slice(8)}${ESC}[K\r\r\n` +
+	`${ESC}[2GStore${ESC}[8Gthis${ESC}[13Gtoken${ESC}[19Gsecurely.`;
+
 describe('terminal output parsing', () => {
-	it('strips CSI colour runs but keeps the text between them', () => {
-		const text = stripTerminalNoise(CODEX_DEVICE_AUTH_STDOUT);
+	it('drops CSI colour runs but keeps the text between them', () => {
+		const text = renderTerminalScreen(CODEX_DEVICE_AUTH_STDOUT);
 		expect(text).toContain('https://auth.openai.com/codex/device');
 		expect(text).toContain('R314-OEASM');
 		expect(text).not.toContain(ESC);
 		expect(text).not.toContain('[94m');
-	});
-
-	it('turns carriage returns into line breaks so a redrawn line stands alone', () => {
-		expect(stripTerminalNoise('a\rb')).toBe('a\nb');
 	});
 
 	it('recovers an OSC 8 target whose visible text was redrawn into fragments', () => {
@@ -143,6 +162,32 @@ describe('claude setup-token driver', () => {
 		);
 		expect(harvest('sk-ant-api03-not-a-subscription-token')).toBeNull();
 		expect(harvest('Paste code here if prompted >')).toBeNull();
+	});
+
+	/**
+	 * The token is printed into a box the CLI repaints, and a repaint writes only
+	 * the cells that changed: one pass leaves a character standing, the next
+	 * rewrites the prefix and steps the cursor over it. The value therefore never
+	 * appears in the byte stream in one piece, which is what
+	 * {@link CLAUDE_TOKEN_REPAINT} reproduces.
+	 *
+	 * This is the whole reason the harvest reads a composed screen. Deleting the
+	 * escapes instead yields a token of the right shape and the wrong value - and
+	 * a wrong value is not a failure anyone sees here: it is stored, and then
+	 * refused by Anthropic on every run the credential is used for.
+	 */
+	it('composes a token the repaint left in pieces', () => {
+		const harvest = driver?.harvest;
+		if (typeof harvest !== 'function') throw new Error('expected a function harvest');
+		expect(harvest(CLAUDE_TOKEN_REPAINT)).toBe(CLAUDE_SYNTHETIC_TOKEN);
+	});
+
+	it('is not satisfied by deleting the escapes, which loses a character', () => {
+		const stripped = CLAUDE_TOKEN_REPAINT.replace(
+			new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g'),
+			'',
+		).replace(/\r/g, '\n');
+		expect(stripped).not.toContain(CLAUDE_SYNTHETIC_TOKEN);
 	});
 });
 

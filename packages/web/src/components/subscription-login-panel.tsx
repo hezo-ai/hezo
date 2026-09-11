@@ -35,6 +35,7 @@ const FAILURE_MESSAGE: Record<SubscriptionLoginFailure, MessageKey> = {
 	completion_timeout: 'settings.provider.signIn.error.expired',
 	code_rejected: 'settings.provider.signIn.error.codeRejected',
 	exited_without_credential: 'settings.provider.signIn.error.noCredential',
+	credential_rejected: 'settings.provider.signIn.error.credentialRejected',
 	cancelled: 'settings.provider.signIn.error.cancelled',
 	internal: 'settings.provider.signIn.error.internal',
 	poll_failed: 'settings.provider.signIn.error.unreachable',

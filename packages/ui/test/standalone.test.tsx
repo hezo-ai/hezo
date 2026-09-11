@@ -1,5 +1,6 @@
 import {
 	BackLink,
+	Callout,
 	ConfirmDialog,
 	DialogContent,
 	InPlaceForm,
@@ -49,6 +50,20 @@ test('the shared confirmation takes the labels it is given', () => {
 
 	expect(screen.getByRole('button', { name: /Annuleren/ })).toBeTruthy();
 	expect(screen.getByTestId('confirm-dialog-close').getAttribute('aria-label')).toBe('Sluiten');
+});
+
+// It resolves no copy of its own - the title and the prose are the caller's -
+// so it has nothing to look up and nothing to break outside an app with a
+// catalog. Asserted rather than assumed, because a default label is exactly the
+// thing that would creep in later.
+test('the shared callout renders without a translation context', () => {
+	render(
+		<Callout tone="danger" title="That did not work">
+			The container stopped before the run began.
+		</Callout>,
+	);
+
+	expect(screen.getByRole('alert').textContent).toContain('That did not work');
 });
 
 test('the shared dialog body renders without a translation context', () => {

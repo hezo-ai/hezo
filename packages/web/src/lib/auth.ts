@@ -119,10 +119,16 @@ export async function checkStatus(): Promise<StatusResponse> {
  * The master key only *unlocks* — it does not mint a session. The server returns
  * a short-lived, password-setup-scoped token, held in memory here; the caller
  * then routes to the create-password step, which exchanges it for a session.
+ *
+ * On setup, `locale` is the language the gate is rendering in - the provider's
+ * current value, so a choice made on the corner switcher rides along rather
+ * than a fresh detection - and becomes the instance's locale unless one is
+ * configured already.
  */
 export async function authenticateWithMnemonic(
 	phrase: string,
 	state: MasterKeyState,
+	locale?: LocaleSettings,
 ): Promise<void> {
 	const keys = deriveAuthKeyPair(phrase);
 	const unlockKey = deriveUnlockKey(phrase);
@@ -132,6 +138,7 @@ export async function authenticateWithMnemonic(
 			public_key: keys.publicKeyHex,
 			unlock_key: unlockKey,
 			signature: signAuthMessage(keys.privateKey, buildSetupMessage(keys.publicKeyHex, unlockKey)),
+			...(locale ? { locale } : {}),
 		});
 		pendingSetupToken = data.token;
 		return;

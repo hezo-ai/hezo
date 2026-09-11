@@ -38,8 +38,8 @@ function WizardShell({ currentStep, hosted, children }: WizardShellProps) {
 	const passwordStatus: StepStatus = currentStep === 'password' ? 'current' : 'complete';
 	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
 	return (
-		/* The locale control stays reachable throughout setup, not just on the
-		   language step. */
+		/* The locale control stays reachable throughout setup; the language was
+		   recorded with the master key, and this is where it is changed. */
 		<OnboardingShell width="2xl" cornerAction={<GateLocaleSwitcher />}>
 			<div>
 				<div className="text-center mb-6 sm:mb-10">
@@ -48,7 +48,6 @@ function WizardShell({ currentStep, hosted, children }: WizardShellProps) {
 				</div>
 				<Stepper
 					steps={[
-						{ label: t('setup.step.language'), status: 'complete' },
 						{ label: t('setup.step.masterKey'), status: 'complete' },
 						...(hosted ? [] : [{ label: t('setup.step.password'), status: passwordStatus }]),
 						{ label: t('setup.step.aiProvider'), status: aiProviderStatus },

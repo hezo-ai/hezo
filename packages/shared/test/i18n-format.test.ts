@@ -15,7 +15,9 @@ import {
 	matchLanguageTag,
 	NumberFormat,
 	negotiateLanguage,
+	PROJECT_BRIEF_MAX_CHARS,
 	parseLocaleSettingsPatch,
+	parseProjectBrief,
 } from '../src/index.js';
 
 /** Intl emits non-breaking / narrow-no-break spaces; normalize for assertions. */
@@ -309,5 +311,36 @@ describe('catalog invariants', () => {
 		expect(LANGUAGES).toHaveLength(12);
 		expect(LANGUAGES).toContain(Language.ZhHans);
 		expect(LANGUAGES).toContain(Language.Ko);
+	});
+});
+
+describe('parseProjectBrief', () => {
+	it('returns the brief trimmed', () => {
+		expect(parseProjectBrief('  A newsletter.\n  ')).toEqual({ ok: true, value: 'A newsletter.' });
+	});
+
+	it('keeps tabs, newlines and carriage returns', () => {
+		const value = 'Line one\r\n\tindented';
+		expect(parseProjectBrief(value)).toEqual({ ok: true, value });
+	});
+
+	it('counts code points, so an emoji costs one', () => {
+		const atCap = '\u{1F600}'.repeat(PROJECT_BRIEF_MAX_CHARS);
+		expect(atCap.length).toBe(PROJECT_BRIEF_MAX_CHARS * 2);
+		expect(parseProjectBrief(atCap)).toEqual({ ok: true, value: atCap });
+		const over = parseProjectBrief(`${atCap}\u{1F600}`);
+		expect(over.ok).toBe(false);
+		if (!over.ok) expect(over.error).toMatch(/at most 2000 characters \(got 2001\)/);
+	});
+
+	it.each([
+		['a non-string', 42, /must be a string/],
+		['whitespace only', ' \n ', /must not be empty/],
+		['a bell character', 'ring\u0007', /control characters/],
+		['DEL', 'x\u007fy', /control characters/],
+	])('refuses %s', (_label, input, expected) => {
+		const result = parseProjectBrief(input);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toMatch(expected);
 	});
 });

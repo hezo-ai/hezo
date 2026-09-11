@@ -353,3 +353,34 @@ test('removing a container that is serving a run says so before it ends the run'
 	await findByText('Remove this container?');
 	expect(document.body.textContent).toContain('A task is running on this container right now');
 });
+
+test('the page says what the budget is spending, and which containers are spending it', async () => {
+	// The gap that made a wedged instance unreadable. Every row shows the memory
+	// its container was *built* with and keeps showing it while the container is
+	// stopped, so an operator adding the column up gets a figure far above the
+	// configured limit and no way to tell which rows the limit is about. Beside a
+	// task page reporting "at its active-container limit", the honest reading was
+	// that the two disagreed.
+	let seeded!: Seeded;
+	const { findByTestId } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			await clearSeededContainers();
+			seeded = await seedTwoProjects();
+			await addMember(seeded.alpha.id, 'alpha-busy', { state: 'busy' });
+			await addMember(seeded.beta.id, 'beta-off', { state: 'suspended' });
+		},
+	});
+
+	await findByTestId('containers-list', undefined, { timeout: 20_000 });
+
+	// The running container is charged; the stopped one is not, and says so
+	// rather than presenting an identical figure for the reader to total up.
+	expect((await findByTestId('container-memory-alpha-busy')).dataset.counted).toBe('yes');
+	expect((await findByTestId('container-memory-beta-off')).dataset.counted).toBe('no');
+
+	// And the figure the gate actually uses is on the page, so "at its
+	// active-container limit" can be reconciled with what is listed beneath it.
+	const figure = await findByTestId('containers-budget-figure');
+	await waitFor(() => expect(figure.textContent).toMatch(/\d+ of \d+ GB in use/));
+});

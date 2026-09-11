@@ -6,6 +6,7 @@ import {
 	DialogContent,
 	HelpDialog,
 	Input,
+	isMacPlatform,
 	Kbd,
 	segmentedLabelsFit,
 	Textarea,
@@ -14,7 +15,7 @@ import {
 import * as Dialog from '@radix-ui/react-dialog';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { expect, test, vi } from 'vitest';
 
 /**
@@ -77,6 +78,37 @@ test("a field's size is a preset, never the native character count", async () =>
 test('a field keeps an id it is given', () => {
 	render(<Input label="Token" id="provider-token" />);
 	expect((screen.getByLabelText('Token') as HTMLInputElement).id).toBe('provider-token');
+});
+
+// A unit, a currency or a fixed domain belongs inside the border box: outside it
+// the suffix sits beyond the focus ring and does not move with the size preset.
+test('a field can end in fixed content, inside the same box as the input', () => {
+	render(<Input label="Subdomain" suffix=".app.hezo.ai" defaultValue="acme" />);
+
+	const field = screen.getByLabelText('Subdomain');
+	const suffix = screen.getByText('.app.hezo.ai');
+	expect(field.parentElement).toBe(suffix.parentElement);
+});
+
+// `InputHTMLAttributes` carries no `ref`, so a caller wanting to focus the field
+// was refused by TypeScript for something React already passed through. It has
+// to land on the `<input>`, not on either wrapper.
+test('a field forwards its ref to the input itself', () => {
+	function Harness() {
+		const ref = useRef<HTMLInputElement>(null);
+		return (
+			<>
+				<Input label="Name" ref={ref} />
+				<button type="button" onClick={() => ref.current?.focus()}>
+					Focus
+				</button>
+			</>
+		);
+	}
+	render(<Harness />);
+
+	fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+	expect(document.activeElement).toBe(screen.getByLabelText('Name'));
 });
 
 test('a keycap renders what it is given', () => {
@@ -190,6 +222,72 @@ test('a confirmation given loading=false still fires only once', async () => {
 	});
 	fireEvent.click(confirm);
 
+	expect(onConfirm).toHaveBeenCalledTimes(1);
+});
+
+// **Withheld, not refused.** The confirmation's own precondition - a typed name,
+// a required field - had nowhere to put its answer, so a caller could render the
+// field and not stop the button. `loading` is the wrong lever: it draws a
+// spinner over work that is not happening.
+test('a confirmation can withhold its action without claiming to be busy', () => {
+	const onConfirm = vi.fn();
+	render(
+		<ConfirmDialog
+			open
+			onOpenChange={() => {}}
+			title="Delete instance?"
+			description="Type the instance name to continue."
+			onConfirm={onConfirm}
+			confirmDisabled
+		/>,
+	);
+
+	const confirm = screen.getByTestId('confirm-dialog-confirm') as HTMLButtonElement;
+	expect(confirm.disabled).toBe(true);
+	fireEvent.click(confirm);
+	expect(onConfirm).not.toHaveBeenCalled();
+
+	// The way out stays open: a withheld confirm must not trap the reader.
+	expect((screen.getByTestId('confirm-dialog-close') as HTMLButtonElement).disabled).toBe(false);
+	expect((screen.getByRole('button', { name: /Cancel/ }) as HTMLButtonElement).disabled).toBe(
+		false,
+	);
+});
+
+// The binding clicks the action through its ref, so a `disabled` button already
+// swallows it - but the binding is gated too, so it never claims the key from
+// whatever is underneath while the action is withheld.
+test('the confirm shortcut is withheld with the button', async () => {
+	const mac = isMacPlatform();
+	const onConfirm = vi.fn();
+	const { rerender } = render(
+		<ConfirmDialog
+			open
+			onOpenChange={() => {}}
+			title="Delete instance?"
+			description="Type the instance name to continue."
+			onConfirm={onConfirm}
+			confirmDisabled
+		/>,
+	);
+
+	fireEvent.keyDown(document.body, { key: 'Enter', metaKey: mac, ctrlKey: !mac });
+	expect(onConfirm).not.toHaveBeenCalled();
+
+	rerender(
+		<ConfirmDialog
+			open
+			onOpenChange={() => {}}
+			title="Delete instance?"
+			description="Type the instance name to continue."
+			onConfirm={onConfirm}
+		/>,
+	);
+	// The enabled path runs `handleConfirm`, which sets state: awaited so the
+	// commit lands inside the test rather than after it.
+	await act(async () => {
+		fireEvent.keyDown(document.body, { key: 'Enter', metaKey: mac, ctrlKey: !mac });
+	});
 	expect(onConfirm).toHaveBeenCalledTimes(1);
 });
 

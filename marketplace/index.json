@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 31,
+			"version": 32,
 			"roster_count": 10,
-			"latest_notes": "Reviewing a teammate's finished work now fans out to adversarial sub-agents, one per review dimension, and the reviewer reconciles their reports into one ranked findings list after verifying each finding themselves. That rule reaches every agent on every team, so the QA Engineer's own prompt now carries only what is specific to it: the eight dimensions a code review covers - correctness, security, performance, scalability, maintainability, architectural elegance, testing and documentation - stated once and read by both the post-implementation review and the heartbeat audit, which previously kept two lists that could drift apart."
+			"latest_notes": "Engineer, UI Designer, DevOps Engineer and Marketing Lead now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 22,
+			"version": 23,
 			"roster_count": 7,
-			"latest_notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
+			"latest_notes": "Content Writer, Media Producer and Distribution Manager now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 23,
+			"version": 24,
 			"roster_count": 6,
-			"latest_notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
+			"latest_notes": "Catalyst Monitor and Report Writer now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
 		}
 	]
 }

@@ -1,4 +1,4 @@
-import { HQ_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -154,12 +154,16 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(hiredComment.rows[0].chosen_option.member_agent_slug).toBe('payments-engineer');
 
 		// The requester/assignee (the CEO) is queued to run again to review + resume.
-		const wakeups = await db.query(
-			`SELECT id FROM agent_wakeup_requests
+		// The source matters as much as the row: on `automation` the dispatcher was
+		// entitled to discard this, and did, on exactly the state an agent parked on
+		// its own proposal is in.
+		const wakeups = await db.query<{ source: string }>(
+			`SELECT source FROM agent_wakeup_requests
 			 WHERE payload->>'approval_id' = $1 AND payload->>'reason' = 'hire_resolved'`,
 			[approval.id],
 		);
 		expect(wakeups.rows.length).toBeGreaterThan(0);
+		expect(wakeups.rows[0].source).toBe(WakeupSource.ApprovalResolved);
 	});
 
 	it('denying the hire approval leaves no agent behind', async () => {
@@ -196,6 +200,16 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(deniedComment.rows).toHaveLength(1);
 		expect(deniedComment.rows[0].chosen_option.status).toBe('denied');
 		expect(deniedComment.rows[0].chosen_option.resolution_note).toBe('not needed right now');
+
+		// A denial is a decision too: the requester has to hear it to revise or drop
+		// the role, so it wakes on the same exempt source an approval does.
+		const wakeups = await db.query<{ source: string }>(
+			`SELECT source FROM agent_wakeup_requests
+			 WHERE payload->>'approval_id' = $1 AND payload->>'reason' = 'hire_resolved'`,
+			[approval.id],
+		);
+		expect(wakeups.rows.length).toBeGreaterThan(0);
+		expect(wakeups.rows[0].source).toBe(WakeupSource.ApprovalResolved);
 	});
 
 	it('rejects a second pending hire for the same slug', async () => {

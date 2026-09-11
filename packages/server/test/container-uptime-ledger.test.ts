@@ -10,14 +10,15 @@
 
 import { ContainerUptimeEndReason, HoursBucket } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { resetRuntimeConfig, setPolicy } from '../src/config/runtime';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	containerHoursByProject,
 	containerHoursSeries,
 	containerHoursTotals,
-	monthToDateContainerSeconds,
+	currentWindowContainerSeconds,
 } from '../src/services/container-hours';
 import {
 	claimPoolMember,
@@ -312,7 +313,7 @@ describe('aggregation', () => {
 		// Non-zero, or the equality below would hold for a reader that banked
 		// nothing at all.
 		expect(seeded.rows[0].seconds).toBeGreaterThan(0);
-		expect(await monthToDateContainerSeconds(db)).toBe(seeded.rows[0].seconds);
+		expect(await currentWindowContainerSeconds(db)).toBe(seeded.rows[0].seconds);
 	});
 
 	it('emits every bucket in the window, including the quiet ones', async () => {
@@ -552,5 +553,63 @@ describe('every pool state write moves the ledger', () => {
 		await check('the pool loses confidence in it');
 		await removePoolMember(db, id);
 		await check('it is destroyed');
+	});
+});
+
+/**
+ * The window the hours cap is measured over, when a deployer has anchored it.
+ *
+ * A control plane bills on the day a tenant subscribed, so a pool resetting on
+ * the 1st would cap them against a period they are not charged for — and hand a
+ * tenant who bought on the 20th a third of their first month at full price.
+ */
+describe('an anchored container-hours window', () => {
+	afterEach(() => resetRuntimeConfig());
+
+	/** An entry that ran for an hour, `daysAgo` days back. */
+	async function ran(daysAgo: number, id: string): Promise<void> {
+		await db.query(
+			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
+			 VALUES (NULL, $2,
+			         now() - ($1 || ' days')::interval - interval '1 hour',
+			         now() - ($1 || ' days')::interval,
+			         'docker')`,
+			[String(daysAgo), id],
+		);
+	}
+
+	// **The anchor is read on the admission path, not just stored.** Unanchored,
+	// the window is the calendar month and this has always been so; anchored to
+	// yesterday, everything before it belongs to the window that just closed.
+	it('counts from the anchor rather than from the first of the month', async () => {
+		const now = new Date();
+		// Two days ago and today, both inside this calendar month wherever we are
+		// in it — so the calendar window holds both and an anchor set to yesterday
+		// holds only the later one.
+		const anchorDay = new Date(now.getTime() - 24 * 60 * 60 * 1000).getUTCDate();
+		await ran(2, 'c-before-anchor');
+		await ran(0, 'c-after-anchor');
+
+		setPolicy({ managedBy: 'Acme Cloud', pinned: {} });
+		const calendar = await currentWindowContainerSeconds(db);
+
+		setPolicy({ managedBy: 'Acme Cloud', pinned: { containerHoursAnchorDay: anchorDay } });
+		const anchored = await currentWindowContainerSeconds(db);
+
+		// Only meaningful where the calendar month actually holds both entries:
+		// on the first two days of a month it does not, and the window that just
+		// closed is the previous month either way.
+		if (calendar >= 7200) {
+			expect(anchored).toBeLessThan(calendar);
+			expect(anchored).toBe(3600);
+		}
+	});
+
+	it('is the calendar month when nothing is anchored', async () => {
+		setPolicy({ managedBy: 'Acme Cloud', pinned: {} });
+		const before = await currentWindowContainerSeconds(db);
+		await ran(0, 'c-unanchored');
+
+		expect(await currentWindowContainerSeconds(db)).toBe(before + 3600);
 	});
 });

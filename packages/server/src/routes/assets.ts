@@ -43,6 +43,7 @@ import { err, ok } from '../lib/response';
 import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { FRAME_ANCESTORS_SELF } from '../middleware/framing';
 
 const log = logger.child('routes');
 
@@ -630,9 +631,11 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 		'X-Content-Type-Options': 'nosniff',
 	};
 	// HTML mockups render inline but are pinned to an opaque origin so their
-	// script can't reach the app's same-origin credentials.
+	// script can't reach the app's same-origin credentials. The app's own viewer
+	// frames them, so this policy names itself as the one allowed ancestor -
+	// every other response refuses framing outright (`framingMiddleware`).
 	const csp = assetServeCsp(content_type);
-	if (csp) headers['Content-Security-Policy'] = csp;
+	if (csp) headers['Content-Security-Policy'] = `${csp}; ${FRAME_ANCESTORS_SELF}`;
 	// Re-view the Buffer rather than copying it into a fresh ArrayBuffer: the copy
 	// doubled peak memory per download, on a route serving files up to the 10 MB
 	// attachment cap, concurrently. See `asBodyBytes`.

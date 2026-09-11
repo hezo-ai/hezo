@@ -20,6 +20,15 @@ export interface QueuedWakeup {
 export interface QueuedDispatchState {
 	task_busy: boolean;
 	instance_at_capacity: boolean;
+	/**
+	 * The monthly container-hours allowance is spent.
+	 *
+	 * Separate from {@link instance_at_capacity} because it is a different wait:
+	 * releasing a container answers that one and cannot answer this, which clears
+	 * only when the month turns or the operator raises the cap. The server sets
+	 * exactly one of the two.
+	 */
+	hours_exhausted: boolean;
 }
 
 export interface QueuedWakeupsState {

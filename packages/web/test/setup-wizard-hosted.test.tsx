@@ -36,3 +36,15 @@ test('an ordinary wizard still shows it', async () => {
 	await findByTestId('setup-step-ai-provider');
 	expect(container.textContent).toContain('Password');
 });
+
+// The language is recorded with the master key, not chosen on a step of its
+// own, so the stepper opens on the master key for every kind of instance.
+test('neither wizard lists a language step', async () => {
+	for (const hosted of [true, false]) {
+		const { findByTestId, container, unmount } = renderWizard(hosted);
+		await findByTestId('setup-step-ai-provider');
+		expect(container.textContent).not.toContain('Language');
+		expect(container.textContent).toContain('Master key');
+		unmount();
+	}
+});

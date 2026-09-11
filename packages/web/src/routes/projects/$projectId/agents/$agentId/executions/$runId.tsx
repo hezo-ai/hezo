@@ -11,6 +11,7 @@ import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { getRunWaitingMessage, useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
+import { useI18n } from '../../../../../../lib/i18n';
 import { formatTriggerReason } from '../../../../../../lib/run-trigger';
 
 function formatTimeRange(
@@ -72,6 +73,7 @@ function ExecutionDetailPage() {
 		[run?.invocation_command],
 	);
 
+	const { t } = useI18n();
 	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
 	const elapsedDisplay = run?.started_at ? elapsed : '-';
 
@@ -139,10 +141,12 @@ function ExecutionDetailPage() {
 			{taskBlock}
 
 			{(() => {
-				const trigger = formatTriggerReason(run, projectId);
+				const trigger = formatTriggerReason(run, projectId, t);
 				return (
 					<div className="mb-4 text-xs" data-testid="run-trigger-reason">
-						<span className="text-text-3 uppercase tracking-wider mr-2">Triggered by</span>
+						<span className="text-text-3 uppercase tracking-wider mr-2">
+							{t('runTrigger.label')}
+						</span>
 						{trigger.href ? (
 							<a
 								href={trigger.href}

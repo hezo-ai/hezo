@@ -2,7 +2,7 @@ import { ChatSystemMessageKind } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '074_team_chat.sql';
+const TARGET = '076_team_chat.sql';
 
 // Seeds two conversations at schema 073 - one with messages of every kind the
 // old CHECK admitted, one empty - plus a member memory row, applies the
@@ -15,7 +15,7 @@ const TARGET = '074_team_chat.sql';
 // conversation-kind enum admits 'group' (memberless, one General per
 // project), participants dedupe and die with their room, and a memory row
 // carries exactly one scope.
-describe('074_team_chat migration', () => {
+describe('076_team_chat migration', () => {
 	let h: DataPreservationHarness;
 	let conversationId: string;
 	let emptyConversationId: string;

@@ -1,4 +1,4 @@
-import { AiAuthMethod, AiProvider } from '@hezo/shared';
+import { AiAuthMethod, AiProvider, AiProviderStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -180,13 +180,178 @@ describe('deleteAiProviderConfig', () => {
 		const result = await deleteAiProviderConfig(db, '00000000-0000-0000-0000-000000000099');
 		expect(result).toBe(false);
 	});
+
+	it('hands the default to the next credential when the default is deleted', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		const first = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-first',
+			AiAuthMethod.ApiKey,
+			'first',
+		);
+		const second = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-second',
+			AiAuthMethod.ApiKey,
+			'second',
+		);
+		// The first config added to an instance auto-takes the default.
+		expect((await listAiProviders(db)).find((c) => c.is_default)?.id).toBe(first);
+
+		expect(await deleteAiProviderConfig(db, first)).toBe(true);
+
+		const remaining = await listAiProviders(db);
+		expect(remaining.filter((c) => c.is_default).map((c) => c.id)).toEqual([second]);
+	});
+
+	it('prefers a verified successor over a rejected one', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		const theDefault = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-default',
+			AiAuthMethod.ApiKey,
+			'the-default',
+		);
+		const rejected = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-rejected',
+			AiAuthMethod.ApiKey,
+			'rejected-but-older',
+		);
+		const working = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.DeepSeek,
+			'sk-working',
+			AiAuthMethod.ApiKey,
+			'verified-but-newer',
+		);
+		await db.query(`UPDATE ai_provider_configs SET status = $1 WHERE id = $2`, [
+			AiProviderStatus.Invalid,
+			rejected,
+		]);
+
+		expect(await deleteAiProviderConfig(db, theDefault)).toBe(true);
+
+		// The rejected row is older, so plain oldest-first would have taken it - and
+		// the resolver refuses a run naming an unusable default rather than passing
+		// to the next in line, which would strand an instance that still works.
+		const remaining = await listAiProviders(db);
+		expect(remaining.filter((c) => c.is_default).map((c) => c.id)).toEqual([working]);
+	});
+
+	it('leaves a non-default deletion alone', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		const theDefault = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-keeps-it',
+			AiAuthMethod.ApiKey,
+			'keeps-it',
+		);
+		const other = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-other',
+			AiAuthMethod.ApiKey,
+			'other',
+		);
+
+		expect(await deleteAiProviderConfig(db, other)).toBe(true);
+
+		const remaining = await listAiProviders(db);
+		expect(remaining.filter((c) => c.is_default).map((c) => c.id)).toEqual([theDefault]);
+	});
+
+	it('deletes the last config without leaving a default behind', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		const only = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-only',
+			AiAuthMethod.ApiKey,
+			'only',
+		);
+
+		expect(await deleteAiProviderConfig(db, only)).toBe(true);
+		expect(await listAiProviders(db)).toEqual([]);
+	});
 });
 
 describe('getAiProviderStatus', () => {
 	it('returns configured: true when any provider is stored', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-status',
+			AiAuthMethod.ApiKey,
+			'status-verified',
+		);
 		const status = await getAiProviderStatus(db);
 		expect(status.configured).toBe(true);
 		expect(status.providers).toContain(AiProvider.Anthropic);
+	});
+
+	it('stays configured when every credential has been rejected', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-dead',
+			AiAuthMethod.ApiKey,
+			'rejected',
+		);
+		await db.query(`UPDATE ai_provider_configs SET status = $1`, [AiProviderStatus.Invalid]);
+
+		const status = await getAiProviderStatus(db);
+		// Setup has been done; the credential is simply broken. Reporting `false`
+		// here throws the operator into the first-run wizard, which replaces the
+		// whole app shell - taking away the settings page where the credential
+		// would be replaced, on the very click that diagnosed it.
+		expect(status.configured).toBe(true);
+		// It is still not usable, and that is what `providers` reports.
+		expect(status.providers).toEqual([]);
+	});
+
+	it('lists a provider once when it holds both a verified and a rejected credential', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-good',
+			AiAuthMethod.ApiKey,
+			'good',
+		);
+		const bad = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-bad',
+			AiAuthMethod.ApiKey,
+			'bad',
+		);
+		await db.query(`UPDATE ai_provider_configs SET status = $1 WHERE id = $2`, [
+			AiProviderStatus.Invalid,
+			bad,
+		]);
+
+		const status = await getAiProviderStatus(db);
+		expect(status.providers).toEqual([AiProvider.Anthropic]);
 	});
 
 	it('returns configured: false on a fresh DB', async () => {

@@ -243,6 +243,40 @@ describe('concurrency settings', () => {
 		await patchSettings({ max_container_memory_gb: null });
 	});
 
+	it('refuses a cap that fits the total but leaves nothing for task runs', async () => {
+		// The gap the old check left open. It compared the cap against the
+		// **configured total**, which still holds one container's worth back for the
+		// chat - so on this instance (total 7) a cap of 4 passed validation and left
+		// a task budget of 3, which no 4 GB container can ever fit. The setting saved
+		// cleanly and every run afterwards queued at capacity against containers that
+		// were not there.
+		const res = await patchSettings({ default_ram_cap_per_container_gb: 4 });
+		expect(res.status).toBe(400);
+		const message = (await res.json()).error.message;
+		expect(message).toContain('could never start');
+		// The refusal has to say what would make it work, or the operator's only
+		// move is to guess at a second number.
+		expect(message).toContain('8 GB');
+		expect((await getSettings()).default_ram_cap_per_container_gb).toBe(2);
+	});
+
+	it('refuses a cap equal to the whole budget, which leaves a task budget of zero', async () => {
+		// The endpoint of the same arithmetic: cap == total reserves the entire
+		// budget for the chat. Accepted, it is an instance that can never run a task
+		// again, with the setting that did it reading as valid.
+		const res = await patchSettings({ default_ram_cap_per_container_gb: 7 });
+		expect(res.status).toBe(400);
+		expect((await getSettings()).default_ram_cap_per_container_gb).toBe(2);
+	});
+
+	it('still accepts a cap the task budget can actually fit', async () => {
+		// The other side of the boundary, so the stricter check cannot quietly
+		// become "refuse everything": total 7, cap 3, task budget 4 >= 3.
+		expect((await patchSettings({ default_ram_cap_per_container_gb: 3 })).status).toBe(200);
+		expect((await getSettings()).task_container_memory_gb).toBe(4);
+		await patchSettings({ default_ram_cap_per_container_gb: 2 });
+	});
+
 	it('rejects the retired idle-timeout setting rather than silently ignoring it', async () => {
 		// The window is a constant now (CONTAINER_IDLE_TIMEOUT_MIN). A PATCH naming
 		// only the retired field must 400 rather than 200-with-no-effect, so an

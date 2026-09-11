@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resetRuntimeConfig, runtimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { FRAME_ANCESTORS_NONE } from '../src/middleware/framing';
 import type { StartupProgress } from '../src/startup-progress';
 import { serveStartupRequest } from '../src/startup-serving';
 import type { StaticAsset } from '../src/static-assets';
@@ -126,6 +127,17 @@ describe('serveStartupRequest (pre-ready handler)', () => {
 		expect(res.status).toBe(200);
 		expect(res.headers.get('Content-Type')).toContain('text/html');
 		expect(await res.text()).toContain('<title>Hezo</title>');
+	});
+
+	it('refuses to be framed, on the shell and on the boot status alike', async () => {
+		// The gate a visitor meets while the instance boots is as framable as the
+		// one after, and no middleware exists yet to add the header for it.
+		const shell = await serveStartupRequest(req('/'), withBundle(bundle({ '/index.html': html })));
+		expect(shell.headers.get('Content-Security-Policy')).toBe(FRAME_ANCESTORS_NONE);
+		const status = await serveStartupRequest(req('/api/status'), withBundle(null));
+		expect(status.headers.get('Content-Security-Policy')).toBe(FRAME_ANCESTORS_NONE);
+		const starting = await serveStartupRequest(req('/api/projects'), withBundle(null));
+		expect(starting.headers.get('Content-Security-Policy')).toBe(FRAME_ANCESTORS_NONE);
 	});
 
 	it('serves a real static asset by path', async () => {

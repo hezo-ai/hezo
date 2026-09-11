@@ -21,27 +21,19 @@ import { LocaleForm } from './locale-form';
  */
 interface LocaleEditorProps {
 	/**
-	 * Message key for the primary action ("Continue" during onboarding, "Save"
-	 * after). A key rather than a rendered string - the hosts sit outside the
-	 * preview, so a string they translated would be frozen in the old language.
+	 * Message key for the primary action. A key rather than a rendered string -
+	 * the hosts sit outside the preview, so a string they translated would be
+	 * frozen in the old language.
 	 */
 	submitLabelKey: MessageKey;
 	/** Render a Cancel beside the submit (the dialog host); called on click. */
 	onCancel?: () => void;
 	/** Called after a save lands, so a dialog host can close itself. */
 	onSaved?: () => void;
-	/** Stack the actions full-width (onboarding) instead of right-aligning them. */
-	fullWidthSubmit?: boolean;
 	testId?: string;
 }
 
-export function LocaleEditor({
-	submitLabelKey,
-	onCancel,
-	onSaved,
-	fullWidthSubmit,
-	testId,
-}: LocaleEditorProps) {
+export function LocaleEditor({ submitLabelKey, onCancel, onSaved, testId }: LocaleEditorProps) {
 	const i18n = useI18n();
 	const [draft, setDraft] = useState<LocaleSettings>({
 		language: i18n.language,
@@ -80,7 +72,6 @@ export function LocaleEditor({
 					onSave={handleSave}
 					onCancel={onCancel}
 					submitLabelKey={submitLabelKey}
-					fullWidthSubmit={fullWidthSubmit}
 					isPending={isPending}
 					hasError={Boolean(error)}
 					scope={scope}
@@ -101,7 +92,6 @@ function LocaleEditorBody({
 	onSave,
 	onCancel,
 	submitLabelKey,
-	fullWidthSubmit,
 	isPending,
 	hasError,
 	scope,
@@ -111,7 +101,6 @@ function LocaleEditorBody({
 	onSave: () => void;
 	onCancel?: () => void;
 	submitLabelKey: MessageKey;
-	fullWidthSubmit?: boolean;
 	isPending: boolean;
 	hasError: boolean;
 	scope: LocaleSaveScope | null;
@@ -133,22 +122,13 @@ function LocaleEditorBody({
 				</p>
 			)}
 
-			<div
-				className={
-					fullWidthSubmit ? 'mt-6' : 'mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end'
-				}
-			>
+			<div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
 				{onCancel && (
 					<Button variant="secondary" onClick={onCancel}>
 						{t('locale.settings.cancel')}
 					</Button>
 				)}
-				<Button
-					onClick={onSave}
-					disabled={isPending}
-					className={fullWidthSubmit ? 'w-full' : undefined}
-					data-testid="locale-save"
-				>
+				<Button onClick={onSave} disabled={isPending} data-testid="locale-save">
 					{isPending ? t('locale.saving') : t(submitLabelKey)}
 				</Button>
 			</div>

@@ -8,6 +8,7 @@
 
 import {
 	ContainerUptimeEndReason,
+	containerCountsTowardBudget,
 	DEFAULT_CONTAINER_DISK_GB,
 	poolDiskCeilingBytes,
 } from '@hezo/shared';
@@ -34,6 +35,16 @@ import {
  * rather than as zero (which would recycle instantly) or as unbounded.
  */
 const DEFAULT_DISK_CEILING_SQL = String(poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB));
+
+/**
+ * What a member reads on the Containers page once its provision is judged dead.
+ *
+ * One string for both routes to that verdict - the boot pass and the liveness
+ * reconcile - so an operator sees the same explanation whichever noticed, and a
+ * test can assert on the outcome without naming the pass that produced it.
+ */
+export const INTERRUPTED_PROVISION_ERROR =
+	'Provisioning did not finish. The container was never handed to a run; Hezo starts a fresh one when the next run needs it.';
 
 /**
  * Move a container's uptime interval to match the state just written.
@@ -456,6 +467,93 @@ export async function reclaimBusyPoolMembers(db: Db): Promise<string[]> {
 }
 
 /**
+ * Fail every provision that was still in flight when the process ended.
+ *
+ * A `creating` member is written the moment the engine hands back an id and is
+ * promoted only by the provisioning call that wrote it, several minutes of
+ * network work later. That call cannot outlive the process, so at boot the state
+ * describes a provision no one is running: its `catch` never fired, and nothing
+ * else in the tree looks at `creating` at all.
+ *
+ * Charged like a live container and reachable by nothing, such a row consumes
+ * its whole allocation against the instance budget for the life of the instance.
+ * Enough of them - or on a small budget, one - and every run queues at capacity
+ * against containers that do not exist.
+ *
+ * `error` rather than dropped: the row is the only record that the provision was
+ * attempted, an operator can see it on the Containers page as Failed, and the
+ * state closes the uptime interval the `creating` upsert opened. A provision that
+ * somehow completes anyway upserts itself back to `idle`, so this cannot strand a
+ * container that turns out to be real.
+ */
+/**
+ * Give back a claim whose run is already over.
+ *
+ * The reconcile pass finds a `busy` member whose container has stopped and
+ * deliberately leaves the claim alone, because a claim is the holding run's to
+ * return and releasing it underneath a live run hands its container to somebody
+ * else. That is right while the run is live. It leaves nothing behind to act once
+ * the run is not: the transition fails the run's row, and `runAgent`'s own
+ * teardown - the only other thing that releases - never fires for a run this
+ * process is no longer executing. The member then reads `busy` for a run that
+ * ended, charged against the instance budget, until the next restart.
+ *
+ * So this runs **after** the runs have been failed, and asks the database rather
+ * than trusting the caller: the release applies only while no `running` row still
+ * names the container. A live run therefore keeps its claim exactly as before,
+ * and one that has ended stops costing the instance a container.
+ *
+ * `suspended` rather than `idle`, matching every other stop path - the container
+ * is down, and advertising it as idle would offer the ladder something that is
+ * not there.
+ */
+export async function releaseClaimIfRunGone(db: Db, containerId: string): Promise<boolean> {
+	const res = await db.query<{ container_id: string }>(
+		`UPDATE container_pool_members m
+		    SET state = 'suspended', updated_at = now()
+		  WHERE m.container_id = $1
+		    AND m.state = 'busy'
+		    AND NOT EXISTS (
+		          SELECT 1 FROM heartbeat_runs hr
+		           WHERE hr.container_id = m.container_id
+		             AND hr.status = 'running'
+		        )
+		 RETURNING m.container_id`,
+		[containerId],
+	);
+	if (res.rows.length === 0) return false;
+	await syncUptimeForState(db, containerId, 'suspended');
+	return true;
+}
+
+/**
+ * Fail one provision that has been in flight too long to still be running.
+ *
+ * The single-member form of {@link failInterruptedProvisions}, for the liveness
+ * pass rather than boot. Same verdict, same state and same message, so an
+ * operator cannot tell - and does not need to tell - which pass reached it.
+ */
+export async function failWedgedProvision(db: Db, containerId: string): Promise<void> {
+	await setPoolMemberState(db, containerId, 'error');
+	await setPoolMemberOutcome(db, containerId, null, INTERRUPTED_PROVISION_ERROR);
+}
+
+export async function failInterruptedProvisions(db: Db): Promise<string[]> {
+	const res = await db.query<{ container_id: string }>(
+		`UPDATE container_pool_members
+		    SET state = 'error',
+		        last_error = $1,
+		        updated_at = now()
+		  WHERE state = 'creating'
+		 RETURNING container_id`,
+		[INTERRUPTED_PROVISION_ERROR],
+	);
+	const ids = res.rows.map((r) => r.container_id);
+	for (const id of ids) await syncUptimeForState(db, id, 'error');
+	return ids;
+}
+
+/**
  * Every container id Hezo still references, instance-wide, across **both**
  * representations of a container.
  *
@@ -506,6 +604,16 @@ export interface ContainerListing {
 	 * Null for a container whose allocation was never recorded.
 	 */
 	memory_bytes: number | null;
+	/**
+	 * Whether this container is charging the instance memory budget right now.
+	 *
+	 * Derived rather than stored, from {@link containerCountsTowardBudget}. The
+	 * page shows every container's allocation, and an operator adding those up
+	 * gets a figure that bears no relation to the budget the instance reports -
+	 * a stopped container carries a 4 GB allocation and spends none of it. This
+	 * is the field that lets the page say which rows the limit is actually about.
+	 */
+	counts_toward_budget: boolean;
 	last_task_id: string | null;
 	last_task_identifier: string | null;
 	/** The run currently executing on it, when one is. */
@@ -654,6 +762,7 @@ function toContainerListing(row: ContainerListingRow): ContainerListing {
 		disk_used_bytes: Number(row.disk_used_bytes),
 		disk_ceiling_bytes: Number(row.disk_ceiling_bytes),
 		memory_bytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
+		counts_toward_budget: containerCountsTowardBudget(row.state),
 	};
 }
 
@@ -807,6 +916,16 @@ export interface PoolMemberForReconcile {
 	 * already making, rather than asking every member every tick.
 	 */
 	memoryBytes: number | null;
+	/**
+	 * When the member last changed state, in epoch milliseconds.
+	 *
+	 * The listing is already ordered by it; it is carried through so the caller
+	 * can put a ceiling on how long a state may persist. `creating` is the state
+	 * that needs one - it is charged against the budget and nothing else revisits
+	 * it - and the answer is "how long has it been claiming to be creating",
+	 * which is exactly this column.
+	 */
+	updatedAtMs: number;
 }
 
 /**
@@ -833,9 +952,11 @@ export async function listPoolMembersForReconcile(
 		team_id: string;
 		state: string;
 		memory_bytes: string | number | null;
+		updated_at_ms: string | number;
 	}>(
 		`SELECT m.container_id, m.project_id, p.slug AS project_slug, p.team_id,
-		        m.state::text AS state, m.memory_bytes
+		        m.state::text AS state, m.memory_bytes,
+		        (extract(epoch from m.updated_at) * 1000)::bigint AS updated_at_ms
 		   FROM container_pool_members m
 		   JOIN projects p ON p.id = m.project_id
 		  WHERE m.updated_at < now() - ($1 * interval '1 second')
@@ -850,6 +971,7 @@ export async function listPoolMembersForReconcile(
 		teamId: r.team_id,
 		state: r.state,
 		memoryBytes: r.memory_bytes === null ? null : Number(r.memory_bytes),
+		updatedAtMs: Number(r.updated_at_ms),
 	}));
 }
 

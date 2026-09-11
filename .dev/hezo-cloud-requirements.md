@@ -1,8 +1,11 @@
 # What Hezo Cloud needs from this repo
 
 **Inbound requirements from the `hezo-ai/cloud` control plane.** Nine tasks, two
-of them optional. Everything here is **additive and inert unless hosted config
-is present** — self-hosted behaviour must stay byte-identical.
+of them optional, plus **H33**, which is a defect in shipped work rather than a
+new ask. Everything here is **additive and inert unless hosted config
+is present** — self-hosted behaviour must stay byte-identical. **H27, H28 and H29
+are the recorded exceptions**: product changes the hosted launch flow asked for
+that alter what a self-hosted instance does too, each stated as such below.
 
 Every claim below was verified against the working tree, not from memory. Where
 something turned out to already exist, that is recorded at the end rather than
@@ -10,7 +13,12 @@ quietly dropped.
 
 The control-plane repo keeps a companion copy at `.dev/track-h-spec.md` so its
 own readers know what Track H blocks. **This file is the one to work from**; if
-the two disagree, this one is newer.
+the two disagree, this one is newer - with one known gap: the cloud copy carries
+**H22** (widen `@hezo/ui` for touch, shipped `0.59.0`, hezo#1076/#1077) and
+**H23** (three gaps a second consumer meets, optional, hezo#1083/#1084/#1085),
+which were never mirrored here. They are not restated below; read them in the
+cloud copy until someone backfills them, and treat the two files as moving
+together from H24 on.
 
 > **Relationship to [`hosted-architecture.md`](./hosted-architecture.md).** That
 > document is the 2026-05/06 design of record and predates the substrate
@@ -34,6 +42,13 @@ the two disagree, this one is newer.
 | H10 | Unprefix provision-script env vars | nothing | optional |
 | H18 | A 1-vCPU Daytona shape | 38% off the container-hour rate | optional |
 | **H21** | Extract a `@hezo/ui` package | the control plane writing its own primitives | **done** |
+| **H24** | `seed` config block | a signup brief and language reaching the instance | **done** |
+| **H25** | Seed consumer: locale at boot, intake at first unlock | the CEO greeting a signup brief | **done** |
+| **H26** | Preset-aware intake prose | H25 reading as what it is | **done** |
+| **H27** | Remove the language step; setup carries the language | one gate order on every instance | **done**, product change |
+| **H28** | Lock the locale route on the master key | tenants no longer world-writable | **done**, product change |
+| **H29** | Translate the first screens | the seeded language reaching the gate | **done**, product change |
+| **H30** | Refuse to be framed | the launch modal's threat model | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -521,6 +536,58 @@ survives the inode swap; nothing is watched when `policyFile` is unset.
 
 ---
 
+## H33 — reload the policy on any directory event, not on a name Bun does not report
+
+**H15 shipped and the watcher never fires on the runtime a release runs.** The
+control plane writes `/etc/hezo/policy.json` as `<file>.tmp` then `rename()`,
+which is the pattern H15's own docblock is built around — and `watchPolicyFile`
+then filtered the directory's events by the policy file's name. Node reports the
+destination's name for a rename. **Bun reports only the source's**, as a single
+event, so the filter dropped every policy change a deployment ever made.
+
+Measured with the writer's exact sequence — write `.tmp`, `chmod`, `rename` —
+ten times, waiting past the 150 ms debounce each round:
+
+| Writer | Node 24 | Bun 1.3.11 |
+|---|---|---|
+| `.tmp` + `rename` (what a deployment writes) | 10/10 | **0/10** |
+| `.tmp` + `rename`, then an in-place rewrite | 10/10 | 7/10 |
+| in-place write only | 10/10 | 10/10 |
+
+Delivery is not quite deterministic — one destination-named event appeared in
+thirty rounds — which is why the hosting plane's end-to-end tier saw a plan
+change land occasionally and read it as a race for three rounds before anyone
+measured it.
+
+**The consequence for a hosted tenant.** A tier change, an hour pack and a
+billing hold all reach the instance's disk and none of them reaches the running
+process: the container-hours pool, the container ceiling and the two memory pins
+a hold sets take effect only at the next restart. The hold is the one that
+costs — a tenant who has stopped paying keeps their full container budget until
+their box happens to restart.
+
+**Why no writer can work around it.** In-place writing is the only shape Bun
+reports reliably, and it gives up the atomicity this watcher's own docblock
+depends on: a reader can catch a half-written file, and a bad parse then keeps
+the *previous* value until the next change, which for a deployment that skips
+unchanged writes is indefinitely.
+
+**The fix**: drop the name filter and reload on any event in the watched
+directory. The read is a small JSON file behind the existing debounce, and a
+spurious reload is already harmless — `readPolicyFile` returns `null` on a bad
+read or parse and `reload()` keeps the last good value. Measured with the filter
+removed: **10/10 on both runtimes, and every reload read the value just
+written**, the rename having completed before the debounce expires.
+
+**AC:** a rename into place changes a pinned setting with no restart **on the
+Bun runtime**, change after change; a write to a neighbouring file in the same
+directory leaves the policy where it is. The Node coverage in
+`test/policy-watch.test.ts` was green throughout and could not have caught this,
+so the new test belongs in the Bun-native tier — this is exactly the
+"runtime-sensitive code gets a test on the production runtime" rule.
+
+---
+
 ## H16 — Make the container backend pinnable
 
 `policy.pinned` covered four keys before this task, and `backend` was not one.
@@ -635,6 +702,109 @@ because the two `@theme` surfaces agree token for token.
 on `<html>` and every stacked primitive - the buttons `ConfirmDialog` renders on
 its behalf included - takes the 44px floor, while the isolated controls carry a
 44px target in every density. `density.ts` in the package is the contract.
+
+**The three things the adopting consumer worked around are now imports.** A tone
+is drawable as a block of prose (`Callout`) as well as a pill, from the tone
+tables `tone.ts` now exports - so the dashboard's local `Notice` and the regex
+that compared its colour pairs against our source both go. `ConfirmDialog` takes
+`confirmDisabled`, so a typed-name check withholds the destructive button rather
+than refusing it after the press. `Input` types a `ref` and takes a `suffix`
+rendered inside its border box, so a subdomain field's fixed domain sits inside
+the focus ring.
+
+## H24 — `seed` config block *(done)*
+
+The plane provisions an instance for someone who has already told it two things:
+the language they chose on hezo.ai and, when they wrote one, a project brief.
+Neither had a carrier. `seed: { locale?, project? } | null` on `HezoConfig` is
+that carrier - file-only like `sso`, strict like every block, and inert when
+absent, so a self-hosted instance is untouched. `locale` is a full
+`LocaleSettings`; `project.description` is the brief, bounded by
+`PROJECT_BRIEF_MAX_CHARS` (2,000, counted in **code points**) through
+`parseProjectBrief` in `@hezo/shared`, the one validator the signup form, the
+plane's storage and this schema all call, so no side can accept a brief another
+refuses. An older binary handed a file carrying `seed` refuses to start naming
+the key; the plane writes the block only for a release that reads it.
+Documented in `docs/deployment/configuration.md` (hand-written; the comment
+claiming a generator was stale and is gone) and architecture § 12.
+
+## H25 — the seed consumer *(done)*
+
+`services/seed.ts`, the one reader of the block. `applySeedLocale` runs in the
+`workspace` startup phase after `seedDefaultTeam` and writes the locale only
+when none is configured, so `/api/status` reports `localeConfigured: true` from
+the first request and every browser adopts it. `consumeSeedProject` is
+registered on `masterKeyManager.onUnlock` - which `setup()` fires before the
+setup route returns - and opens one CEO intake for the brief, titled from its
+first sentence (`deriveProjectName`: syntax and controls stripped, 60 code
+points, "New project" when empty). Once-ness is a `system_meta` marker
+(`seed_project:consumed`) written as `INSERT ... ON CONFLICT DO NOTHING
+RETURNING` *before* the work, so a restart, a rebuilt host or two processes on
+one database open one intake and only a wiped database seeds again; a null or
+thrown intake gives the marker back for the next unlock. **A race the plan did
+not see:** the superuser used to be created after `setup()` returned, so the
+intake's admin mention found nobody and the CEO's heartbeat was never parked
+against the unanswered thread. `/auth/setup` now creates the superuser before it
+enrols the key. Proven by a test that boots `startup()` with a seed.
+
+## H26 — preset-aware intake prose *(done)*
+
+A brief from signup is not a Create Project form: nobody named the project or
+chose a team type, and the text was typed before its author saw the instance.
+`CreateProjectIntakeInput.origin` (`'form' | 'seed'`, required) selects a row of
+one prose table - the greeting's opener and closing ask, the task body's context
+paragraph, the baseline line (never "Blank (Captain only)" for a choice nobody
+made) and steps 2-3. The seed row says the brief was written at signup on
+hezo.ai, quotes it as a blockquote between two stated rules so a heading or a
+numbered step inside it cannot read as the CEO's instructions, names the admin's
+language from the instance locale and asks for the reply in it, and tells the
+CEO to propose a name the admin confirms rather than passing the working title
+to `create_project` (a non-Latin sentence slugs to nothing). The form row is the
+dialog's prose byte for byte. `agents/_instance/ceo.md` covers both origins.
+
+## H27 — remove the language step *(done; changes self-hosted behaviour)*
+
+The first screen of a fresh instance was a language picker ahead of the master
+key. The gate already rendered in the browser's language and carried the corner
+switcher, so the picker asked a question the gate had answered - and on a hosted
+instance the seed had answered it before boot. It is gone for everyone: the
+master key is the first screen, and `POST /api/auth/setup` carries the locale
+the gate was showing (the provider's current value, so a switcher choice rides
+along), persisted only after the key is enrolled and only when none is
+configured. A self-hosted instance therefore records the language it was set up
+in; a seeded one keeps its own. Four catalog keys deleted from all twelve
+languages; `docs/getting-started/first-run.md` and
+`docs/concepts/languages-and-formats.md` rewritten.
+
+## H28 — lock the locale route on the master key *(done; changes self-hosted behaviour)*
+
+`PATCH /api/instance-settings/locale` opened itself to anyone while no admin
+password was enrolled. A hosted instance never enrols one - an issuer signs it
+in - so on every tenant the route was world-writable for life. It is keyed on
+the master key being unset now, which is the window `/auth/setup` was always
+meant to mirror; after that an admin-equivalent bearer is required, which the
+SSO session satisfies. Self-hosted, the open window shrinks from "until a
+password is enrolled" to "until the key exists": a reload between those two
+steps gets the browser-only save the switcher already explains.
+
+## H29 — translate the first screens *(done; changes self-hosted behaviour)*
+
+The master-key gate, the home welcome card, the intake panel and the provider
+picker's heading were hardcoded English, so a seeded German instance showed a
+German corner switcher over an English vault. Thirty-five keys in all twelve
+catalogs, five existing keys reused; the English values are byte-identical to
+the literals they replaced, so every assertion matching the copy stands. Not in
+scope: the projects dashboard on the home page, which is not a first screen.
+
+## H30 — refuse to be framed *(done)*
+
+Every response leaves with `Content-Security-Policy: frame-ancestors 'none'`
+unless the route wrote a policy of its own - one outermost middleware in
+`buildApp`, applied by hand on the booting shell. The signed asset route, which
+serves agent-authored HTML under a sandbox that the app's own viewer frames,
+names itself the one allowed ancestor instead. The plane sends the same policy
+on its documents; between them, no third-party page can draw its chrome around
+the master-key gate or the sign-in screen.
 
 ---
 

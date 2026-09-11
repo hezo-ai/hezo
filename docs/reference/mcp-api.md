@@ -305,7 +305,7 @@ List a project's tasks, newest first. Omit `project` to use the project your run
 
 _Read-only._
 
-Get task details, including the task's declared blockers (upstream - what this task is waiting on) and dependents (downstream - tasks that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this task is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tasks will be auto-unblocked when this task is marked terminal - you do not need to @-mention them, the auto-wake handles it.
+Get task details, including the task's declared blockers (upstream - what this task is waiting on) and dependents (downstream - tasks that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this task is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tasks will be auto-unblocked when this task is marked terminal - you do not need to @-mention them, the auto-wake handles it. This is the single-item read that serves a task's whole `description`, which list_tasks and your run prompt both show as an excerpt. A description too large for one read comes back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null.
 
 **Parameters:**
 
@@ -313,6 +313,8 @@ Get task details, including the task's declared blockers (upstream - what this t
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
+| `offset` | `integer` | No | Byte offset to start reading `description` from (default 0). To page a description too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. |
+| `max_bytes` | `integer` | No | Max bytes of `description` to return in this window (default and ceiling is the read budget, so a normal-size description comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short. |
 
 **Returns:** The task row plus `blockers[]` (upstream) and `dependents[]` (downstream); each entry has `dependency_id`, `id`, `identifier`, `title`, `status`. Returns `null` if the task is not found.
 

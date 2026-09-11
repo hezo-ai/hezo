@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.63.0 - 2026-09-11
+
+### Features
+
+- **agents:** default new agents to high reasoning effort ([#1102](https://github.com/hezo-ai/hezo/pull/1102))
+
+### Bug Fixes
+
+- **prompts:** bound the assembled run prompt in row width, not just row count ([#1101](https://github.com/hezo-ai/hezo/pull/1101))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.62.2...0.63.0
+
+## 0.62.2 - 2026-09-09
+
+### Other
+
+- Stop a dead provision holding the container memory budget for ever ([#1099](https://github.com/hezo-ai/hezo/pull/1099))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.62.1...0.62.2
+
+## 0.62.1 - 2026-09-09
+
+### Bug Fixes
+
+- **config:** reload the policy on any directory event, not on a name Bun drops ([#1097](https://github.com/hezo-ai/hezo/pull/1097))
+
+### Refactors
+
+- **shared:** export the vCPU a sandbox is created with ([#1096](https://github.com/hezo-ai/hezo/pull/1096))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.62.0...0.62.1
+
+## 0.62.0 - 2026-09-08
+
+### Features
+
+- **policy:** let a deployer anchor the container-hours window to a billing day ([#1094](https://github.com/hezo-ai/hezo/pull/1094))
+
+### Bug Fixes
+
+- **wakeups:** let an approval decision reach the agent that asked for it ([#1092](https://github.com/hezo-ai/hezo/pull/1092))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.61.0...0.62.0
+
+## 0.61.0 - 2026-09-07
+
+### Breaking Changes
+
+- seed a hosted first run with a language and a project brief (Track H H24-H30) ([#1090](https://github.com/hezo-ai/hezo/pull/1090))
+
+### Features
+
+- seed a hosted first run with a language and a project brief (Track H H24-H30) ([#1090](https://github.com/hezo-ai/hezo/pull/1090))
+- **inbox:** open the failed run from a run-failure notice, and stop calling a queued retry an error ([#1089](https://github.com/hezo-ai/hezo/pull/1089))
+
+### Bug Fixes
+
+- **providers:** a verify that checks, reports what it found, and stays put ([#1088](https://github.com/hezo-ai/hezo/pull/1088))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.60.0...0.61.0
+
+## 0.60.0 - 2026-09-07
+
+### Features
+
+- **ui:** a tone as a paragraph, a confirmation that can withhold, a field with a ref and a suffix ([#1086](https://github.com/hezo-ai/hezo/pull/1086))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.59.2...0.60.0
+
 ## 0.59.2 - 2026-09-06
 
 ### Bug Fixes

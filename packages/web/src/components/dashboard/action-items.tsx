@@ -3,7 +3,12 @@ import { Link } from '@tanstack/react-router';
 import { Inbox } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useI18n } from '../../lib/i18n';
-import { inboxRowKind, inboxRowLead } from '../../lib/inbox-row-kind';
+import {
+	AGENT_ERROR_ROW,
+	inboxRowKind,
+	inboxRowLead,
+	isAgentErrorApproval,
+} from '../../lib/inbox-row-kind';
 import { Badge } from '../ui/badge';
 import { Card } from '../ui/card';
 import { RelativeTime } from '../ui/relative-time';
@@ -66,7 +71,32 @@ function ActionItemRow({
 	projectId: string;
 	row: ProjectDashboardNeedsYouItem;
 }) {
+	const { t } = useI18n();
 	if (row.kind === 'approval') {
+		const a = row.approval;
+		// A run-failure notice is a `strategy` row: its type would call it a
+		// strategy decision and send the reader to the inbox, not to the run that
+		// stopped. One Link either way - the row is the control, and the parity
+		// test holds it to a single anchor.
+		const notice = isAgentErrorApproval(a);
+		const taskId = a.payload_task_identifier;
+		if (notice && taskId) {
+			return (
+				<Link
+					to="/projects/$projectId/tasks/$taskId"
+					params={{ projectId, taskId: taskId.toLowerCase() }}
+					{...(a.payload_run_comment_public_id
+						? { hash: `comment-${a.payload_run_comment_public_id}` }
+						: {})}
+					className={ROW_CLASS}
+					data-testid="dashboard-action-item"
+				>
+					<RowContent tag="action" tagColor="accent" createdAt={row.created_at}>
+						{t(AGENT_ERROR_ROW.text, { who: a.requested_by_name ?? 'An agent' })}
+					</RowContent>
+				</Link>
+			);
+		}
 		return (
 			<Link
 				to="/projects/$projectId/inbox"
@@ -75,7 +105,7 @@ function ActionItemRow({
 				data-testid="dashboard-action-item"
 			>
 				<RowContent tag="action" tagColor="accent" createdAt={row.created_at}>
-					{approvalText(row.approval)}
+					{approvalText(a)}
 				</RowContent>
 			</Link>
 		);

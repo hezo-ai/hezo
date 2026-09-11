@@ -15,8 +15,9 @@
  * since it merged concurrent runs that shared one container.
  */
 
-import { HOURS_BUCKET_SPAN, type HoursBucket } from '@hezo/shared';
+import { containerHoursWindowStart, HOURS_BUCKET_SPAN, type HoursBucket } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { pinnedSetting } from '../lib/system-meta';
 
 /**
  * Seconds of one interval that fall inside one window, as a SQL expression.
@@ -206,19 +207,33 @@ export async function containerHoursTotals(
 }
 
 /**
- * Instance-wide container-seconds so far this calendar month - what the hours
- * cap is enforced against.
+ * Instance-wide container-seconds so far this window - what the hours cap is
+ * enforced against.
+ *
+ * **The calendar month unless a deployer pinned an anchor day**, which is what
+ * this has always done and what a local or self-hosted instance wants. A control
+ * plane billing on the day a tenant subscribed pins that day instead, so the
+ * pool covers the period the tenant is charged for rather than a calendar month
+ * cutting across it.
+ *
+ * The boundary is computed rather than written into the SQL because the clamp -
+ * a window anchored on the 31st, in a month that has no 31st - is arithmetic
+ * worth testing on its own, and `date_trunc` cannot express it.
  *
  * Its own narrow query rather than a field off {@link containerHoursTotals}:
  * this one runs on the container-admission path, where the other five columns
  * would be work done per dispatch and thrown away.
  */
-export async function monthToDateContainerSeconds(db: Db): Promise<number> {
-	const month = `date_trunc('month', now() AT TIME ZONE 'UTC')`;
+export async function currentWindowContainerSeconds(db: Db): Promise<number> {
+	const start = containerHoursWindowStart(
+		pinnedSetting('containerHoursAnchorDay'),
+		new Date(),
+	).toISOString();
 	const res = await db.query<{ seconds: number }>(
-		`SELECT COALESCE(SUM(${clippedSeconds('e', month, 'now()')}), 0)::int AS seconds
+		`SELECT COALESCE(SUM(${clippedSeconds('e', '$1::timestamptz', 'now()')}), 0)::int AS seconds
 		   FROM container_uptime_entries e
-		  WHERE ${overlapsWindow('e', month, 'now()')}`,
+		  WHERE ${overlapsWindow('e', '$1::timestamptz', 'now()')}`,
+		[start],
 	);
 	return res.rows[0]?.seconds ?? 0;
 }

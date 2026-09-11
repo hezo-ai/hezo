@@ -134,3 +134,56 @@ export function normalizeBudgetWindowsUp(w: BudgetWindowsCents): BudgetWindowsCe
 		monthly_budget_cents: monthly,
 	};
 }
+
+/**
+ * The lowest and highest day of the month a container-hours window may be
+ * anchored on.
+ *
+ * 31 is admitted even though seven months are shorter: the anchor is a day the
+ * deployer names, and clamping it to 28 so every month is uniform would move the
+ * anniversary of everyone anchored later in the month.
+ */
+export const CONTAINER_HOURS_ANCHOR_MIN_DAY = 1;
+export const CONTAINER_HOURS_ANCHOR_MAX_DAY = 31;
+
+/**
+ * A day of the month as it falls in one particular month, or that month's last
+ * day where it is too short to hold it.
+ *
+ * **Always from the anchor, never from wherever the last window landed.** Taking
+ * the day off a window that had already been clamped is how an anniversary walks
+ * backwards: the 31st becomes the 28th in February, and every month after that
+ * is the 28th for ever.
+ */
+function occurrenceInMonth(year: number, month: number, day: number): Date {
+	// Day zero of the next month is the last day of this one.
+	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+	return new Date(Date.UTC(year, month, Math.min(day, lastDay)));
+}
+
+/**
+ * When the container-hours window containing `now` began.
+ *
+ * **The calendar month unless a deployer anchored it**, which is what an unset
+ * anchor gives and what this has always done — a local instance and a
+ * self-hosted one both want the first of the month.
+ *
+ * A hosted instance is billed on the day it subscribed, and a pool resetting on
+ * the 1st would hand a tenant who bought on the 20th a third of their first
+ * month at the full price of it. The anchor is a day rather than a date so it
+ * survives being pinned once and read for ever.
+ */
+export function containerHoursWindowStart(anchorDay: number | undefined, now: Date): Date {
+	const year = now.getUTCFullYear();
+	const month = now.getUTCMonth();
+	if (anchorDay === undefined) return new Date(Date.UTC(year, month, 1));
+
+	const day = Math.min(
+		Math.max(Math.trunc(anchorDay), CONTAINER_HOURS_ANCHOR_MIN_DAY),
+		CONTAINER_HOURS_ANCHOR_MAX_DAY,
+	);
+	const thisMonth = occurrenceInMonth(year, month, day);
+	// Before the anchor has come round this month, the window began last month —
+	// and `Date.UTC` takes month -1 as December of the year before.
+	return thisMonth.getTime() <= now.getTime() ? thisMonth : occurrenceInMonth(year, month - 1, day);
+}

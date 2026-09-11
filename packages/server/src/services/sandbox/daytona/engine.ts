@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
-import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
+import { DEFAULT_CONTAINER_DISK_GB, DEFAULT_CONTAINER_VCPU } from '@hezo/shared';
 import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
 import { ContainerUnreachableError } from '../errors';
@@ -118,7 +118,7 @@ function isHostFile(hostPath: string | undefined): boolean {
  */
 const FALLBACK_DISK_GB = DEFAULT_CONTAINER_DISK_GB;
 /** vCPU per sandbox. */
-const DEFAULT_CPU = 2;
+const DEFAULT_CPU = DEFAULT_CONTAINER_VCPU;
 
 /**
  * Most memory this provider will give one sandbox, in GB.

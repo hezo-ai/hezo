@@ -11,6 +11,7 @@ import {
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
 	projectMemoryFitsBudget,
+	taskContainerMemoryBudgetGb,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -30,7 +31,7 @@ import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-ur
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
-import { getMaxContainerMemoryGb } from '../lib/system-meta';
+import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
@@ -469,6 +470,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 	const intake = await createProjectIntake(
 		db,
 		{
+			origin: 'form',
 			name: body.name.trim(),
 			description: body.description.trim(),
 			initialProjectPlan: body.initial_project_plan?.trim() || null,
@@ -628,14 +630,23 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		// the same reason the Daytona adapter refuses a request above its ceiling
 		// rather than quietly allocating less.
 		if (body.memory_limit_gib !== null) {
-			const budget = await getMaxContainerMemoryGb(db, c.get('docker'));
+			// **The task budget, not the configured total.** The total holds one
+			// container's worth back for the assistant chat, so a project cap between
+			// the two passes a check against the total and is then refused by every
+			// dispatch: the gate this is meant to mirror compares against what task
+			// runs may actually have. Checked against the wrong figure, the setting
+			// saved cleanly and the project's runs queued at capacity for good.
+			const budget = taskContainerMemoryBudgetGb(
+				await getMaxContainerMemoryGb(db, c.get('docker')),
+				await getDefaultRamCapPerContainerGb(db),
+			);
 			if (!projectMemoryFitsBudget(body.memory_limit_gib, budget)) {
 				return err(
 					c,
 					'INVALID_REQUEST',
-					`memory_limit_gib of ${body.memory_limit_gib} GB exceeds the instance memory ` +
-						`budget of ${budget} GB, so a container this size could never start. Raise ` +
-						`the budget in instance settings first.`,
+					`memory_limit_gib of ${body.memory_limit_gib} GB exceeds the ${budget} GB this ` +
+						`instance allows task containers, so a container this size could never ` +
+						`start. Raise the budget in instance settings first.`,
 					400,
 				);
 			}

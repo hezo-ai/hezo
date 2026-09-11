@@ -59,7 +59,10 @@ When you hire an agent you set:
 - **Code access** - whether the agent works in the project's code workspace.
 
 Once approved, the agent is onboarded into the team and starts picking up work on its
-heartbeat.
+heartbeat. The agent that proposed the hire is woken as soon as you decide, so it can act on
+your answer straight away: confirm the reporting line, finish the rest of the setup, or, if
+you denied it, revise the role or drop it. Denying wakes it for the same reason. Your decision
+also shows on the originating task, where the proposal card flips to hired or denied.
 
 ## New agents wait for the team setup review
 
@@ -114,16 +117,17 @@ container frees it - so the wait is for the provider to recover. Press **Run now
 task to try again immediately. If the work is still being turned away after two hours, Hezo
 stops retrying and raises an item in your Inbox, so a long outage does not sit unnoticed;
 switching the agent or task to another model is usually the fastest way through. That
-Inbox item is a notice rather than a decision: it opens the task, and **Dismiss** clears it.
-You rarely need to: the agent's next successful run clears it for you, on whichever task or
-project that run happens.
+Inbox item is a notice rather than a decision: click it and it opens the run that failed,
+inside the task, and clears itself on the way. You often need do nothing at all: the agent's
+next successful run clears it for you, on whichever task or project that run happens.
 
 Cancelled covers one more case, and it is the only one that asks anything of you. If a run
 is queued but never begins - Hezo lost track of it before the agent launched - the work is
 put back on the queue and runs again on its own. Should that keep happening, Hezo stops
 after three attempts, says so on the run, posts a note in the task, and raises an item in
-your Inbox, with the same task link and **Dismiss** as the provider notice above, and cleared
-the same way by the agent's next successful run. That run
+your Inbox, opening on the run that failed just like the provider notice above, and cleared
+the same way by the agent's next successful run. A run that died before it had a task has
+nothing to open, so that notice keeps a **Dismiss** button instead. That run
 carries a **Retry** button, which is the only cancelled run that does:
 a run you stopped yourself, or one whose work is already back on the queue, has nothing
 left to press. A run like that is not counted as an error, so it does not raise the task's

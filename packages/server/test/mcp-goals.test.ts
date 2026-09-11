@@ -1,3 +1,4 @@
+import { WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -353,5 +354,53 @@ describe('MCP suggest_goal', () => {
 			approval_id: string;
 		}>;
 		expect(afterSuggestions.map((s) => s.approval_id)).not.toContain(suggested.approval_id);
+	});
+
+	it('flips the suggestion card and wakes the Captain on an exempt source when the admin decides', async () => {
+		// A suggestion linked to a task: the half the wake needs, and the half that
+		// went untested. Without the wake the Captain learns the admin's answer only
+		// on its next scheduled heartbeat, and the source has to be one the dispatch
+		// suppressions leave alone - a Captain parked on its own suggestion is in
+		// exactly the state both of them read as "nothing has changed".
+		const task = await db.query<{ id: string; identifier: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+			 VALUES ($1, $2, 900, 'GOAL-900', 'Planning') RETURNING id, identifier`,
+			[teamId, projectId],
+		);
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		const suggested = (await callTool(agent.token, 'suggest_goal', {
+			project: projectSlug,
+			title: 'Ship the mobile app',
+			measurement: 'The app is live in both stores',
+			task_id: task.rows[0].identifier,
+		})) as { approval_id: string };
+
+		const resolveRes = await app.request(`/api/approvals/${suggested.approval_id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'content-type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(resolveRes.status).toBe(200);
+
+		const card = await db.query<{ chosen_option: { status: string; goal_id?: string } }>(
+			`SELECT chosen_option FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'action'::comment_content_type
+			   AND content->>'kind' = 'goal_suggestion' AND content->>'approval_id' = $2`,
+			[task.rows[0].id, suggested.approval_id],
+		);
+		expect(card.rows).toHaveLength(1);
+		expect(card.rows[0].chosen_option.status).toBe('approved');
+		expect(card.rows[0].chosen_option.goal_id).toBeTruthy();
+
+		const wakeups = await db.query<{ member_id: string; source: string }>(
+			`SELECT member_id, source FROM agent_wakeup_requests
+			 WHERE payload->>'approval_id' = $1 AND payload->>'reason' = 'goal_suggestion_resolved'`,
+			[suggested.approval_id],
+		);
+		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
+		expect(wakeups.rows[0].member_id).toBe(captainAgentId);
+		expect(wakeups.rows[0].source).toBe(WakeupSource.ApprovalResolved);
 	});
 });

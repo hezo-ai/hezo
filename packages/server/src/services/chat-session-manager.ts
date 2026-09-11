@@ -37,7 +37,7 @@ import { logger } from '../logger';
 import { signChatSessionJwt, WORKER_SESSION_JWT_TTL_SECONDS } from '../middleware/auth';
 import {
 	acquireCredentialLock,
-	assertPromptDeliverable,
+	assertPromptAcceptable,
 	buildRuntimeInvocation,
 	CAPACITY_PARK_MAX_MS,
 	CREDENTIAL_WAIT_CAP_MS,
@@ -2504,7 +2504,7 @@ export class ChatSessionManager {
 			// fails the turn by name instead of dying as `Argument list too long` in
 			// the exec's shell. The catch below finalizes the assistant message with
 			// the error, so the operator sees it in the chatbox.
-			assertPromptDeliverable(session.runtimeType, prompt);
+			assertPromptAcceptable(session.runtimeType, prompt);
 			await writePrompt(prompt);
 
 			const pricing = this.deps.pricing;
@@ -2973,7 +2973,7 @@ export class ChatSessionManager {
 		// the one chat exec that can realistically pass MAX_ARG_STRLEN. Failing here
 		// leaves the window intact, exactly as an aborted compaction does, and says
 		// why in the log instead of dying as `Argument list too long` in the exec.
-		assertPromptDeliverable(session.runtimeType, prompt);
+		assertPromptAcceptable(session.runtimeType, prompt);
 		const {
 			write: writePrompt,
 			remove: removePrompt,

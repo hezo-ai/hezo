@@ -1,18 +1,12 @@
-import {
-	ActionCommentKind,
-	type ApprovalStatus,
-	ApprovalType,
-	CommentContentType,
-	ApprovalStatus as Status,
-	WakeupSource,
-} from '@hezo/shared';
+import { ActionCommentKind, ApprovalType, ApprovalStatus as Status } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { broadcastCommentFamilyChange } from '../lib/broadcast';
-import { logger } from '../logger';
-import { createWakeup } from './wakeup';
+import {
+	insertProposalComment,
+	type ProposalCommentSpec,
+	type ProposalResolution,
+	resolveProposalCommentAndWake,
+} from './proposal-comment';
 import type { WebSocketManager } from './ws';
-
-const log = logger.child('goal-suggestion');
 
 /**
  * A Captain/CEO goal suggestion, carried in the pending `approvals` row's payload.
@@ -63,11 +57,25 @@ function buildContentSnapshot(payload: Record<string, unknown>): Record<string, 
 }
 
 /**
+ * A goal suggestion as a proposal-style approval.
+ *
+ * No assignee fallback: every goal suggestion is filed by an agent through
+ * `suggest_goal`, so a requester that is not an agent means there is nobody with
+ * a suggestion to resume.
+ */
+const GOAL_SUGGESTION: ProposalCommentSpec = {
+	kind: ActionCommentKind.GoalSuggestion,
+	wakeReason: 'goal_suggestion_resolved',
+	wakeKeyPrefix: 'goal-suggestion-resolved',
+	snapshot: buildContentSnapshot,
+	wakeTaskAssigneeWhenRequesterIsHuman: false,
+};
+
+/**
  * Post a goal-suggestion comment on the ticket that prompted it. Renders as an
  * `action` comment (`kind: 'goal_suggestion'`) carrying the approval id, so the
  * task thread shows the pending suggestion (with Approve/Deny) alongside the
  * project's Goals page — and flips to created/denied once the approval resolves.
- * Idempotent per `(task, approval)`.
  */
 export async function insertGoalSuggestionComment(
 	db: Db,
@@ -80,115 +88,33 @@ export async function insertGoalSuggestionComment(
 	},
 	wsManager?: WebSocketManager,
 ): Promise<Record<string, unknown> | null> {
-	const { taskId, approvalId, payload, teamId, projectId } = params;
-
-	const existing = await db.query<{ id: string }>(
-		`SELECT id FROM task_comments
-		 WHERE task_id = $1
-		   AND content_type = $2::comment_content_type
-		   AND content->>'kind' = $3
-		   AND content->>'approval_id' = $4
-		 LIMIT 1`,
-		[taskId, CommentContentType.Action, ActionCommentKind.GoalSuggestion, approvalId],
-	);
-	if (existing.rows.length > 0) return null;
-
-	const content = {
-		kind: ActionCommentKind.GoalSuggestion,
-		approval_id: approvalId,
-		...buildContentSnapshot(payload),
-	};
-	const inserted = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, content_type, content)
-		 VALUES ($1, $2::comment_content_type, $3::jsonb)
-		 RETURNING *`,
-		[taskId, CommentContentType.Action, JSON.stringify(content)],
-	);
-	const row = inserted.rows[0] ?? null;
-	if (row) {
-		broadcastCommentFamilyChange(wsManager, teamId, projectId, 'task_comments', 'INSERT', row);
-	}
-	return row;
+	return insertProposalComment(db, GOAL_SUGGESTION, params, wsManager);
 }
-
-type GoalResolution = typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied;
 
 /**
  * Flip the goal-suggestion comment(s) for an approval to created/denied and re-wake
- * the suggesting agent so it can react. Best-effort: a failure here must not roll
- * back an already-created goal.
+ * the suggesting agent so it can react.
  */
 export async function resolveGoalSuggestionCommentAndWake(
 	db: Db,
 	params: {
 		approval: Record<string, unknown>;
-		status: GoalResolution;
+		status: ProposalResolution;
 		goalId?: string | null;
 		resolutionNote?: string | null;
 	},
 	wsManager?: WebSocketManager,
 ): Promise<void> {
 	const { approval, status, goalId, resolutionNote } = params;
-	const approvalId = approval.id as string;
-	const teamId = approval.team_id as string;
-	const payload = (approval.payload ?? {}) as Record<string, unknown>;
-	const taskId = typeof payload.task_id === 'string' ? payload.task_id : null;
-	if (!taskId) return;
-
-	try {
-		const project = await db.query<{ project_id: string }>(
-			'SELECT project_id FROM tasks WHERE id = $1',
-			[taskId],
-		);
-		const projectId = project.rows[0]?.project_id ?? null;
-
-		const chosen: Record<string, unknown> = {
+	return resolveProposalCommentAndWake(
+		db,
+		GOAL_SUGGESTION,
+		{
+			approval,
 			status,
-			resolved_at: new Date().toISOString(),
-		};
-		if (goalId) chosen.goal_id = goalId;
-		if (resolutionNote) chosen.resolution_note = resolutionNote;
-
-		const contentPatch = buildContentSnapshot(payload);
-
-		const updated = await db.query<Record<string, unknown>>(
-			`UPDATE task_comments
-			 SET content = content || $1::jsonb,
-			     chosen_option = $2::jsonb
-			 WHERE content_type = $3::comment_content_type
-			   AND content->>'kind' = $4
-			   AND content->>'approval_id' = $5
-			   AND chosen_option IS NULL
-			 RETURNING *`,
-			[
-				JSON.stringify(contentPatch),
-				JSON.stringify(chosen),
-				CommentContentType.Action,
-				ActionCommentKind.GoalSuggestion,
-				approvalId,
-			],
-		);
-		if (projectId) {
-			for (const row of updated.rows) {
-				broadcastCommentFamilyChange(wsManager, teamId, projectId, 'task_comments', 'UPDATE', row);
-			}
-		}
-
-		const requestedBy = approval.requested_by_member_id as string | null;
-		if (requestedBy) {
-			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [requestedBy]);
-			if (isAgent.rows.length > 0) {
-				await createWakeup(
-					db,
-					requestedBy,
-					teamId,
-					WakeupSource.Automation,
-					{ task_id: taskId, approval_id: approvalId, reason: 'goal_suggestion_resolved', status },
-					`goal-suggestion-resolved:${approvalId}`,
-				);
-			}
-		}
-	} catch (e) {
-		log.error('Failed to resolve goal-suggestion comment / wake requester:', e);
-	}
+			chosenExtra: goalId ? { goal_id: goalId } : undefined,
+			resolutionNote,
+		},
+		wsManager,
+	);
 }

@@ -91,6 +91,24 @@ describe('AI providers CRUD', () => {
 		expect(body.data.providers).toContain('anthropic');
 	});
 
+	it('stays configured after the provider rejects the credential', async () => {
+		// The first-run wizard replaces the whole app shell while this is false, so
+		// reporting an instance with a rejected credential as unconfigured throws the
+		// operator into onboarding on the very click that diagnosed the credential -
+		// away from the settings page where it would be replaced.
+		await db.query(`UPDATE ai_provider_configs SET status = 'invalid' WHERE id = $1`, [configId]);
+
+		const res = await app.request('/api/ai-providers/status', { headers: authHeader(token) });
+
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.configured).toBe(true);
+		// Still not usable, and that is the field which says so.
+		expect(body.data.providers).not.toContain('anthropic');
+
+		await db.query(`UPDATE ai_provider_configs SET status = 'verified' WHERE id = $1`, [configId]);
+	});
+
 	it('rejects invalid provider name', async () => {
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',

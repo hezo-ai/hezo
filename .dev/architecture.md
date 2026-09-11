@@ -73,8 +73,8 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
   dialog and confirmation, the button, input, textarea, toggle and password field, the
-  badges, card, breadcrumb, data table, tooltips, selects, segmented control, filter
-  pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
+  badges and callout, card, breadcrumb, data table, tooltips, selects, segmented control,
+  filter pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
   them. Source-only, with an `exports` map, so a consumer transpiles it the way `web`
   already transpiles its own `.tsx`. **Three rules keep it importable**: no copy is
   resolved inside it (every user-visible string is a prop with an English default, and
@@ -88,6 +88,11 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   that every utility used only by a primitive is missing from the stylesheet and the
   component renders unstyled with nothing to say so. `web` declares it in `index.css`
   and `test/stylesheet-sources.test.ts` holds it there.
+  **A tone reaches the screen twice, from one table.** `tone.ts` holds the `Tone`
+  union and the tint/solid/dot class pairs, and exports them: `Badge` draws a tone as a
+  pill, `Callout` as a block of prose (deriving `role="alert"` for the destructive tone
+  and `role="status"` otherwise, which a hand-rolled tinted `<div>` carries neither of),
+  and a consumer composing a third shape reads the same rows rather than restating them.
   **Its props types are part of the contract.** Every component exports its own
   `*Props`, because `ComponentProps<typeof X>` erases the parameter of a generic — a
   consumer cannot wrap `DataTable`, `SegmentedControl` or `FilterPills` type-safely
@@ -411,7 +416,11 @@ section only when `ctx.goals` is non-empty. A run can also be triggered on deman
 `JobManager.dispatchProgressUpdateNow`), which passes `manual` to skip the due-check entirely —
 pressing the button always runs. If **Run now** hits a *transient* conflict — the Captain is already running, the
 instance is at its active-container limit, or a launch race — the run is
-**queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
+**queued** rather than erroring (the task-level `/run-now` and `/retry` handlers in
+`routes/queued-wakeups.ts` answer the same way, off their shared `DISPATCH_OUTCOMES` table:
+`markWakeupSkipped` leaves the row `queued`, so every reason but `blocked` and `not_queued`
+is a wait the wakeup cron clears, and reporting it as a 409 told the reader their run had
+failed while it was on its way): a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
 "Run now" is idempotent) that the 5s dispatcher retries until the Captain frees up. This trigger tag
 also makes such a wakeup guard against fall-through: when it is finally dispatched, `activateAgent`
@@ -436,7 +445,7 @@ the owning project's asset library - HQ's for the CEO stream, the project's own 
 DM or group room), and `chat_memories` holds automatically-maintained long-term
 memory in exactly one scope per row (`chat_memories_one_scope`): `member_id` for an
 agent's DM memory (§ 4), `conversation_id` for a group room's shared memory.
-Migration 074 adds the team-chat columns: `chat_conversations.last_message_id`
+Migration 076 adds the team-chat columns: `chat_conversations.last_message_id`
 (denormalized so unread badges never count rows), the `chat_conversation_reads`
 per-(user, conversation) watermark table behind server-side unread,
 `chat_messages.suggested_replies` (up to three short one-tap replies an agent reply
@@ -455,7 +464,7 @@ room membership.
 chat is a **single continuous DM** (decision: single-stream): the "default" web
 conversation resolves to the member's most recently active open web thread
 (`ORDER BY last_activity_at DESC`), there is no thread-creation route
-(`POST /api/chat/conversations` is gone), and migration 074 closed all but the most
+(`POST /api/chat/conversations` is gone), and migration 076 closed all but the most
 recently active open web thread per member — older ones stay fully readable as
 **History**. Every conversation still has exactly **one home surface**: the web stream,
 a Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a
@@ -512,7 +521,7 @@ mark a readable History entry whose meta message and banner link the task. The s
 carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058; the
 CHECK list is widened by 067 for `connector_refused`, the chat's twin of a task run's connector
 refusal warning, by 068 for `credential_wait`, the twin of a waiting run's
-`[runner] Waiting for …` line, and by 074 for the budget/capacity/breadcrumb kinds): which
+`[runner] Waiting for …` line, and by 076 for the budget/capacity/breadcrumb kinds): which
 marker a system row is has to be a property of the **message**, since the chatbox would otherwise
 choose by the thread's `converted_task_id` and render a handoff warning written before the
 conversion as the converted-task link. Converted
@@ -1150,7 +1159,13 @@ project.
   tool both reject a re-point of these roles, and the settings UI disables the field. Each proposal is also mirrored as a `hire_proposal` action comment on the
   linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
   resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
-  the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent runs through the `setAgentAdminStatus`
+  the requester (the CEO) closes it once setup is complete. That wake is
+  **`approval_resolved`** (`services/proposal-comment.ts`, shared with the goal-suggestion
+  twin), and the source is the load-bearing half: on the generic `automation` source the
+  dispatch suppressions were entitled to discard it, and did, on exactly the state an agent
+  parked on its own proposal is in — so an approved hire sat with nobody acting on it until
+  the requester's next scheduled heartbeat, 12 hours out at the default cadence. A proposal
+  filed with no `task_id` still wakes nobody: there is no ticket to render or resume against. Retiring/reinstating an agent runs through the `setAgentAdminStatus`
   service, shared by the `set_agent_status` MCP tool (gated to the team's Captain or an HQ
   coordinator) and the REST disable/enable routes (admin web UI). The **instance singletons
   (CEO/Coach) cannot be disabled through any path** — the MCP tool rejects it and the REST
@@ -1330,6 +1345,20 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    **`start_team_setup`** MCP tool to assign it to itself and begin the run. There is no
    longer a `project_creation` approval row (the enum value is retained for historical
    rows only).
+3. **Seeded** - the same intake, opened by `consumeSeedProject` (`services/seed.ts`) from
+   the `seed.project` block of the config file at the first unlock, once (§ *Hosted first
+   run*). No form was submitted and no team type chosen, so the intake's `name` is a
+   placeholder derived from the brief's first sentence and the CEO is asked to propose the
+   real one. `CreateProjectIntakeInput.origin` (`'form' | 'seed'`, required) selects a row of
+   `ORIGIN_PROSE` in `services/project-intake.ts`: the greeting's opener and closing ask, the
+   task body's context paragraph, the baseline line (a seed has none chosen, never "Blank"),
+   and steps 2-3. The seed row says the brief was written at signup on hezo.ai, quotes it as a
+   blockquote between two stated rules so a heading or a step inside it cannot read as the
+   CEO's instructions, names the admin's language from the instance locale and asks for the
+   reply in it, and tells the CEO the working title never reaches `create_project` unchanged
+   (`toSlug` would mangle a non-Latin one). The form row is the dialog's prose, byte for
+   byte. From the greeting on it is the CEO-assisted path above: no wakeup, the admin's first
+   reply is the CEO's first run.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
@@ -2143,6 +2172,35 @@ locally, because there a container disappearing is normal rather than anomalous 
 stops, archives and reaps sandboxes on its own schedule, and enforces quota by refusing or
 removing them.
 
+**A state that charges the budget needs something that ends it.** The reconcile pass answers
+"is this container still there", and two members used to be charged indefinitely because
+nothing ever asked a different question about them.
+
+- **`creating`.** A provision writes its member the moment the engine returns an id and
+  promotes it minutes later, after the CA install, the run-user probe and the whole clone.
+  That call cannot outlive the process, so at boot any `creating` row belongs to a provision
+  nobody is running: `failInterruptedProvisions` moves the lot to `error`, beside the `busy`
+  reclaim that has always run there. For the case boot cannot see - the process stays up and
+  the provisioning call wedges anyway - `reconcilePoolMembers` carries a ceiling
+  (`PROVISION_WEDGED_AFTER_MS`) and fails a member that has been coming up longer than any
+  cold start takes. **That verdict is taken ahead of the engine round trip**, which is the one
+  deliberate exception to the definite-answer rule above: a throw ends the loop early, so
+  asked in the other order the shape most likely to strand a provision - an unreachable
+  backend - would also be the one that could never be cleared. It is safe at any age because a
+  provision that completes anyway upserts itself back to `idle`. Before this, a wedged
+  `creating` row was reachable by nothing at all: the ladder skips it, both idle passes filter
+  on `idle`, cross-project reclaim filters on `idle`, and every branch of the reconcile pass
+  walked past it - while `getActiveContainers` charged it in full and the uptime ledger billed
+  it around the clock. The only cure was an operator pressing Remove.
+- **`busy` after the run has ended.** The reconcile pass deliberately leaves a claim for its
+  run to return, because releasing one under a live run hands its container to whoever asks
+  next. That is right while the run is live, and left nothing to act once it was not:
+  `runAgent`'s teardown is the only other release, and it never fires for a run this process is
+  no longer executing. `handleContainerTransition` therefore calls `releaseClaimIfRunGone`
+  **after** `failProjectRuns`, and the release is conditioned in SQL on no `running` row still
+  naming the container - so a live run keeps its claim exactly as before, and one that has
+  ended stops costing a container until the next restart.
+
 **A container found stopped-but-present is a suspended member, not a lost one**, and this is
 the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
 that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
@@ -2213,6 +2271,77 @@ and a fresh one be built.
   `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a project mid-burst is not stripped of a container it
   is about to reuse, and `CONTAINER_RECLAIM_MIN_AGE_SEC` so a container the instance only
   just paid a cold provision for is not retired to fund another cold provision elsewhere.
+
+- **Dormant retirement** (`retireDormantContainers`, riding the same cron one clock further
+  out). The two passes above filter on `idle`, and both are right to: a `suspended` member is
+  charged nothing, so retiring one frees nothing the budget can measure, and
+  `planSurplusIdleRetirement` deliberately *keeps* one because it is the cheapest warm start
+  the pool has - about a second through the resume rung against minutes for a clone. The
+  consequence was that the last container of a project which went quiet was held for ever, by
+  design, with nothing able to end it. What that costs is invisible from inside the budget: a
+  container is pinned to its project for life, so a dormant one is memory nobody else can
+  reach, and on a managed backend it holds **disk quota** - the constraint that actually
+  bounds the fleet there (§ Daytona), and the one `projectMemoryFitsBudget` does not model.
+  So `CONTAINER_DORMANT_RETIRE_MIN` disposes of it after a week of silence, which is long
+  enough that a project pausing for a weekend keeps its warm start and short enough that a
+  retired project stops holding provider quota indefinitely. Work that reached no durable
+  remote is excluded by the query, exactly as both planners exclude it, and so is the chat's
+  pinned member; the clock is `last_released_at`, which `idx_container_pool_members_idle`
+  already indexes. **This is the one pass that destroys rather than frees**, and it qualifies
+  under the never-sweep-the-user's-data rule because a container's contents are already
+  declared non-durable at the point an operator removes one: what goes is a clone and an
+  installed toolchain, rebuilt on demand.
+
+**The gate counts as headroom exactly what the planner would actually retire.** The dispatch
+gate admits a run on the strength of another project's reclaimable idle memory, and
+`planCrossProjectReclaim` is what has to make good on it - so `getActiveContainers` applies
+*both* reclaim floors, not just the idle one. Applying only `CONTAINER_RECLAIM_MIN_IDLE_SEC`,
+the gate counted a container the planner then refused on age: the run was admitted, found
+nothing to reclaim, failed on `PoolCapacityError`, parked and requeued under the same
+at-capacity label an operator was already staring at. Two formulas answering one question is
+the bug; the floors belong in one place.
+
+**A pending start exempts memory, never hours.** `JobManager.isContainerCapacityBlocked`
+short-circuits on two conditions that look alike and are not. A project with a spare
+container is exempt from both arms, correctly: the container it will use is already up and
+already billing. A start already *in flight* is a new container coming up, and each admitted
+dispatch takes its own pending slot and brings up its own - so sharing one short-circuit
+gave the exemption to precisely the case that spends hours, and an operator's monthly cap
+had a way past it. The hours check now sits between the two, ahead of the pending exemption
+and still ahead of the memory arithmetic (no amount of reclaiming buys an hour back, so a
+run parked on hours would never clear).
+
+**The stale-tunnel sweep asks before it executes.** A tunnel client is a process, so a
+container that is not running has none. Sweeping by label alone meant an exec against every
+stopped sandbox, which a managed backend refuses - a `SANDBOX_NOT_RUNNING` warning per
+stopped container on every boot, from a pass with nothing to do. It inspects first and skips
+anything not running, which costs one round trip on a startup pass that already made one per
+container and saves the call it replaces.
+
+**The Containers page reports the budget rather than inviting the reader to derive it.**
+`GET /api/containers` returns the list *and* `getActiveContainers`'s own `usedMemoryGb` /
+`budgetGb`, and each row carries `counts_toward_budget`. Both exist because the page's
+Memory column is an *allocation* - what the container was built with, which a stopped
+container keeps reporting - so summing the visible column produces a number the gate never
+sees, and an operator reconciling "at its active-container limit" against a page of
+apparently-free containers had no way to find the three rows that were charged. The
+per-row predicate is {@link containerCountsTowardBudget} in `@hezo/shared`; the gate's copy
+is a SQL `WHERE` clause and cannot call it, so a test sums the listing's charged rows and
+pins the total against `usedMemoryGb`. That test is the only thing keeping the two honest.
+
+**Every path that brings a container up is gated, not just the ladder.**
+`ensureProjectContainerRunning` refuses over budget (`refuseStartOverBudget`), and so do the
+two paths that provision without it - creating a project, and the startup pass replacing a
+container the engine has lost. It used to be checked by one of its four callers, leaving repo
+setup, the HQ warm-up and the startup restart to charge a full allocation against a budget that
+had already refused it; `markPoolMemberRunning` moves a member from `suspended` (uncharged) to
+`idle` (charged) with no arithmetic of its own, and a container started that way is
+indistinguishable from one the ladder admitted. A container the engine *already* reports as
+running is exempt, because it costs nothing new - and so is the ladder's own provision rung,
+which has already decided, having reclaimed the memory it is about to use. The per-project and
+instance-wide cap validators compare against the **task** budget (`taskContainerMemoryBudgetGb`)
+for the same reason: against the configured total they accepted a cap between the two, which
+saved cleanly and was then refused by every dispatch.
   Between them they stop two starved projects reclaiming from each other in a loop. A
   candidate is **suspended rather than destroyed** whenever taking it would leave its
   project with nothing resumable, as well as when it holds unpushed commits: both free
@@ -2614,11 +2743,17 @@ scheduled heartbeat would have come round anyway); and no `task_comments` row ha
 since, excluding ones that run authored. Comments are the signal rather than `tasks.updated_at`
 because every mutation that could give the agent work - status, assignee, title, unblock -
 writes one through `task-events.ts`, whereas `updated_at` is bumped by the run's own
-in-progress flip and would report "changed" on the quietest run. Conversational sources
-(`mention`, `comment`, `reply`, `on_demand`, `credential_provided`, `asset_deletion_resolved`)
-are exempt: each is somebody asking for something the last pass could not have served. A
-suppressed wakeup is marked `completed` with `last_skipped_reason = no_work_cooldown` -
-answered, not re-queued to ask again, and not left dangling in `claimed`.
+in-progress flip and would report "changed" on the quietest run. **Answering a choice card
+writes no row** - it sets `chosen_option` on the card already there - so `chosen_at`
+(stamped by a trigger, migration 074) is read alongside `created_at`; without it the one
+event that most conclusively ends a wait was the one event neither suppression could see.
+Conversational sources (`mention`, `comment`, `reply`, `on_demand`, `credential_provided`,
+`asset_deletion_resolved`, `approval_resolved`) are exempt: each is somebody asking for
+something the last pass could not have served. A suppressed wakeup is marked `completed` with
+`last_skipped_reason = no_work_cooldown` - answered, not re-queued to ask again, and not left
+dangling in `claimed`. The skip is logged at `warn` for every source but `heartbeat` and
+`timer`: on those two it is the backoff working, on anything else it means something asked
+for this agent and got nothing, and the row leaves the queued list as it goes.
 
 **The parked-on-admin suppression.** `noWorkCooldownActive` covers only the case where the
 agent *said* it had nothing to do. The commoner one is an agent that asked a human something
@@ -2629,8 +2764,9 @@ task closed. `parkedOnAdminAsk` (same module) applies the second verdict at the 
 suppressing when both hold: an ask still stands on the thread - a comment that raised an
 `admin_mentions` row, or an unanswered choice card (`chosen_option IS NULL`), spelled through
 `outstandingAdminAskExistsSql` in `lib/task-sort.ts` so migration 059's partial index still
-applies - and nobody but this agent has commented since. The agent's own later comments are
-excluded: chasing its own question is not an answer to it. Unlike the no-work backoff it is
+applies - and nobody but this agent has commented since, `chosen_at` counting as the admin
+speaking whoever authored the card. The agent's own later comments are excluded: chasing its
+own question is not an answer to it. Unlike the no-work backoff it is
 **unbounded in time**, because a question addressed to a person goes stale only when they
 answer; the same exempt sources carry every form that answer can take, and `on_demand` ("Run
 now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
@@ -2811,9 +2947,15 @@ Errored view and the failure ping both fire, and `fileProviderRefusalApproval` f
 shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
 dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
 after the agent when the fault is upstream. The web renders every such `agent_error` record
-as a notice, not a proposal: a link to the task and a Dismiss that closes the row through the
-ordinary resolve route, never Approve/Deny, since neither had any side effect for this payload
-and both read as a decision the reader was not being asked to make. The record's other half
+as a notice, not a proposal, and the card *is* the control: clicking it resolves the row
+through the ordinary resolve route and navigates to `#comment-<run entry>` on the task, never
+Approve/Deny, since neither had any side effect for this payload and both read as a decision
+the reader was not being asked to make. The approvals route supplies both halves of that
+destination - `payload_task_project_slug` off the task's own project (a route param resolves
+against `projects.slug`, and `team_slug` is a different string that resolves against nothing)
+and `payload_run_comment_public_id` off the `run` comment carrying `payload.run_id`. A notice
+whose run left no task, and so has nothing to open, keeps the Dismiss button instead - it is
+the only shape that still carries one. The record's other half
 is `clearAgentErrorApprovalsOnRecovery`, called from `runAgent` on every succeeded run: it
 resolves the member's pending `agent_error` rows through `resolveApproval` and the approvals
 broadcast, exactly as a human Dismiss does, so a recovered agent does not leave a stale notice
@@ -3157,15 +3299,27 @@ with its assignee and status. The downward half exists so a manager can see what
 delegated: `SHARED_INSTRUCTIONS` tells it to route fresh feedback to an in-flight sub-task
 rather than absorbing the deliverable, and without the list that rule depends on the agent
 remembering its own earlier fan-out. It also injects the **latest 3 comments** inline (the
-comment that woke the run tagged) as a head-start — small enough to carry on every run, while
-the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
-`list_comments` for the full thread before acting, since instructions posted after a task is
-created routinely change it. A comment-sourced wakeup additionally renders a handoff that
-quotes the triggering comment verbatim: `## Mention Handoff` (`mention`), `## Reply Received`
-(`reply`), or `## New Comment on Your Task` (the opt-in assignee `comment` wake, previously the
-one comment source that surfaced no reference to what triggered it). The Coach's `task_done`
-review is the one path that instead embeds the **full** comment history (both share
-`loadCommentHistory`/`renderCommentHistory`).
+comment that woke the run tagged) as a head-start, while the `SHARED_INSTRUCTIONS` "read the
+thread before you act" rule still directs the agent to `list_comments` for the full thread
+before acting, since instructions posted after a task is created routinely change it. A
+comment-sourced wakeup additionally renders a handoff quoting the triggering comment:
+`## Mention Handoff` (`mention`), `## Reply Received` (`reply`, which quotes **two** bodies —
+the reply and the comment it answers, which can be older than the head-start window reaches), or
+`## New Comment on Your Task` (the opt-in assignee `comment` wake). A body a handoff has quoted
+is back-referenced rather than repeated in the thread block. The Coach's `task_done` review takes
+a wider window of the same thread (both share `loadCommentHistory`/`renderCommentHistory`).
+
+**The task-scoped half of every run prompt is budgeted** — `PROMPT_BUDGET_CHARS` in
+`services/prompt-budget.ts`, spent in priority order through one `PromptBudget`, with a ceiling
+per section. **The ceilings shape a normal prompt; the budget exists only so the sections cannot
+sum past it**, which is the failure mode capping each field individually does not prevent — the
+total stays an arithmetic coincidence that reopens whenever a section is added, and two were.
+Every cut section states its source length and names the tool call that serves the rest
+(`get_comment`, `get_task`, `list_comments`, `list_task_runs`), so a bound is a size hint rather
+than a silent drop. `RUNTIME_PROMPT_MAX_CHARS` (`@hezo/shared`) records what a CLI itself refuses
+— Codex enforces 1 MiB client-side, on every provider — and `assertPromptAcceptable` fails the run
+by name against it. That check is a **backstop, not the bound**: with the budget in place it
+should never fire, and if it does, a section escaped the budget.
 
 ### Workspaces, worktrees & git
 
@@ -3882,6 +4036,15 @@ shape.** `AiProviderVerifyEndpoint.subscriptionHeaders` carries it (Anthropic: a
 since `x-api-key` refuses an `sk-ant-oat01-…` token whatever its state and would make every
 probe a false condemnation); an absent entry says this provider's subscription credential is
 not a bearer at all (Codex's is a JSON auth file) and leaves it on the shape check alone.
+**A verify has three outcomes, not two, and the same three for both auth methods.**
+Accepted (the provider took it) writes `verified`; refused (`probeProvesCredentialDead`)
+writes `invalid` and relays the provider's own reason through `refusalDetail`, scrubbed of
+the credential; everything else - unreachable, the provider's own 5xx, or a subscription
+with no `subscriptionHeaders` to ask with - is **unknown** and writes nothing, reported as
+`checked: false` so the UI withholds the tick. Expressing only two is where this route's
+bugs lived: a provider answering 500 condemned a working api key, and a Codex subscription
+was written `verified` and reported valid having made no request at all.
+
 **What a probe may conclude is deliberately asymmetric** and lives in one predicate,
 `probeProvesCredentialDead`: only a 401/403 condemns. Acceptance proves nothing, because what
 a *valid* subscription token does on a catalog endpoint is not assertable for every provider -
@@ -3923,9 +4086,26 @@ screen nobody is watching. `DELETE …/:flowId` cancels. Which runtimes can be d
 (`@hezo/shared`, read by the web to decide whether to offer the button) paired with
 `SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
 asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
-one pasted code; Google has no subscription auth at all (API key only). **The credential never
-reaches the browser** — on success the poll route stores it via `storeAiProviderKey` and
-returns only the config id, coalescing concurrent polls so overlapping requests insert once.
+one pasted code; Google has no subscription auth at all (API key only).
+
+**What the CLI printed is read off a composed screen, never out of the byte stream**
+(`renderTerminalScreen`, `sandbox/terminal-screen.ts`). A TUI repaints only the cells that
+changed, so a value reaches the log as fragments at coordinates: `claude setup-token` writes
+`sk-ant-`, steps the cursor over a character an earlier frame left standing, then writes the
+rest. Deleting the escapes splices the fragments together minus that character, yielding a
+token of the right shape and the wrong value — which passes every shape check, is stored, and
+is then refused by the provider on every run. For the same reason the script sizes the PTY
+with `stty` rather than with `COLUMNS`: `script` opens a terminal that reports `0 0`, so the
+CLI falls back to 80 columns and wraps both the sign-in URL and the token it mints. The
+mechanics and the rest of the traps are `.dev/driving-a-cli-in-a-container.md`.
+
+**The credential never
+reaches the browser** — on success the poll route puts it through `prepareProviderCredential`,
+the same shape check and live provider question a pasted credential answers, then stores it via
+`storeAiProviderKey` and returns only the config id, coalescing concurrent polls so overlapping
+requests insert once. A credential the provider refuses fails the flow as `credential_rejected`
+and stores nothing: a sign-in Hezo drove is not more trustworthy than one the operator pasted,
+because everything between the vendor's screen and the vault is Hezo's own reading of a terminal.
 Every exit path releases the container through `finish`, and `sweepLoginContainers` collects
 anything a mid-flow crash stranded, scoped by an instance-id label value. The login container
 deliberately gets **no egress proxy**: a sign-in emits no `__HEZO_SECRET_*__` placeholders to
@@ -4017,12 +4197,13 @@ stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
-global `medium`. Each runtime maps it natively: `claude_code` appends
+global `high`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `antigravity`
-sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has no
-`minimal`, which maps to `low`); `opencode` writes `reasoning.effort` onto the run's model in
-its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
-directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
+passes `--effort`, folding the five-level ladder onto the `low|medium|high` it accepts; `kimi`
+sets `KIMI_MODEL_THINKING_EFFORT` (it has no `minimal`, which maps to `low`); `opencode`
+writes `reasoning.effort` onto the run's model in its per-run `opencode.json` (see below);
+`grok` steers effort through the portable prompt directive alone. It's also exposed as
+`HEZO_AGENT_EFFORT`.
 
 ### Runtime adapters
 
@@ -4140,7 +4321,7 @@ is ~111 KB — so `arg` only works for a runtime whose system prompt travels out
 home the CLI auto-loads, and when set the resolved system prompt is written there by the
 runtime's own MCP injector while the prompt file carries the task body alone. Kimi Code is the
 only entry (`$KIMI_CODE_HOME/AGENTS.md`, which the CLI concatenates into its system prompt with
-no size cap — it warns past 32 KB and carries on). `assertPromptDeliverable` still guards what
+no size cap — it warns past 32 KB and carries on). `assertPromptAcceptable` still guards what
 is left: an `arg`-mode prompt over the cap fails the run with an error naming the runtime, the
 size and the limit, rather than being truncated or rerouted.
 
@@ -5569,6 +5750,17 @@ unthrottled. The one exception is password auth - `routes/auth.ts` keeps an in-m
 brute-force counter (5 attempts, then a 60s lockout with exponential backoff capped at
 1h, HTTP 429) on the password-verify and password-change paths.
 
+**Framing.** Every response leaves with `Content-Security-Policy: frame-ancestors 'none'`
+unless the route wrote a policy of its own: `framingMiddleware` (`middleware/framing.ts`) is
+the outermost middleware in `buildApp`, and `serveStartupRequest` applies the same
+`refuseFraming` by hand because it runs before the app exists. The one route with its own
+policy is the signed asset route, which serves agent-authored HTML under `sandbox` and is
+framed by the app's own asset viewer - so that policy is kept, and it names itself the one
+allowed ancestor (`frame-ancestors 'self'`) rather than taking `'none'`, or the viewer would
+break. The control plane that provisions hosted instances sends the same
+`'none'` on its documents; the point on both sides is that no third-party page can draw its
+chrome around the master-key gate or the sign-in screen.
+
 ---
 
 ## 11. Web frontend
@@ -5782,9 +5974,13 @@ here), and **invalidate + refetch** (validation-heavy / long-running work). Erro
 on rollback; successes are confirmed by the UI change itself.
 
 **Locale.** The instance has one display locale - language, date field order, and money
-punctuation - chosen on a first-run screen that runs *ahead of master-key generation* and
-editable afterwards at Settings › Languages & formats. It is global (no per-user override)
-and lives in three `system_meta` keys, so it needed no migration.
+punctuation - recorded by the request that enrols the master key (`POST /api/auth/setup`
+carries the gate's current `LocaleSettings`, persisted only when none is configured), by a
+`seed` block on a provisioned instance (§ *Hosted first run*), or from the gate's corner
+switcher, and editable afterwards at Settings › Languages & formats. There is no language
+step of its own: the master-key gate renders in the browser's language and that is what
+setup records. It is global (no per-user override) and lives in three `system_meta` keys, so
+it needed no migration.
 
 Three axes rather than one BCP-47 tag: field order and month language are independent (there
 is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
@@ -5798,7 +5994,8 @@ renders in it before a credential exists (the boot-time status handler omits it 
 open yet). `I18nProvider` (`lib/i18n`) wraps `ThemeProvider` in `main.tsx`, above both the
 router and the `Toaster`; it seeds from a localStorage *render hint* to avoid a first-paint
 flash, then adopts the server value - but only once `localeConfigured` is true, since the
-pre-choice default would otherwise overwrite `navigator.languages` detection.
+pre-choice default would otherwise overwrite `navigator.languages` detection, which is the
+language the first gate renders in and the setup request then records.
 `lib/format-date.ts` keeps its exported signatures and reads the active locale from module
 state (sound because the locale is global and the provider is its only writer), so its
 consumers were untouched. Catalogs are committed JSON per language, statically imported, with
@@ -5829,11 +6026,14 @@ renders under the preview. Its hosts pass a `MessageKey` rather than a translate
 `submitLabel`, since a string translated in the host is frozen in the committed language.
 
 `PATCH /api/instance-settings/locale` is the single write path. It is listed in
-`PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
-same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
-in-route via `requireAdminEquivalentBearer`. The language button that hosts the editor appears
-only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
-than failing.
+`PUBLIC_PATHS` but self-authenticating: open only while `masterKeyManager.getState()` is
+`unset` (exactly the window `POST /api/auth/setup` is open in), admin-only after, resolving
+the bearer in-route via `requireAdminEquivalentBearer`. It used to key on an enrolled admin
+password, which a hosted instance never has - an issuer signs it in - so on every tenant the
+route stayed world-writable for life. The language button that hosts the editor appears only
+on pre-auth surfaces; an unauthorized save there applies to that browser alone rather than
+failing, and on a self-hosted instance that now covers the gap between the key and the
+password step as well.
 
 **Responsive.** Mobile-first is mandatory — build the mobile layout first, enhance with
 `sm:`/`md:`/`lg:`. Three breakpoints (mobile <768px, tablet 768–1023px, desktop 1024px+).
@@ -5979,6 +6179,50 @@ shorter than the image it writes), and the maskable variant had no safe zone at 
 
 ---
 
+### Hosted first run
+
+A hosted instance (one with an `sso` block, § *Configuration resolution*) is provisioned
+by a control plane on someone's behalf, and arrives with a `seed` block carrying what that
+person already told the plane: their language and, when they wrote one, a project brief.
+
+The gate order on any fresh instance is: the boot screen while `/api/status` reports
+`starting`; `MasterKeyGate` (`unset`, then `locked` on every later restart) with the corner
+locale switcher; on a hosted instance `SsoRedirect` to the issuer and back with `#sso=`; then
+`SetupGate` with the AI-provider step (the password step is omitted when an issuer owns
+sign-in); then `/home`. There is no language step: the master-key gate renders in the
+browser's language, the corner switcher can change it, and the setup request records
+whichever is showing - unless the seed already did.
+
+`services/seed.ts` is the one consumer of the block, and the two halves land at the two
+points where the instance can first act on them:
+
+- **The locale, at boot.** `applySeedLocale` runs in the `workspace` startup phase after
+  `seedDefaultTeam`, before the app serves, and writes `seed.locale` into `system_meta`
+  only when `instanceLocaleIsConfigured` is false. `/api/status` therefore reports
+  `localeConfigured: true` from the first request, and `useSyncInstanceLocale` adopts the
+  language on every browser. A locale anyone chose - from the gate's corner switcher or
+  from Settings - is never overwritten, on this or any later boot.
+- **The brief, at the first unlock.** `consumeSeedProject` is registered on
+  `masterKeyManager.onUnlock`, which `setup()` fires before the setup route returns and
+  every later `unlock()` fires again. It writes the `seed_project:consumed` marker into
+  `system_meta` first, as `INSERT ... ON CONFLICT DO NOTHING RETURNING`, and only the
+  caller that got a row back proceeds to `createProjectIntake` - so a restart, a rebuilt
+  host or two processes on one database open one intake, and only a wiped database (the
+  plane's `reset`) seeds again. A null intake or a thrown error deletes the marker and logs,
+  so a transient (HQ or the CEO missing) is tried once more at the next unlock rather than
+  papered over. It runs under `trackBackground` because the unlock hook is synchronous and
+  nothing awaits it.
+
+The intake needs only HQ and an enabled CEO, both seeded before any key exists, and it
+queues no run: by the time the AI-provider step finishes and `/home` mounts, the greeting
+is waiting in `ProjectIntakeHomePanel` and the admin's first reply is the CEO's first run.
+The one ordering that matters is the superuser: `POST /api/auth/setup` calls
+`ensureSuperuserId` **before** `masterKeyManager.setup()`, because the greeting's
+`fireAdminMention` fans out to the superuser and returns silently when there is none -
+and that inbox row is what parks the CEO's heartbeat against an unanswered thread
+(§ *The parked-on-admin suppression*). Created after `setup()` returned, as it used to be,
+the mention would have raced the intake and lost.
+
 ## 12. Build, release, migrations & upgrades
 
 ### Configuration resolution
@@ -6011,6 +6255,17 @@ than a generic "unrecognized key":
   argv is visible in the process list.
 - **`reset`** - it renames the embedded `pgdata` aside, which is a one-off action. In a
   persistent file it would wipe the database on **every** restart.
+
+**The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
+first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
+running instance applies to the same data - `parseLocaleSettingsPatch` for the locale, and
+`parseProjectBrief` (`@hezo/shared`, beside it) for the brief, which counts
+`PROJECT_BRIEF_MAX_CHARS` in code points so a brief the signup form accepted is never refused
+here. Like `sso`, it is file-only and inert when absent; unlike `sso`, every key inside is
+optional. `services/seed.ts` consumes it: the locale at boot when none is configured, the
+brief once at the first unlock (§ *Hosted first run*). An older binary
+handed a file carrying `seed` refuses to start naming the key, which is the strict schema
+doing its job - a plane writes the block only for a release that reads it.
 
 **Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
 reading were removed with no shim and no warning, so an instance whose supervisor still

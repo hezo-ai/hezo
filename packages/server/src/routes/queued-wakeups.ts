@@ -7,9 +7,10 @@ import { apiKeyIdFromAuth, resolveActorMemberId, resolveTaskId } from '../lib/re
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import type { DispatchNowResult } from '../services/job-manager';
 import {
+	containerCapacityVerdictInDb,
 	getBusyAgentIdsInProject,
-	isContainerCapacityBlockedInDb,
 	isTaskBusyInDb,
 } from '../services/run-concurrency';
 import { recordWakeupCancelled, resolveActorName } from '../services/task-events';
@@ -63,10 +64,18 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 
 	let taskBusy = false;
 	let instanceAtCapacity = false;
+	let hoursExhausted = false;
 	if (await isTaskBusyInDb(db, taskId)) {
 		taskBusy = true;
-	} else if (projectId && (await isContainerCapacityBlockedInDb(db, c.get('docker'), projectId))) {
-		instanceAtCapacity = true;
+	} else if (projectId) {
+		// Kept apart all the way to the client. Both waits used to arrive here as
+		// one boolean, so an instance that had spent its monthly container-hours
+		// told every reader it was at its container limit - while the Containers
+		// page it sits beside showed containers doing nothing. The two clear on
+		// different clocks and only one of them is about containers at all.
+		const verdict = await containerCapacityVerdictInDb(db, c.get('docker'), projectId);
+		instanceAtCapacity = verdict.blocked && !verdict.hoursExhausted;
+		hoursExhausted = verdict.hoursExhausted;
 	}
 
 	// agent_busy is per-agent (each wakeup has its own member), so it lives on
@@ -91,18 +100,41 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 		dispatch: {
 			task_busy: taskBusy,
 			instance_at_capacity: instanceAtCapacity,
+			hours_exhausted: hoursExhausted,
 		},
 	});
 });
 
-// Shared by both manual-dispatch handlers below; keys mirror DispatchNowResult.
-const DISPATCH_CONFLICT_MESSAGES: Record<string, string> = {
-	task_busy: 'This task already has a run in progress',
-	instance_at_capacity:
-		'Hezo is at its active-container limit; the run will start when a container goes idle',
-	agent_busy: 'This agent is currently running on another task in this project',
-	blocked: 'This task is blocked by an open dependency',
-	not_queued: 'Wakeup is no longer queued and cannot be run',
+/** Every reason a dispatch can decline, minus the one that means "no such row". */
+type NotDispatchedReason = Exclude<
+	Extract<DispatchNowResult, { dispatched: false }>['reason'],
+	'not_found'
+>;
+
+/**
+ * What a declined manual dispatch means for the person who pressed the button,
+ * keyed by reason and shared by both handlers below.
+ *
+ * `markWakeupSkipped` leaves the row `queued`, so for most reasons the wakeup is
+ * genuinely pending and the wakeup cron starts it as soon as the guard clears.
+ * Reporting that as an error told the reader their run had failed while it was
+ * on its way. Those carry no prose: the caller names the wait in its own
+ * language from `reason`. Only a conflict a person must act on carries a
+ * sentence - `blocked` moves the row to `deferred` until the dependency closes,
+ * and `not_queued` means there is nothing pending to start.
+ *
+ * Typed against the reason union so a new `DispatchNowResult` reason is a
+ * compile error here - which is how `hours_exhausted` came to have no message.
+ */
+type DispatchOutcome = { queued: true } | { queued: false; message: string };
+
+const DISPATCH_OUTCOMES: Record<NotDispatchedReason, DispatchOutcome> = {
+	instance_at_capacity: { queued: true },
+	hours_exhausted: { queued: true },
+	task_busy: { queued: true },
+	agent_busy: { queued: true },
+	blocked: { queued: false, message: 'This task is blocked by an open dependency' },
+	not_queued: { queued: false, message: 'Wakeup is no longer queued and cannot be run' },
 };
 
 queuedWakeupsRoutes.post(
@@ -221,12 +253,14 @@ queuedWakeupsRoutes.post(
 			if (result.reason === 'not_found') {
 				return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
 			}
-			return err(
-				c,
-				'CONFLICT',
-				DISPATCH_CONFLICT_MESSAGES[result.reason] ?? 'Unable to start queued run',
-				409,
-			);
+			const outcome = DISPATCH_OUTCOMES[result.reason];
+			// The row this handler was given is still queued, so the guard that
+			// declined it is a wait, not a failure - say which wait it is and let
+			// the caller report it as a notice.
+			if (outcome.queued) {
+				return ok(c, { queued: true, wakeup_id: wakeupId, reason: result.reason });
+			}
+			return err(c, 'CONFLICT', outcome.message, 409);
 		}
 
 		return ok(c, { dispatched: true });
@@ -271,12 +305,22 @@ queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry',
 		if (result.reason === 'not_found') {
 			return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
 		}
-		return err(
-			c,
-			'CONFLICT',
-			DISPATCH_CONFLICT_MESSAGES[result.reason] ?? 'Unable to start retry run',
-			409,
-		);
+		const outcome = DISPATCH_OUTCOMES[result.reason];
+		if (outcome.queued) {
+			// The wakeup created above survived the guard, so the retry is pending
+			// rather than lost. Announce the row as well as reporting it: nothing
+			// else tells another viewer's queued-agents list that it now exists.
+			broadcastChange(c, wsRoom.team(teamId), 'agent_wakeup_requests', 'INSERT', {
+				id: wakeupId,
+				team_id: teamId,
+				project_id: c.get('projectId') as string,
+				member_id: runRow.member_id,
+				task_id: taskId,
+				status: WakeupStatus.Queued,
+			});
+			return ok(c, { queued: true, wakeup_id: wakeupId, reason: result.reason });
+		}
+		return err(c, 'CONFLICT', outcome.message, 409);
 	}
 
 	return ok(c, { dispatched: true });

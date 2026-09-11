@@ -173,6 +173,7 @@ describe('noWorkCooldownActive', () => {
 			WakeupSource.OnDemand,
 			WakeupSource.CredentialProvided,
 			WakeupSource.AssetDeletionResolved,
+			WakeupSource.ApprovalResolved,
 		]) {
 			expect(await noWorkCooldownActive(db, agentId, taskId, source)).toBe(false);
 		}
@@ -209,6 +210,26 @@ describe('noWorkCooldownActive', () => {
 
 		// The running row has a null finished_at, so the no-work verdict still stands.
 		expect(await noWorkCooldownActive(db, agentId, taskId, WakeupSource.Automation)).toBe(true);
+	});
+
+	it('lifts when a choice card is answered, which writes no comment row at all', async () => {
+		await clearRuns();
+		// The card was posted before the run, so the created_at probe sees nothing
+		// new; the admin then answers it. Answering sets `chosen_option` on the row
+		// already there rather than inserting one, which is how the single most
+		// conclusive "the wait is over" event stayed invisible to this check.
+		const cardId = await insertAgentComment({
+			minutesAgo: 30,
+			contentType: CommentContentType.Action,
+		});
+		await insertRun({ reportedNoWork: true, minutesAgo: 10 });
+		expect(await noWorkCooldownActive(db, agentId, taskId, WakeupSource.Automation)).toBe(true);
+
+		await db.query(
+			`UPDATE task_comments SET chosen_option = '{"status":"approved"}'::jsonb WHERE id = $1`,
+			[cardId],
+		);
+		expect(await noWorkCooldownActive(db, agentId, taskId, WakeupSource.Automation)).toBe(false);
 	});
 
 	it('lifts on a status change, which reaches it as a system comment', async () => {
@@ -331,12 +352,53 @@ describe('parkedOnAdminAsk', () => {
 			WakeupSource.OnDemand,
 			WakeupSource.CredentialProvided,
 			WakeupSource.AssetDeletionResolved,
+			WakeupSource.ApprovalResolved,
 		]) {
 			expect(await parkedOnAdminAsk(db, agentId, taskId, source)).toBe(false);
 		}
 	});
 
+	it('lifts when the admin answers a card, even though answering writes no comment', async () => {
+		await clearRuns();
+		const cardId = await insertAgentComment({
+			minutesAgo: 20,
+			contentType: CommentContentType.Action,
+		});
+		await insertAgentComment({ minutesAgo: 10, raisesAdminMention: true });
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+
+		// The admin acting on the thread is the admin speaking on it, whoever
+		// authored the card. `chosen_at` is the only trace it leaves.
+		await db.query(
+			`UPDATE task_comments SET chosen_option = '{"status":"approved"}'::jsonb WHERE id = $1`,
+			[cardId],
+		);
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
 	it('returns false for a task-less wakeup', async () => {
 		expect(await parkedOnAdminAsk(db, agentId, null, WakeupSource.Heartbeat)).toBe(false);
+	});
+});
+
+describe('an approval resolution reaches the agent that filed it', () => {
+	it('is exempt from both suppressions, which discarded it on the automation source', async () => {
+		await clearRuns();
+		// The reported incident. The agent filed its proposals, asked the admin the
+		// last thing it needed, and reported no work because the task was now in
+		// somebody else's court - which is what SHARED_INSTRUCTIONS tells it to do.
+		// Approving in the inbox writes no comment, so both suppressions still read
+		// the thread as unchanged and the wake was dropped, not re-queued: nothing
+		// retried it, and the next chance was a scheduled heartbeat 12 hours out.
+		await insertAgentComment({ minutesAgo: 6, raisesAdminMention: true });
+		await insertRun({ reportedNoWork: true, minutesAgo: 5 });
+
+		expect(await noWorkCooldownActive(db, agentId, taskId, WakeupSource.Automation)).toBe(true);
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Automation)).toBe(true);
+
+		expect(await noWorkCooldownActive(db, agentId, taskId, WakeupSource.ApprovalResolved)).toBe(
+			false,
+		);
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.ApprovalResolved)).toBe(false);
 	});
 });

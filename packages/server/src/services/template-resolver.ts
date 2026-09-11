@@ -8,6 +8,7 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
+import { excerpt } from '../mcp/paging';
 import { buildConnectorRecipesSkill } from './connector-registry';
 import { buildHezoDocsBlock } from './docs-bundle';
 import { buildContainerEnvironmentBlock as buildAgentContainerEnvironmentBlock } from './sandbox/agent-environment';
@@ -59,6 +60,15 @@ interface ResolveContext {
  * count. Recency-ordered, so the cap drops the least-recently-touched docs first.
  */
 const PROJECT_DOCS_MANIFEST_LIMIT = 40;
+
+/**
+ * Skills listed in the per-run manifest, and how much of each one's blurb it
+ * carries. Same fixed-per-run-cost reasoning as the docs manifest above; the
+ * blurb is capped separately because a skill's `description` is free text that
+ * nothing refuses at write time, so row count alone leaves the block unbounded.
+ */
+const SKILLS_MANIFEST_LIMIT = 40;
+const SKILL_BLURB_CHARS = 300;
 
 const SHARED_INSTRUCTIONS = `
 
@@ -490,16 +500,27 @@ export async function resolveSystemPrompt(
 		// agents can get_skill('connector-recipes') before wiring up an external
 		// service. It always appears, even when the team has no DB skills yet.
 		const virtual = buildConnectorRecipesSkill();
-		const dbLines = skillRows.map(
-			(s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`,
-		);
+		// Bounded in both directions, the way the project-docs manifest is: this is
+		// a one-line-per-entry index that every run pays for, and a `description` is
+		// free text with no write-time ceiling. Overflow is named rather than
+		// dropped silently, and `list_skills` pages the rest.
+		const shownSkills = skillRows.slice(0, SKILLS_MANIFEST_LIMIT);
+		const dbLines = shownSkills.map((s) => {
+			const blurb = excerpt(s.description, SKILL_BLURB_CHARS);
+			const tail = blurb.truncated ? '…' : '';
+			return `- ${s.name} (slug: ${s.slug})${blurb.excerpt ? `: ${blurb.excerpt}${tail}` : ''}`;
+		});
 		const virtualLine = `- ${virtual.name} (slug: ${virtual.slug}): ${virtual.description}`;
+		const overflow =
+			skillRows.length > shownSkills.length
+				? `\n\n${shownSkills.length} of ${skillRows.length} skills shown, alphabetically. Call list_skills to page through the rest.`
+				: '';
 		const manifest = [
 			'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
 			"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
 			'These skills live in the Hezo skills database and load ONLY through the get_skill MCP tool — never your coding CLI\'s own skill feature (its built-in Skill tool, a /skill command, or a file on disk), which does not know these slugs and fails with "unknown skill". get_skill(slug) is the only loader.',
 			'',
-			[...dbLines, virtualLine].join('\n'),
+			[...dbLines, virtualLine].join('\n') + overflow,
 		].join('\n');
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, manifest);
 	}

@@ -24,6 +24,12 @@ import { ensureProjectWorkspace, getProjectDir } from '../src/services/workspace
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
 import { createStubDocker, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	clearContainerCapacityForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setContainerCapacityForTest,
+} from './helpers/capacity';
 
 let db: Db;
 let dataDir: string;
@@ -217,6 +223,74 @@ describe('ensureProjectContainerRunning', () => {
 		expect(id).toBe('already-running');
 		expect(docker.createContainer).not.toHaveBeenCalled();
 		expect(docker.startContainer).not.toHaveBeenCalled();
+	});
+
+	it('refuses to wake a stopped container the memory budget has no room for', async () => {
+		// This function has four callers - repo setup, the HQ warm-up, the git-state
+		// route and its own provision fallback - and only one of them used to check
+		// the budget first. The other three charged a full allocation against a
+		// budget that had already refused it, and a container started this way is
+		// indistinguishable from one the ladder admitted: the memory it takes is
+		// memory every queued run is then told it cannot have.
+		await resetContainerRow();
+		await db.query(
+			"UPDATE projects SET container_id = 'over-budget', container_status = 'stopped'::container_status WHERE id = $1",
+			[projectId],
+		);
+		// Room for one task container, and another project is already holding it.
+		await setContainerCapacityForTest(db, 1);
+		await seedRunningContainerProject(db, 'cap-filler-ensure');
+		const startContainer = vi.fn(async () => {});
+		const docker = createStubDocker({
+			inspectContainer: vi.fn(async () => ({
+				Id: 'over-budget',
+				State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+				Config: { Image: 'stub' },
+			})),
+			startContainer,
+			createContainer: vi.fn(),
+		});
+
+		try {
+			await expect(ensureProjectContainerRunning(deps(docker), projectId)).rejects.toThrow(
+				/no container available/,
+			);
+			expect(startContainer).not.toHaveBeenCalled();
+			expect(docker.createContainer).not.toHaveBeenCalled();
+		} finally {
+			await removeSeededContainerProject(db, 'cap-filler-ensure');
+			await clearContainerCapacityForTest(db);
+		}
+	});
+
+	it('still returns a container the engine already reports as running, budget or not', async () => {
+		// The gate covers the paths that bring a container up. One that is already
+		// up costs nothing new, so refusing it would deny an answer the caller can
+		// see is true - and would break every warm path the moment the instance
+		// filled, which is exactly when it must keep working.
+		await resetContainerRow();
+		await db.query(
+			"UPDATE projects SET container_id = 'warm-at-capacity', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+		await setContainerCapacityForTest(db, 1);
+		await seedRunningContainerProject(db, 'cap-filler-warm');
+		const docker = createStubDocker({
+			inspectContainer: vi.fn(async () => ({
+				Id: 'warm-at-capacity',
+				State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+				Config: { Image: 'stub' },
+			})),
+			createContainer: vi.fn(),
+			startContainer: vi.fn(),
+		});
+
+		try {
+			expect(await ensureProjectContainerRunning(deps(docker), projectId)).toBe('warm-at-capacity');
+		} finally {
+			await removeSeededContainerProject(db, 'cap-filler-warm');
+			await clearContainerCapacityForTest(db);
+		}
 	});
 
 	it('starts a stopped container in place, resubscribes logs, and broadcasts', async () => {

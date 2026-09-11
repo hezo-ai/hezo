@@ -205,6 +205,68 @@ describe('the sso block', () => {
 		expect(() => loadConfigFile(sso('hosted: true'))).toThrow(/hosted/);
 	});
 });
+describe('the seed block', () => {
+	const LOCALE = "locale: { language: 'de', date_format: 'dmy', number_format: 'comma-dot' }";
+
+	function seed(body: string): string {
+		return write(`module.exports = { seed: { ${body} } };`);
+	}
+
+	it('accepts a locale and a project brief', () => {
+		expect(
+			loadConfigFile(seed(`${LOCALE}, project: { description: '  A gym newsletter.  ' }`)).seed,
+		).toEqual({
+			locale: { language: 'de', date_format: 'dmy', number_format: 'comma-dot' },
+			project: { description: 'A gym newsletter.' },
+		});
+	});
+
+	it('accepts either half alone, and an empty block', () => {
+		expect(loadConfigFile(seed(LOCALE)).seed).toEqual({
+			locale: { language: 'de', date_format: 'dmy', number_format: 'comma-dot' },
+		});
+		expect(loadConfigFile(seed("project: { description: 'Just a brief.' }")).seed).toEqual({
+			project: { description: 'Just a brief.' },
+		});
+		expect(loadConfigFile(seed('')).seed).toEqual({});
+	});
+
+	it('is absent, not null, when the file does not name it', () => {
+		expect(loadConfigFile(write('module.exports = { port: 1 };')).seed).toBeUndefined();
+	});
+
+	// The cap counts code points: 2,000 emoji are 4,000 UTF-16 units and must
+	// pass, since the signup form that accepted them counts the same way.
+	it('bounds the brief in code points, not UTF-16 units', () => {
+		const smile = '\u{1F600}';
+		expect(loadConfigFile(seed(`project: { description: '${smile}'.repeat(2000) }`)).seed).toEqual({
+			project: { description: '\u{1F600}'.repeat(2000) },
+		});
+		expect(() => loadConfigFile(seed(`project: { description: '${smile}'.repeat(2001) }`))).toThrow(
+			/seed\.project\.description: brief must be at most 2000 characters \(got 2001\)/,
+		);
+	});
+
+	it.each([
+		['an empty brief', "project: { description: '   ' }", /must not be empty/],
+		[
+			'a control character in the brief',
+			"project: { description: 'a\\u0007b' }",
+			/control characters/,
+		],
+		['an unknown project key', "project: { description: 'x', name: 'y' }", /name/],
+		['an unknown seed key', "${LOCALE}, team: 'blank'", /team/],
+		[
+			'an unsupported language',
+			"locale: { language: 'xx', date_format: 'dmy', number_format: 'comma-dot' }",
+			/language must be one of/,
+		],
+		['a locale missing an axis', "locale: { language: 'de', date_format: 'dmy' }", /number_format/],
+	])('refuses %s', (_label, body, expected) => {
+		expect(() => loadConfigFile(seed(body.replace('${LOCALE}', LOCALE)))).toThrow(expected);
+	});
+});
+
 describe('runtimeConfig', () => {
 	it('serves the built-in defaults until one is set', () => {
 		resetRuntimeConfig();

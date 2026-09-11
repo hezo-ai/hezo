@@ -40,9 +40,9 @@ const PUBLIC_PATHS = [
 	// lookup, so they bypass the bearer-token auth middleware.
 	'/api/api-keys/register',
 	'/api/api-keys/status',
-	// The onboarding language screen runs before any credential exists. The
-	// route re-checks initialization itself and requires superuser once an admin
-	// password is enrolled, so this is only open in the same window where
+	// The gate's corner language switcher runs before any credential exists.
+	// The route re-checks itself and requires an admin bearer once the master
+	// key is set, so this is only open in the same window where
 	// /api/auth/setup already lets anyone claim the instance.
 	'/api/instance-settings/locale',
 ];

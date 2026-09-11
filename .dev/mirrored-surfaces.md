@@ -18,6 +18,7 @@ one to read: where it says *nothing*, no test will catch you.
 | A prompt-style rule | `packages/shared/src/prompt-style.ts`, its `{{prompt_style_rules}}` render, the authoring tool descriptions, `.dev/writing-agent-prompts.md` | `mcp-reference.test.ts` for the tool docs, **nothing for the rest** |
 | A new surface that accepts an authored prompt | its `checkPromptStyle` call | **nothing - on you** |
 | A new server-wired wakeup path reachable from an agent run | `created_by_run_id` on the wakeup it creates | **nothing - on you** |
+| A new `WakeupSource` value | the `wakeup_source` Postgres enum (a migration), `DISPATCH_SUPPRESSION_EXEMPT_SOURCES` if it carries an answer rather than a system ping, and a `runTrigger.*` label in all twelve catalogs - without the label the run list calls it "Unknown trigger" | `run-trigger.test.ts` covers the label; **nothing for the other two** |
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
 | A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
@@ -31,6 +32,8 @@ one to read: where it says *nothing*, no test will catch you.
 | A config mechanism, data location or startup path an existing instance carries across a restart | a check that fails loudly on the old form, plus every deployment artifact in `deploy/` still writing it | the `Upgrade-Checked:` trailer |
 | A `.dev/` guide added, renamed or removed | the `.dev/` map table in `AGENTS.md`, the link from its section there, and this table | **nothing - on you** |
 | A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
+| `CODEX_VERSION` moved | `RUNTIME_PROMPT_MAX_CHARS[Codex]`, which mirrors that release's `MAX_USER_INPUT_TEXT_CHARS` - re-read it on every bump, and treat a *lowered* upstream cap as the dangerous direction | **nothing - on you** |
+| A section added to a run prompt | a `PROMPT_SECTION_CEILINGS` entry and a `budget.take` for it - an unbudgeted section reopens the hole the budget exists to close, and does it silently | `prompt-budget.test.ts` asserts the total, so an unbudgeted section is caught only once it is large |
 | A rule `AGENTS.md` states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
 | A new rule added to `AGENTS.md` | that file's byte budget - fitting it in usually means cutting something else down | `agents-md-budget.test.ts` |
 | CLI flag / subcommand / config key / port / default (`src/cli.ts`, `src/config/`) | `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, any page showing the command | **nothing - on you** |

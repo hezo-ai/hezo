@@ -286,6 +286,32 @@ export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolea
 }
 
 /**
+ * Whether a container is charging the instance memory budget right now.
+ *
+ * **The same predicate the capacity gate applies in SQL**, stated once here so
+ * the Containers page can mark which rows are actually spending the budget it
+ * reports. Without it an operator reads a page of six containers each labelled
+ * with its allocation, adds them up, gets a figure far over the configured limit,
+ * and has no way to tell that half of them cost nothing - which is exactly how a
+ * stopped container comes to be blamed for a full instance.
+ *
+ * A container is charged for what it was **built** to hold, whatever it is doing
+ * with it, so the question is only about its state: a stopped one is released
+ * memory, a starting one has already been promised it. Nothing is exempt - a
+ * container held by a chat turn is charged exactly like one held by a task run,
+ * because the two are the same container claimed under different workloads.
+ *
+ * `run-concurrency.ts` cannot call this - its copy is a SQL predicate on the same
+ * column - so a test sums the rows this returns true for and pins the total
+ * against the gate's own figure. That test is what keeps the two from drifting.
+ */
+export function containerCountsTowardBudget(
+	state: 'creating' | 'idle' | 'busy' | 'suspended' | 'error',
+): boolean {
+	return state === 'creating' || state === 'idle' || state === 'busy';
+}
+
+/**
  * Disk, in GB, allocated to each project container.
  *
  * The sibling of the per-container RAM cap: an instance-wide default, overridable
@@ -302,6 +328,16 @@ export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolea
  * needs it - rather than paying for headroom every project holds and none uses.
  */
 export const DEFAULT_CONTAINER_DISK_GB = 5;
+/**
+ * vCPU a sandbox is created with.
+ *
+ * Beside the disk and memory defaults because it is the same kind of fact: what
+ * one container is provisioned with, fixed rather than configurable, and the
+ * third of the three numbers anything costing a container has to know. The
+ * engine that asks the provider for it reads it from here.
+ */
+export const DEFAULT_CONTAINER_VCPU = 2;
+
 /** Below this a checkout plus `node_modules` does not reliably fit. */
 export const CONTAINER_DISK_GB_MIN = 2;
 export const CONTAINER_DISK_GB_MAX = 1024;
@@ -450,6 +486,30 @@ export function splitRunLinks(text: string): RunLinkSegment[] {
  * is a job an agent-run container was never the right home for.
  */
 export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
+
+/**
+ * How long a **suspended** container is kept for a warm resume before it is
+ * retired outright.
+ *
+ * A third clock, and a much slower one, because it answers a third question.
+ * {@link CONTAINER_IDLE_TIMEOUT_MIN} asks "is this project between runs" and
+ * stops the container; this asks "is this project still a going concern" and
+ * disposes of it. In between, a stopped container is the cheapest warm start the
+ * pool has - about a second to resume, against minutes to clone - and it is
+ * charged nothing, so keeping it costs the instance nothing the budget measures.
+ *
+ * Long enough to be unambiguous. A week of silence from a project is not a lull
+ * between runs; whatever it does next will pay a cold start anyway, on an image
+ * and a checkout that have both moved on. Set it much shorter and it becomes a
+ * second idle timeout, throwing away warm containers a working project would have
+ * resumed on Monday.
+ *
+ * What makes the retirement worth doing at all is the cost the memory budget
+ * cannot see: a container is pinned to its project for life, so a dormant one is
+ * unreachable by anybody else, and on a managed backend it holds disk quota -
+ * which is what actually bounds how many containers the account can have.
+ */
+export const CONTAINER_DORMANT_RETIRE_MIN = 7 * 24 * 60;
 
 /**
  * The same window, for a project whose **assistant chat session is live**.

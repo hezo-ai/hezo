@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { FRAME_ANCESTORS_NONE } from '../src/middleware/framing';
 import { authHeader } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -43,6 +44,19 @@ describe('buildApp SPA serving (filesystem fallback)', () => {
 		expect(res.headers.get('Content-Type')).toContain('text/html');
 		const body = await res.text();
 		expect(body.toLowerCase()).toContain('<!doctype html');
+	});
+
+	it.runIf(hasDist)('refuses to be framed: the shell carries frame-ancestors none', async () => {
+		for (const path of ['/', '/some/deep/client/route']) {
+			const res = await ctx.app.request(path);
+			expect(res.headers.get('Content-Security-Policy'), path).toBe(FRAME_ANCESTORS_NONE);
+		}
+	});
+
+	it('carries the framing policy on API responses too, since one rule covers every route', async () => {
+		const res = await ctx.app.request('/api/status');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Security-Policy')).toBe(FRAME_ANCESTORS_NONE);
 	});
 
 	it.runIf(hasDist)('serves a real static asset with its mapped content-type', async () => {

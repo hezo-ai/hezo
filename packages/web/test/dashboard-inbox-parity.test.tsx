@@ -237,3 +237,69 @@ test('the global dashboard lists exactly the unread rows the global inbox shows'
 	});
 	expect(document.body.textContent).toContain(`provide ${CREDENTIAL_NAME}`);
 });
+
+// A run-failure notice is a `strategy` approval carrying an `agent_error`
+// payload. Read by type alone it would announce a strategy decision and send
+// the reader to the inbox they are already looking at; all three surfaces have
+// to name it for what it is and point at the run that stopped.
+test('a run-failure notice reads as a failure and opens the run on both dashboards', async () => {
+	const RUN_ID = 'abcd0000-0000-0000-0000-0000000000ff';
+	const ref = { slug: '', identifier: '', runCommentPublicId: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const { db } = getTestContext();
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Notice Project' });
+			const task = await seedTask(ws, project, { title: 'Refused work' });
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			ref.slug = project.slug;
+			ref.identifier = task.identifier.toLowerCase();
+
+			const runComment = await db.query<{ public_id: string }>(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'run', $3::jsonb)
+				 RETURNING public_id`,
+				[task.id, captain.id, JSON.stringify({ run_id: RUN_ID, agent_id: captain.id })],
+			);
+			ref.runCommentPublicId = runComment.rows[0].public_id;
+
+			await db.query(
+				`INSERT INTO approvals (team_id, type, status, payload, requested_by_member_id)
+				 VALUES ($1, $2::approval_type, 'pending'::approval_status, $3::jsonb, $4)`,
+				[
+					ws.team.id,
+					ApprovalType.Strategy,
+					JSON.stringify({
+						type: 'agent_error',
+						member_id: captain.id,
+						run_id: RUN_ID,
+						task_id: task.id,
+						message: 'The provider has been refusing this agent runs.',
+					}),
+					captain.id,
+				],
+			);
+		},
+	});
+
+	const expectedHref = `/projects/${ref.slug}/tasks/${ref.identifier}#comment-${ref.runCommentPublicId}`;
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: ref.slug },
+	});
+	const section = await findByTestId('dashboard-action-items', undefined, { timeout: 20_000 });
+	await waitFor(() => expect(section.textContent).toContain('hit an error'));
+	expect(section.textContent).not.toContain('strategy decision');
+	const row = section.querySelector<HTMLAnchorElement>('[data-testid="dashboard-action-item"]');
+	expect(row?.tagName).toBe('A');
+	expect(row?.querySelector('a')).toBeNull();
+	expect(row?.getAttribute('href')).toBe(expectedHref);
+
+	await router.navigate({ to: '/home' });
+	const homeRow = await findByTestId('home-needs-you-row', undefined, { timeout: 20_000 });
+	await waitFor(() => expect(homeRow.textContent).toContain('hit an error'));
+	expect(homeRow.textContent).not.toContain('strategy decision');
+	expect(homeRow.querySelector('a')?.getAttribute('href')).toBe(expectedHref);
+});

@@ -8,13 +8,17 @@ import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
  *
  * Each is somebody asking this agent for something it could not have served on
  * its last pass: a human or teammate addressing it, an operator pressing "Run
- * now", a credential or asset decision it was parked on. The backoff exists to
- * stop the system re-asking a question it already answered, never to delay an
- * answer to a new one.
+ * now", a credential, asset or proposal decision it was parked on. The backoff
+ * exists to stop the system re-asking a question it already answered, never to
+ * delay an answer to a new one.
  *
  * The complement - `heartbeat`, `assignment`, `timer`, `automation` - is
  * everything the system raises on its own behalf, which is exactly what a
- * "nothing to do" verdict is about.
+ * "nothing to do" verdict is about. A resolved hire or goal suggestion belongs
+ * on this side of that line and rode `automation` until it had a source of its
+ * own: an agent parked on a proposal it filed cannot serve the decision before
+ * the admin has made it, so a "nothing to do" verdict from before the decision
+ * says nothing about the run that must follow it.
  */
 export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set([
 	WakeupSource.Mention,
@@ -23,6 +27,7 @@ export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set(
 	WakeupSource.OnDemand,
 	WakeupSource.CredentialProvided,
 	WakeupSource.AssetDeletionResolved,
+	WakeupSource.ApprovalResolved,
 ]);
 
 /**
@@ -51,6 +56,10 @@ export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set(
  *    reassignment, a retitle, an unblock - writes a `task_comments` row through
  *    `services/task-events.ts`, so one check covers all of them. Comments the
  *    run itself authored are excluded; they are the run reporting, not new input.
+ *    Answering a choice card writes no row - it sets `chosen_option` on the card
+ *    already there - so `chosen_at` is read alongside `created_at`. Without it
+ *    the single most conclusive "the wait is over" event on a thread is the one
+ *    event this check cannot see.
  *
  * Deliberately reads comments rather than `tasks.updated_at`: a run bumps its
  * own task's `updated_at` when it flips the status to in_progress, so that
@@ -87,6 +96,10 @@ export async function noWorkCooldownActive(
 		       AND c.created_at > lr.finished_at
 		       AND (c.created_by_run_id IS NULL OR c.created_by_run_id <> lr.id)
 		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_comments a
+		     WHERE a.task_id = $2 AND a.chosen_at > lr.finished_at
+		   )
 		 ) AS cooldown
 		 FROM last_run lr
 		 JOIN member_agents ma ON ma.id = $1`,
@@ -116,6 +129,10 @@ export async function noWorkCooldownActive(
  *    reassignment, an unblock - writes a `task_comments` row through
  *    `services/task-events.ts`, so the one check covers all of them. The agent's own
  *    later comments are excluded: chasing its own question is not an answer to it.
+ *    An answered choice card counts as somebody speaking whoever authored the card,
+ *    since the answer is the admin's; it writes no row, so `chosen_at` carries it.
+ *    Folding it in only ever moves the cutoff later, which narrows the window an
+ *    ask can stand in - this cannot park a task that was not already parked.
  *
  * Deliberately unbounded in time, unlike the no-work backoff. That one expires at
  * the agent's own cadence because "nothing to do *yet*" goes stale; this one is a
@@ -146,14 +163,20 @@ export async function parkedOnAdminAsk(
 	if (!taskId) return false;
 	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
 
-	// `newest_other` is a single backwards seek on idx_comments_task_created
-	// (task_id, created_at); the ask probe is then bounded to the comments after it,
-	// which on a parked task is the ask itself plus whatever the agent added.
+	// `newest_other` reads this task's comments through idx_comments_task_created
+	// (task_id, created_at), filtering out the agent's own unanswered ones; the ask
+	// probe is then bounded to the comments after it, which on a parked task is the
+	// ask itself plus whatever the agent added. `GREATEST` ignores NULLs in
+	// Postgres, so a card answered by the agent's own row still contributes its
+	// `chosen_at` while its `created_at` is skipped.
 	const r = await db.query<{ parked: boolean }>(
 		`WITH newest_other AS (
-		   SELECT max(c.created_at) AS at
+		   SELECT max(GREATEST(
+		            CASE WHEN c.author_member_id IS DISTINCT FROM $1 THEN c.created_at END,
+		            c.chosen_at)) AS at
 		   FROM task_comments c
-		   WHERE c.task_id = $2 AND c.author_member_id IS DISTINCT FROM $1
+		   WHERE c.task_id = $2
+		     AND (c.author_member_id IS DISTINCT FROM $1 OR c.chosen_at IS NOT NULL)
 		 )
 		 SELECT EXISTS (
 		   SELECT 1 FROM task_comments ask CROSS JOIN newest_other n

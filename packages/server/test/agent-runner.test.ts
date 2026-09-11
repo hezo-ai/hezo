@@ -2319,10 +2319,15 @@ describe('runAgent', () => {
 			}
 		});
 
-		it('fails the run by name when an arg-mode prompt passes the argv cap', async () => {
+		it('budgets an oversized task body down instead of failing the run at the argv cap', async () => {
 			await seedProvider('kimi', 'sk-test-kimi-oversize', 'kimi');
+			const project = makeProject();
+			let promptOnDisk: string | null = null;
 			const docker = createMockDocker({
-				execCreate: async () => 'exec-kimi-oversize',
+				execCreate: async (_id: string, opts: any) => {
+					promptOnDisk = readPromptFromExec(opts, testDataDir, project);
+					return 'exec-kimi-oversize';
+				},
 				execStart: async () => ({ stdout: '', stderr: '' }),
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
@@ -2335,8 +2340,11 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			// The system prompt now travels out of band, so the only way left to bust
-			// the cap is the task body itself.
+			// A task body that used to fail this run outright. The prompt budget cuts
+			// it to its section ceiling long before the argv cap, so the run proceeds
+			// - which is the fix: an oversized field is a bounded prompt, not a dead
+			// task. `assertPromptAcceptable` stays wired underneath as the backstop,
+			// and `prompt-budget.test.ts` pins its refusal directly.
 			await setAgentPrompt('short');
 			const result = await runAgent(
 				deps,
@@ -2346,19 +2354,19 @@ describe('runAgent', () => {
 					description: 'Y'.repeat(MAX_SINGLE_ARG_BYTES + 1),
 					runtime_type: 'kimi' as const,
 				},
-				makeProject(),
+				project,
 			);
 
-			expect(result.success).toBe(false);
 			const row = await db.query<{ status: string; error: string | null }>(
 				'SELECT status, error FROM heartbeat_runs WHERE id = $1',
 				[result.heartbeatRunId],
 			);
-			expect(row.rows[0].status).toBe('failed');
-			const error = row.rows[0].error ?? '';
-			expect(error).toContain('MAX_ARG_STRLEN');
-			expect(error).toContain('Kimi Code');
-			expect(error).toContain(String(MAX_SINGLE_ARG_BYTES));
+			expect(row.rows[0].error ?? '').not.toContain('MAX_ARG_STRLEN');
+			expect(Buffer.byteLength(promptOnDisk ?? '', 'utf8')).toBeLessThan(MAX_SINGLE_ARG_BYTES);
+			// Cut, and told both how much there was and where to get it - never
+			// dropped in silence.
+			expect(promptOnDisk).toContain('read the rest with');
+			expect(promptOnDisk).toContain(`of ${MAX_SINGLE_ARG_BYTES + 1} characters`);
 		});
 
 		it('records the prompt-file redirect suffix in the invocation_command', async () => {

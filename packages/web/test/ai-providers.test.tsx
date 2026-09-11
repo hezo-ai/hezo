@@ -1091,3 +1091,34 @@ test('the providers list marks only the credential whose runs serialise', async 
 	expect(markers.length).toBe(1);
 	expect(markers[0].closest('tr')?.textContent).toContain('codex-sub');
 });
+
+test('Verify withholds the tick for a credential it could not check', async () => {
+	// The reported complaint: Verify "returns instantly" and reports success. A
+	// Codex subscription is a sign-in file, not a token any endpoint accepts, so
+	// nothing is asked - and the button used to write `verified` and show the green
+	// tick anyway. Deterministic without stubbing the network precisely because no
+	// request is made.
+	const { findByRole, findByText, queryByTestId, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'openai',
+				api_key: JSON.stringify({ tokens: { refresh_token: 'rt-unverifiable' } }),
+				label: 'codex-unverifiable',
+				auth_method: 'subscription',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(
+		await findByRole('button', { name: 'Verify codex-unverifiable' }, { timeout: 15_000 }),
+	);
+
+	// It says so, rather than passing silently.
+	await findByText(/cannot be checked/, undefined, { timeout: 15_000 });
+	// And no claim is made on the row: the tick is the thing that lied.
+	expect(queryByTestId(/^credential-verified-/)).toBeNull();
+});

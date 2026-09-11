@@ -368,6 +368,8 @@ describe('buildTaskPrompt', () => {
 		responderSlug: 'bob',
 		replyExcerpt: 'here is my reply',
 		originalExcerpt: 'my original',
+		replyCommentId: 'cmt-reply',
+		originalCommentId: 'cmt-orig',
 		referencedTasks: [{ identifier: 'BR-2', title: 'Ref', status: 'done' }],
 	};
 
@@ -453,6 +455,8 @@ describe('buildTaskPrompt', () => {
 					responderSlug: null,
 					replyExcerpt: '',
 					originalExcerpt: '',
+					replyCommentId: 'cmt-reply',
+					originalCommentId: 'cmt-orig',
 					referencedTasks: [],
 				},
 			},
@@ -502,17 +506,16 @@ describe('buildTaskPrompt', () => {
 		expect(out).not.toContain('**Last output:**');
 	});
 
-	it('omits the exit-code line when previous_failure carries a null exit code, but renders the tails', () => {
+	it('omits the exit-code line when previous_failure carries a null exit code, but renders the log tail', () => {
 		const out = buildTaskPrompt('SYS', makeTask(), {
 			retry_count: 3,
 			max_retries: 3,
-			previous_failure: { exit_code: null, stderr_tail: 'boom', stdout_tail: 'tail' },
+			previous_failure: { exit_code: null, log_tail: 'boom\ntail' },
 		});
 		expect(out).toContain('## Retry Attempt 3/3');
 		expect(out).not.toContain('**Exit code:**');
-		expect(out).toContain('**Error output:**');
+		expect(out).toContain('**Output from the failed attempt:**');
 		expect(out).toContain('boom');
-		expect(out).toContain('**Last output:**');
 		expect(out).toContain('tail');
 	});
 });
