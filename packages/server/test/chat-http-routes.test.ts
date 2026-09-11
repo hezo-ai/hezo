@@ -222,6 +222,48 @@ describe('CEO chat HTTP routes', () => {
 		});
 	});
 
+	describe('an id that cannot name a conversation', () => {
+		// `chat_conversations.id` is a uuid column, so binding an unparseable route
+		// param to it threw out of the query and left a 500 in the log. Every one of
+		// these is a conversation that does not exist, and 404 is the honest answer -
+		// asserted per route because each reaches the table by a different path.
+		test('answers 404, never a 500, on every route that takes one', async () => {
+			const h = { ...authHeader(ctx.token), 'Content-Type': 'application/json' };
+
+			const read = await app.request('/api/chat/conversations/not-a-uuid/read', {
+				method: 'POST',
+				headers: h,
+				body: JSON.stringify({ last_read_message_id: 'also-not-a-uuid' }),
+			});
+			expect(read.status).toBe(404);
+
+			const close = await app.request('/api/chat/conversations/not-a-uuid/close', {
+				method: 'POST',
+				headers: h,
+			});
+			expect(close.status).toBe(404);
+
+			const convert = await app.request('/api/chat/conversations/not-a-uuid/convert-message', {
+				method: 'POST',
+				headers: h,
+				body: JSON.stringify({ message_id: 'not-a-uuid-either' }),
+			});
+			expect(convert.status).toBe(404);
+
+			// The reads take it as a query string rather than a path segment, and
+			// resolve it through the same guard.
+			const conv = await app.request('/api/chat/conversation?conversation_id=not-a-uuid', {
+				headers: h,
+			});
+			expect(conv.status).toBe(404);
+
+			const msgs = await app.request('/api/chat/messages?conversation_id=not-a-uuid', {
+				headers: h,
+			});
+			expect(msgs.status).toBe(404);
+		});
+	});
+
 	describe('GET /api/chat/conversation', () => {
 		test('returns the active window plus the compacted count', async () => {
 			const conversationId = await manager.getConversationId();

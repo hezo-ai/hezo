@@ -31,6 +31,7 @@ import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
 import { KeyedLockTimeoutError } from '../lib/keyed-lock';
+import { isUuid } from '../lib/resolve';
 import { withTransaction } from '../lib/sql';
 import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
@@ -1993,6 +1994,12 @@ export class ChatSessionManager {
 
 	/** Fetch a conversation row (identity + lifecycle), or null if it doesn't exist. */
 	async getConversation(conversationId: string): Promise<ConversationSummary | null> {
+		// The id reaches here from a route param or a query string, and `c.id` is a
+		// uuid column: an unparseable one is a conversation that does not exist, not
+		// a 500 wearing "invalid input syntax for type uuid". Guarding here rather
+		// than at each caller is what keeps every route that resolves a conversation
+		// through this answering the same way.
+		if (!isUuid(conversationId)) return null;
 		const r = await this.deps.db.query<ConversationRow>(
 			`SELECT ${CONVERSATION_COLUMNS}
 			 FROM chat_conversations c

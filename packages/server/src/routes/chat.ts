@@ -335,6 +335,10 @@ chatRoutes.post('/chat/conversations/:id/read', async (c) => {
 	}
 	const db = c.get('db');
 	const id = c.req.param('id');
+	// This one reads the table directly rather than through the manager, because
+	// the watermark spans both surfaces and the manager's HQ scope would not cover
+	// a project DM - so it carries the manager's uuid guard itself.
+	if (!isUuid(id)) return err(c, 'NOT_FOUND', 'conversation not found', 404);
 	const convo = await db.query<{ team_id: string }>(
 		`SELECT team_id FROM chat_conversations WHERE id = $1`,
 		[id],
