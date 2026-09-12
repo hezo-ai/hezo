@@ -52,22 +52,43 @@ describe('076_team_chat migration', () => {
 		await h.db.query(`INSERT INTO chat_memories (member_id, content) VALUES ($1, 'the plan')`, [
 			memberId,
 		]);
-		const convo = async (): Promise<string> => {
+		// Activity times are explicit, and must stay that way. The migration keeps
+		// the most recently active thread per member, tie-broken by `created_at` -
+		// and both columns default to `now()`, which is transaction time, so two
+		// conversations seeded in one transaction tie on both and `DISTINCT ON`
+		// picks between them arbitrarily. That made these assertions pass or fail
+		// at random. Stating the ages says which thread each case is about.
+		const convo = async (minutesAgo: number): Promise<string> => {
 			const r = await h.db.query<{ id: string }>(
-				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel)
-				 VALUES ($1, $2, $3, 'web') RETURNING id`,
-				[memberId, teamId, projectId],
+				`INSERT INTO chat_conversations
+				   (member_id, team_id, project_id, channel, created_at, last_activity_at)
+				 VALUES ($1, $2, $3, 'web',
+				         now() - ($4 || ' minutes')::interval,
+				         now() - ($4 || ' minutes')::interval)
+				 RETURNING id`,
+				[memberId, teamId, projectId, String(minutesAgo)],
 			);
 			return r.rows[0].id;
 		};
-		conversationId = await convo();
-		emptyConversationId = await convo();
+		// The older thread is the one the migration closes; the newer empty one is
+		// the survivor every case below reads as the live DM.
+		conversationId = await convo(30);
+		emptyConversationId = await convo(5);
 
+		// Message times are explicit for the same reason the conversation times are:
+		// `created_at` defaults to `now()`, which is transaction time, so messages
+		// seeded together are all equally "newest" and the backfill picks between
+		// them arbitrarily. A thread is an ordered thing - say the order.
+		let seq = 0;
 		const insert = async (role: string, content: string, kind: string | null): Promise<string> => {
+			seq += 1;
 			const r = await h.db.query<{ id: string }>(
-				`INSERT INTO chat_messages (conversation_id, role, channel, status, content, system_kind)
-				 VALUES ($1, $2::chat_message_role, 'web', 'complete', $3, $4) RETURNING id`,
-				[conversationId, role, content, kind],
+				`INSERT INTO chat_messages
+				   (conversation_id, role, channel, status, content, system_kind, created_at)
+				 VALUES ($1, $2::chat_message_role, 'web', 'complete', $3, $4,
+				         now() - interval '30 minutes' + ($5 || ' seconds')::interval)
+				 RETURNING id`,
+				[conversationId, role, content, kind, String(seq)],
 			);
 			return r.rows[0].id;
 		};

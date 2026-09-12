@@ -2,9 +2,15 @@ import { AgentAdminStatus, centsToDollars, GoalHealth, type GoalWithProject } fr
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useAgents } from '../../hooks/use-agents';
-import { useBudgetStatus } from '../../hooks/use-costs';
+import {
+	monthToDateNotionalCents,
+	useBudgetStatus,
+	useDailyCostSeries,
+	type WindowStatus,
+} from '../../hooks/use-costs';
 import { useProjectMeta } from '../../hooks/use-projects';
 import { useI18n } from '../../lib/i18n';
+import { NotionalFigure } from '../cost-figures';
 
 /**
  * The metric strip across the top of the project dashboard: the five numbers that answer "what is
@@ -73,6 +79,59 @@ function Metric({
 	);
 }
 
+/**
+ * Month-to-date spend, with the part nobody was billed for on a line of its own.
+ *
+ * A component rather than another `Metric` in the list so the per-day query it
+ * reads is issued only where the tile renders: HQ has no budget and drops it.
+ * The cap bar and the percentage stay billed-only - what is enforced has not
+ * changed.
+ */
+function SpendMetric({
+	projectId,
+	monthly,
+}: {
+	projectId: string;
+	monthly: WindowStatus | undefined;
+}) {
+	const { t, formatMoney } = useI18n();
+	const { data: costs } = useDailyCostSeries(projectId);
+	const notionalCents = monthToDateNotionalCents(costs?.summary);
+	return (
+		<Metric
+			testId="dashboard-metric-spend"
+			projectId={projectId}
+			to="/projects/$projectId/budget"
+			label={t('dashboard.metric.monthSpend')}
+			value={monthly ? formatMoney(monthly.spentCents) : '-'}
+			detail={
+				monthly && monthly.limitCents > 0
+					? t('dashboard.metric.ofCap', { amount: `$${centsToDollars(monthly.limitCents)}` })
+					: undefined
+			}
+			valueClass={monthly?.overBudget ? 'text-danger' : 'text-text-1'}
+		>
+			{monthly && monthly.limitCents > 0 && (
+				<div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3">
+					<div
+						className={`h-full rounded-full ${monthly.overBudget ? 'bg-danger' : 'bg-success'}`}
+						style={{
+							width: `${Math.min(100, Math.round((monthly.spentCents / monthly.limitCents) * 100))}%`,
+						}}
+					/>
+				</div>
+			)}
+			{notionalCents > 0 && (
+				<NotionalFigure
+					cents={notionalCents}
+					className="mt-1 block text-[10px] leading-tight text-text-3"
+					testId="dashboard-metric-spend-notional"
+				/>
+			)}
+		</Metric>
+	);
+}
+
 /** Mean completion across a project's active goals, rounded, as the strip's goal tile. */
 function goalRollup(goals: GoalWithProject[]): { percent: number; offTrack: number } | null {
 	const active = goals.filter((g) => !g.archived_at);
@@ -96,7 +155,7 @@ export function DashboardMetrics({
 	/** HQ has neither goals nor a budget, so those two tiles are dropped rather than shown empty. */
 	isInternal: boolean;
 }) {
-	const { t, formatMoney } = useI18n();
+	const { t } = useI18n();
 	const project = useProjectMeta(projectId);
 	const { data: agents } = useAgents(projectId, AgentAdminStatus.Enabled);
 	const { data: budget } = useBudgetStatus(projectId, { enabled: !isInternal });
@@ -150,31 +209,7 @@ export function DashboardMetrics({
 						: undefined
 				}
 			/>,
-			<Metric
-				key="spend"
-				testId="dashboard-metric-spend"
-				projectId={projectId}
-				to="/projects/$projectId/budget"
-				label={t('dashboard.metric.monthSpend')}
-				value={monthly ? formatMoney(monthly.spentCents) : '-'}
-				detail={
-					monthly && monthly.limitCents > 0
-						? t('dashboard.metric.ofCap', { amount: `$${centsToDollars(monthly.limitCents)}` })
-						: undefined
-				}
-				valueClass={monthly?.overBudget ? 'text-danger' : 'text-text-1'}
-			>
-				{monthly && monthly.limitCents > 0 && (
-					<div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3">
-						<div
-							className={`h-full rounded-full ${monthly.overBudget ? 'bg-danger' : 'bg-success'}`}
-							style={{
-								width: `${Math.min(100, Math.round((monthly.spentCents / monthly.limitCents) * 100))}%`,
-							}}
-						/>
-					</div>
-				)}
-			</Metric>,
+			<SpendMetric key="spend" projectId={projectId} monthly={monthly} />,
 		);
 	}
 

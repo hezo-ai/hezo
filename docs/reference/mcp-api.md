@@ -987,7 +987,7 @@ Save team-relationships contexts for MULTIPLE agents in one call (max 50) - the 
 
 _Write tool._
 
-Save short human-readable summaries for MULTIPLE agents in one call (max 50) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Files a SINGLE team-coherence review for the whole batch rather than one per agent. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.
+Save short human-readable summaries for MULTIPLE agents in one call (max 50) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.
 
 **Parameters:**
 
@@ -1566,7 +1566,7 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 
 _Read-only._
 
-Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false.
+Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false. Every shape reports two figures: `total_cents` is real money, and `notional_cents` is what runs on a subscription would have cost at the provider's published rates. A subscription is not billed per token, so the second counts towards no budget and never pauses anyone - read it as effort, not spend.
 
 **Parameters:**
 
@@ -1577,7 +1577,7 @@ Get the cost summary for a project. Ungrouped returns a single total. group_by: 
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, entry_count }`.
+**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents, notional_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents, notional_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, notional_cents, entry_count }`.
 
 ## Onboarding
 

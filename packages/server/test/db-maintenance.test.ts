@@ -86,6 +86,31 @@ describe('sweepTerminalWakeups', () => {
 		await sweepTerminalWakeups(db, 1);
 		expect(await alive(id)).toBe(false);
 	});
+
+	it('drains a backlog larger than one statement batch in a single pass', async () => {
+		// The fault this covers: a scheduler defect churning rows faster than one
+		// batch a night outruns the sweep forever, and the table grows without
+		// bound while a working sweep runs every night. One pass must leave the
+		// window clean, not take a batch off the top.
+		const backlog = 12_000;
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (team_id, member_id, source, status, created_at)
+			 SELECT $1, $2, 'heartbeat', $3::wakeup_status, now() - interval '30 days'
+			 FROM generate_series(1, $4::int)`,
+			[teamId, memberId, WakeupStatus.Completed, backlog],
+		);
+
+		const swept = await sweepTerminalWakeups(db, 7);
+		expect(swept).toBeGreaterThanOrEqual(backlog);
+
+		const left = await db.query<{ n: string }>(
+			`SELECT count(*) AS n FROM agent_wakeup_requests
+			 WHERE status = ANY($1::wakeup_status[])
+			   AND created_at < now() - interval '7 days'`,
+			[[...TERMINAL_WAKEUP_STATUSES]],
+		);
+		expect(Number(left.rows[0].n)).toBe(0);
+	});
 });
 
 describe('analyzeHotTables', () => {

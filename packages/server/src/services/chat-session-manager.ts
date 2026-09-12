@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import {
 	AgentEffort,
 	type AgentRuntime,
+	AiAuthMethod,
 	type AiProvider,
 	CEO_AGENT_SLUG,
 	CHAT_MESSAGE_PREVIEW_CHARS,
@@ -998,6 +999,9 @@ export class ChatSessionManager {
 				description,
 				aiProviderConfigId: session.invocationInputs.credential.configId,
 				provider: session.invocationInputs.provider,
+				// A subscription is not billed per token, so this turn's figure is
+				// notional - recorded to be shown, never to charge a budget.
+				billed: session.invocationInputs.credential.authMethod !== AiAuthMethod.Subscription,
 			});
 			if (entry) {
 				broadcastRowChange(

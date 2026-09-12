@@ -47,6 +47,8 @@ function makeRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		output_tokens: 0,
 		cost_cents: null,
 		usage_partial: false,
+		model: null,
+		cost_billed: true,
 		invocation_command: null,
 		log_text: null,
 		working_dir: null,

@@ -164,6 +164,38 @@ export function describeFilesConformance(fixture: LiveAdapterFixture, h: Conform
 			for (const p of found) expect(p.startsWith('/')).toBe(false);
 		});
 
+		it('finds a file by the stable ends of a generated name', async () => {
+			// Names carrying a timestamp or uuid cannot be matched exactly, and a
+			// glob is not an option: one backend shells out to `find -name` and would
+			// expand it while the others compare strings and match nothing.
+			await files.write('rollouts/2026/rollout-2026-09-12T10-00-00-abc.jsonl', 'a');
+			await files.write('rollouts/2026/rollout-2026-09-12T11-00-00-def.jsonl', 'b');
+			await files.write('rollouts/2026/notes.txt', 'c');
+			const found = await files.findByName('rollouts', { prefix: 'rollout-', suffix: '.jsonl' }, 5);
+			expect(found.length).toBe(2);
+			for (const path of found) expect(path.endsWith('.jsonl')).toBe(true);
+		});
+
+		it('reads the tail of a file without buffering the whole thing', async () => {
+			// For a runtime transcript, where hundreds of megabytes is ordinary and a
+			// whole-file read is an out-of-memory fault rather than a slow one.
+			const line = `${'x'.repeat(200)}\n`;
+			await files.write('big.log', `${line.repeat(50)}LAST\n`);
+
+			const whole = await files.readTail('big.log', 1_000_000);
+			expect(whole.endsWith('LAST\n')).toBe(true);
+			expect(whole.split('\n').length).toBe(52);
+
+			const tail = await files.readTail('big.log', 1_000);
+			expect(tail.endsWith('LAST\n')).toBe(true);
+			expect(tail.length).toBeLessThan(whole.length);
+			// A tail starts mid-line, and half a record parses as nothing, so the
+			// fragment must be dropped rather than handed back.
+			for (const l of tail.split('\n').filter(Boolean)) {
+				expect(l === 'LAST' || l.length === 200).toBe(true);
+			}
+		});
+
 		it('refuses a path that escapes its root', async () => {
 			// The root is the sandbox boundary this interface exists to enforce; a
 			// caller that can climb out of it can read the operator's own disk on a

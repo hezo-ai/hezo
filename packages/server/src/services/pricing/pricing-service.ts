@@ -124,9 +124,18 @@ export class PricingService {
 	costCents(model: string | undefined, tokens: CostTokens): number {
 		const rate = this.resolve(model);
 		if (!rate) {
-			if (model && !this.warned.has(model)) {
-				this.warned.add(model);
-				log.warn(`No pricing for model "${model}"; recording run cost as $0`);
+			// An unnamed model warns too. It used to be the one $0 that said nothing
+			// at all - the `model &&` guard swallowed it - which is exactly the case
+			// that hid a runtime naming no model anywhere: every one of its runs
+			// priced at $0 and the only symptom was an empty spend page.
+			const key = model ?? '(unnamed)';
+			if (!this.warned.has(key)) {
+				this.warned.add(key);
+				log.warn(
+					model
+						? `No pricing for model "${model}"; recording run cost as $0. Add a manual pricing row for it in Settings.`
+						: 'A run reported no model, so it prices as $0. Its runtime names none on its stream and none was resolved from the run.',
+				);
 			}
 			return 0;
 		}

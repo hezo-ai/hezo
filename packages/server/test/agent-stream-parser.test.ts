@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
 	createAgentStreamParser,
+	extractCodexUsageFromRollout,
 	extractGrokUsageFromDebugLog,
 	extractKimiUsageFromSessionLog,
 	type PriceModelFn,
@@ -308,16 +309,43 @@ describe('agent-stream-parser', () => {
 					cached_input_tokens: 24448,
 					output_tokens: 122,
 					reasoning_output_tokens: 8,
+					// Codex's own total proves both subset relations in this fixture:
+					// 24763 + 122 === 24885, so reasoning is inside output and the cache
+					// buckets are inside input. Neither may be added on top.
+					total_tokens: 24885,
 				},
 			};
 			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
-			// cached_input_tokens is a subset of input_tokens; reasoning is billed output.
-			expect(out).toContain('[done] success turns=1 tokens=24763/130');
+			expect(out).toContain('[done] success turns=1 tokens=24763/122');
 
 			const usage = parser.getUsage();
 			expect(usage?.inputTokens).toBe(24763);
-			expect(usage?.outputTokens).toBe(130);
+			expect(usage?.outputTokens).toBe(122);
+			expect((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)).toBe(event.usage.total_tokens);
 			expect(usage?.costCents).toBe(0);
+		});
+
+		it('splits the input buckets so cache reads are not priced as fresh input', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'codex-x');
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.completed',
+					usage: {
+						input_tokens: 1000,
+						cached_input_tokens: 900,
+						cache_write_input_tokens: 50,
+						output_tokens: 10,
+					},
+				})}\n`,
+			);
+			// The whole point of the split: an agent run is cache-read dominated, so
+			// folding the cached bucket into fresh input overstates it many times over.
+			expect(parser.getUsage()?.buckets).toEqual({
+				inputTokens: 50,
+				cacheReadTokens: 900,
+				cacheCreationTokens: 50,
+				outputTokens: 10,
+			});
 		});
 
 		it('ignores a runtime-reported cost and prices from the table', () => {
@@ -529,7 +557,13 @@ describe('agent-stream-parser', () => {
 				inputTokens: 5,
 				outputTokens: 7,
 				costCents: 0,
-				buckets: { inputTokens: 5, cacheReadTokens: 0, outputTokens: 7 },
+				model: null,
+				buckets: {
+					inputTokens: 5,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					outputTokens: 7,
+				},
 			});
 		});
 
@@ -1517,5 +1551,112 @@ describe('claude-code unrecognized-model stderr', () => {
 		);
 		expect(parser.getUsage()?.inputTokens).toBe(10);
 		expect(parser.getFinalAssistantMessage()).toBe('done');
+	});
+});
+
+describe('extractCodexUsageFromRollout', () => {
+	/** One cumulative `token_count` record, in the shape Codex actually writes. */
+	const tokenCount = (t: {
+		input: number;
+		cached?: number;
+		cacheWrite?: number;
+		output: number;
+		reasoning?: number;
+	}): string =>
+		`${JSON.stringify({
+			type: 'event_msg',
+			payload: {
+				type: 'token_count',
+				info: {
+					total_token_usage: {
+						input_tokens: t.input,
+						cached_input_tokens: t.cached ?? 0,
+						cache_write_input_tokens: t.cacheWrite ?? 0,
+						output_tokens: t.output,
+						reasoning_output_tokens: t.reasoning ?? 0,
+						total_tokens: t.input + t.output,
+					},
+					last_token_usage: { input_tokens: t.input, output_tokens: t.output },
+				},
+			},
+		})}\n`;
+
+	const turnContext = (model: string): string =>
+		`${JSON.stringify({ type: 'turn_context', payload: { turn_id: 1, model } })}\n`;
+
+	it('takes the last cumulative total, never the sum of the records', () => {
+		// The trap: Codex re-emits `token_count` more often than there are requests,
+		// so summing the per-request deltas over-counts - measured at 2.8% on a real
+		// 1,105-record session. The totals are cumulative and monotonic.
+		const usage = extractCodexUsageFromRollout(
+			[tokenCount({ input: 100, output: 10 }), tokenCount({ input: 250, output: 25 })].join(''),
+		);
+		expect(usage?.inputTokens).toBe(250);
+		expect(usage?.outputTokens).toBe(25);
+	});
+
+	it('subtracts both cache buckets out of input rather than adding them on top', () => {
+		const usage = extractCodexUsageFromRollout(
+			tokenCount({ input: 1000, cached: 900, cacheWrite: 50, output: 10 }),
+		);
+		expect(usage?.buckets).toEqual({
+			inputTokens: 50,
+			cacheReadTokens: 900,
+			cacheCreationTokens: 50,
+			outputTokens: 10,
+		});
+		// The reported total still counts every input token.
+		expect(usage?.inputTokens).toBe(1000);
+	});
+
+	it('does not add reasoning on top of output', () => {
+		const usage = extractCodexUsageFromRollout(
+			tokenCount({ input: 500, output: 40, reasoning: 10 }),
+		);
+		expect(usage?.outputTokens).toBe(40);
+	});
+
+	it('reads the model off turn_context and splits a mid-session switch', () => {
+		const price: PriceModelFn = (model) => (model === 'expensive' ? 100 : 1);
+		const usage = extractCodexUsageFromRollout(
+			[
+				turnContext('cheap'),
+				tokenCount({ input: 100, output: 10 }),
+				turnContext('expensive'),
+				tokenCount({ input: 1000, output: 100 }),
+			].join(''),
+			price,
+		);
+		// Priced per model and summed - pricing the whole session at whichever model
+		// happened to be last would be wrong in both directions.
+		expect(usage?.costCents).toBe(101);
+		// The heavier model is the one reported.
+		expect(usage?.model).toBe('expensive');
+	});
+
+	it('clamps a counter that goes backwards instead of subtracting', () => {
+		// A fork or a compaction resets the cumulative total; that must cost one
+		// segment, not corrupt the run's figure with a negative.
+		const usage = extractCodexUsageFromRollout(
+			[
+				tokenCount({ input: 900, output: 90 }),
+				tokenCount({ input: 10, output: 1 }),
+				tokenCount({ input: 30, output: 3 }),
+			].join(''),
+		);
+		expect(usage?.inputTokens).toBe(920);
+		expect(usage?.outputTokens).toBe(92);
+	});
+
+	it('ignores a torn line, which a tail read always begins with', () => {
+		const usage = extractCodexUsageFromRollout(
+			`{"type":"event_msg","payload":{"type":"token_c${'\n'}${tokenCount({ input: 5, output: 1 })}`,
+		);
+		expect(usage?.inputTokens).toBe(5);
+	});
+
+	it('returns null when the rollout carries no usage at all', () => {
+		expect(extractCodexUsageFromRollout('')).toBeNull();
+		expect(extractCodexUsageFromRollout(turnContext('gpt-5-codex'))).toBeNull();
 	});
 });

@@ -131,8 +131,10 @@ projectsRoutes.get('/projects', async (c) => {
        (SELECT count(*) FROM member_agents ma2 JOIN members mm2 ON mm2.id = ma2.id
           WHERE mm2.team_id = p.team_id AND ma2.touches_code)::int
           AS code_agent_count,
+       -- Real spend only, so "today" on the project rail keeps meaning money.
        (SELECT COALESCE(sum(ce.amount_cents), 0) FROM cost_entries ce
-          WHERE ce.project_id = p.id AND ce.created_at >= date_trunc('day', now()))::int
+          WHERE ce.project_id = p.id AND ce.billed
+            AND ce.created_at >= date_trunc('day', now()))::int
           AS today_spend_cents,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,

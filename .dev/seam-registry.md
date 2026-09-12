@@ -16,6 +16,7 @@ rather than here, is how a codebase ends up with two of everything.
 | How much task-scoped text a run prompt may carry | `PromptBudget` / `PROMPT_SECTION_CEILINGS` (`services/prompt-budget.ts`) - one budget per prompt, spent in priority order; never a per-caller cap |
 | A container backend | `ContainerEngine` (`services/sandbox/types.ts`), always reached via `SandboxBackendHolder.engine` |
 | "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
+| Reading or writing a file inside a container | `SandboxFiles` (`services/sandbox/files.ts`), reached via `engine.files(containerId, root)`. `read`/`readBytes` buffer the whole file, so bound the size first (`size()`) or use `readTail` - a runtime's own transcript runs to hundreds of MB and a whole-file read of one is an out-of-memory fault. `findByName` takes an exact basename or a `{ prefix, suffix }`, never a glob: the Docker backend shells out to `find -name` and would expand it while the host and Daytona walkers compare strings. Every method is held to `test/conformance/files.ts` across all four backends |
 | An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |
 | Reading what a CLI printed to a terminal | `renderTerminalScreen` (`services/sandbox/terminal-screen.ts`) - compose the screen, never strip the escapes out of the stream |
 | What a container was provisioned with | `container_pool_members` (`memory_bytes`, `disk_ceiling_bytes`) - never re-read from the setting |

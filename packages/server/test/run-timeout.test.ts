@@ -8,6 +8,7 @@ import {
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { runtimeConfig } from '../src/config/runtime';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
@@ -16,6 +17,7 @@ import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { MAX_TASK_ATTEMPT_GIVEUPS } from '../src/services/no-work-backoff';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -238,6 +240,104 @@ describe('run timeout classification (runAgent)', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.TimedOut);
 	});
 
+	it('stops a run that will not stop calling tools, and fails it rather than timing it out', async () => {
+		// The run this bounds made 1,477 asset reads in one hour and was ended only
+		// by the wall clock, having spent the whole allowance re-sending its own
+		// context. `failed`, not `timed_out`: a timeout queues a continuation, which
+		// would resume the exact run shape the ceiling exists to stop.
+		const ceiling = runtimeConfig().runs.maxToolCalls;
+		const toolCall = `${JSON.stringify({
+			type: 'assistant',
+			message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
+		})}\n`;
+
+		// A real exec tears down when its signal aborts; the stub must too, or the
+		// ceiling would look enforced while the run carried on to a normal finish.
+		const deps = makeDeps({
+			execStart: async (
+				_execId: string,
+				opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+			) => {
+				for (let i = 0; i < ceiling + 5; i++) {
+					await opts?.onChunk?.({ stream: 'stdout', text: toolCall });
+					if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+				}
+				return { stdout: '', stderr: '' };
+			},
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
+
+		expect(result.timedOut).toBeFalsy();
+		const run = await db.query<{ status: string; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].error).toContain('tool-call ceiling');
+	});
+
+	it('leaves a run under the ceiling alone', async () => {
+		let aborted = false;
+		const deps = makeDeps({
+			execStart: async (
+				_execId: string,
+				opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+			) => {
+				const toolCall = `${JSON.stringify({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
+				})}\n`;
+				// Comfortably the p95 of real succeeded runs.
+				for (let i = 0; i < 161; i++) {
+					await opts?.onChunk?.({ stream: 'stdout', text: toolCall });
+					if (opts?.signal?.aborted) aborted = true;
+				}
+				return { stdout: '', stderr: '' };
+			},
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
+
+		// Asserted on the ceiling, not the status: a run producing no output fails
+		// for that reason here regardless, which would mask an off-by-one.
+		expect(aborted).toBe(false);
+		const run = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].error ?? '').not.toContain('tool-call ceiling');
+	});
+
+	it('says so in the run log when a run burned tokens and still priced at $0', async () => {
+		// The two cases this makes visible are otherwise indistinguishable from a
+		// genuinely free run: a runtime that named no model, and a model the pricing
+		// table has never heard of. Both leave the spend page empty while the
+		// allowance drains, and the server-log warning is not somewhere an operator
+		// looks. No pricing service is wired into these deps, so every model misses.
+		const deps = makeDeps({
+			execStart: async (_execId: string, opts?: { onChunk?: (c: any) => void | Promise<void> }) => {
+				await opts?.onChunk?.({
+					stream: 'stdout',
+					text: `${JSON.stringify({
+						type: 'result',
+						usage: { input_tokens: 5000, output_tokens: 400 },
+					})}\n`,
+				});
+				return { stdout: '', stderr: '' };
+			},
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
+
+		const log = await db.query<{ content: string }>(
+			`SELECT string_agg(content, '' ORDER BY seq) AS content
+			 FROM heartbeat_run_log_chunks WHERE run_id = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(log.rows[0]?.content ?? '').toContain('priced at $0');
+	});
+
 	it('finalizes a bare abort (user cancel) as cancelled, not timed_out', async () => {
 		const ac = new AbortController();
 		const deps = makeDeps({
@@ -272,7 +372,7 @@ describe('timeout continuation (JobManager)', () => {
 
 		const queued = await (manager as any).queueTimeoutContinuation(agentId, taskId, teamId);
 
-		expect(queued).toBe(true);
+		expect(queued).toBe('queued');
 		const w = await db.query<{ source: string; payload: { reason?: string; task_id?: string } }>(
 			`SELECT source, payload FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued'`,
 			[agentId],
@@ -283,21 +383,30 @@ describe('timeout continuation (JobManager)', () => {
 		expect(w.rows[0].payload.task_id).toBe(taskId);
 	});
 
-	it('declines to queue after MAX consecutive timeouts (loop cap)', async () => {
+	/** A finished run on the shared task, `secsAgo` in the past. */
+	async function seedRun(
+		status: string,
+		secsAgo: number,
+		cancelReason: string | null = null,
+	): Promise<void> {
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, cancel_reason, started_at, finished_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5,
+			         now() - make_interval(secs => $6 + 60), now() - make_interval(secs => $6))`,
+			[teamId, agentId, taskId, status, cancelReason, secsAgo],
+		);
+	}
+
+	it('declines to queue once the task has exhausted its attempts', async () => {
 		await resetTaskHistory();
-		// Seed 5 consecutive timed_out runs (matches MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS).
-		for (let i = 0; i < 5; i++) {
-			await db.query(
-				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, 'timed_out', now() - make_interval(secs => $4))`,
-				[teamId, agentId, taskId, (5 - i) * 10],
-			);
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await seedRun('timed_out', (MAX_TASK_ATTEMPT_GIVEUPS - i) * 10);
 		}
 		const manager = createJobManager();
 
 		const queued = await (manager as any).queueTimeoutContinuation(agentId, taskId, teamId);
 
-		expect(queued).toBe(false);
+		expect(queued).toBe('exhausted');
 		const w = await db.query(
 			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued'`,
 			[agentId],
@@ -305,26 +414,47 @@ describe('timeout continuation (JobManager)', () => {
 		expect(w.rows.length).toBe(0);
 	});
 
-	it('still queues when the timeout streak is broken by a non-timeout run', async () => {
+	it('does not hand back a fresh allowance when a give-up interleaves the timeouts', async () => {
 		await resetTaskHistory();
-		// 4 timeouts then a most-recent succeeded run → streak broken → not at cap.
-		for (let i = 0; i < 4; i++) {
-			await db.query(
-				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, 'timed_out', now() - make_interval(secs => $4))`,
-				[teamId, agentId, taskId, 100 + (4 - i) * 10],
-			);
-		}
-		await db.query(
-			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
-			 VALUES ($1, $2, $3, 'succeeded', now())`,
-			[teamId, agentId, taskId],
-		);
+		// The production shape this closes. Counting *consecutive* timeouts meant a
+		// `cancelled` give-up - a capacity park, a credential wait, a provider
+		// refusal - reset the streak, so a task alternating between the two never
+		// reached any cap. One task ran 31 times in 17 hours that way, nine of them
+		// burning a full hour of provider allowance before being killed.
+		await seedRun('timed_out', 60);
+		await seedRun('timed_out', 50);
+		await seedRun('cancelled', 40, 'handed_back');
+		await seedRun('timed_out', 30);
+		await seedRun('failed', 20);
+		await seedRun('timed_out', 10);
 		const manager = createJobManager();
 
-		const queued = await (manager as any).queueTimeoutContinuation(agentId, taskId, teamId);
+		expect(await (manager as any).queueTimeoutContinuation(agentId, taskId, teamId)).toBe(
+			'exhausted',
+		);
+	});
 
-		expect(queued).toBe(true);
+	it('a run that operator-terminated does not count against the task', async () => {
+		await resetTaskHistory();
+		// A person pressing Terminate twice must not park their own task.
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await seedRun('cancelled', (MAX_TASK_ATTEMPT_GIVEUPS - i) * 10, 'operator_terminated');
+		}
+		const manager = createJobManager();
+
+		expect(await (manager as any).queueTimeoutContinuation(agentId, taskId, teamId)).toBe('queued');
+	});
+
+	it('a run that finished the work buys the task a fresh allowance', async () => {
+		await resetTaskHistory();
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await seedRun('timed_out', 100 + (MAX_TASK_ATTEMPT_GIVEUPS - i) * 10);
+		}
+		// Progress is the only thing that should reset the count.
+		await seedRun('succeeded', 50);
+		const manager = createJobManager();
+
+		expect(await (manager as any).queueTimeoutContinuation(agentId, taskId, teamId)).toBe('queued');
 	});
 
 	it('onAgentComplete on a timed-out run queues a continuation and posts no failure ping', async () => {

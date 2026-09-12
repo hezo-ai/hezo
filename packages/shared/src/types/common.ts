@@ -955,6 +955,16 @@ export const WakeupSkipReason = {
 	 */
 	ParkedOnAdmin: 'parked_on_admin',
 	/**
+	 * This agent has given up on this task too many times in a row without ever
+	 * finishing it, so the dispatcher has stopped handing it over. Counts every
+	 * unproductive ending - failed, timed out, handed back - and resets only on a
+	 * run that actually succeeded, because a task that cannot fit its run window
+	 * otherwise consumes the provider allowance indefinitely. Lifts when a person
+	 * replies or retries. See `attemptsExhaustedOnTask` in
+	 * `services/no-work-backoff.ts`.
+	 */
+	AttemptsExhausted: 'attempts_exhausted',
+	/**
 	 * Another run still held the rotating provider credential when this one gave
 	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
 	 * on different clocks: capacity frees when the idle pass reclaims a container,

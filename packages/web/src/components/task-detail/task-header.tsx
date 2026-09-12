@@ -6,6 +6,7 @@ import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use
 import { formatDuration } from '../../lib/format-duration';
 import { useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
+import { CostFigure, NotionalFigure } from '../cost-figures';
 import { MarkdownProse } from '../markdown-prose';
 import { TaskPriorityBadge } from '../task-priority-badge';
 import { TaskStatusBadge } from '../task-status-badge';
@@ -254,7 +255,18 @@ export function TaskHeader({
 					>
 						{task.run_count} {task.run_count === 1 ? 'run' : 'runs'}
 						{task.total_duration_seconds > 0 && ` · ${formatDuration(task.total_duration_seconds)}`}
-						{task.total_cost_cents > 0 && ` · $${(task.total_cost_cents / 100).toFixed(2)}`}
+						{task.total_cost_cents > 0 && (
+							<>
+								{' · '}
+								<CostFigure cents={task.total_cost_cents} billed testId="task-run-cost" />
+							</>
+						)}
+						{task.notional_cost_cents > 0 && (
+							<>
+								{' · '}
+								<NotionalFigure cents={task.notional_cost_cents} testId="task-run-notional-cost" />
+							</>
+						)}
 					</span>
 				)}
 			</div>

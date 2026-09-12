@@ -1,124 +1,68 @@
-import { useState } from 'react';
-import {
-	Bar,
-	BarChart,
-	CartesianGrid,
-	Line,
-	LineChart,
-	ResponsiveContainer,
-	Tooltip,
-	XAxis,
-	YAxis,
-} from 'recharts';
 import { type DailyCostPoint, useDailyCostSeries } from '../../hooks/use-costs';
-import { dollars, formatDay } from '../charts/chart-format';
+import { useI18n } from '../../lib/i18n';
+import { centsToPlottedDollars, formatDay, plottedDollars } from '../charts/chart-format';
+import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
 
-type ChartKind = 'bar' | 'line';
+/** The two kinds of money a day bucket can hold, stacked in this order. */
+const BILLED = 'billed';
+const NOTIONAL = 'notional';
 
-interface ChartDatum {
-	day: string;
-	label: string;
-	dollars: number;
-}
-
-function toData(points: DailyCostPoint[] | undefined): ChartDatum[] {
-	return (points ?? []).map((p) => ({
-		day: p.day,
-		label: formatDay(p.day),
-		dollars: Number((p.total_cents / 100).toFixed(2)),
-	}));
+/**
+ * Split each day into what was charged and what was not.
+ *
+ * The unbilled segment is emitted only on days that have one, so a project
+ * paying for every run keeps the single-series chart it has always had - and one
+ * running entirely on subscriptions gets a chart instead of an empty panel
+ * claiming no spend.
+ */
+function toCells(
+	points: DailyCostPoint[] | undefined,
+	labels: { billed: string; notBilled: string },
+): SeriesCell[] {
+	const cells: SeriesCell[] = [];
+	for (const p of points ?? []) {
+		cells.push({
+			bucket: p.day,
+			seriesKey: BILLED,
+			seriesLabel: labels.billed,
+			value: p.total_cents,
+		});
+		if (p.notional_cents > 0) {
+			cells.push({
+				bucket: p.day,
+				seriesKey: NOTIONAL,
+				seriesLabel: labels.notBilled,
+				value: p.notional_cents,
+			});
+		}
+	}
+	return cells;
 }
 
 /**
- * Per-day spend chart with a bar/line toggle. Scoped to the project, or to a
- * single agent when `agentId` is set. Responsive: full-width and stacked on
- * mobile, the toggle wraps above the chart.
+ * Per-day project spend, billed and unbilled stacked. Responsive: full-width and
+ * stacked on mobile, the bar/line toggle wraps above the chart.
  */
-export function BudgetCharts({
-	projectId,
-	agentId,
-	title,
-}: {
-	projectId: string;
-	agentId?: string;
-	title?: string;
-}) {
-	const [kind, setKind] = useState<ChartKind>('bar');
-	const { data, isLoading } = useDailyCostSeries(
-		projectId,
-		agentId ? { agent_id: agentId } : undefined,
-	);
-	const chartData = toData(data?.summary);
+export function BudgetCharts({ projectId, title }: { projectId: string; title?: string }) {
+	const { t } = useI18n();
+	const { data, isLoading } = useDailyCostSeries(projectId);
 
 	return (
-		<div className="rounded-md border border-border bg-surface p-4">
-			<div className={`mb-3 flex items-center gap-2 ${title ? 'justify-between' : 'justify-end'}`}>
-				{title && <span className="text-[13px] font-medium text-text-1">{title}</span>}
-				<div
-					role="tablist"
-					aria-label="Chart type"
-					className="inline-flex rounded-md border border-border bg-surface-2 p-0.5 text-xs"
-				>
-					{(['bar', 'line'] as const).map((k) => (
-						<button
-							key={k}
-							type="button"
-							role="tab"
-							aria-selected={kind === k}
-							onClick={() => setKind(k)}
-							className={`px-2.5 py-1 rounded capitalize ${
-								kind === k ? 'bg-surface text-text-1 shadow-sm' : 'text-text-2 hover:text-text-1'
-							}`}
-						>
-							{k}
-						</button>
-					))}
-				</div>
-			</div>
-
-			{isLoading ? (
-				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-3">
-					Loading…
-				</div>
-			) : chartData.length === 0 ? (
-				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-3">
-					No spend recorded.
-				</div>
-			) : (
-				<div className="h-[220px] w-full" data-testid="budget-chart">
-					<ResponsiveContainer width="100%" height="100%">
-						{kind === 'bar' ? (
-							<BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-								<CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
-								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
-								<Tooltip
-									formatter={(value) => dollars(Math.round(Number(value) * 100))}
-									contentStyle={{ fontSize: 12 }}
-								/>
-								<Bar dataKey="dollars" fill="var(--color-accent)" radius={[2, 2, 0, 0]} />
-							</BarChart>
-						) : (
-							<LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-								<CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
-								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
-								<Tooltip
-									formatter={(value) => dollars(Math.round(Number(value) * 100))}
-									contentStyle={{ fontSize: 12 }}
-								/>
-								<Line
-									type="monotone"
-									dataKey="dollars"
-									stroke="var(--color-accent)"
-									strokeWidth={2}
-									dot={false}
-								/>
-							</LineChart>
-						)}
-					</ResponsiveContainer>
-				</div>
-			)}
-		</div>
+		<StackedSeriesChart
+			title={title}
+			cells={toCells(data?.summary, {
+				billed: t('cost.series.billed'),
+				notBilled: t('cost.series.notBilled'),
+			})}
+			isLoading={isLoading}
+			toDisplay={centsToPlottedDollars}
+			formatValue={plottedDollars}
+			formatBucket={formatDay}
+			// Fixed rather than sorted by total, so the billed segment is the same
+			// colour whether or not a project is mostly running on subscriptions.
+			seriesOrder={[BILLED, NOTIONAL]}
+			emptyText="No spend recorded."
+			testId="budget-chart"
+		/>
 	);
 }

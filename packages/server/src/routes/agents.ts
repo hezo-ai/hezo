@@ -138,6 +138,9 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	-- no started_at, and created_at is the only clock it has to be placed by.
 	hr.status, hr.queued_reason, hr.cancel_reason, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
+	-- Both narrow, and both needed to read the cost honestly: the model says what
+	-- it was priced from, cost_billed whether anyone is actually charged for it.
+	hr.model, hr.cost_billed,
 	hr.invocation_command, hr.working_dir,
 	hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS task_identifier, i.title AS task_title,

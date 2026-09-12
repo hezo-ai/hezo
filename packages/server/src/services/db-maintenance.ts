@@ -62,8 +62,21 @@ export async function analyzeHotTables(db: Db): Promise<number> {
 /** Rows are kept this long so a recent dispatch is still debuggable. */
 export const WAKEUP_RETENTION_DAYS = 7;
 
-/** Ceiling per pass, so one tick can never turn into a long global-lock hold. */
-const WAKEUP_SWEEP_LIMIT = 5_000;
+/** Rows per statement, so one DELETE can never turn into a long global-lock hold. */
+const WAKEUP_SWEEP_BATCH = 5_000;
+
+/**
+ * Ceiling on what one pass will delete in total, across repeated batches.
+ *
+ * A single statement bounds the lock hold; this bounds the pass. One batch a
+ * night cannot drain a backlog built at dispatch rate - a scheduler fault that
+ * churns rows faster than the batch size outruns the sweep indefinitely, and the
+ * table grows without bound while a working sweep runs every night. Draining in
+ * batches until the table is clean keeps the lock hold unchanged and turns a
+ * backlog into a few nights rather than never. Steady state exits on the first
+ * short batch.
+ */
+const WAKEUP_SWEEP_MAX_PER_PASS = 100_000;
 
 /**
  * Delete terminal `agent_wakeup_requests` rows older than the retention window.
@@ -76,23 +89,32 @@ const WAKEUP_SWEEP_LIMIT = 5_000;
  * whole reason this function is allowed to exist while nothing prunes runs,
  * costs or audit entries.
  *
- * Bounded by `WAKEUP_SWEEP_LIMIT` per pass; a backlog simply drains over several
- * ticks rather than one pass holding the write path for an unbounded time.
+ * Deletes in statement-sized batches until the table is clean or the pass
+ * ceiling is reached, so the write path is never held for an unbounded time and
+ * a backlog still drains in a bounded number of nights.
  */
 export async function sweepTerminalWakeups(
 	db: Db,
 	retentionDays: number = WAKEUP_RETENTION_DAYS,
 ): Promise<number> {
-	const res = await db.query<{ id: string }>(
-		`DELETE FROM agent_wakeup_requests
-		 WHERE id IN (
-		   SELECT id FROM agent_wakeup_requests
-		   WHERE status = ANY($1::wakeup_status[])
-		     AND created_at < now() - ($2 || ' days')::interval
-		   LIMIT $3
-		 )
-		 RETURNING id`,
-		[[...TERMINAL_WAKEUP_STATUSES], String(retentionDays), WAKEUP_SWEEP_LIMIT],
-	);
-	return res.rows.length;
+	let swept = 0;
+	while (swept < WAKEUP_SWEEP_MAX_PER_PASS) {
+		const batch = Math.min(WAKEUP_SWEEP_BATCH, WAKEUP_SWEEP_MAX_PER_PASS - swept);
+		const res = await db.query<{ id: string }>(
+			`DELETE FROM agent_wakeup_requests
+			 WHERE id IN (
+			   SELECT id FROM agent_wakeup_requests
+			   WHERE status = ANY($1::wakeup_status[])
+			     AND created_at < now() - ($2 || ' days')::interval
+			   LIMIT $3
+			 )
+			 RETURNING id`,
+			[[...TERMINAL_WAKEUP_STATUSES], String(retentionDays), batch],
+		);
+		swept += res.rows.length;
+		// A short batch means the table is clean for this window; stop rather than
+		// spending another round trip proving it.
+		if (res.rows.length < batch) break;
+	}
+	return swept;
 }
