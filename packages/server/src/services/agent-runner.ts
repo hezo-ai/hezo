@@ -168,7 +168,11 @@ import { condemnRejectedProviderCredential } from './provider-credential-health'
 import { loadReactionsForComments, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
-import { CAPACITY_PARK_QUEUED_REASON, projectContainerMemoryGb } from './run-concurrency';
+import {
+	CAPACITY_PARK_QUEUED_REASON,
+	containerCapacityVerdictInDb,
+	projectContainerMemoryGb,
+} from './run-concurrency';
 import { classifyRunFailure, RunFailureClass } from './run-failure-classification';
 import {
 	applyEffortToRuntime,
@@ -1961,20 +1965,31 @@ export async function runAgent(
 	}
 
 	/**
-	 * Record that this run is parked waiting for container capacity.
+	 * Record that this run is parked, and on which of the two waits.
 	 *
 	 * The run row stays `queued` — it was never marked running — and stays inside
 	 * `runAgent`, which is what keeps it in the live-run registry and therefore
 	 * invisible to the orphan pass. Same shape as the rotating-credential wait
 	 * below: the reason is written so the run comment and the run detail page read
 	 * honestly ("Queued - waiting for container capacity…") while blocked.
+	 *
+	 * **Memory and hours are asked apart, because they clear on different
+	 * clocks.** One ends when a neighbour hands a container back; the other when
+	 * the hours window turns or somebody adds to the allowance. Stamped as one
+	 * reason, an instance whose allowance was spent told its operator to wait for
+	 * a container while every container it had sat idle. The verdict costs one
+	 * query and is asked once per park, not per poll.
 	 */
 	const recordCapacityPark = async (): Promise<void> => {
+		const verdict = await containerCapacityVerdictInDb(deps.db, deps.docker, project.id);
+		const reason = verdict.hoursExhausted
+			? QueuedRunReason.HoursSpent
+			: CAPACITY_PARK_QUEUED_REASON;
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
 			 WHERE id = $2 AND status = $3::heartbeat_run_status
 			   AND queued_reason IS DISTINCT FROM $1`,
-			[CAPACITY_PARK_QUEUED_REASON, heartbeatRunId, HeartbeatRunStatus.Queued],
+			[reason, heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
 	};
 

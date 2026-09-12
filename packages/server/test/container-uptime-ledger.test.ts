@@ -223,8 +223,8 @@ describe('aggregation', () => {
 		// Two containers up for the same hour is two container-hours - which is
 		// exactly what a provider bills, and exactly where per-agent run hours go
 		// wrong by merging runs that shared one container. Asserted against the
-		// span the seed actually banked: on the first hour of a month the
-		// month-to-date window is narrower than the hour asked for, and a merging
+		// span the seed actually banked: on the first hour of a window the
+		// window-to-date span is narrower than the hour asked for, and a merging
 		// reader still differs from a summing one by the same factor of two.
 		const span = await seedUptimeStretch(db, {
 			containers: ['c-par-a', 'c-par-b'],
@@ -232,7 +232,7 @@ describe('aggregation', () => {
 			projectId,
 		});
 		const totals = await containerHoursTotals(db, projectId);
-		expect(totals.month_seconds).toBe(2 * span);
+		expect(totals.window_seconds).toBe(2 * span);
 	});
 
 	it('bills an open interval up to now rather than counting it as zero', async () => {
@@ -243,8 +243,8 @@ describe('aggregation', () => {
 			open: true,
 		});
 		const totals = await containerHoursTotals(db, projectId);
-		expect(totals.month_seconds).toBeGreaterThanOrEqual(banked);
-		expect(totals.month_seconds).toBeLessThanOrEqual(banked + 60);
+		expect(totals.window_seconds).toBeGreaterThanOrEqual(banked);
+		expect(totals.window_seconds).toBeLessThanOrEqual(banked + 60);
 		expect(totals.open_intervals).toBe(1);
 	});
 
@@ -263,7 +263,7 @@ describe('aggregation', () => {
 			projectId,
 		});
 		const totals = await containerHoursTotals(db, projectId);
-		expect(totals.month_seconds).toBe(chat + task);
+		expect(totals.window_seconds).toBe(chat + task);
 	});
 
 	it('scopes a project read to that project and keeps the instance read whole', async () => {
@@ -273,8 +273,8 @@ describe('aggregation', () => {
 			minutes: 120,
 			projectId: otherProjectId,
 		});
-		expect((await containerHoursTotals(db, projectId)).month_seconds).toBe(mine);
-		expect((await containerHoursTotals(db, null)).month_seconds).toBe(mine + theirs);
+		expect((await containerHoursTotals(db, projectId)).window_seconds).toBe(mine);
+		expect((await containerHoursTotals(db, null)).window_seconds).toBe(mine + theirs);
 	});
 
 	it("keeps a deleted project's hours under one heading rather than dropping them", async () => {
@@ -611,5 +611,38 @@ describe('an anchored container-hours window', () => {
 		await ran(0, 'c-unanchored');
 
 		expect(await currentWindowContainerSeconds(db)).toBe(before + 3600);
+	});
+
+	// **The meter and the gate measure one window, or the page lies.** The
+	// admission path moved onto the anchor and the totals query stayed on
+	// `date_trunc('month')`, so a tenant anchored on the 20th was refused a
+	// container while the bar beside it read a third full. Asserted as the two
+	// agreeing rather than as a figure, because that is the invariant: whatever
+	// the gate counts is what the page must draw.
+	it('draws the same window the admission gate enforces', async () => {
+		const now = new Date();
+		const anchorDay = new Date(now.getTime() - 24 * 60 * 60 * 1000).getUTCDate();
+		await ran(2, 'c-totals-before-anchor');
+		await ran(0, 'c-totals-after-anchor');
+
+		setPolicy({ managedBy: 'Acme Cloud', pinned: { containerHoursAnchorDay: anchorDay } });
+
+		const totals = await containerHoursTotals(db, null);
+		expect(totals.window_seconds).toBe(await currentWindowContainerSeconds(db));
+
+		// And the bounds it reports are the ones it counted between, so a page
+		// naming the period cannot name a different one from the figure above it.
+		expect(new Date(totals.window_start).getUTCDate()).toBe(anchorDay);
+		expect(new Date(totals.window_end).getTime()).toBeGreaterThan(now.getTime());
+	});
+
+	it('carries the window bounds even with nothing anchored', async () => {
+		setPolicy({ managedBy: 'Acme Cloud', pinned: {} });
+
+		const totals = await containerHoursTotals(db, null);
+		// The calendar month, which is what an unanchored instance has always had.
+		expect(new Date(totals.window_start).getUTCDate()).toBe(1);
+		expect(new Date(totals.window_end).getUTCDate()).toBe(1);
+		expect(totals.window_seconds).toBe(await currentWindowContainerSeconds(db));
 	});
 });

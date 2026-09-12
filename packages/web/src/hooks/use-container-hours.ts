@@ -30,10 +30,19 @@ export interface ContainerHoursProjectBucket extends ContainerHoursBucket {
 export interface ContainerHoursTotals {
 	today_seconds: number;
 	week_seconds: number;
-	month_seconds: number;
-	prev_month_seconds: number;
+	/**
+	 * So far this container-hours window - the figure the cap is enforced against.
+	 *
+	 * Not a month: a deployment may anchor the window to a billing day, so the
+	 * page reads the period off `window_start` and `window_end` rather than
+	 * assuming one.
+	 */
+	window_seconds: number;
+	prev_window_seconds: number;
 	/** Stretches open right now - containers currently accruing. */
 	open_intervals: number;
+	window_start: string;
+	window_end: string;
 }
 
 export interface ProjectContainerHours {
@@ -44,7 +53,7 @@ export interface ProjectContainerHours {
 
 export interface InstanceContainerHours extends ProjectContainerHours {
 	by_project: ContainerHoursProjectBucket[];
-	/** The monthly allowance in hours. 0 is unlimited, and the default. */
+	/** The hours allowance for one window. 0 is unlimited, and the default. */
 	monthly_hours: number;
 	/**
 	 * Whether container hours cost anything on this backend. False on a local
@@ -78,7 +87,7 @@ export function useInstanceContainerHours(bucket: HoursBucket) {
 }
 
 /**
- * Set the monthly allowance.
+ * Set the hours allowance.
  *
  * Invalidate-and-refetch rather than optimistic: the server clamps the value,
  * and the figure it stores is what every admission check reads - so showing the

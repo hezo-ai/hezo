@@ -724,13 +724,24 @@ export const CHANGELOG_BREAKING_HEADING = 'Breaking Changes';
  * operator reading "queued" wants to know whether that is normal and whether it
  * needs them, and the two answers differ per reason.
  *
- * `CAPACITY_PARK` is load-bearing beyond display - a run parked on it holds no
+ * Two of them are load-bearing beyond display - a run parked on either holds no
  * container, so the idle pass must not count its project as busy or it would
- * never reclaim the capacity that run is waiting for.
+ * never reclaim the capacity that run is waiting for. {@link PARKED_HOLDING_NOTHING}
+ * is that set, and every reader of it takes it from there rather than naming a
+ * member.
  */
 export const QueuedRunReason = {
 	/** At the instance's memory budget; waiting for a container to be released. */
 	CapacityPark: 'waiting for container capacity',
+	/**
+	 * The hours allowance is spent; waiting for the window to turn or for more.
+	 *
+	 * **Not the same wait as `CapacityPark`, and it never was.** Memory clears
+	 * when a neighbour hands a container back; hours clear when the window turns
+	 * or somebody adds to the allowance. Sharing one reason told an operator to
+	 * wait for a container on an instance whose containers were all idle.
+	 */
+	HoursSpent: 'waiting for container hours',
 	/** The provider credential runs one agent at a time; waiting its turn. */
 	CredentialSerialized: 'waiting for prior run on this credential',
 } as const;
@@ -738,7 +749,22 @@ export type QueuedRunReason = (typeof QueuedRunReason)[keyof typeof QueuedRunRea
 
 export const QUEUED_RUN_REASONS = [
 	QueuedRunReason.CapacityPark,
+	QueuedRunReason.HoursSpent,
 	QueuedRunReason.CredentialSerialized,
+] as const;
+
+/**
+ * The reasons a queued run is holding no container at all.
+ *
+ * **A set, because the idle pass has to match every member and a missed one
+ * deadlocks silently.** A run parked on one of these is waiting on the very
+ * reclaim the idle scan feeds; counted busy, its project keeps its containers
+ * warm and the run waits for ever. The SQL that excludes them builds its
+ * predicate from this list rather than spelling a member out.
+ */
+export const PARKED_HOLDING_NOTHING = [
+	QueuedRunReason.CapacityPark,
+	QueuedRunReason.HoursSpent,
 ] as const;
 
 /** Whether a stored `queued_reason` is one this build knows how to explain. */

@@ -108,20 +108,29 @@ Three things are worth knowing about the figure:
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
   Each agent's run time for the month is shown on the **Budget** tab, beside its spend.
+  That one really is a calendar month, and is a different figure from the hours below.
 
 On a local Docker daemon an hour of uptime costs nothing, so the Hours tab is there to
 show you what the fleet is doing rather than to budget against.
 
-### The monthly allowance
+### The hours allowance
 
-Where container hours do cost money, you can set a **monthly allowance** from HQ's
+Where container hours do cost money, you can set an **hours allowance** from HQ's
 Hours tab (under **Team & Budget**). Once it is spent:
 
-- No new container starts - chat replies included, so an exhausted allowance
-  pauses chat too until the month turns or the allowance is raised.
+- No new container starts, until more hours are added or the period turns - chat
+  replies included, so an exhausted allowance pauses chat too.
 - Runs that land on a container **already up** carry on - they spend no new hours, and
   stopping them would idle a container you are paying for anyway.
 - Runs that need a new container queue, and say so.
 
-The allowance returns when the calendar month turns. It is unset by default, which
-means no limit.
+It is unset by default, which means no limit.
+
+**The period is usually the calendar month, and not always.** A deployment that
+bills you on the day you subscribed anchors the allowance to that day instead, so
+the hours you are capped against cover the period you are charged for. The Hours
+tab names the period it is measuring and the date the allowance comes back, so
+you never have to work out which one you are on.
+
+Where the allowance is fixed by whoever runs your instance, the Budget page says
+so and links to where it can be changed.

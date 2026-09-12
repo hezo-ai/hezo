@@ -57,6 +57,22 @@ test('a capacity wait explains itself too', async () => {
 	expect(await findByTestId('queued-reason-help')).toBeTruthy();
 });
 
+// **The two waits clear on different clocks and must not share a sentence.**
+// Memory frees when a neighbour hands a container back; hours come back when the
+// window turns or somebody adds to the allowance. Told it was waiting for
+// capacity, an operator whose allowance was spent went looking at containers
+// that were all sitting idle.
+test('an hours wait is its own reason, not a capacity one', async () => {
+	const { findByTestId } = await renderQueued(QueuedRunReason.HoursSpent);
+
+	const working = await findByTestId('run-comment-working', undefined, { timeout: 20_000 });
+	expect(working.textContent).toContain('waiting for container hours');
+	expect(working.textContent).not.toContain('waiting for container capacity');
+
+	const help = await findByTestId('queued-reason-help');
+	expect(help.getAttribute('aria-label')).toBe('waiting for container hours');
+});
+
 // An older row, or a newer server, must still render its reason rather than
 // leaving the row saying only "queued".
 test('a reason this build does not recognise still renders, without an icon', async () => {

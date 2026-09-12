@@ -187,3 +187,52 @@ export function containerHoursWindowStart(anchorDay: number | undefined, now: Da
 	// and `Date.UTC` takes month -1 as December of the year before.
 	return thisMonth.getTime() <= now.getTime() ? thisMonth : occurrenceInMonth(year, month - 1, day);
 }
+
+/**
+ * How far past a window's start to look for the next one.
+ *
+ * **Longer than any month, shorter than two.** Landing anywhere inside the
+ * following month is enough, because the clamped arithmetic above then finds
+ * that month's own occurrence of the anchor day - so this only has to clear a
+ * 31-day month without reaching the month after.
+ */
+const MONTH_STRIDE_DAYS = 32;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The container-hours window containing `now`: when it opened, and when it ends.
+ *
+ * **The bound a reader needs, not one they derive.** The cap is enforced against
+ * the window, so any surface naming what is left has to name the same period -
+ * and a page adding a month to the start would disagree with the gate in every
+ * short month. Both bounds come from the one clamped helper, so a window opened
+ * on the 31st ends on the 28th of a February and the one after it opens on the
+ * 31st again.
+ *
+ * The end is exclusive: it is the instant the next window opens.
+ */
+export function containerHoursWindow(
+	anchorDay: number | undefined,
+	now: Date,
+): { start: Date; end: Date } {
+	const start = containerHoursWindowStart(anchorDay, now);
+	return {
+		start,
+		end: containerHoursWindowStart(
+			anchorDay,
+			new Date(start.getTime() + MONTH_STRIDE_DAYS * DAY_MS),
+		),
+	};
+}
+
+/**
+ * When the window before the one containing `now` opened.
+ *
+ * One millisecond before this window began is, by definition, inside the one
+ * before it - so the same clamped helper answers it, rather than a second copy
+ * of the month arithmetic that could disagree with the first.
+ */
+export function previousContainerHoursWindowStart(anchorDay: number | undefined, now: Date): Date {
+	const start = containerHoursWindowStart(anchorDay, now);
+	return containerHoursWindowStart(anchorDay, new Date(start.getTime() - 1));
+}

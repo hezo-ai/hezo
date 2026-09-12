@@ -1,7 +1,7 @@
 import { ExternalLink, Lock } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useInstanceSettings } from '../../hooks/use-instance-settings';
-import { useI18n } from '../../lib/i18n';
+import { type MessageKey, useI18n } from '../../lib/i18n';
 
 /**
  * Rendering for a setting fixed by whoever deployed this instance.
@@ -16,7 +16,21 @@ import { useI18n } from '../../lib/i18n';
  * superuser and can call the API directly. This exists so they find that out
  * before typing rather than after.
  */
-export function ManagedSettingNotice({ pinned }: { pinned: boolean }) {
+export function ManagedSettingNotice({
+	pinned,
+	manageLabel = 'settings.managed.manage',
+}: {
+	pinned: boolean;
+	/**
+	 * What the link out is called.
+	 *
+	 * **Named by the setting, not by the deployment.** The generic word is right
+	 * for a limit somebody else fixed; a control a tenant can only move by buying
+	 * something says so instead. Still one link to `manage_url`, still no
+	 * deployment named anywhere.
+	 */
+	manageLabel?: MessageKey;
+}) {
 	const { t } = useI18n();
 	const { data: settings } = useInstanceSettings();
 	const policy = settings?.policy;
@@ -41,7 +55,7 @@ export function ManagedSettingNotice({ pinned }: { pinned: boolean }) {
 					className="inline-flex items-center gap-1 text-accent hover:underline"
 					data-testid="managed-setting-link"
 				>
-					{t('settings.managed.manage')}
+					{t(manageLabel)}
 					<ExternalLink className="h-3 w-3" aria-hidden />
 				</a>
 			)}
@@ -59,14 +73,22 @@ export function ManagedSettingNotice({ pinned }: { pinned: boolean }) {
  * point: an operator needs to read what was fixed even though they cannot change
  * it.
  */
-export function ManagedSetting({ pinned, children }: { pinned: boolean; children: ReactNode }) {
+export function ManagedSetting({
+	pinned,
+	manageLabel,
+	children,
+}: {
+	pinned: boolean;
+	manageLabel?: MessageKey;
+	children: ReactNode;
+}) {
 	if (!pinned) return <>{children}</>;
 	return (
 		<div data-testid="managed-setting">
 			<div inert className="pointer-events-none opacity-60">
 				{children}
 			</div>
-			<ManagedSettingNotice pinned />
+			<ManagedSettingNotice pinned {...(manageLabel ? { manageLabel } : {})} />
 		</div>
 	);
 }
