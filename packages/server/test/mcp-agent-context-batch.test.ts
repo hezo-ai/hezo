@@ -269,13 +269,22 @@ describe('batch writes for contexts and summaries', () => {
 		expect(rows.rows[1].summary).toContain('Final approval gate');
 	});
 
-	it('files one coherence review for the batch, not one per agent', async () => {
-		const before = await db.query<{ c: number }>(
-			`SELECT COUNT(*)::int AS c FROM tasks
-			 WHERE project_id = (SELECT id FROM projects WHERE slug = $1)
-			   AND labels @> '["team-coherence-review"]'::jsonb`,
-			[projectSlug],
-		);
+	it('files no coherence review at all - rewriting summaries is the review, not a trigger for one', async () => {
+		// The loop this closes: step 6 of a coherence review is "rewrite every
+		// agent's summary", so filing a review here made the review's own output
+		// its next trigger. One instance produced 21 duplicate review tasks and
+		// 87M input tokens in a week that way.
+		const countReviews = async (): Promise<number> => {
+			const r = await db.query<{ c: number }>(
+				`SELECT COUNT(*)::int AS c FROM tasks
+				 WHERE project_id = (SELECT id FROM projects WHERE slug = $1)
+				   AND labels @> '["team-coherence-review"]'::jsonb`,
+				[projectSlug],
+			);
+			return r.rows[0].c;
+		};
+
+		const before = await countReviews();
 		await callTool(captainToken, 'set_agent_summaries', {
 			project: projectSlug,
 			updates: [
@@ -284,13 +293,44 @@ describe('batch writes for contexts and summaries', () => {
 				{ agent_id: 'architect', summary: 'Rev two of the architect summary.' },
 			],
 		});
-		const after = await db.query<{ c: number }>(
-			`SELECT COUNT(*)::int AS c FROM tasks
-			 WHERE project_id = (SELECT id FROM projects WHERE slug = $1)
-			   AND labels @> '["team-coherence-review"]'::jsonb`,
-			[projectSlug],
-		);
-		// Three summaries updated; reviews coalesce, so this must not add three.
-		expect(after.rows[0].c - before.rows[0].c).toBeLessThanOrEqual(1);
+		expect(await countReviews()).toBe(before);
+
+		await callTool(captainToken, 'set_agent_summary', {
+			project: projectSlug,
+			agent_id: 'engineer',
+			summary: 'Rev three of the engineer summary.',
+		});
+		expect(await countReviews()).toBe(before);
+	});
+
+	it('does not write the row when the summary is unchanged, but still reports the agent as found', async () => {
+		const summary = 'A summary written exactly once.';
+		const stamp = async (): Promise<number> => {
+			const r = await db.query<{ updated_at: string | Date }>(
+				`SELECT ma.updated_at FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND ma.slug = 'engineer'`,
+				[teamId],
+			);
+			return new Date(r.rows[0].updated_at).getTime();
+		};
+
+		await callTool(captainToken, 'set_agent_summary', {
+			project: projectSlug,
+			agent_id: 'engineer',
+			summary,
+		});
+		const after = await stamp();
+
+		// The Captain rewrites an identical roster on every review; the embedded
+		// database does not vacuum, so a no-op update leaks a dead tuple per agent
+		// per review. Skipping the write must not read as "agent not found".
+		const res = (await callTool(captainToken, 'set_agent_summary', {
+			project: projectSlug,
+			agent_id: 'engineer',
+			summary,
+		})) as { updated?: boolean; error?: string };
+		expect(res.error).toBeUndefined();
+		expect(res.updated).toBe(true);
+		expect(await stamp()).toBe(after);
 	});
 });

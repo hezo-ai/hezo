@@ -703,17 +703,27 @@ mid-flight never reaches the run-completion cost record, so `reconcileOnStartup`
 its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
 interrupted run still counts against budgets.
 
-**There is no mid-run ceiling, and that is a known gap.** Budgets are evaluated before
+**There is no mid-run *cost* ceiling, and that is a known gap.** Budgets are evaluated before
 dispatch and again at run completion, so a single run can overshoot its agent's whole daily
 cap by an unbounded margin; the overshoot is only discovered when its cost row lands, and
-what it clamps is the *next* run. The only per-run limit is wall-clock `run_timeout_min`.
-The wiring for a ceiling exists - `parser.getUsage()` is refreshed on every output chunk and
-`runAbort` already carries a typed reason union - but a real one needs a new failure
-classification, a throttled read of the remaining window (`cost_entries` is only written at
-completion), an operator-facing control, and a token backstop, because the local providers
-price to $0 and a cost-only ceiling would never fire there. Deliberately not built: the
-thread-read fixes removed the cause of the run that prompted the question, and a blunt
-ceiling would mostly fire on legitimately expensive work.
+what it clamps is the *next* run. A cost-denominated ceiling still needs a throttled read of
+the remaining window (`cost_entries` is only written at completion) and a token backstop,
+because the local providers price to $0 and a subscription prices to a figure nobody is
+billed for, so a cost-only ceiling would never fire on either.
+
+**What does bound a single run is `runs.maxToolCalls` (default 600), plus wall-clock
+`run_timeout_min`.** Tool calls rather than dollars because that is what actually grows the
+cost: every tool result stays in the conversation and is re-sent on the next call, so a run's
+token spend grows with the square of its length, and past a few hundred calls a run is mostly
+re-reading its own context. Enforced in `onChunk` off `parser.getToolCallTotal()` - the runner,
+not the MCP tool wrapper, because the tally counts *every* tool the runtime reports including
+the shell, and the shell is how a run refused an MCP call carries on anyway. Crossing it aborts
+with `tool_call_ceiling` and finalizes **`failed`**, never `timed_out`: `timed_out` queues a
+same-task continuation, which would resume the exact run shape the ceiling exists to stop.
+Every runtime's parser carries a tally, so there is no backend the ceiling silently skips.
+
+**And what bounds a *task* is the attempt count**, since a ceiling or a timeout on its own just
+produces the next attempt. See the dispatch suppressions.
 
 **Container hours are metered separately from spend, and answer the other bill.**
 `container_uptime_entries` (migration 071) records **one row per running stretch**, not
@@ -1979,11 +1989,14 @@ cover the rest of the run:
 
   `formatToolUse` takes the tally as a required argument, so recording and rendering cannot
   separate; a runtime added without wiring it is a compile error rather than a silent zero.
-  Four of six runtimes report: Claude Code, Codex, OpenCode and Kimi Code. **Grok and
-  Antigravity return NULL** - Grok's tool calls arrive as a type its parser drops, and
-  Antigravity's handles only `init`/`step_update`/`result`. Neither can be instrumented
-  without first teaching its parser to render tool calls, so both read as "not instrumented"
-  rather than as runs that called nothing.
+  **All six runtimes report**, which is what lets the per-run tool-call ceiling apply
+  uniformly instead of silently skipping a backend. Grok and Antigravity were the two that
+  did not: Grok's calls arrive as `tool_call` (its parser dropped the type, and its field
+  names are probed in both spellings because upstream ships two engine generations), and
+  Antigravity's arrive as a `step_update` with `step_type: "tool"` - counted on the `DONE`
+  state only, since a step goes ACTIVE then DONE and counting both doubles every call. NULL
+  still means "not instrumented" and stays distinct from a recorded zero, so a run that
+  genuinely called nothing reads as that.
 
   This exists to answer whether a tool earns the context its schema occupies on every
   request. Hezo's own surface measures 82 tools at ~136 KB, 71.4% of it prose, and a real
@@ -2785,9 +2798,29 @@ parks the task, including one inside a routine status update. It is marked `comp
 same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
 so neither can be renamed to cover both.
 
-**The provider-refusal cooldown.** The third suppression, and the only one applied *before*
+**The attempts-exhausted suppression.** The third applied after task resolution.
+`attemptsExhaustedOnTask` (`services/no-work-backoff.ts`) counts this agent's unproductive
+endings on this task - `failed`, `timed_out`, and `cancelled` with `handed_back`/`abandoned` -
+inside a rolling 24 hours, and stops dispatch at six. **Only a `succeeded` run resets the
+count**, and that is the whole point: counting *consecutive* timeouts was the original shape,
+and a `cancelled` give-up (a capacity park, a credential wait, a provider refusal) broke the
+streak and handed the task a fresh allowance, so a task alternating between the two never hit
+any cap. One task ran 31 times in 17 hours that way, nine of them burning a full hour of
+provider allowance before the wall clock killed them.
+
+It lives here, beside the other two, rather than in `queueTimeoutContinuation`, because that
+continuation is one wakeup source out of ten - the same task is also woken by `heartbeat`,
+`assignment` and `automation`, none of which passed through it. The continuation now calls the
+same predicate, so there is one count rather than two that can disagree. A run a *person*
+terminated is deliberately excluded, so pressing Terminate twice cannot park their own task.
+Marked `completed` with `last_skipped_reason = attempts_exhausted`, and unlike its siblings it
+is never logged quietly: parking a task is a standing state, not a backoff that lifts on a
+clock, so it also files an Inbox notice through `fileExhaustedAttemptsApproval`, which clears
+itself on the next successful run.
+
+**The provider-refusal cooldown.** The fourth suppression, and the only one applied *before*
 the claim rather than after task resolution - `processWakeups` NULLs `last_skipped_at` and
-`last_skipped_reason` when it claims a row, so a predicate placed beside the two above could
+`last_skipped_reason` when it claims a row, so a predicate placed beside the three above could
 not read the very fields this one keys on. `providerRefusalCooldownSql`
 (`services/no-work-backoff.ts`) is therefore a fragment in the scan's own `WHERE`, excluding
 a wakeup handed back for `provider_at_capacity` within 5 minutes or `provider_usage_limit`
@@ -2799,7 +2832,7 @@ newer work for as long as the outage lasted. The `NOT` is wrapped in `COALESCE(.
 `NOT (NULL)` is NULL, which a `WHERE` treats as false and drops the entire ordinary queue.
 Nothing is written per tick: the row is simply not selected, so its clock runs from the
 handback's own timestamp, no unchanged row is rewritten, and the wakeup stays `queued` with
-its reason set so the task keeps its queued badge throughout. Unlike the two above it has
+its reason set so the task keeps its queued badge throughout. Unlike the three above it has
 **no exempt sources** - a human's mention or reply cannot change how loaded the provider is,
 so dispatching for one would claim a container to be refused again. `dispatchWakeupNow`
 selects by id and does not apply it, which is the operator's override.

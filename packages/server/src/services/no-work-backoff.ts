@@ -1,10 +1,10 @@
-import { WakeupSkipReason, WakeupSource } from '@hezo/shared';
+import { HeartbeatRunStatus, RunCancelReason, WakeupSkipReason, WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 
 /**
- * Wakeup sources neither dispatch suppression in this module ever applies to.
+ * Wakeup sources no dispatch suppression in this module ever applies to.
  *
  * Each is somebody asking this agent for something it could not have served on
  * its last pass: a human or teammate addressing it, an operator pressing "Run
@@ -231,7 +231,7 @@ const PROVIDER_REFUSAL_COOLDOWN_MIN: Record<string, number> = {
  * rewritten. The wakeup stays `queued` throughout, so the task keeps showing
  * its queued badge for the whole outage.
  *
- * Deliberately has no exempt sources, unlike the two suppressions above. A
+ * Deliberately has no exempt sources, unlike the three suppressions above. A
  * human's mention or reply cannot change how loaded the provider is, so
  * dispatching for one would claim a container to fail again. "Run now"
  * (`dispatchWakeupNow`) selects by id and does not apply this, which is the
@@ -248,4 +248,90 @@ export function providerRefusalCooldownSql(alias = ''): string {
 	// the OR is NULL, and a bare `NOT (NULL)` is NULL - which a WHERE treats as
 	// false, silently filtering out every ordinary wakeup in the queue.
 	return `NOT COALESCE(${arms.join(' OR ')}, false)`;
+}
+
+/**
+ * How many unproductive attempts on one task, inside
+ * {@link TASK_ATTEMPT_WINDOW_HOURS}, before the dispatcher stops handing this
+ * agent that task.
+ *
+ * Six, against the observed shape of the fault: a task that genuinely needs two
+ * or three retries is untouched, while one that cannot finish inside its run
+ * window parks instead of spending a full provider allowance per attempt for as
+ * long as nobody is watching.
+ */
+export const MAX_TASK_ATTEMPT_GIVEUPS = 6;
+
+/** The rolling window the count above is taken over. */
+export const TASK_ATTEMPT_WINDOW_HOURS = 24;
+
+/**
+ * Endings that count as "this attempt produced nothing".
+ *
+ * `operator_terminated` and `work_withdrawn` are deliberately absent: a person
+ * pressing Terminate twice must not park their own task. That is the same
+ * judgement `NON_PINGING_STATUSES` encodes for failure pings.
+ */
+const UNPRODUCTIVE_CANCEL_REASONS: readonly string[] = [
+	RunCancelReason.HandedBack,
+	RunCancelReason.Abandoned,
+];
+
+/**
+ * Has this agent given up on this task too many times to keep being handed it?
+ *
+ * The third dispatch suppression, and the one that bounds total work rather than
+ * repetition. Its siblings ask whether a *fresh* pass would reach a conclusion
+ * the last one already reached; this one asks whether the agent has stopped
+ * being able to finish at all.
+ *
+ * It lives here, beside them, rather than in the timeout-continuation path,
+ * because the continuation is one wakeup source out of ten. A task that times
+ * out repeatedly is also woken by `heartbeat`, `assignment` and `automation`,
+ * none of which consulted the continuation cap - so bounding that one caller
+ * bounded almost nothing.
+ *
+ * **Only a success resets the count.** Counting *consecutive* endings of one
+ * kind is what failed before: a give-up that finalizes `cancelled` (a capacity
+ * park, a credential wait, a provider refusal) broke a timeout streak and handed
+ * the task a fresh allowance, so a task alternating between the two never hit any
+ * cap. Progress is the only thing that should buy more attempts.
+ */
+export async function attemptsExhaustedOnTask(
+	db: Db,
+	memberId: string,
+	taskId: string | null | undefined,
+	source: string,
+): Promise<boolean> {
+	if (!taskId) return false;
+	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+
+	// Served by idx (member_id, task_id, finished_at DESC) from migration 061.
+	const r = await db.query<{ attempts: string }>(
+		`WITH last_success AS (
+		   SELECT max(finished_at) AS at FROM heartbeat_runs
+		   WHERE member_id = $1 AND task_id = $2
+		     AND status = $3::heartbeat_run_status
+		 )
+		 SELECT count(*) AS attempts
+		 FROM heartbeat_runs r CROSS JOIN last_success s
+		 WHERE r.member_id = $1 AND r.task_id = $2
+		   AND r.finished_at IS NOT NULL
+		   AND r.finished_at > now() - ($4 || ' hours')::interval
+		   AND (s.at IS NULL OR r.finished_at > s.at)
+		   AND (
+		     r.status = ANY($5::heartbeat_run_status[])
+		     OR (r.status = $6::heartbeat_run_status AND r.cancel_reason = ANY($7::text[]))
+		   )`,
+		[
+			memberId,
+			taskId,
+			HeartbeatRunStatus.Succeeded,
+			String(TASK_ATTEMPT_WINDOW_HOURS),
+			[HeartbeatRunStatus.Failed, HeartbeatRunStatus.TimedOut],
+			HeartbeatRunStatus.Cancelled,
+			[...UNPRODUCTIVE_CANCEL_REASONS],
+		],
+	);
+	return Number(r.rows[0]?.attempts ?? 0) >= MAX_TASK_ATTEMPT_GIVEUPS;
 }

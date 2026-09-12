@@ -67,7 +67,10 @@ async function getSpendByColumn(
 		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly,
 		   COALESCE(SUM(amount_cents), 0)::int AS "allTime"
 		 FROM cost_entries
-		 WHERE ${column} = $1`,
+		 -- Billed rows only. A notional figure is shown, never enforced: an operator
+		 -- on a subscription is not billed per token, so charging a dollar budget
+		 -- against imputed spend would pause agents over money nobody spent.
+		 WHERE ${column} = $1 AND billed`,
 		[id],
 	);
 	return res.rows[0] ?? ZERO_SPEND;
@@ -197,12 +200,21 @@ export async function recordRunCost(
 		description: string;
 		aiProviderConfigId: string | null;
 		provider: AiProvider | null;
+		/**
+		 * Real money, or a notional figure for a run nobody is billed per token for.
+		 *
+		 * Required with no default so every call site has to decide and a new one is
+		 * a compile error. Getting it wrong in the false direction silently stops
+		 * charging a budget; in the true direction it starts enforcing on money that
+		 * was never spent.
+		 */
+		billed: boolean;
 	},
 ): Promise<Record<string, unknown> | null> {
 	if (entry.amountCents <= 0) return null;
 	const res = await db.query<Record<string, unknown>>(
-		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description, ai_provider_config_id, provider)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7::ai_provider)
+		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description, ai_provider_config_id, provider, billed)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7::ai_provider, $8)
 		 RETURNING *`,
 		[
 			entry.memberId,
@@ -212,6 +224,7 @@ export async function recordRunCost(
 			entry.description,
 			entry.aiProviderConfigId,
 			entry.provider,
+			entry.billed,
 		],
 	);
 	return res.rows[0] ?? null;

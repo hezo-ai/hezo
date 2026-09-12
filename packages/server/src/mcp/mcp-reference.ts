@@ -524,7 +524,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	get_costs: {
 		category: 'Costs',
 		returns:
-			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, entry_count }`.',
+			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents, notional_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents, notional_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, notional_cents, entry_count }`.',
 	},
 
 	// Onboarding

@@ -23,6 +23,8 @@ import type { HezoConfig } from './types';
 const cron = z.string().trim().min(1).describe('a seconds-precision six-field cron expression');
 
 const positiveInt = z.int().positive();
+/** Allows 0, which several settings use to mean "no limit". */
+const nonNegativeInt = z.int().nonnegative();
 
 const databaseSchema = z
 	.object({
@@ -38,6 +40,12 @@ const assetStorageSchema = z.object({ url: z.string().min(1).optional() }).stric
 
 const daytonaSchema = z
 	.object({ apiKey: z.string().min(1).optional(), apiUrl: z.url().optional() })
+	.strict();
+
+const runsSchema = z
+	.object({
+		maxToolCalls: nonNegativeInt.optional(),
+	})
 	.strict();
 
 const containersSchema = z
@@ -265,6 +273,7 @@ export const configFileSchema = z
 		database: databaseSchema.optional(),
 		assetStorage: assetStorageSchema.optional(),
 		containers: containersSchema.optional(),
+		runs: runsSchema.optional(),
 		egress: egressSchema.optional(),
 		telemetry: telemetrySchema.optional(),
 		updates: updatesSchema.optional(),

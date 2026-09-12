@@ -340,7 +340,9 @@ Every task run ends through a completeness judge, a deterministic handoff-delive
 ## Cost: always priced from the table
 Per-run cost is computed **always** from the pricing table, using the token counts each runtime reports. **A runtime's own dollar figure is ignored in every parser** - it is a client-side estimate from the CLI's built-in rate card, which for a third-party endpoint belongs to the wrong provider entirely. The CLIs' only job in cost accounting is accurate token counts. An unknown model prices to $0 - fail-low, never fail-high.
 
-**Where usage is recovered from a file rather than stdout, scrub the file after parsing** - it can carry the provider credential in plaintext. Parsing such a log has three traps, each of which otherwise prices runs silently wrong; they are in `.dev/agent-run-hooks.md`, and you will not guess them.
+**A cost that is shown is not a cost that is charged.** A subscription bills nothing per token, so its runs are priced at list rates and recorded as **notional** - `cost_entries.billed = false`. Notional spend is display-only: it reaches no budget query, gates no dispatch and pauses no agent. A new reader of `cost_entries` decides which it wants; a new writer must say.
+
+**Where usage is recovered from a file rather than stdout, scrub the file after parsing** - it can carry the provider credential in plaintext, and a runtime's rollout is the whole transcript. Recovery runs on the failure path too, or a killed run records zero for work that happened. Parsing such a file has traps that otherwise price runs silently wrong - cumulative vs per-request totals, which bucket already contains the cache, whether reasoning is inside output, and the file size; they are in `.dev/agent-run-hooks.md`, and you will not guess them.
 
 ## Container toolset
 The agent image pre-bakes the common toolchain, and anything else installs cleanly at runtime through the per-run egress proxy with our CA already trusted. **`wget` is deliberately absent - use `curl`.** **If you add a tool, add it to the toolset paragraph in the shared instructions too**, or agents will not know it exists.

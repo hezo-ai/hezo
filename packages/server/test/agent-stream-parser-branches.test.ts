@@ -381,6 +381,7 @@ describe('Claude Code — assistant usage edge arms', () => {
 			inputTokens: 5,
 			outputTokens: 2,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 5,
 				cacheCreationTokens: 0,
@@ -397,6 +398,7 @@ describe('Claude Code — assistant usage edge arms', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheCreationTokens: 0,
@@ -450,6 +452,7 @@ describe('Claude Code — user/result edge arms', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheCreationTokens: 0,
@@ -483,9 +486,11 @@ describe('Codex — thread.started + item edge arms', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
 				outputTokens: 0,
 			},
 		});
@@ -632,6 +637,7 @@ describe('Antigravity — init/step/result edge arms', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheReadTokens: 0,
@@ -746,6 +752,7 @@ describe('generic parser — usage/error/terminal arms', () => {
 			inputTokens: 12,
 			outputTokens: 4,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 12,
 				cacheReadTokens: 0,
@@ -762,6 +769,7 @@ describe('generic parser — usage/error/terminal arms', () => {
 			inputTokens: 7,
 			outputTokens: 2,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 7,
 				cacheReadTokens: 0,
@@ -851,6 +859,7 @@ describe('generic parser — usage/error/terminal arms', () => {
 			inputTokens: 3,
 			outputTokens: 9,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 3,
 				cacheReadTokens: 0,
@@ -1069,6 +1078,7 @@ describe('chat parser — remaining arms', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheCreationTokens: 0,
@@ -1094,9 +1104,11 @@ describe('chat parser — remaining arms', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
 				outputTokens: 0,
 			},
 		});
@@ -1152,6 +1164,9 @@ describe('chat parser — remaining arms', () => {
 			inputTokens: 4,
 			outputTokens: 1,
 			costCents: 0,
+			// The model the cost was priced from, carried through so a $0 figure
+			// stays distinguishable from one priced against nothing.
+			model: 'k',
 			buckets: {
 				inputTokens: 4,
 				cacheReadTokens: 0,

@@ -31,14 +31,34 @@ Model pricing ships built in and refreshes daily from
 [pricepertoken.com](https://pricepertoken.com), so rates stay current without any
 setup. The catalog carries no cache rates, so Hezo derives them from each model's
 input rate: Anthropic bills cache reads at a tenth of the input rate and cache
-writes at a small premium, and agent runs are cache-heavy, so this is most of what
-a run costs.
+writes at a small premium, OpenAI bills cache reads at a tenth with no write
+premium, and agent runs are cache-heavy, so this is most of what a run costs.
 
 For a provider whose cache rates are not yet known, cache traffic still bills at
-the full input rate, which makes those figures a **conservative upper-bound
-estimate** - your real bill is lower than the figure shown, never higher. For exact
-billing on a model (or to correct a rate), add a manual pricing override in
-Settings - overrides win and can include cache rates.
+the full input rate, which makes those particular figures a **conservative
+upper-bound estimate** - your real bill is lower than the figure shown, never
+higher. For exact billing on a model (or to correct a rate), add a manual pricing
+override in Settings - overrides win and can include cache rates.
+
+## Subscription runs are costed but not billed
+
+A provider you signed into with a subscription does not charge per token, so there
+is no bill for Hezo to track. It still records what each run would have cost at the
+provider's published API rates, and shows that figure marked as not billed.
+
+This exists because the alternative is worse: with nothing recorded, a team running
+entirely on subscriptions saw an empty spend page while getting through billions of
+tokens a week, and the first sign of trouble was the provider cutting them off.
+
+The figure is there to show you what the fleet is doing, not to budget against:
+
+- It **never** counts towards a daily, weekly or monthly limit.
+- It **never** pauses an agent.
+- It is kept separate from real spend everywhere both are shown, so "what did this
+  cost me" stays answerable.
+
+If you want a hard stop on subscription usage, the controls that apply are the
+per-agent run time limit and the per-run tool-call ceiling, not a budget.
 
 ## Budget windows
 

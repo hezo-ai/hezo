@@ -290,6 +290,7 @@ function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
 		exists: async (p) => (await bound()).exists(p),
 		read: async (p) => (await bound()).read(p),
 		readBytes: async (p) => (await bound()).readBytes(p),
+		readTail: async (p, maxBytes) => (await bound()).readTail(p, maxBytes),
 		size: async (p) => (await bound()).size(p),
 		remove: async (p) => (await bound()).remove(p),
 		removeDir: async (p) => (await bound()).removeDir(p),

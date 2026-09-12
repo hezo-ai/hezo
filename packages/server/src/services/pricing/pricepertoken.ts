@@ -31,6 +31,15 @@ const TOKENS_PER_MILLION = 1_000_000;
  * default 5-minute TTL (2x for the 1-hour TTL, which no runtime Hezo drives
  * opts into - 1.25x is both the common case and the lower of the two).
  *
+ * OpenAI prices cached input at 0.1x and charges no cache-write premium. The
+ * 1.0x is not the same as leaving it null: null means "unknown, bill it at the
+ * full input rate to be safe", 1.0 means "known, and it happens to be the input
+ * rate". Verified against the catalog: gpt-5-codex input is $1.25/M against a
+ * published cached-input rate of $0.125/M, and gpt-5.2-codex holds the ratio.
+ * This matters more than it looks - an agent run is cache-read dominated (96%
+ * on a live instance), so the null fallback overstated those runs roughly
+ * tenfold, which is the whole figure for a subscription operator reading it.
+ *
  * **Derived rather than baked** so the cache rates stay correct when the feed
  * moves a base price, and so a model released after this ships is covered
  * without a code change - the failure mode a snapshot of absolute figures has.
@@ -42,6 +51,7 @@ const TOKENS_PER_MILLION = 1_000_000;
  */
 const CACHE_RATE_MULTIPLIERS: Record<string, { read: number; creation: number }> = {
 	anthropic: { read: 0.1, creation: 1.25 },
+	openai: { read: 0.1, creation: 1.0 },
 };
 
 /** A normalized rate row ready to upsert into `model_pricing`. */

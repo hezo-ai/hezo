@@ -82,11 +82,19 @@ import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
 import {
+	attemptsExhaustedOnTask,
+	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	providerRefusalCooldownSql,
+	TASK_ATTEMPT_WINDOW_HOURS,
 } from './no-work-backoff';
-import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
+import {
+	detectOrphans,
+	fileExhaustedAttemptsApproval,
+	healStaleRunState,
+	STALE_STATE_GRACE_SECONDS,
+} from './orphan-detector';
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { buildProgressActivityCandidates } from './project-activity';
@@ -121,10 +129,6 @@ import type { WebSocketManager } from './ws';
 const log = logger.child('job-manager');
 
 const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
-// A run cut off by its wall-clock time limit auto-queues a same-task continuation. This caps
-// how many consecutive timeouts we re-queue through before parking the task, so a task that
-// never fits its run window can't loop forever; a non-timeout run in between resets the streak.
-const MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS = 5;
 // How stale the progress summary may get before the Captain rebuilds it, independently of goals.
 // Matches the default daily goal cadence, and is deliberately conservative: paired with the
 // "has anything changed since?" guard in `isProgressSnapshotDue`, it means an active project
@@ -1061,8 +1065,10 @@ export class JobManager {
 					costCents: run.cost_cents,
 					// No split to report: this is a snapshot read back off the row, and
 					// only the cost is used from here anyway. Reconstructing buckets that
-					// were never flushed would be inventing them.
+					// were never flushed would be inventing them. Same for the model -
+					// the row already carries whatever was known.
 					buckets: null,
+					model: null,
 				},
 				{
 					wsManager,
@@ -2406,7 +2412,12 @@ export class JobManager {
 						reason: WakeupSkipReason.ParkedOnAdmin,
 						detail: `is waiting on an unanswered ask on ${ref(task.identifier, task.id)} and nobody has replied since`,
 					}
-				: null;
+				: (await attemptsExhaustedOnTask(db, memberId, task.id, wakeupSource))
+					? {
+							reason: WakeupSkipReason.AttemptsExhausted,
+							detail: `has given up on ${ref(task.identifier, task.id)} ${MAX_TASK_ATTEMPT_GIVEUPS} times in the last ${TASK_ATTEMPT_WINDOW_HOURS}h without finishing it`,
+						}
+					: null;
 		if (suppression) {
 			// Warned, not debugged, for every source but the two the system raises on a
 			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its
@@ -2414,11 +2425,25 @@ export class JobManager {
 			// something asked for this agent and got nothing, with the row flipped to
 			// `completed` below and gone from the queued list - which is exactly how an
 			// approved hire came to sit with nobody acting on it and no line saying so.
-			const quiet = wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer;
+			// An exhausted task is never quiet, whatever woke it: the other two
+			// suppressions are a backoff that lifts on its own, while this one means
+			// the agent has stopped making progress and nothing will dispatch onto the
+			// task until a person acts.
+			const quiet =
+				suppression.reason !== WakeupSkipReason.AttemptsExhausted &&
+				(wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer);
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
 			else log.warn(line);
 			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
+			// Stamp the check for the same reason the "no actionable tasks" branch
+			// above does: a pass that concluded there is nothing to do must advance the
+			// clock, or the scheduler re-selects this agent every cron tick. Without it
+			// an agent parked on an unanswered ask never advances and spins at tick
+			// rate for as long as the ask goes unanswered.
+			await db.query('UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1', [
+				memberId,
+			]);
 			// Completed, not left claimed: the wakeup was considered and answered -
 			// there is nothing to do - which is the same outcome as the "no actionable
 			// tasks" branch above, and it must not sit in `claimed` forever. Not
@@ -2845,9 +2870,24 @@ export class JobManager {
 		// A run cut off by its wall-clock time limit is not a failure. Queue a same-task
 		// continuation so the agent resumes it (committed work is already pushed) and skip the
 		// failure ping + next-task chain, which would mislead or compete with the resume. Only
-		// once the task keeps timing out (the cap) do we fall through to the failure path.
+		// once the task has exhausted its attempts do we fall through to the failure path.
 		if (result.timedOut) {
-			if (await this.queueTimeoutContinuation(memberId, taskId, teamId)) return;
+			const continuation = await this.queueTimeoutContinuation(memberId, taskId, teamId);
+			if (continuation === 'queued') return;
+			// Parking the task is otherwise silent: it simply stops moving, which reads
+			// as the agent having nothing to do rather than as work needing a person.
+			// Only for `exhausted` — a failed insert is this attempt going wrong, and
+			// falls through to the ordinary failure ping below.
+			if (continuation === 'exhausted' && result.heartbeatRunId) {
+				await fileExhaustedAttemptsApproval(this.deps.db, {
+					runId: result.heartbeatRunId,
+					memberId,
+					teamId,
+					taskId,
+					attempts: MAX_TASK_ATTEMPT_GIVEUPS,
+					windowHours: TASK_ATTEMPT_WINDOW_HOURS,
+				});
+			}
 		}
 
 		if (!result.success && result.heartbeatRunId) {
@@ -2873,45 +2913,43 @@ export class JobManager {
 	 * After a run hit its wall-clock time limit, queue a same-task continuation so the agent
 	 * picks the task back up on the next wakeup pass (committed work is already pushed by the
 	 * per-commit auto-push hook, so nothing is lost). The `launchTask` finally already kicks
-	 * `processWakeups`, which dispatches this once the task releases. Returns false — declining
-	 * to queue — once the task has hit `MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS` timeouts in a
-	 * row, so a task that never fits its run window can't re-queue forever; a non-timeout run in
-	 * between resets the streak. The current run's row is already `timed_out` here, so it counts.
+	 * `processWakeups`, which dispatches this once the task releases. The current run's row is
+	 * already `timed_out` here, so it counts.
+	 *
+	 * Says WHY it declined, not just that it did. The two reasons need different handling: an
+	 * exhausted task is a standing state a person must clear, while a failed insert is this
+	 * attempt going wrong and the caller falling back to the ordinary failure ping. Reporting
+	 * both as `false` filed the "give up on this task" notice for a transient insert error.
+	 *
+	 * The bound is `attemptsExhaustedOnTask`, the same predicate dispatch applies, rather than a
+	 * count of its own: two counters would disagree, and this one is the lesser half anyway —
+	 * a timing-out task is also woken by heartbeat, assignment and automation, none of which
+	 * pass through here.
 	 */
 	private async queueTimeoutContinuation(
 		memberId: string,
 		taskId: string,
 		teamId: string,
-	): Promise<boolean> {
+	): Promise<'queued' | 'exhausted' | 'failed'> {
 		const { db } = this.deps;
-		const recent = await db.query<{ status: HeartbeatRunStatus }>(
-			`SELECT status FROM heartbeat_runs
-			 WHERE member_id = $1 AND task_id = $2
-			 ORDER BY started_at DESC NULLS LAST
-			 LIMIT $3`,
-			[memberId, taskId, MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS],
-		);
-		if (
-			recent.rows.length >= MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS &&
-			recent.rows.every((r) => r.status === HeartbeatRunStatus.TimedOut)
-		) {
+		if (await attemptsExhaustedOnTask(db, memberId, taskId, WakeupSource.Timer)) {
 			log.warn(
-				`Not queuing timeout continuation for member ${memberId} on task ${taskId}: ${MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS} consecutive timeouts`,
+				`Not queuing timeout continuation for member ${memberId} on task ${taskId}: ${MAX_TASK_ATTEMPT_GIVEUPS} unproductive attempts in the last ${TASK_ATTEMPT_WINDOW_HOURS}h`,
 			);
-			return false;
+			return 'exhausted';
 		}
 		try {
 			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
 				task_id: taskId,
 				reason: 'timeout_continuation',
 			});
-			return true;
+			return 'queued';
 		} catch (e) {
 			log.error(
 				`Failed to queue timeout continuation for member ${memberId} on task ${taskId}:`,
 				e,
 			);
-			return false;
+			return 'failed';
 		}
 	}
 

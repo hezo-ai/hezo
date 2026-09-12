@@ -852,6 +852,9 @@ export function resolveConfig(
 			poolSize: file.database?.poolSize ?? d.database.poolSize,
 		},
 		assetStorage: { url: str('assetStorageUrl') ?? file.assetStorage?.url },
+		runs: {
+			maxToolCalls: file.runs?.maxToolCalls ?? d.runs.maxToolCalls,
+		},
 		containers: {
 			backend: str('sandboxBackend') ?? file.containers?.backend,
 			dockerSocket: str('dockerSocket') ?? file.containers?.dockerSocket,

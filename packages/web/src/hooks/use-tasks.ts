@@ -64,8 +64,10 @@ export interface Task {
 	run_count: number;
 	/** Summed wall-clock duration of finished runs, in seconds. */
 	total_duration_seconds: number;
-	/** Summed cost across the task's runs, in cents. */
+	/** Summed billed cost across the task's runs, in cents. */
 	total_cost_cents: number;
+	/** Summed cost of the task's runs that nobody was billed for, in cents. */
+	notional_cost_cents: number;
 	has_unread_admin_mention: boolean;
 	/**
 	 * The task is parked on the admin: an unread inbox row for the viewing admin, or

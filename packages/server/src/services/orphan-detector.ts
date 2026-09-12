@@ -749,3 +749,34 @@ export async function healStaleRunState(db: Db, wsManager?: WebSocketManager): P
 		}
 	}
 }
+
+/**
+ * Record that a task has consumed its attempt allowance and is no longer being
+ * dispatched onto.
+ *
+ * The visible half of the attempt bound. Declining to dispatch is the right
+ * behaviour but a silent one: the task simply stops moving, which reads as the
+ * agent having nothing to do rather than as work that needs a person. Filed
+ * through the same writer as the other give-ups, so it gets the same
+ * one-per-stuck-agent dedupe and is closed automatically by
+ * {@link clearAgentErrorApprovalsOnRecovery} the moment a run on the task
+ * succeeds.
+ */
+export async function fileExhaustedAttemptsApproval(
+	db: Db,
+	run: {
+		runId: string;
+		memberId: string;
+		teamId: string;
+		taskId?: string | null;
+		attempts: number;
+		windowHours: number;
+	},
+): Promise<void> {
+	await fileLostRunApproval(
+		db,
+		run,
+		undefined,
+		`This agent has given up on this task ${run.attempts} times in the last ${run.windowHours} hours without finishing it, so Hezo has stopped dispatching onto it. Each attempt spends a full run's model allowance, so retrying unchanged will not converge. Narrow the task, raise the agent's run time limit, or press Retry once you have changed something.`,
+	);
+}

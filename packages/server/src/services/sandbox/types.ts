@@ -1,7 +1,7 @@
 import type { ContainerHostMemory } from '@hezo/shared';
-import type { SandboxFiles } from './files';
+import type { NameMatch, SandboxFiles } from './files';
 
-export type { SandboxFiles };
+export type { NameMatch, SandboxFiles };
 /**
  * The container-engine seam.
  *

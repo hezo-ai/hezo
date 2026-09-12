@@ -21,7 +21,6 @@ export type TeamCoherenceReviewReason =
 	| 'reports_to_changed'
 	| 'prompt_updated'
 	| 'role_updated'
-	| 'summary_updated'
 	| 'custom_prompt_updated'
 	| 'enabled_changed';
 

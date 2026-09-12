@@ -22,6 +22,7 @@ import { useRunLogs } from '../../hooks/use-run-logs';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { agentPageParams } from '../agent-link';
+import { CostFigure } from '../cost-figures';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
 import { useOpenPreview } from '../task-detail/preview-context';
@@ -351,9 +352,12 @@ export function RunCommentBody({
 							<span aria-hidden="true" className="hidden sm:inline">
 								·
 							</span>
-							<span className="hidden sm:inline" data-testid="run-comment-cost">
-								${(run.cost_cents / 100).toFixed(2)}
-							</span>
+							<CostFigure
+								cents={run.cost_cents}
+								billed={run.cost_billed}
+								className="hidden sm:inline"
+								testId="run-comment-cost"
+							/>
 						</>
 					)}
 				</span>

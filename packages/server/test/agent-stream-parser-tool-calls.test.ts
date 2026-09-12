@@ -107,15 +107,62 @@ describe('getToolCallCounts', () => {
 		expect(b.getToolCallCounts()).toEqual({ Read: 1 });
 	});
 
-	it('reports null for the runtimes whose parsers render no tool events', () => {
-		// Grok's tool calls arrive as a type its parser drops; Antigravity handles
-		// only init/step_update/result. Neither can be instrumented without first
-		// teaching its parser to render tool calls, so both must read as "not
-		// instrumented" rather than as runs that called nothing.
-		for (const runtime of [AgentRuntime.Grok, AgentRuntime.Antigravity]) {
+	it('still reports null when a run genuinely called nothing', () => {
+		// "Not instrumented" and "called nothing" must stay distinguishable, so a
+		// parser that saw no tool event reports null rather than an empty record.
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		parser.onStdout(line({ event: 'init', init: { model: 'gemini' } }));
+		expect(parser.getToolCallCounts()).toBeNull();
+		expect(parser.getToolCallTotal()).toBe(0);
+	});
+
+	it('counts an Antigravity tool step once, on the state that completes it', () => {
+		// A step goes ACTIVE then DONE; counting both would double every call.
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		parser.onStdout(
+			line({ event: 'step_update', step_update: { step_type: 'tool', state: 'ACTIVE' } }),
+		);
+		parser.onStdout(
+			line({
+				event: 'step_update',
+				step_update: { step_type: 'tool', state: 'DONE', tool_info: { name: 'read_file' } },
+			}),
+		);
+		// A non-tool step is not a tool call.
+		parser.onStdout(
+			line({ event: 'step_update', step_update: { step_type: 'agent_response', state: 'DONE' } }),
+		);
+		expect(parser.getToolCallCounts()).toEqual({ read_file: 1 });
+		expect(parser.getToolCallTotal()).toBe(1);
+	});
+
+	it('every runtime can be counted, so the ceiling has no unbounded backend', () => {
+		// AGENTS.md: a backend that cannot do what the interface requires is
+		// unsupported, not a second code path. If a new runtime lands without a
+		// tally, its runs would silently ignore the per-run tool-call ceiling.
+		for (const runtime of Object.values(AgentRuntime)) {
 			const parser = createAgentStreamParser(runtime);
-			parser.onStdout(line({ type: 'assistant', content: 'hello' }));
-			expect(parser.getToolCallCounts(), runtime).toBeNull();
+			expect(typeof parser.getToolCallTotal(), runtime).toBe('number');
 		}
+	});
+
+	it('counts Grok tool calls across every spelling upstream ships', () => {
+		// Field names are probed rather than picked: xAI carries two engine
+		// generations with duplicated logging paths, and a spelling this misses
+		// does not fail - it silently counts zero for the whole run.
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		parser.onStdout(line({ type: 'tool_call', name: 'bash' }));
+		parser.onStdout(line({ type: 'tool_call', toolName: 'bash' }));
+		parser.onStdout(line({ type: 'tool_call', tool_name: 'read_file' }));
+		parser.onStdout(line({ type: 'tool_call', function: { name: 'read_file' } }));
+		expect(parser.getToolCallCounts()).toEqual({ bash: 2, read_file: 2 });
+	});
+
+	it('counts a Grok tool call once, not once per argument delta', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		parser.onStdout(line({ type: 'tool_call', name: 'bash' }));
+		parser.onStdout(line({ type: 'tool_call_update', name: 'bash' }));
+		parser.onStdout(line({ type: 'tool_call_update', name: 'bash' }));
+		expect(parser.getToolCallCounts()).toEqual({ bash: 1 });
 	});
 });
