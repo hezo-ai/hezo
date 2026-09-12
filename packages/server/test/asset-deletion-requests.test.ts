@@ -236,6 +236,34 @@ describe('resolve-asset-deletion (legacy pending cards)', () => {
 		expect(await waitForAuditRow('deleted', a.id)).toBe(true);
 	});
 
+	it('reports the deleted assets in the order they were requested', async () => {
+		// The order is load-bearing three times over: the summary comment lists the
+		// filenames, the stored outcome lists the ids, and the audit row names the
+		// first id as the asset the deletion was about. The query behind all three
+		// once had no ORDER BY, so the answer followed whatever plan the available
+		// indexes produced - and adding an unrelated index renamed the audited asset.
+		const first = await uploadAsset('zzz-last-alphabetically.png');
+		const second = await uploadAsset('aaa-first-alphabetically.png');
+		const commentId = await seedDeletionRequest([second, first]);
+
+		const res = await resolveDeletion(commentId, true);
+		expect(res.status).toBe(200);
+		// Requested order, not creation order and not filename order - either of
+		// which would read as "sorted" here and pass by accident.
+		expect((await res.json()).data.deleted_asset_ids).toEqual([second.id, first.id]);
+
+		const system = await db.query<{ content: { text: string } }>(
+			`SELECT content FROM task_comments
+			  WHERE task_id = $1 AND content_type = 'system'::comment_content_type
+			  ORDER BY created_at DESC LIMIT 1`,
+			[taskId],
+		);
+		expect(system.rows[0].content.text).toContain(
+			'assets/aaa-first-alphabetically.png, assets/zzz-last-alphabetically.png',
+		);
+		expect(await waitForAuditRow('deleted', second.id)).toBe(true);
+	});
+
 	it('deny keeps everything and wakes the agent with the outcome', async () => {
 		const a = await uploadAsset('spared.png');
 		const commentId = await seedDeletionRequest([a]);

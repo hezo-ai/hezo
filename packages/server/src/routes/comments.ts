@@ -827,8 +827,16 @@ commentsRoutes.post(
 				// separately deleted since the request. Renamed assets still delete
 				// (the admin approved the request-time snapshot; the system comment
 				// reports current paths); already-gone ids are recorded, not errored.
+				// Ordered by the request, because three things downstream read this order
+				// and none of them should vary: the summary comment lists the filenames,
+				// the stored outcome lists the ids, and the audit row records the first
+				// id as the entity the deletion was about. Unordered, all three followed
+				// whatever plan the row count and available indexes happened to produce,
+				// so adding an index elsewhere silently renamed the audited asset.
 				const current = await db.query<{ id: string; original_filename: string }>(
-					'SELECT id, original_filename FROM assets WHERE id = ANY($1::uuid[]) AND team_id = $2 AND project_id = $3',
+					`SELECT id, original_filename FROM assets
+					  WHERE id = ANY($1::uuid[]) AND team_id = $2 AND project_id = $3
+					  ORDER BY array_position($1::uuid[], id)`,
 					[requestedIds, teamId, projectId],
 				);
 				const ids = current.rows.map((r) => r.id);
