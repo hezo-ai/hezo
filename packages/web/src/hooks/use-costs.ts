@@ -73,9 +73,8 @@ export interface AgentBudgetStatus extends EntityBudgetStatus {
 	agent_name: string | null;
 	agent_slug: string;
 	runtime_status: string;
-	/** Uploaded avatar (signed URL); null when unset. Built-in CEO/Coach defaults
-	 *  are resolved client-side from the slug. */
-	agent_icon_url: string | null;
+	/** Generated avatar spec; built-in CEO/Coach defaults resolve from the slug. */
+	agent_avatar_spec: unknown;
 	agent_over_budget: boolean;
 	project_over_budget: boolean;
 }
