@@ -170,6 +170,7 @@ function firstResolvableFiles(
 		exists: async (p) => (await pick()).exists(p),
 		read: async (p) => (await pick()).read(p),
 		readBytes: async (p) => (await pick()).readBytes(p),
+		readTail: async (p, maxBytes) => (await pick()).readTail(p, maxBytes),
 		size: async (p) => (await pick()).size(p),
 		list: async (p) => (await pick()).list(p),
 		remove: async (p) => (await pick()).remove(p),

@@ -1,12 +1,17 @@
 import { HoursBucket } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { BarChart3, Pencil, Users } from 'lucide-react';
+import { BarChart3, Info, Pencil, Users } from 'lucide-react';
 import { agentDisplayName } from '../../../../components/agent-identity-tooltip';
 import { agentPageParams } from '../../../../components/agent-link';
 import { AgentRef } from '../../../../components/agent-ref';
 import { BudgetCharts } from '../../../../components/budget/budget-charts';
 import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
-import { dollars, formatDay } from '../../../../components/charts/chart-format';
+import {
+	centsToPlottedDollars,
+	dollars,
+	formatDay,
+	plottedDollars,
+} from '../../../../components/charts/chart-format';
 import {
 	type SeriesCell,
 	StackedSeriesChart,
@@ -23,6 +28,7 @@ import {
 	useAdapterDailyCostSeries,
 	useAgentDailyCostSeries,
 	useBudgetStatus,
+	useDailyCostSeries,
 	type WindowStatus,
 } from '../../../../hooks/use-costs';
 import { defaultAvatarForSlug } from '../../../../lib/default-avatars';
@@ -63,12 +69,17 @@ function WindowGrid({ status }: { status: EntityBudgetStatus }) {
 /** A NULL adapter config (manual entries, historical rows) groups under one label. */
 const UNATTRIBUTED_KEY = 'unattributed';
 
+/**
+ * These two already spend their stack on the breakdown they exist for, so each
+ * cell carries the day's whole figure. The note above the charts says how much
+ * of it nobody was billed for.
+ */
 function toAgentCells(points: AgentDailyCostPoint[] | undefined): SeriesCell[] {
 	return (points ?? []).map((p) => ({
 		bucket: p.day,
 		seriesKey: p.agent_id,
 		seriesLabel: agentDisplayName({ human_name: p.agent_name, title: p.agent_title }),
-		value: p.total_cents,
+		value: p.total_cents + p.notional_cents,
 	}));
 }
 
@@ -77,19 +88,18 @@ function toAdapterCells(points: AdapterDailyCostPoint[] | undefined): SeriesCell
 		bucket: p.day,
 		seriesKey: p.ai_provider_config_id ?? UNATTRIBUTED_KEY,
 		seriesLabel: p.adapter_label ?? p.provider ?? 'Unattributed',
-		value: p.total_cents,
+		value: p.total_cents + p.notional_cents,
 	}));
 }
 
-/** Cents are the chart's base unit; dollars are what it plots, and `dollarsSpent`
- *  inverts that exactly for the tooltip. */
-const centsToPlottedDollars = (cents: number) => cents / 100;
-const dollarsSpent = (plotted: number) => dollars(Math.round(plotted * 100));
-
 function BudgetPage() {
-	const { t } = useI18n();
+	const { t, formatMoney } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: status } = useBudgetStatus(projectId);
+	// Shares the per-day query the project chart already issues; read here only
+	// for its all-time unbilled total, which the note below the header reports.
+	const { data: costSeries } = useDailyCostSeries(projectId);
+	const notionalCents = costSeries?.notional_cents ?? 0;
 	const { data: agentSeries, isLoading: agentLoading } = useAgentDailyCostSeries(projectId);
 	const { data: adapterSeries, isLoading: adapterLoading } = useAdapterDailyCostSeries(projectId);
 	// Per-agent run time, folded into the cards below rather than given a panel of
@@ -113,6 +123,18 @@ function BudgetPage() {
 					description="Daily project spend, and the same totals split by agent and by AI adapter."
 				/>
 				<div className="flex flex-col gap-4">
+					{notionalCents > 0 && (
+						<div
+							className="flex items-start gap-2.5 rounded-lg border border-border bg-surface p-4 shadow-xs"
+							data-testid="notional-spend-note"
+						>
+							<Info className="mt-0.5 h-4 w-4 shrink-0 text-text-3" aria-hidden />
+							<p className="text-[13px] text-text-2">
+								{t('cost.notional.included', { amount: formatMoney(notionalCents) })}{' '}
+								{t('cost.notional.explainer')}
+							</p>
+						</div>
+					)}
 					<BudgetCharts projectId={projectId} title="Project spend per day" />
 					<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 						<StackedSeriesChart
@@ -120,7 +142,7 @@ function BudgetPage() {
 							cells={toAgentCells(agentSeries?.summary)}
 							isLoading={agentLoading}
 							toDisplay={centsToPlottedDollars}
-							formatValue={dollarsSpent}
+							formatValue={plottedDollars}
 							formatBucket={formatDay}
 							emptyText="No spend recorded."
 							testId="stacked-spend-chart"
@@ -130,7 +152,7 @@ function BudgetPage() {
 							cells={toAdapterCells(adapterSeries?.summary)}
 							isLoading={adapterLoading}
 							toDisplay={centsToPlottedDollars}
-							formatValue={dollarsSpent}
+							formatValue={plottedDollars}
 							formatBucket={formatDay}
 							emptyText="No spend recorded."
 							testId="stacked-spend-chart"

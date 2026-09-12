@@ -5,6 +5,7 @@ import { useId } from 'react';
 import { useBudgetStatus, useDailyCostSeries } from '../../hooks/use-costs';
 import { useI18n } from '../../lib/i18n';
 import { Card } from '../ui/card';
+import { Tooltip } from '../ui/tooltip';
 
 /** Days of history the sparkline draws. Older spend is the Budget page's business. */
 const SPARK_DAYS = 14;
@@ -128,6 +129,18 @@ export function DashboardSpend({ projectId }: { projectId: string }) {
 							{formatMoney(costs?.total_cents ?? 0)}
 						</b>
 					</span>
+					{/* Beside the real figures, never inside them: the three above are
+					    money, and this one is what the same tokens would have cost. */}
+					{(costs?.notional_cents ?? 0) > 0 && (
+						<Tooltip content={t('cost.notional.explainer')}>
+							<span data-testid="dashboard-spend-notional">
+								{t('cost.series.notBilled')}{' '}
+								<b className="font-mono font-medium tabular-nums text-text-1">
+									{formatMoney(costs?.notional_cents ?? 0)}
+								</b>
+							</span>
+						</Tooltip>
+					)}
 				</div>
 			</Card>
 		</section>

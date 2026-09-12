@@ -47,6 +47,15 @@ export interface AgentRunUsage {
 	 * very different runs, and collapsing them to a sum loses which it was.
 	 */
 	buckets: CostTokens | null;
+	/**
+	 * The model the cost was priced from, or null where the runtime named none.
+	 *
+	 * Persisted on the run so a recorded figure stays auditable: `$0` because the
+	 * model was unknown and `$0` because the model is genuinely free are the same
+	 * number and completely different faults, and nothing else on the row can tell
+	 * them apart - a subscription run's argv carries no model either.
+	 */
+	model: string | null;
 }
 
 /**
@@ -69,6 +78,37 @@ function toRunUsage(
 		outputTokens: buckets.outputTokens,
 		costCents: price(model, buckets),
 		buckets,
+		model: model ?? null,
+	};
+}
+
+/**
+ * Sum two usage records, for a runtime that leaves more than one usage file.
+ *
+ * Costs add rather than being re-derived: each side was already priced against
+ * whatever model produced it, and re-pricing the sum against one of them would
+ * be wrong wherever they differ. The reported model is the heavier side's, on
+ * the same "dominant by tokens" rule used within a single file.
+ */
+export function mergeRunUsage(a: AgentRunUsage, b: AgentRunUsage): AgentRunUsage {
+	const add = (x: number | undefined, y: number | undefined): number | undefined =>
+		x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
+	const buckets: CostTokens | null =
+		a.buckets || b.buckets
+			? {
+					inputTokens: (a.buckets?.inputTokens ?? 0) + (b.buckets?.inputTokens ?? 0),
+					cacheReadTokens: add(a.buckets?.cacheReadTokens, b.buckets?.cacheReadTokens),
+					cacheCreationTokens: add(a.buckets?.cacheCreationTokens, b.buckets?.cacheCreationTokens),
+					outputTokens: (a.buckets?.outputTokens ?? 0) + (b.buckets?.outputTokens ?? 0),
+				}
+			: null;
+	const weight = (u: AgentRunUsage): number => u.inputTokens + u.outputTokens;
+	return {
+		inputTokens: a.inputTokens + b.inputTokens,
+		outputTokens: a.outputTokens + b.outputTokens,
+		costCents: a.costCents + b.costCents,
+		buckets,
+		model: (weight(a) >= weight(b) ? a.model : b.model) ?? a.model ?? b.model,
 	};
 }
 
@@ -144,6 +184,17 @@ export interface AgentStreamParser {
 	 * "not reported" apart from "reported zero".
 	 */
 	getToolCallCounts(): Record<string, number> | null;
+
+	/**
+	 * Tool calls recorded so far, as one number.
+	 *
+	 * Read on every stdout chunk to enforce the per-run ceiling, so it is a
+	 * counter rather than a sum over {@link getToolCallCounts}: summing a record
+	 * per chunk would walk every tool name the run has used, on the hot path, for
+	 * a figure the tally can just keep. Zero for a parser with no tally, which
+	 * leaves such a runtime unbounded - see the ceiling's own guard.
+	 */
+	getToolCallTotal(): number;
 }
 
 /**
@@ -332,6 +383,7 @@ function createPassthroughParser(): AgentStreamParser {
 	return {
 		onStdout: (chunk) => chunk,
 		onStderr: (chunk) => chunk,
+		getToolCallTotal: () => 0,
 		flush: () => '',
 		getUsage: () => null,
 		getTerminalError: () => null,
@@ -349,17 +401,21 @@ function createPassthroughParser(): AgentStreamParser {
 interface ToolCallTally {
 	record(name: string): void;
 	snapshot(): Record<string, number> | null;
+	total(): number;
 }
 
 function createToolCallTally(): ToolCallTally {
 	const counts = new Map<string, number>();
+	let total = 0;
 	return {
 		record(name: string): void {
 			const key = name.trim();
 			if (!key) return;
 			counts.set(key, (counts.get(key) ?? 0) + 1);
+			total += 1;
 		},
 		snapshot: () => (counts.size === 0 ? null : Object.fromEntries(counts)),
+		total: () => total,
 	};
 }
 
@@ -377,6 +433,7 @@ function createJsonlParser(
 	getFinalAssistantMessage: () => string | null = () => null,
 	getMcpToolCounts: () => Record<string, number> | null = () => null,
 	getToolCallCounts: () => Record<string, number> | null = () => null,
+	getToolCallTotal: () => number = () => 0,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -418,6 +475,7 @@ function createJsonlParser(
 		getFinalAssistantMessage,
 		getMcpToolCounts,
 		getToolCallCounts,
+		getToolCallTotal,
 	};
 }
 
@@ -560,11 +618,13 @@ function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentCha
 			const u = event.usage ?? {};
 			const input = u.input_tokens ?? 0;
 			const cached = u.cached_input_tokens ?? 0;
-			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
+			const cacheWrite = u.cache_write_input_tokens ?? 0;
+			// Reasoning is inside `output_tokens`, not beside it - see the run parser.
 			usage = toRunUsage(price, modelId, {
-				inputTokens: Math.max(0, input - cached),
+				inputTokens: Math.max(0, input - cached - cacheWrite),
 				cacheReadTokens: cached,
-				outputTokens: output,
+				cacheCreationTokens: cacheWrite,
+				outputTokens: u.output_tokens ?? 0,
 			});
 			return [];
 		}
@@ -987,6 +1047,7 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 		() => finalMessage,
 		() => mcpCounts,
 		toolTally.snapshot,
+		toolTally.total,
 	);
 	// Untouched passthrough unless this run's endpoint makes the diagnostic
 	// unconditional, so an unknown provider never silences a real one.
@@ -1001,9 +1062,12 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 // ---------------------------------------------------------------------------
 
 interface CodexUsage {
+	/** Total input, with both cache buckets already inside it. */
 	input_tokens?: number;
 	cached_input_tokens?: number;
+	cache_write_input_tokens?: number;
 	output_tokens?: number;
+	/** A subset of {@link output_tokens}, never a bucket to add beside it. */
 	reasoning_output_tokens?: number;
 }
 
@@ -1080,12 +1144,18 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 			const u = event.usage ?? {};
 			const input = u.input_tokens ?? 0;
 			const cached = u.cached_input_tokens ?? 0;
-			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
-			// `input_tokens` already includes `cached_input_tokens`; price the cached
-			// portion at the (discounted) cache-read rate, the rest at full input.
+			const cacheWrite = u.cache_write_input_tokens ?? 0;
+			// `reasoning_output_tokens` is a SUBSET of `output_tokens`, not a sibling
+			// bucket: the reported total is input + output with reasoning already
+			// inside it. Adding the two inflates the output bucket by the reasoning
+			// share - the bucket that prices at several times the input rate.
+			const output = u.output_tokens ?? 0;
+			// `input_tokens` already includes both cache buckets; price each at its own
+			// rate and the remainder at full input.
 			usage = toRunUsage(price, modelId, {
-				inputTokens: Math.max(0, input - cached),
+				inputTokens: Math.max(0, input - cached - cacheWrite),
 				cacheReadTokens: cached,
+				cacheCreationTokens: cacheWrite,
 				outputTokens: output,
 			});
 			// Codex puts a failed turn's reason on the turn event itself, and does not
@@ -1127,6 +1197,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 		() => finalMessage,
 		() => null,
 		toolTally.snapshot,
+		toolTally.total,
 	);
 }
 
@@ -1201,7 +1272,14 @@ interface AntigravityUsage {
 interface AntigravityEvent {
 	event?: string;
 	init?: { model?: string };
-	step_update?: { step_index?: number; state?: string; step_type?: string };
+	step_update?: {
+		step_index?: number;
+		state?: string;
+		/** Observed values include `user_input`, `agent_response`, `tool`, `checkpoint`. */
+		step_type?: string;
+		/** Present on a `tool` step, carrying the call and its result. */
+		tool_info?: { name?: string; tool_name?: string; tool?: string; args?: unknown };
+	};
 	result?: { status?: string; response?: string; usage?: AntigravityUsage; error?: string };
 }
 
@@ -1224,6 +1302,7 @@ function createAntigravityParser(
 	price: PriceModelFn,
 	runModel: string | undefined,
 ): AgentStreamParser {
+	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let finalMessage: string | null = null;
 	let terminalError: RuntimeErrorVerdict | null = null;
@@ -1244,7 +1323,17 @@ function createAntigravityParser(
 		// `step_update` frames carry per-step usage too, but the terminal `result`
 		// usage is their cumulative sum (verified), so they are ignored here to
 		// avoid double-counting, and render nothing - the response is in `result`.
-		if (kind === 'step_update') return out;
+		// A tool step is still counted: a step goes ACTIVE then DONE, so only the
+		// terminal state is tallied or every call would count twice.
+		if (kind === 'step_update') {
+			const step = event.step_update;
+			if (step?.step_type === 'tool' && (step.state ?? '').toUpperCase() === 'DONE') {
+				const info = step.tool_info;
+				const name = info?.name ?? info?.tool_name ?? info?.tool;
+				out.push(formatToolUse(name?.trim() || 'tool', info?.args, toolTally));
+			}
+			return out;
+		}
 
 		if (kind === 'result') {
 			const r = event.result ?? {};
@@ -1272,6 +1361,9 @@ function createAntigravityParser(
 		() => usage,
 		() => terminalError,
 		() => finalMessage,
+		() => null,
+		toolTally.snapshot,
+		toolTally.total,
 	);
 }
 
@@ -1583,6 +1675,7 @@ function createGenericJsonlParser(
 		() => finalMessage,
 		() => null,
 		toolTally.snapshot,
+		toolTally.total,
 	);
 
 	return {
@@ -1643,9 +1736,39 @@ interface GrokEvent {
 	stopReason?: string;
 	message?: string;
 	sessionId?: string;
+	/**
+	 * A tool call's name and arguments. Every spelling upstream has shipped is
+	 * probed rather than one being picked: xAI carries two engine generations
+	 * with duplicated logging paths, and a spelling this misses does not fail -
+	 * it silently counts zero tool calls for the whole run.
+	 */
+	name?: string;
+	toolName?: string;
+	tool_name?: string;
+	tool?: string;
+	function?: { name?: string; arguments?: unknown };
+	arguments?: unknown;
+	args?: unknown;
+	input?: unknown;
+}
+
+/** First non-empty tool name across the spellings above. */
+function grokToolName(event: GrokEvent): string {
+	const candidates = [
+		event.name,
+		event.toolName,
+		event.tool_name,
+		event.tool,
+		event.function?.name,
+	];
+	for (const c of candidates) {
+		if (typeof c === 'string' && c.trim()) return c.trim();
+	}
+	return 'tool';
 }
 
 function createGrokParser(): AgentStreamParser {
+	const toolTally = createToolCallTally();
 	let terminalError: RuntimeErrorVerdict | null = null;
 	let thoughtBuf = '';
 	let textBuf = '';
@@ -1683,7 +1806,7 @@ function createGrokParser(): AgentStreamParser {
 
 		// Consecutive `text` events are deltas of ONE message, so they accumulate.
 		// Anything else ends that message: the next turn opens with `thought`, a
-		// tool call arrives as a type this parser drops, or the run reaches `end`.
+		// `tool_call` arrives, or the run reaches `end`.
 		if (type === 'text') {
 			const out: string[] = [];
 			flushThought(out);
@@ -1708,6 +1831,19 @@ function createGrokParser(): AgentStreamParser {
 			thoughtBuf += event.data ?? '';
 			return out;
 		}
+		// `tool_call` opens a call; `tool_call_update` streams that same call's
+		// argument deltas, so only the opener is rendered and counted - tallying
+		// updates too would report one call as many.
+		if (type === 'tool_call') {
+			out.push(
+				formatToolUse(
+					grokToolName(event),
+					event.arguments ?? event.args ?? event.input ?? event.function?.arguments,
+					toolTally,
+				),
+			);
+			return out;
+		}
 		if (type === 'error') {
 			const msg = extractErrorMessage(undefined, event.message);
 			if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
@@ -1722,6 +1858,9 @@ function createGrokParser(): AgentStreamParser {
 		() => null,
 		() => terminalError,
 		() => finalMessage,
+		() => null,
+		toolTally.snapshot,
+		toolTally.total,
 	);
 }
 
@@ -1754,6 +1893,138 @@ function matchInt(line: string, re: RegExp): number | null {
  * rate and `cache_read` at the discounted cache-read rate). Returns null when the
  * log contains no usable span (unpriced ⇒ the caller records $0, fail-low).
  */
+/** One cumulative `total_token_usage` snapshot from a Codex rollout. */
+interface CodexRolloutTotals {
+	input_tokens?: number;
+	cached_input_tokens?: number;
+	cache_write_input_tokens?: number;
+	output_tokens?: number;
+	reasoning_output_tokens?: number;
+}
+
+/** Read a number from either spelling upstream has shipped. */
+function rolloutNum(t: CodexRolloutTotals, snake: keyof CodexRolloutTotals): number {
+	const camel = String(snake).replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+	const rec = t as unknown as Record<string, unknown>;
+	const v = rec[String(snake)] ?? rec[camel];
+	return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/**
+ * Token usage and the model, recovered from a Codex session rollout.
+ *
+ * Codex names no model anywhere on its `exec --json` stream and reports usage
+ * only on the single terminal turn event, so a run killed before that event
+ * records nothing at all. Both facts are in the rollout JSONL it writes under
+ * `CODEX_HOME` regardless of how the run ended.
+ *
+ * Three things here are easy to get wrong, and each prices runs silently wrong:
+ *
+ * - **`total_token_usage` is cumulative; never sum it, and never sum the
+ *   per-request `last_token_usage` either.** Codex re-emits `token_count` more
+ *   often than there are requests: measured against a real 1,105-record session,
+ *   summing the deltas gave 144,209,906 against a true 140,210,822. The totals
+ *   were strictly monotonic, so consecutive differences telescope back to the
+ *   last total exactly - which is what makes per-model attribution free.
+ * - **`input_tokens` already contains both cache buckets**, so they are
+ *   subtracted out rather than added on top.
+ * - **`reasoning_output_tokens` is a subset of `output_tokens`**, not a bucket
+ *   beside it.
+ *
+ * A cumulative counter that goes backwards (a fork, a compaction) is clamped at
+ * zero rather than allowed to subtract, so a reset costs one segment instead of
+ * corrupting the total.
+ */
+export function extractCodexUsageFromRollout(
+	contents: string,
+	price: PriceModelFn = NO_PRICE,
+): AgentRunUsage | null {
+	const perModel = new Map<string, CostTokens>();
+	let model: string | undefined;
+	let prev: CodexRolloutTotals | null = null;
+	let saw = false;
+
+	for (const line of contents.split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith('{')) continue;
+		let event: { type?: string; payload?: Record<string, unknown> };
+		try {
+			event = JSON.parse(trimmed);
+		} catch {
+			// A tail read starts mid-line and a killed run can leave a torn one.
+			continue;
+		}
+		if (event.type === 'turn_context') {
+			const named = event.payload?.model;
+			if (typeof named === 'string' && named.trim()) model = named.trim();
+			continue;
+		}
+		if (event.type !== 'event_msg') continue;
+		const payload = event.payload as { type?: string; info?: Record<string, unknown> } | undefined;
+		if (payload?.type !== 'token_count') continue;
+		const totals = payload.info?.total_token_usage as CodexRolloutTotals | undefined;
+		if (!totals) continue;
+
+		const delta = (field: keyof CodexRolloutTotals): number =>
+			Math.max(0, rolloutNum(totals, field) - (prev ? rolloutNum(prev, field) : 0));
+		const cached = delta('cached_input_tokens');
+		const cacheWrite = delta('cache_write_input_tokens');
+		const input = Math.max(0, delta('input_tokens') - cached - cacheWrite);
+		const output = delta('output_tokens');
+		prev = totals;
+		if (input === 0 && cached === 0 && cacheWrite === 0 && output === 0) continue;
+		saw = true;
+
+		const key = model ?? '';
+		const acc = perModel.get(key) ?? {
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			outputTokens: 0,
+		};
+		acc.inputTokens += input;
+		acc.cacheReadTokens = (acc.cacheReadTokens ?? 0) + cached;
+		acc.cacheCreationTokens = (acc.cacheCreationTokens ?? 0) + cacheWrite;
+		acc.outputTokens += output;
+		perModel.set(key, acc);
+	}
+	if (!saw) return null;
+
+	// Priced per model and summed: a rollout can switch models mid-session, and
+	// pricing the whole thing at whichever was last seen would be wrong in both
+	// directions. The reported model is the one that moved the most tokens.
+	const summed: CostTokens = {
+		inputTokens: 0,
+		cacheReadTokens: 0,
+		cacheCreationTokens: 0,
+		outputTokens: 0,
+	};
+	let costCents = 0;
+	let dominant: { key: string; weight: number } | null = null;
+	for (const [key, buckets] of perModel) {
+		costCents += price(key || undefined, buckets);
+		summed.inputTokens += buckets.inputTokens;
+		summed.cacheReadTokens = (summed.cacheReadTokens ?? 0) + (buckets.cacheReadTokens ?? 0);
+		summed.cacheCreationTokens =
+			(summed.cacheCreationTokens ?? 0) + (buckets.cacheCreationTokens ?? 0);
+		summed.outputTokens += buckets.outputTokens;
+		const weight =
+			buckets.inputTokens +
+			(buckets.cacheReadTokens ?? 0) +
+			(buckets.cacheCreationTokens ?? 0) +
+			buckets.outputTokens;
+		if (!dominant || weight > dominant.weight) dominant = { key, weight };
+	}
+	return {
+		inputTokens:
+			summed.inputTokens + (summed.cacheReadTokens ?? 0) + (summed.cacheCreationTokens ?? 0),
+		outputTokens: summed.outputTokens,
+		costCents,
+		buckets: summed,
+		model: dominant?.key || null,
+	};
+}
+
 export function extractGrokUsageFromDebugLog(
 	contents: string,
 	price: PriceModelFn = NO_PRICE,
@@ -1909,6 +2180,7 @@ function createKimiParser(): AgentStreamParser {
 		() => finalAssistantMessage,
 		() => null,
 		toolTally.snapshot,
+		toolTally.total,
 	);
 }
 

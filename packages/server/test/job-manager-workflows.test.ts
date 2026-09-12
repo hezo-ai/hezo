@@ -530,6 +530,84 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
+		it('advances last_heartbeat_at when the wakeup is suppressed, not just when there is no task', async () => {
+			// The storm this prevents: a task parked on an unanswered ask concludes
+			// "nothing to do" without advancing the clock, so the scheduler finds the
+			// agent due again on the very next tick and re-raises a wakeup forever.
+			// One production agent produced 336,183 of them at one every five seconds.
+			const manager = createJobManager();
+
+			// Its own task, so the ask below is the newest comment on it and no other
+			// test's leftovers decide which task gets selected.
+			await db.query(
+				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'cancelled')",
+				[agentId],
+			);
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const parked = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, 'Parked on an ask', '', $6::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					TaskStatus.InProgress,
+				],
+			);
+			const parkedTaskId = parked.rows[0].id;
+
+			// An agent-authored ask nobody has answered is what parks the task.
+			const comment = await db.query<{ id: string }>(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb)
+				 RETURNING id`,
+				[parkedTaskId, agentId, JSON.stringify({ text: 'over to you @admin' })],
+			);
+			const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+			await db.query(
+				`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)`,
+				[teamId, parkedTaskId, comment.rows[0].id, user.rows[0].id],
+			);
+
+			await db.query('UPDATE member_agents SET last_heartbeat_at = NULL WHERE id = $1', [agentId]);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
+				 VALUES ($1, $2, 'heartbeat', 'claimed', now() - interval '30 seconds')
+				 RETURNING id`,
+				[agentId, teamId],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).activateAgent(agentId, teamId, wakeupId);
+
+			const wakeup = await db.query<{ status: string; last_skipped_reason: string | null }>(
+				'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupId],
+			);
+			expect(wakeup.rows[0].status).toBe(WakeupStatus.Completed);
+			expect(wakeup.rows[0].last_skipped_reason).toBe('parked_on_admin');
+
+			const agentRow = await db.query<{ last_heartbeat_at: string | null }>(
+				'SELECT last_heartbeat_at FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(agentRow.rows[0].last_heartbeat_at).not.toBeNull();
+
+			manager.shutdown();
+			// Leave the agent with no assigned task, the state this block's other
+			// cases expect to start from.
+			await db.query('DELETE FROM tasks WHERE id = $1', [parkedTaskId]);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+		});
+
 		it('launches (lazy-starting the container) when the project has no container', async () => {
 			const manager = createJobManager();
 

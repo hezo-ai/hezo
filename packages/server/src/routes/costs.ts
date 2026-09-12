@@ -15,6 +15,28 @@ export const costsRoutes = new Hono<Env>();
  * project total chart; `breakdown=agent` / `breakdown=adapter` add a per-day
  * series split for the stacked charts on the Budgets page.
  */
+/**
+ * The two money columns every grouped cost query reports.
+ *
+ * Split in the query rather than fetched twice: same row count, same round trip.
+ * `total_cents` stays real spend so every existing reader keeps its meaning, and
+ * notional spend - a subscription run, where nobody is billed per token - is a
+ * sibling nobody has to consult unless they want to show it.
+ */
+const BILLED_SUMS = `COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
+              COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents`;
+
+/** Roll a grouped result up into the response's two totals. */
+function summaryTotals(rows: Array<{ total_cents: number; notional_cents: number }>): {
+	total_cents: number;
+	notional_cents: number;
+} {
+	return {
+		total_cents: rows.reduce((sum, r) => sum + r.total_cents, 0),
+		notional_cents: rows.reduce((sum, r) => sum + r.notional_cents, 0),
+	};
+}
+
 costsRoutes.get('/projects/:projectId/costs', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -53,11 +75,11 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 	const where = conditions.join(' AND ');
 
 	if (groupBy === 'agent') {
-		const result = await db.query<{ total_cents: number }>(
+		const result = await db.query<{ total_cents: number; notional_cents: number }>(
 			`SELECT ce.member_id AS agent_id,
               COALESCE(ma.title, m.display_name) AS agent_title,
               ${agentDisplayNameSql('ma', 'm')} AS agent_name,
-              sum(ce.amount_cents)::int AS total_cents
+              ${BILLED_SUMS}
        FROM cost_entries ce
        LEFT JOIN members m ON m.id = ce.member_id
        LEFT JOIN member_agents ma ON ma.id = ce.member_id
@@ -65,8 +87,7 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
        GROUP BY ce.member_id, ma.title, ma.human_name, m.display_name`,
 			params,
 		);
-		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
-		return ok(c, { summary: result.rows, total_cents: totalCents });
+		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
 	}
 
 	// The per-day buckets cast to `::date::text` (not bare `::date`) on purpose: PGlite
@@ -75,12 +96,12 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 	// date-only string, so the timestamp form breaks it ("Invalid Date"). `::text` keeps
 	// it a plain "YYYY-MM-DD". Keep the cast on all three group_by=day queries below.
 	if (groupBy === 'day' && breakdown === 'agent') {
-		const result = await db.query<{ total_cents: number }>(
+		const result = await db.query<{ total_cents: number; notional_cents: number }>(
 			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
               ce.member_id AS agent_id,
               COALESCE(ma.title, m.display_name) AS agent_title,
               ${agentDisplayNameSql('ma', 'm')} AS agent_name,
-              sum(ce.amount_cents)::int AS total_cents
+              ${BILLED_SUMS}
        FROM cost_entries ce
        LEFT JOIN members m ON m.id = ce.member_id
        LEFT JOIN member_agents ma ON ma.id = ce.member_id
@@ -89,17 +110,16 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
        ORDER BY day`,
 			params,
 		);
-		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
-		return ok(c, { summary: result.rows, total_cents: totalCents });
+		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
 	}
 
 	if (groupBy === 'day' && breakdown === 'adapter') {
-		const result = await db.query<{ total_cents: number }>(
+		const result = await db.query<{ total_cents: number; notional_cents: number }>(
 			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
               ce.ai_provider_config_id,
               ce.provider,
               apc.label AS adapter_label,
-              sum(ce.amount_cents)::int AS total_cents
+              ${BILLED_SUMS}
        FROM cost_entries ce
        LEFT JOIN ai_provider_configs apc ON apc.id = ce.ai_provider_config_id
        WHERE ${where}
@@ -107,29 +127,32 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
        ORDER BY day`,
 			params,
 		);
-		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
-		return ok(c, { summary: result.rows, total_cents: totalCents });
+		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
 	}
 
 	if (groupBy === 'day') {
-		const result = await db.query<{ total_cents: number }>(
+		const result = await db.query<{ total_cents: number; notional_cents: number }>(
 			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
-              sum(ce.amount_cents)::int AS total_cents
+              ${BILLED_SUMS}
        FROM cost_entries ce
        WHERE ${where}
        GROUP BY day ORDER BY day`,
 			params,
 		);
-		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
-		return ok(c, { summary: result.rows, total_cents: totalCents });
+		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
 	}
 
-	const result = await db.query<{ amount_cents: number }>(
+	const result = await db.query<{ amount_cents: number; billed: boolean }>(
 		`SELECT ce.* FROM cost_entries ce WHERE ${where} ORDER BY ce.created_at DESC`,
 		params,
 	);
-	const totalCents = result.rows.reduce((sum, r) => sum + r.amount_cents, 0);
-	return ok(c, { entries: result.rows, total_cents: totalCents });
+	const totalCents = result.rows.reduce((sum, r) => sum + (r.billed ? r.amount_cents : 0), 0);
+	const notionalCents = result.rows.reduce((sum, r) => sum + (r.billed ? 0 : r.amount_cents), 0);
+	return ok(c, {
+		entries: result.rows,
+		total_cents: totalCents,
+		notional_cents: notionalCents,
+	});
 });
 
 costsRoutes.post('/projects/:projectId/costs', async (c) => {
@@ -155,6 +178,7 @@ costsRoutes.post('/projects/:projectId/costs', async (c) => {
 	// this pushed it or its project over any window — mirroring the run-completion path.
 	const costProjectId = body.project_id ?? projectId;
 	const result = await db.query(
+		// billed defaults true: a person entering a cost is asserting real money.
 		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
@@ -223,9 +247,9 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 	}>(
 		`SELECT ma.id, ma.title, ma.slug, ma.human_name, ma.avatar_spec, ma.runtime_status,
 		        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
-		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('day',   now() AT TIME ZONE 'UTC')), 0)::int AS daily_spent,
-		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('week',  now() AT TIME ZONE 'UTC')), 0)::int AS weekly_spent,
-		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly_spent
+		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.billed AND ce.created_at >= date_trunc('day',   now() AT TIME ZONE 'UTC')), 0)::int AS daily_spent,
+		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.billed AND ce.created_at >= date_trunc('week',  now() AT TIME ZONE 'UTC')), 0)::int AS weekly_spent,
+		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.billed AND ce.created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly_spent
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 LEFT JOIN cost_entries ce ON ce.member_id = ma.id

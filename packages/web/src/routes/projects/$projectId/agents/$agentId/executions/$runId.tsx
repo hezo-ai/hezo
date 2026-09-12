@@ -3,6 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { CostFigure } from '../../../../../../components/cost-figures';
 import { LogViewer } from '../../../../../../components/log-viewer';
 import { TerminateRunButton } from '../../../../../../components/terminate-run-button';
 import { Badge } from '../../../../../../components/ui/badge';
@@ -189,15 +190,29 @@ function ExecutionDetailPage() {
 								<div className="text-[11px] text-text-3 uppercase tracking-wider mb-1">Usage</div>
 								<div className="flex items-baseline gap-2 flex-wrap">
 									{run.cost_cents != null && run.cost_cents > 0 && (
-										<span className="text-sm font-medium tabular-nums">
-											{run.usage_partial ? '~' : ''}${(run.cost_cents / 100).toFixed(2)}
-										</span>
+										<CostFigure
+											cents={run.cost_cents}
+											billed={run.cost_billed}
+											approximate={run.usage_partial}
+											className="text-sm font-medium tabular-nums"
+											testId="run-cost"
+										/>
 									)}
 									<span className="text-xs text-text-3 whitespace-nowrap tabular-nums">
 										{run.usage_partial ? '~' : ''}
 										{run.input_tokens.toLocaleString()} in · {run.output_tokens.toLocaleString()}{' '}
 										out tokens
 									</span>
+									{run.model && (
+										<Tooltip content={t('cost.pricedFrom', { model: run.model })}>
+											<span
+												className="text-[11px] text-text-3 whitespace-nowrap"
+												data-testid="run-cost-model"
+											>
+												{run.model}
+											</span>
+										</Tooltip>
+									)}
 									{run.usage_partial && (
 										<Tooltip content="The run was interrupted before it finished, so this usage is a partial snapshot of what it consumed.">
 											<span className="text-[11px] font-medium text-warning whitespace-nowrap">

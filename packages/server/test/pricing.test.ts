@@ -51,6 +51,32 @@ describe('parsePricePerTokenModels', () => {
 		]);
 	});
 
+	it('derives OpenAI cache rates, which an agent run is dominated by', () => {
+		// 96% of a live instance's input tokens were cache reads. The null fallback
+		// bills those at the full input rate, so leaving OpenAI out of the table
+		// overstated a subscription operator's entire figure roughly tenfold.
+		const rates = parsePricePerTokenModels([pptModel('openai-gpt-5-codex', 'OpenAI', 1.25, 10)]);
+		expect(rates).toEqual([
+			{
+				modelId: 'gpt-5-codex',
+				inputPerToken: 1.25e-6,
+				outputPerToken: 1e-5,
+				// OpenAI reads cached input at 0.1x and charges no write premium. The
+				// 1.0 is meaningful: null would mean "unknown, bill at full rate".
+				cacheReadPerToken: 1.25e-6 * 0.1,
+				cacheCreationPerToken: 1.25e-6,
+			},
+		]);
+	});
+
+	it('leaves a provider whose multipliers are unverified on the safe fallback', () => {
+		// A guessed multiplier is worse than the honest fallback: it is wrong in a
+		// direction nobody checks.
+		const rates = parsePricePerTokenModels([pptModel('mistral-large', 'Mistral', 2, 6)]);
+		expect(rates[0].cacheReadPerToken).toBeNull();
+		expect(rates[0].cacheCreationPerToken).toBeNull();
+	});
+
 	it('skips entries without both numeric prices or without a slug', () => {
 		const rates = parsePricePerTokenModels([
 			pptModel('openai-gpt-5', 'OpenAI', 0.625, 5),

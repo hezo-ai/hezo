@@ -51,6 +51,8 @@ function makeRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		output_tokens: 0,
 		cost_cents: 0,
 		usage_partial: false,
+		model: null,
+		cost_billed: true,
 		invocation_command: null,
 		log_text: null,
 		working_dir: null,
@@ -221,6 +223,17 @@ test('a non-zero exit code and a non-zero cost are surfaced on the row', async (
 	// $4.25 from cost_cents=425, and the exit code suffix.
 	await findByText('$4.25', undefined, { timeout: 20_000 });
 	await findByText('exit: 137');
+});
+
+test('a run nobody was billed for says so beside its cost', async () => {
+	// A subscription run is priced from the same table but charges nobody, so the
+	// row has to carry the qualifier - an unqualified $4.25 reads as money spent.
+	const { findByTestId } = await renderExecutions([
+		makeRun({ id: 'run-9', cost_cents: 425, cost_billed: false, task_identifier: 'DEMO-11' }),
+	]);
+
+	const cost = await findByTestId('execution-row-cost', undefined, { timeout: 20_000 });
+	expect(cost.textContent).toBe('$4.25 not billed');
 });
 
 test('a running row shows the pulsing dot via the queued/running status and reads "queued" when not yet started', async () => {

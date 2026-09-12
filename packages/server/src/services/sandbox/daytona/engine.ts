@@ -27,6 +27,7 @@ import type {
 	ExecResult,
 	ExecStartOpts,
 	ImageInfo,
+	NameMatch,
 	NetworkInfo,
 	ProcessEnvMarker,
 	SandboxFiles,
@@ -772,8 +773,10 @@ export class DaytonaEngine implements ContainerEngine {
 			size: async (relPath: string) => (await bound()).size(relPath),
 			remove: async (relPath: string) => (await bound()).remove(relPath),
 			removeDir: async (relPath: string) => (await bound()).removeDir(relPath),
-			findByName: async (relDir: string, name: string, maxDepth: number) =>
+			findByName: async (relDir: string, name: NameMatch, maxDepth: number) =>
 				(await bound()).findByName(relDir, name, maxDepth),
+			readTail: async (relPath: string, maxBytes: number) =>
+				(await bound()).readTail(relPath, maxBytes),
 			write: async (
 				relPath: string,
 				contents: string,

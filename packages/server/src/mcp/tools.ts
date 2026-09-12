@@ -4488,7 +4488,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_costs',
-		`Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		`Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false. Every shape reports two figures: \`total_cents\` is real money, and \`notional_cents\` is what runs on a subscription would have cost at the provider's published rates. A subscription is not billed per token, so the second counts towards no budget and never pauses anyone - read it as effort, not spend.`,
 		{
 			project: projectArg(),
 			group_by: z.enum(['agent', 'day']).optional().describe('Group costs by'),
@@ -4499,7 +4499,9 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			if (args.group_by === 'agent') {
 				const r = await db.query(
-					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title, sum(ce.amount_cents)::int AS total_cents
+					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title,
+					        COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
+					        COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents
 				 FROM cost_entries ce LEFT JOIN members m ON m.id = ce.member_id LEFT JOIN member_agents ma ON ma.id = ce.member_id
 				 WHERE ce.project_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
 					[scope.projectId],
@@ -4519,7 +4521,9 @@ export function registerTools(
 					dayFilter = ` AND date_trunc('day', ce.created_at)::date < $${params.length}::date`;
 				}
 				const r = await db.query<{ day: string; total_cents: number }>(
-					`SELECT date_trunc('day', ce.created_at)::date AS day, sum(ce.amount_cents)::int AS total_cents
+					`SELECT date_trunc('day', ce.created_at)::date AS day,
+					        COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
+					        COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents
 				 FROM cost_entries ce WHERE ce.project_id = $1${dayFilter}
 				 GROUP BY day ORDER BY day DESC LIMIT ${limit + 1}`,
 					params,
@@ -4527,7 +4531,10 @@ export function registerTools(
 				return pagedList(r.rows, limit, 'get_costs', { column: 'day', idKey: 'day' });
 			}
 			const r = await db.query(
-				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE project_id = $1`,
+				`SELECT COALESCE(sum(amount_cents) FILTER (WHERE billed), 0)::int AS total_cents,
+				        COALESCE(sum(amount_cents) FILTER (WHERE NOT billed), 0)::int AS notional_cents,
+				        count(*)::int AS entry_count
+				   FROM cost_entries WHERE project_id = $1`,
 				[scope.projectId],
 			);
 			return r.rows[0];
@@ -5116,22 +5123,30 @@ export function registerTools(
 			// agent (resolveAgentId's fallback) can't be summarised through this team.
 			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
 			if (!agentId) return { error: 'Agent not found in this team' };
-			const r = await db.query<{ id: string }>(
-				`UPDATE member_agents SET summary = $1, updated_at = now()
-				 WHERE id = $2 AND id IN (
+			// Two counts from one statement: whether the agent is in this team at all,
+			// and whether the summary actually differs. Rewriting an identical summary
+			// must not write the row - the embedded database does not vacuum, so a
+			// no-op update leaks a dead tuple per agent per coherence review - but a
+			// skipped write must still not read as "agent not found".
+			const r = await db.query<{ found: string; changed: string }>(
+				`WITH target AS (
 				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+				 ), updated AS (
+				   UPDATE member_agents SET summary = $1, updated_at = now()
+				   WHERE id IN (SELECT id FROM target) AND summary IS DISTINCT FROM $1
+				   RETURNING id
 				 )
-				 RETURNING id`,
+				 SELECT (SELECT count(*) FROM target) AS found,
+				        (SELECT count(*) FROM updated) AS changed`,
 				[summary, agentId, teamId],
 			);
-			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
+			if (Number(r.rows[0]?.found ?? 0) === 0) return { error: 'Agent not found in this team' };
 
-			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, teamId, 'summary_updated').catch((e) =>
-					log.error('Failed to enqueue team coherence review after summary update:', e),
-				),
-			);
-
+			// No coherence review is filed here. A summary is descriptive prose, not a
+			// structural change - the same judgement set_team_summary already makes -
+			// and rewriting every agent's summary is step 6 of the coherence review
+			// itself, so filing one here made the review's own output its next
+			// trigger. The structural reasons still file one.
 			const styleWarning = authoredPromptWarning(args.summary as string);
 			return { updated: true, ...(styleWarning ? { warning: styleWarning } : {}) };
 		},
@@ -5451,7 +5466,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_summaries',
-		`Save short human-readable summaries for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Files a SINGLE team-coherence review for the whole batch rather than one per agent. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.`,
+		`Save short human-readable summaries for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.`,
 		{
 			project: projectArg(),
 			updates: z
@@ -5484,13 +5499,20 @@ export function registerTools(
 			for (let i = 0; i < updates.length; i++) {
 				const u = updates[i];
 				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				// Skips the write when the summary is unchanged, while still reporting
+				// the agent as found - see set_agent_summary for why both matter.
 				const r = agentId
 					? await db.query<{ id: string; slug: string }>(
-							`UPDATE member_agents SET summary = $1, updated_at = now()
-							 WHERE id = $2 AND id IN (
-							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+							`WITH target AS (
+							   SELECT ma.id, ma.slug FROM member_agents ma
+							   JOIN members m ON m.id = ma.id
+							   WHERE ma.id = $2 AND m.team_id = $3
+							 ), updated AS (
+							   UPDATE member_agents SET summary = $1, updated_at = now()
+							   WHERE id IN (SELECT id FROM target) AND summary IS DISTINCT FROM $1
+							   RETURNING id
 							 )
-							 RETURNING id, slug`,
+							 SELECT t.id, t.slug FROM target t`,
 							[u.summary.trim(), agentId, teamId],
 						)
 					: null;
@@ -5506,17 +5528,7 @@ export function registerTools(
 				results.push({ index: i, agent_id: agentId, slug: r.rows[0].slug, ok: true });
 			}
 
-			// One review for the batch, not one per agent - the singular tool files
-			// its own, so a loop over it would queue N coalescing events for what is
-			// a single roster-wide edit.
-			if (results.some((r) => r.ok)) {
-				trackBackground(
-					enqueueTeamCoherenceReviewTask(db, teamId, 'summary_updated').catch((e) =>
-						log.error('Failed to enqueue team coherence review after summary batch:', e),
-					),
-				);
-			}
-
+			// No coherence review is filed here - see set_agent_summary.
 			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
 		},
 		db,

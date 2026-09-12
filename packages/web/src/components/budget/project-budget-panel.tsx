@@ -1,17 +1,21 @@
-import { type BudgetWindowsCents, centsToDollars } from '@hezo/shared';
+import type { BudgetWindowsCents } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Clock, Loader2, Pencil, TriangleAlert } from 'lucide-react';
 import { type Ref, useState } from 'react';
-import { type EntityBudgetStatus, useBudgetStatus, type WindowStatus } from '../../hooks/use-costs';
+import {
+	type EntityBudgetStatus,
+	monthToDateNotionalCents,
+	useBudgetStatus,
+	useDailyCostSeries,
+	type WindowStatus,
+} from '../../hooks/use-costs';
 import { useProject, useUpdateProject } from '../../hooks/use-projects';
 import { useI18n } from '../../lib/i18n';
+import { dollars } from '../charts/chart-format';
+import { NotionalFigure } from '../cost-figures';
 import { Button } from '../ui/button';
 import { SectionHeader } from '../ui/section-header';
 import { BudgetWindowsEditor } from './budget-windows-editor';
-
-function dollars(cents: number): string {
-	return `$${centsToDollars(cents)}`;
-}
 
 type WindowKey = 'daily' | 'weekly' | 'monthly';
 const WINDOW_LABELS: Record<WindowKey, string> = {
@@ -89,7 +93,20 @@ function WindowColumn({ status, windowKey }: { status: WindowStatus; windowKey: 
 	);
 }
 
-function Hero({ monthly, runsThisMonth }: { monthly: WindowStatus; runsThisMonth: number }) {
+function Hero({
+	projectId,
+	monthly,
+	runsThisMonth,
+}: {
+	projectId: string;
+	monthly: WindowStatus;
+	runsThisMonth: number;
+}) {
+	// Month-to-date spend nobody was billed for. It sits beside the headline
+	// figure and touches neither the cap nor the bars below: the enforcement
+	// story is unchanged, only what the reader is told about it.
+	const { data: series } = useDailyCostSeries(projectId);
+	const notionalCents = monthToDateNotionalCents(series?.summary);
 	const now = new Date();
 	const monthLong = now.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
 	const monthShort = now.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
@@ -112,6 +129,13 @@ function Hero({ monthly, runsThisMonth }: { monthly: WindowStatus; runsThisMonth
 				</span>
 				<span className="text-[13px] text-text-3">of {monthLong}</span>
 			</div>
+			{notionalCents > 0 && (
+				<NotionalFigure
+					cents={notionalCents}
+					className="text-[12px] text-text-3"
+					testId="budget-month-notional"
+				/>
+			)}
 			<span className="text-[12px] text-text-3">
 				{runsThisMonth} {runsThisMonth === 1 ? 'run' : 'runs'} · ≈ {dollars(Math.round(avg))} / run
 			</span>
@@ -291,7 +315,11 @@ export function ProjectBudgetPanel({
 				status ? (
 					<>
 						<div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface shadow-xs lg:flex-row lg:divide-x lg:divide-y-0">
-							<Hero monthly={status.project.monthly} runsThisMonth={status.runsThisMonth} />
+							<Hero
+								projectId={projectId}
+								monthly={status.project.monthly}
+								runsThisMonth={status.runsThisMonth}
+							/>
 							<div className="flex flex-1 flex-col divide-y divide-border sm:flex-row sm:divide-x sm:divide-y-0">
 								<WindowColumn windowKey="daily" status={status.project.daily} />
 								<WindowColumn windowKey="weekly" status={status.project.weekly} />

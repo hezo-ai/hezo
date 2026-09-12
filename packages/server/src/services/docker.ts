@@ -9,7 +9,7 @@ import { logger } from '../logger';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import { resolvedDockerSocketPath } from './docker-socket';
 import { ExecStreamLostError } from './sandbox/errors';
-import type { SandboxFiles } from './sandbox/files';
+import { dropPartialFirstLine, type SandboxFiles } from './sandbox/files';
 import {
 	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
@@ -1173,12 +1173,31 @@ export class DockerClient implements ContainerEngine {
 				await run(`rm -f ${shellQuote(abs(relPath))}`).catch(() => undefined);
 			},
 
-			findByName: async (relDir, basename, maxDepth) => {
+			readTail: async (relPath, maxBytes) => {
+				// `tail -c` rather than the archive endpoint: the whole point is not to
+				// transfer a file whose size is the reason for asking.
+				const path = shellQuote(abs(relPath));
+				const res = await run(`tail -c ${maxBytes} ${path}`);
+				if (res.exitCode !== 0) return '';
+				// Short of the budget means `tail` returned the whole file, so there is
+				// no partial first line to drop.
+				return Buffer.byteLength(res.stdout, 'utf8') < maxBytes
+					? res.stdout
+					: dropPartialFirstLine(res.stdout);
+			},
+
+			findByName: async (relDir, match, maxDepth) => {
 				const root = abs(relDir);
+				// The pattern is built from the match, never passed through from a
+				// caller: `find -name` globs, so a caller's literal string must be
+				// matched literally here or this backend would accept patterns the
+				// string-comparing backends silently reject.
+				const pattern =
+					typeof match === 'string' ? match : `${match.prefix ?? ''}*${match.suffix ?? ''}`;
 				// `-type f` and no `-L`: symlinks are never followed, which is what
 				// makes the depth cap a real bound rather than an approximate one.
 				const res = await run(
-					`find ${shellQuote(root)} -maxdepth ${maxDepth + 1} -type f -name ${shellQuote(basename)} 2>/dev/null`,
+					`find ${shellQuote(root)} -maxdepth ${maxDepth + 1} -type f -name ${shellQuote(pattern)} 2>/dev/null`,
 				);
 				if (res.exitCode !== 0) return [];
 				return res.stdout

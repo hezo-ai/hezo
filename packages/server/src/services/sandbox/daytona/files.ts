@@ -26,7 +26,8 @@
  */
 
 import { logger } from '../../../logger';
-import type { SandboxFiles } from '../files';
+import { dropPartialFirstLine, matchesName, type NameMatch, type SandboxFiles } from '../files';
+import { shellQuote } from '../proc-scripts';
 import type { DaytonaApi, DaytonaSandbox } from './client';
 
 const log = logger.child('daytona-files');
@@ -89,7 +90,7 @@ export function daytonaSandboxFiles(
 
 	const walk = async (
 		absDir: string,
-		basename: string,
+		match: NameMatch,
 		maxDepth: number,
 		depth: number,
 	): Promise<string[]> => {
@@ -105,8 +106,8 @@ export function daytonaSandboxFiles(
 		const found: string[] = [];
 		for (const entry of entries) {
 			const full = `${absDir}/${entry.name}`;
-			if (entry.isDir) found.push(...(await walk(full, basename, maxDepth, depth + 1)));
-			else if (entry.name === basename) {
+			if (entry.isDir) found.push(...(await walk(full, match, maxDepth, depth + 1)));
+			else if (matchesName(entry.name, match)) {
 				// Relative to the root, matching the host implementation's contract.
 				found.push(
 					full.startsWith(`${containerRoot}/`) ? full.slice(containerRoot.length + 1) : full,
@@ -159,8 +160,21 @@ export function daytonaSandboxFiles(
 			}
 		},
 
-		async findByName(relDir, basename, maxDepth) {
-			return walk(abs(relDir), basename, maxDepth, 0);
+		async findByName(relDir, match, maxDepth) {
+			return walk(abs(relDir), match, maxDepth, 0);
+		},
+
+		async readTail(relPath, maxBytes) {
+			// `tail -c` through an exec rather than the toolbox download: the reason
+			// for asking is that the file is too large to move.
+			const target = abs(relPath);
+			const res = await api.execute(sandbox, `tail -c ${maxBytes} ${shellQuote(target)}`);
+			if (res.exitCode !== 0) return '';
+			// Short of the budget means the whole file came back, so there is no
+			// partial first line to drop.
+			return Buffer.byteLength(res.output, 'utf8') < maxBytes
+				? res.output
+				: dropPartialFirstLine(res.output);
 		},
 
 		async write(relPath, contents, opts = {}) {

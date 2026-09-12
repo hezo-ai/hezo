@@ -84,6 +84,7 @@ describe('agent-chat-parser — Claude Code', () => {
 			inputTokens: 150,
 			outputTokens: 50,
 			costCents: 24,
+			model: 'claude-x',
 			buckets: {
 				inputTokens: 100,
 				cacheCreationTokens: 20,
@@ -113,6 +114,7 @@ describe('agent-chat-parser — Claude Code', () => {
 			inputTokens: 100,
 			outputTokens: 50,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 100,
 				cacheCreationTokens: 0,
@@ -129,6 +131,7 @@ describe('agent-chat-parser — Claude Code', () => {
 			inputTokens: 0,
 			outputTokens: 0,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 0,
 				cacheCreationTokens: 0,
@@ -202,23 +205,33 @@ describe('agent-chat-parser — Codex', () => {
 		expect(parser.getUsage()?.costCents).toBe(1);
 	});
 
-	it('captures usage from turn.completed, folding reasoning into output', () => {
+	it('captures usage from turn.completed, without double-counting reasoning', () => {
 		const parser = createAgentChatParser(AgentRuntime.Codex);
 		const events = feed(parser, [
 			{
 				type: 'turn.completed',
-				usage: { input_tokens: 500, output_tokens: 40, reasoning_output_tokens: 10 },
+				usage: {
+					input_tokens: 500,
+					output_tokens: 40,
+					reasoning_output_tokens: 10,
+					// Codex's own total settles it: 500 + 40. Reasoning is already inside
+					// `output_tokens`, so adding it inflated the bucket that prices
+					// highest - by 42% on a real session.
+					total_tokens: 540,
+				},
 			},
 		]);
 		expect(events).toEqual([]); // terminal events yield no chat text
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 500,
-			outputTokens: 50,
+			outputTokens: 40,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 500,
 				cacheReadTokens: 0,
-				outputTokens: 50,
+				cacheCreationTokens: 0,
+				outputTokens: 40,
 			},
 		});
 	});
@@ -230,9 +243,11 @@ describe('agent-chat-parser — Codex', () => {
 			inputTokens: 7,
 			outputTokens: 3,
 			costCents: 0,
+			model: null,
 			buckets: {
 				inputTokens: 7,
 				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
 				outputTokens: 3,
 			},
 		});
@@ -292,6 +307,7 @@ describe('agent-chat-parser — Antigravity', () => {
 			inputTokens: 1000,
 			outputTokens: 120,
 			costCents: 0,
+			model: 'gemini-2.5-pro',
 			buckets: {
 				inputTokens: 1000,
 				cacheReadTokens: 0,
@@ -322,6 +338,7 @@ describe('agent-chat-parser — generic (OpenCode)', () => {
 			inputTokens: 300,
 			outputTokens: 60,
 			costCents: 0,
+			model: 'opencode-model',
 			buckets: {
 				inputTokens: 300,
 				cacheReadTokens: 0,

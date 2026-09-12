@@ -88,11 +88,11 @@ async function insertCost(amountCents: number, ageInterval: string): Promise<voi
  * contrast, lands in *yesterday* (and possibly last week/month) when the suite
  * runs in the first hour after UTC midnight — the source of past flakes.
  */
-async function insertCostToday(amountCents: number): Promise<void> {
+async function insertCostToday(amountCents: number, billed = true): Promise<void> {
 	await db.query(
-		`INSERT INTO cost_entries (member_id, project_id, amount_cents, created_at)
-		 VALUES ($1, $2, $3, date_trunc('day', now() AT TIME ZONE 'UTC'))`,
-		[agentId, projectId, amountCents],
+		`INSERT INTO cost_entries (member_id, project_id, amount_cents, billed, created_at)
+		 VALUES ($1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC'))`,
+		[agentId, projectId, amountCents, billed],
 	);
 }
 
@@ -142,6 +142,18 @@ describe('budget service - checkOverBudget gate', () => {
 		expect(await checkOverBudget(db, agentId, projectId)).toBeNull();
 	});
 
+	it('never blocks on notional spend, however large', async () => {
+		// The load-bearing assertion of the whole notional-cost feature. An operator
+		// on a subscription is not billed per token; charging a dollar budget against
+		// imputed spend would pause their agents over money nobody spent. A billed
+		// row of the same size blocks - see the case below - so this is the flag
+		// doing the work, not the amount.
+		await db.query('UPDATE member_agents SET weekly_budget_cents = 100 WHERE id = $1', [agentId]);
+		await insertCostToday(500_000, false);
+		expect(await checkOverBudget(db, agentId, projectId)).toBeNull();
+		expect((await getAgentSpend(db, agentId)).daily).toBe(0);
+	});
+
 	it('blocks on the agent window', async () => {
 		await db.query('UPDATE member_agents SET weekly_budget_cents = 100 WHERE id = $1', [agentId]);
 		await insertCostToday(150);
@@ -175,6 +187,7 @@ describe('budget service - recordRunCost', () => {
 			description: 'Agent run abc',
 			aiProviderConfigId: null,
 			provider: null,
+			billed: true,
 		});
 		expect(entry).not.toBeNull();
 		const spend = await getAgentSpend(db, agentId);
@@ -195,6 +208,7 @@ describe('budget service - recordRunCost', () => {
 			description: 'Agent run xyz',
 			aiProviderConfigId: configId,
 			provider: 'anthropic',
+			billed: true,
 		});
 		expect(entry).not.toBeNull();
 		expect((entry as Record<string, unknown>).ai_provider_config_id).toBe(configId);
@@ -210,6 +224,7 @@ describe('budget service - recordRunCost', () => {
 			description: 'free run',
 			aiProviderConfigId: null,
 			provider: null,
+			billed: true,
 		});
 		expect(entry).toBeNull();
 		const spend = await getAgentSpend(db, agentId);

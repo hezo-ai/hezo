@@ -11,6 +11,7 @@ import { waitForBackground } from '../src/lib/background';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { MAX_TASK_ATTEMPT_GIVEUPS } from '../src/services/no-work-backoff';
 import { clearRefreshFns, registerRefreshFn } from '../src/services/oauth/token-resolver';
 import type { PricingService } from '../src/services/pricing';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
@@ -691,9 +692,13 @@ describe('JobManager scheduling & dispatch', () => {
 
 	describe('timeout continuations', () => {
 		async function seedRun(status: HeartbeatRunStatus, ageSeconds: number): Promise<string> {
+			// `finished_at` matters: the attempt bound counts finished runs, so a row
+			// without one is invisible to it - and to the index that serves it.
 			const r = await ctx.db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - ($5 || ' seconds')::interval)
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status,
+				         now() - (($5::int + 60) || ' seconds')::interval,
+				         now() - ($5 || ' seconds')::interval)
 				 RETURNING id`,
 				[agentId, teamId, taskId, status, String(ageSeconds)],
 			);
@@ -740,12 +745,12 @@ describe('JobManager scheduling & dispatch', () => {
 			manager.shutdown();
 		});
 
-		it('stops re-queuing after the consecutive-timeout cap and suppresses the ping on a long streak', async () => {
+		it('stops re-queuing once attempts are exhausted and suppresses the ping on a long streak', async () => {
 			const manager = createJobManager();
-			// Five consecutive timeouts — the cap. The most recent is the run
-			// completing now.
+			// Enough unproductive attempts to exhaust the task. The most recent is the
+			// run completing now.
 			let lastRunId = '';
-			for (let i = 5; i >= 1; i--) {
+			for (let i = MAX_TASK_ATTEMPT_GIVEUPS; i >= 1; i--) {
 				lastRunId = await seedRun(HeartbeatRunStatus.TimedOut, i * 10);
 			}
 

@@ -64,6 +64,27 @@ export interface DaytonaConfig {
 	apiUrl: string;
 }
 
+export interface RunsConfig {
+	/**
+	 * Hard ceiling on the tool calls one agent run may make before it is stopped.
+	 *
+	 * Every tool result stays in the conversation and is re-sent on the next call,
+	 * so a run's token cost grows with the square of its length. Past a few hundred
+	 * calls a run is mostly re-reading its own context, and the wall-clock timeout
+	 * is the only thing that ends it - an hour of allowance spent to produce
+	 * nothing. This bounds the single run; the per-task attempt bound in
+	 * `no-work-backoff.ts` bounds how often one may be retried.
+	 *
+	 * Default measured against 3,334 succeeded runs on a live instance: p50 12
+	 * calls, p95 161, p99 624. 600 sits at that p99, so it clears every ordinary
+	 * run several times over and bites only the tail that does not converge.
+	 *
+	 * `0` disables the ceiling, for an operator who would rather bound runs by the
+	 * wall clock alone.
+	 */
+	maxToolCalls: number;
+}
+
 export interface ContainersConfig {
 	/**
 	 * Where agent containers run: `docker` (the local daemon) or a managed sandbox
@@ -347,6 +368,7 @@ export interface HezoConfig {
 	database: DatabaseConfig;
 	assetStorage: AssetStorageConfig;
 	containers: ContainersConfig;
+	runs: RunsConfig;
 	egress: EgressConfig;
 	telemetry: TelemetryConfig;
 	updates: UpdatesConfig;
@@ -416,6 +438,7 @@ export const DEFAULT_CONFIG: HezoConfig = {
 
 	database: { poolSize: 10 },
 	assetStorage: {},
+	runs: { maxToolCalls: 600 },
 	containers: {
 		dockerRequestTimeoutMs: 10_000,
 		keepOld: false,

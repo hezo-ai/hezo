@@ -44,6 +44,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
+import { runtimeConfig } from '../config/runtime';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import { appendRunLogChunks, type RunUsageSnapshot, runLogLengthSql } from '../db/run-log-chunks';
@@ -1244,6 +1245,7 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 export type RunAbortReason =
 	| ContainerExitAbortReason
 	| 'run_timeout'
+	| 'tool_call_ceiling'
 	| 'tunnel_lost'
 	| 'server_shutdown';
 
@@ -1251,6 +1253,7 @@ const RUN_ABORT_REASONS: readonly string[] = [
 	'container_error',
 	'container_stopped',
 	'run_timeout',
+	'tool_call_ceiling',
 	'tunnel_lost',
 	'server_shutdown',
 ];
@@ -1277,8 +1280,12 @@ function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 
 /**
  * Terminal status for an aborted run: a wall-clock timeout is `TimedOut` (and drives an
- * automatic same-task continuation — see `JobManager.onAgentComplete`), container death and
- * a lost tunnel are `Failed`, and a bare abort (a user cancel) is `Cancelled`.
+ * automatic same-task continuation — see `JobManager.onAgentComplete`), container death, a
+ * lost tunnel and a spent tool-call ceiling are `Failed`, and a bare abort (a user cancel)
+ * is `Cancelled`.
+ *
+ * The ceiling is deliberately `Failed` rather than `TimedOut`: `TimedOut` queues a
+ * continuation, which would resume the very run shape the ceiling exists to stop.
  *
  * `server_shutdown` never reaches here: it is handed back before any caller asks for
  * a status, and a handback finalizes `Cancelled` with `handed_back` on the row.
@@ -1400,6 +1407,12 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 /** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
+	if (reason === 'tool_call_ceiling')
+		return (
+			`run reached its tool-call ceiling of ${runtimeConfig().runs.maxToolCalls} calls - ` +
+			'every tool result stays in the conversation and is re-sent on the next call, so a run ' +
+			'this long is spending most of its allowance re-reading its own context'
+		);
 	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
 	if (reason === 'tunnel_lost')
 		return (
@@ -2193,7 +2206,11 @@ export async function runAgent(
 			deps.db,
 			heartbeatRunId,
 			runBroadcast,
-			{ aiProviderConfigId: credential.configId, provider },
+			{
+				aiProviderConfigId: credential.configId,
+				provider,
+				costBilled: credential.authMethod !== AiAuthMethod.Subscription,
+			},
 			// Recorded here rather than at insert because the container is acquired
 			// after the row exists. It is what lets a container's death fail exactly
 			// the runs that were on it (see `failProjectRuns`).
@@ -2432,6 +2449,49 @@ export async function runAgent(
 		// failed or slow release can never block the run result from reaching the
 		// completion bookkeeping (lock release, idle flip, wakeup completion) —
 		// a wedge here previously left agents stuck "running" forever.
+		// Memoised because both the clean-exit path and the abort/throw finalizer
+		// need it, and it scrubs the file it reads - a second call would find
+		// nothing and report $0 over the top of a real figure.
+		//
+		// Reached from the failure path too, which is the whole point: Codex, Grok
+		// and Kimi all report no usage on their streams, so a run of any of them
+		// killed by the wall clock, a cancel or a handback recorded zero tokens for
+		// work that really happened. The file survives however the run ended.
+		let recoveredUsage: AgentRunUsage | null | undefined;
+		const recoverUsageOnce = async (): Promise<AgentRunUsage | null> => {
+			if (recoveredUsage !== undefined) return recoveredUsage;
+			recoveredUsage = await recoverOffStreamRunUsage(
+				runtimeType,
+				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
+				priceFn,
+				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
+			);
+			return recoveredUsage;
+		};
+
+		/**
+		 * Say so in the run log when a run burned tokens and still priced at $0.
+		 *
+		 * The server log already warns once per unknown model, but an operator does
+		 * not read the server log - they read the run. Without this the two cases
+		 * that matter are indistinguishable from a genuinely free run: a runtime
+		 * that named no model, and a model the pricing table has never heard of
+		 * (a provider alias, or one released since the catalog last refreshed).
+		 * Both leave the spend page empty while the allowance drains.
+		 */
+		const warnIfUnpriced = (usage: AgentRunUsage | null): void => {
+			if (!usage || usage.costCents > 0) return;
+			if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
+			emit(
+				'stderr',
+				`[runner] This run used ${usage.inputTokens} input / ${usage.outputTokens} output tokens but priced at $0, ` +
+					(usage.model
+						? `because no pricing row matches the model "${usage.model}". Add one in Settings > Model pricing.`
+						: 'because its runtime reported no model. Cost cannot be attributed without one.') +
+					'\n',
+			);
+		};
+
 		const cleanupRunArtifacts = async () => {
 			const step = async (label: string, fn: () => void | Promise<void>) => {
 				try {
@@ -2579,6 +2639,12 @@ export async function runAgent(
 				}
 			};
 
+			// Enforced here rather than in the MCP tool wrapper because the tally counts
+			// every tool the runtime reports, shell included - and the shell is how a run
+			// that has been refused an MCP call carries on regardless.
+			const maxToolCalls = runtimeConfig().runs.maxToolCalls;
+			let ceilingHit = false;
+
 			const onChunk = async (chunk: ExecLogChunk) => {
 				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
@@ -2588,6 +2654,15 @@ export async function runAgent(
 				// crash-safely (see currentUsage / onFlush above).
 				currentUsage = parser.getUsage();
 				await persistMcpToolCounts();
+
+				if (!ceilingHit && maxToolCalls > 0 && parser.getToolCallTotal() >= maxToolCalls) {
+					ceilingHit = true;
+					emit(
+						'stderr',
+						`[runner] Run stopped at its tool-call ceiling (${maxToolCalls}). Every tool result stays in the conversation and is re-sent on the next call, so a run this long spends most of its allowance re-reading its own context.\n`,
+					);
+					runAbort.abort('tool_call_ceiling');
+				}
 			};
 
 			// Unelevated: the agent writes into the bind-mounted worktree, and those
@@ -2664,16 +2739,12 @@ export async function runAgent(
 			const unpushedError =
 				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
 
-			// Grok and Kimi Code emit no usage on their streams; recover it from the
-			// file each writes into the per-run home mount, then scrub that file (both
-			// can carry the provider credential). Falls back to null (⇒ $0) if the log
-			// is missing/unparseable; the home mount is removed at cleanup anyway.
-			const runUsage = await recoverOffStreamRunUsage(
-				runtimeType,
-				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
-				priceFn,
-				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
-			);
+			// Codex, Grok and Kimi Code emit no usage on their streams; recover it
+			// from the file each writes into the per-run home mount, then scrub that
+			// file (they can carry the provider credential, and a Codex rollout is the
+			// whole transcript). Falls back to null (⇒ $0) if the file is
+			// missing/unparseable; the home mount is removed at cleanup anyway.
+			const runUsage = await recoverUsageOnce();
 
 			// A clean exit is only a real success if the run produced persisted
 			// output: a Hezo write (comment/task/doc/blocker/…, flagged on the run
@@ -3122,6 +3193,13 @@ export async function runAgent(
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
 			else if (unexplainedExitError) emit('stderr', `\n[runner] ${unexplainedExitError}\n`);
 
+			// Codex, Grok and Kimi report usage in a file (runUsage); every other
+			// runtime reports it on the stream. The file wins where both exist: for
+			// Codex it is the only source that also names the model, and a run priced
+			// against no model prices to $0.
+			const finalUsage = runUsage ?? parser.getUsage();
+			warnIfUnpriced(finalUsage);
+
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
 				deps.db,
@@ -3138,9 +3216,7 @@ export async function runAgent(
 						noOutputError ??
 						unexplainedExitError ??
 						undefined,
-					// Grok's usage comes from the debug log (runUsage); every other
-					// runtime reports it on the stream (parser.getUsage()).
-					usage: runUsage ?? parser.getUsage(),
+					usage: finalUsage,
 					// The stream ran to its terminal event, so this usage is final, not a
 					// mid-run snapshot — clear the partial flag any earlier flush set.
 					usagePartial: false,
@@ -3247,6 +3323,8 @@ export async function runAgent(
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
+			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage();
+			warnIfUnpriced(abortUsage);
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
 				deps.db,
@@ -3256,9 +3334,15 @@ export async function runAgent(
 					exitCode: -1,
 					durationMs,
 					error: errorMessage,
-					// Persist whatever the parser captured before the throw/abort; leave
-					// usage_partial as the last flush set it (true once any usage landed).
-					usage: parser.getUsage(),
+					// Recover before falling back to the parser: a runtime that reports
+					// usage only in a file reaches here with nothing captured at all, so
+					// an hour of real work recorded zero tokens.
+					usage: abortUsage,
+					// A killed run's figure is never final, and this is the path where
+					// that mattered least visibly and most often: no flush had carried
+					// usage for these runtimes, so the flag stayed false and the UI
+					// presented an interrupted run's tokens as the whole story.
+					...(abortUsage ? { usagePartial: true } : {}),
 					// Partial by nature - the calls made before the run died are still the
 					// truth about what it reached for, and a died-early run is exactly the
 					// case worth being able to inspect.
@@ -5241,7 +5325,12 @@ async function markHeartbeatRunRunning(
 	db: Db,
 	runId: string,
 	broadcast: HeartbeatRunBroadcast,
-	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
+	adapter: {
+		aiProviderConfigId: string | null;
+		provider: AiProvider | null;
+		/** False on a subscription, where nobody is billed per token. */
+		costBilled: boolean;
+	},
 	containerId: string | null,
 ): Promise<boolean> {
 	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
@@ -5255,7 +5344,7 @@ async function markHeartbeatRunRunning(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
 		        ai_provider_config_id = $4, provider = $5::ai_provider,
-		        container_id = $6, queued_reason = NULL
+		        container_id = $6, cost_billed = $7, queued_reason = NULL
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -5265,6 +5354,7 @@ async function markHeartbeatRunRunning(
 			adapter.aiProviderConfigId,
 			adapter.provider,
 			containerId,
+			adapter.costBilled,
 		],
 	);
 	// Guarded on the row still being `queued`, so whoever declared an outcome
@@ -5320,7 +5410,8 @@ async function updateHeartbeatRun(
 		     cache_read_tokens = COALESCE($11, cache_read_tokens),
 		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
 		     usage_partial = COALESCE($7, usage_partial),
-		     tool_call_counts = COALESCE($13::jsonb, tool_call_counts)
+		     tool_call_counts = COALESCE($13::jsonb, tool_call_counts),
+		     model = COALESCE($14, model)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
 		     -- party: terminateHeartbeatRun backfills operator_terminated while the
@@ -5350,6 +5441,8 @@ async function updateHeartbeatRun(
 			update.usage?.buckets?.cacheCreationTokens ?? null,
 			// $13, appended for the same reason as $11/$12 above.
 			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null,
+			// $14. What the cost was priced from, so a $0 figure stays auditable.
+			update.usage?.model ?? null,
 		],
 	);
 	if (applied.rows.length > 0) {
@@ -5405,11 +5498,21 @@ export async function recordRunCostAndEnforce(
 	try {
 		// The resolved AI adapter config was stamped on the run at start
 		// (markHeartbeatRunRunning); read it back to attribute this cost to it.
+		// `cost_billed` was stamped alongside it, from the credential's auth method
+		// at the time - not joined now, because a config can be deleted or flipped
+		// and either would re-label a run that finished months ago.
 		const runRow = await db.query<{
 			ai_provider_config_id: string | null;
 			provider: AiProvider | null;
-		}>(`SELECT ai_provider_config_id, provider FROM heartbeat_runs WHERE id = $1`, [runId]);
-		const adapter = runRow.rows[0] ?? { ai_provider_config_id: null, provider: null };
+			cost_billed: boolean;
+		}>(`SELECT ai_provider_config_id, provider, cost_billed FROM heartbeat_runs WHERE id = $1`, [
+			runId,
+		]);
+		const adapter = runRow.rows[0] ?? {
+			ai_provider_config_id: null,
+			provider: null,
+			cost_billed: true,
+		};
 
 		const entry = await recordRunCost(db, {
 			memberId: broadcast.memberId,
@@ -5419,6 +5522,7 @@ export async function recordRunCostAndEnforce(
 			description: `Agent run ${runId}`,
 			aiProviderConfigId: adapter.ai_provider_config_id,
 			provider: adapter.provider,
+			billed: adapter.cost_billed,
 		});
 		if (entry && broadcast.wsManager) {
 			broadcastRowChange(
@@ -5430,6 +5534,9 @@ export async function recordRunCostAndEnforce(
 			);
 		}
 
+		// Notional spend moves no budget, so the gate would be a guaranteed no-op
+		// read on the run-completion path.
+		if (!adapter.cost_billed) return;
 		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
 		if (block) {
 			await pauseAgentForBudget(

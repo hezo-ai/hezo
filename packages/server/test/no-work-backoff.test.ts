@@ -3,7 +3,13 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { noWorkCooldownActive, parkedOnAdminAsk } from '../src/services/no-work-backoff';
+import {
+	attemptsExhaustedOnTask,
+	MAX_TASK_ATTEMPT_GIVEUPS,
+	noWorkCooldownActive,
+	parkedOnAdminAsk,
+	TASK_ATTEMPT_WINDOW_HOURS,
+} from '../src/services/no-work-backoff';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -400,5 +406,93 @@ describe('an approval resolution reaches the agent that filed it', () => {
 			false,
 		);
 		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.ApprovalResolved)).toBe(false);
+	});
+});
+
+describe('attemptsExhaustedOnTask', () => {
+	/** A finished run on the shared task with an explicit ending. */
+	async function insertEnding(
+		status: HeartbeatRunStatus,
+		minutesAgo: number,
+		cancelReason: string | null = null,
+	): Promise<void> {
+		await db.query(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, task_id, status, cancel_reason, started_at, finished_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5,
+			         now() - ($6 || ' minutes')::interval - interval '1 minute',
+			         now() - ($6 || ' minutes')::interval)`,
+			[teamId, agentId, taskId, status, cancelReason, String(minutesAgo)],
+		);
+	}
+
+	it('parks the task once the allowance is spent', async () => {
+		await clearRuns();
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await insertEnding(HeartbeatRunStatus.TimedOut, (i + 1) * 10);
+		}
+		expect(await attemptsExhaustedOnTask(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('counts a mixed streak, which is the shape that defeated a consecutive count', async () => {
+		await clearRuns();
+		// One task ran 31 times in 17 hours because a `cancelled` give-up between
+		// timeouts reset the streak and handed it a fresh allowance every time.
+		await insertEnding(HeartbeatRunStatus.TimedOut, 60);
+		await insertEnding(HeartbeatRunStatus.TimedOut, 50);
+		await insertEnding(HeartbeatRunStatus.Cancelled, 40, 'handed_back');
+		await insertEnding(HeartbeatRunStatus.TimedOut, 30);
+		await insertEnding(HeartbeatRunStatus.Failed, 20);
+		await insertEnding(HeartbeatRunStatus.TimedOut, 10);
+		expect(await attemptsExhaustedOnTask(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('stays under the bound one attempt short of it', async () => {
+		await clearRuns();
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS - 1; i++) {
+			await insertEnding(HeartbeatRunStatus.TimedOut, (i + 1) * 10);
+		}
+		expect(await attemptsExhaustedOnTask(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('resets on a run that finished the work, and only on that', async () => {
+		await clearRuns();
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await insertEnding(HeartbeatRunStatus.TimedOut, 100 + i * 10);
+		}
+		await insertEnding(HeartbeatRunStatus.Succeeded, 50);
+		expect(await attemptsExhaustedOnTask(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('does not count a run a person terminated', async () => {
+		await clearRuns();
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await insertEnding(HeartbeatRunStatus.Cancelled, (i + 1) * 10, 'operator_terminated');
+		}
+		// Pressing Terminate repeatedly must not park the operator's own task.
+		expect(await attemptsExhaustedOnTask(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('ignores attempts older than the window', async () => {
+		await clearRuns();
+		const outsideWindow = TASK_ATTEMPT_WINDOW_HOURS * 60 + 60;
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await insertEnding(HeartbeatRunStatus.TimedOut, outsideWindow + i * 10);
+		}
+		expect(await attemptsExhaustedOnTask(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('never suppresses a source a person raised, so an answer always gets through', async () => {
+		await clearRuns();
+		for (let i = 0; i < MAX_TASK_ATTEMPT_GIVEUPS; i++) {
+			await insertEnding(HeartbeatRunStatus.TimedOut, (i + 1) * 10);
+		}
+		for (const source of [WakeupSource.Mention, WakeupSource.Reply, WakeupSource.OnDemand]) {
+			expect(await attemptsExhaustedOnTask(db, agentId, taskId, source), source).toBe(false);
+		}
+	});
+
+	it('is inert for a task-less wakeup', async () => {
+		expect(await attemptsExhaustedOnTask(db, agentId, null, WakeupSource.Heartbeat)).toBe(false);
 	});
 });

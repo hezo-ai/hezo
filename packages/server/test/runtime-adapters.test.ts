@@ -1335,11 +1335,18 @@ describe('runtime adapter behaviour beyond MCP', () => {
 	});
 
 	describe('recoverUsage', () => {
-		it('is declared by exactly the runtimes whose stream carries no usage', () => {
+		it('is declared by exactly the runtimes whose stream carries no usable usage', () => {
+			// Codex belongs here despite reporting usage on its stream: it does so
+			// only on the single terminal turn event, so a run killed by the wall
+			// clock, a cancel or a handback has nothing captured at all. Its rollout
+			// is also the only place it names the model, without which the run prices
+			// at $0.
 			const declared = Object.values(AgentRuntime).filter(
 				(r) => RUNTIME_ADAPTERS[r].recoverUsage !== undefined,
 			);
-			expect(new Set(declared)).toEqual(new Set([AgentRuntime.Grok, AgentRuntime.Kimi]));
+			expect(new Set(declared)).toEqual(
+				new Set([AgentRuntime.Codex, AgentRuntime.Grok, AgentRuntime.Kimi]),
+			);
 		});
 	});
 

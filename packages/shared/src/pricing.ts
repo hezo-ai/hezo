@@ -7,13 +7,20 @@
  *
  * Four buckets, not two: cache-read and cache-creation tokens bill at very
  * different rates from regular input. Anthropic charges cache *reads* at ~0.1x
- * and cache *writes* (creation) at ~1.25x of the base input rate. The token
- * data carries the buckets separately, so we price them separately when rates
- * are known. The pricepertoken.com catalog carries **no** cache rates, so both
- * cache buckets fall back to the full input rate — deliberately conservative:
- * on cache-read-dominated agent runs the recorded cost is an upper bound
- * (~10x over on the cache-read bucket), never an understatement. A manual
- * override row can supply real cache rates for exact per-model billing.
+ * and cache *writes* (creation) at ~1.25x of the base input rate; OpenAI reads
+ * cached input at ~0.1x and charges no write premium. The token data carries the
+ * buckets separately, so we price them separately when the rates are known.
+ *
+ * The pricepertoken.com catalog carries no cache rates of its own, so they are
+ * derived from each provider's published multipliers (see `CACHE_RATE_MULTIPLIERS`
+ * in the server's pricing service). A provider whose multipliers have not been
+ * verified keeps null rates and falls back to the full input rate - deliberately
+ * conservative, an upper bound rather than an understatement, since a guessed
+ * multiplier is wrong in a direction nobody checks.
+ *
+ * That fallback is not a small effect where it applies: an agent run is
+ * cache-read dominated, ~96% on a live instance, so a provider left on it reads
+ * roughly tenfold high. A manual override row can supply real cache rates.
  */
 
 /** Per-token rates for one model. Cache rates fall back to the input rate. */

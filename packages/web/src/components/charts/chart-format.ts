@@ -44,3 +44,10 @@ export function formatBucketLabel(bucket: string, size: HoursBucket): string {
 export function dollars(cents: number): string {
 	return `$${centsToDollars(cents)}`;
 }
+
+/**
+ * Cents are a spend chart's base unit; dollars are what it plots, and
+ * `plottedDollars` inverts that exactly for the tooltip.
+ */
+export const centsToPlottedDollars = (cents: number) => cents / 100;
+export const plottedDollars = (plotted: number) => dollars(Math.round(plotted * 100));

@@ -61,6 +61,95 @@ describe('recoverOffStreamRunUsage', () => {
 
 	const kimiRecord = (o: Record<string, unknown>): string => JSON.stringify(o);
 
+	describe('codex', () => {
+		/** A rollout at Codex's real nesting: sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl */
+		const seedRollout = (contents: string, dir = 'sessions', name = 'abc'): string => {
+			const full = join(home, dir, '2026', '09', '12');
+			mkdirSync(full, { recursive: true });
+			const path = join(full, `rollout-2026-09-12T10-00-00-${name}.jsonl`);
+			writeFileSync(path, contents);
+			return path;
+		};
+		const rolloutUsage = (input: number, cached: number, output: number): string =>
+			JSON.stringify({
+				type: 'event_msg',
+				payload: {
+					type: 'token_count',
+					info: {
+						total_token_usage: {
+							input_tokens: input,
+							cached_input_tokens: cached,
+							cache_write_input_tokens: 0,
+							output_tokens: output,
+							reasoning_output_tokens: 0,
+							total_tokens: input + output,
+						},
+					},
+				},
+			});
+		const turnContext = (model: string): string =>
+			JSON.stringify({ type: 'turn_context', payload: { model } });
+
+		it('finds the rollout by its generated name and prices it against the model it names', async () => {
+			// The name carries a timestamp and a uuid, so an exact-basename match
+			// cannot find it - this is what the prefix/suffix form of findByName is for.
+			const path = seedRollout([turnContext('grok-4.5'), rolloutUsage(1000, 500, 200)].join('\n'));
+
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), price, onError);
+
+			expect(usage?.inputTokens).toBe(1000);
+			expect(usage?.outputTokens).toBe(200);
+			expect(usage?.model).toBe('grok-4.5');
+			expect(usage?.costCents).toBe(
+				costCentsFromRate(RATES['grok-4.5'], {
+					inputTokens: 500,
+					cacheReadTokens: 500,
+					cacheCreationTokens: 0,
+					outputTokens: 200,
+				}),
+			);
+			// Scrubbed: a rollout is the whole verbatim transcript, materially more
+			// sensitive than the credential file beside it.
+			expect(existsSync(path)).toBe(false);
+			expect(existsSync(join(home, 'sessions'))).toBe(false);
+		});
+
+		it('sums every rollout under the run home, including an archived one', async () => {
+			// CODEX_HOME is per-run, so everything under it belongs to this run -
+			// a subagent's rollout bills to the same account.
+			seedRollout(rolloutUsage(100, 0, 10), 'sessions', 'one');
+			seedRollout(rolloutUsage(50, 0, 5), 'archived_sessions', 'two');
+
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), price, onError);
+
+			expect(usage?.inputTokens).toBe(150);
+			expect(usage?.outputTokens).toBe(15);
+			expect(existsSync(join(home, 'archived_sessions'))).toBe(false);
+		});
+
+		it('reads only the tail of a rollout too large to buffer', async () => {
+			// These run to hundreds of megabytes; a whole-file read at ten concurrent
+			// runs is an out-of-memory fault, and the totals are cumulative so the
+			// tail carries everything that matters.
+			const filler = `${JSON.stringify({ type: 'response_item', payload: { junk: 'x'.repeat(400) } })}\n`;
+			seedRollout(
+				[filler.repeat(8000), turnContext('grok-4.5'), rolloutUsage(9000, 0, 900)].join('\n'),
+			);
+
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), price, onError);
+
+			expect(usage?.inputTokens).toBe(9000);
+			expect(errors).toEqual([]);
+		});
+
+		it('reports nothing rather than failing when there is no rollout at all', async () => {
+			expect(
+				await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), price, onError),
+			).toBeNull();
+			expect(errors).toEqual([]);
+		});
+	});
+
 	describe('kimi', () => {
 		it('finds the session log nested under the run home and prices it', async () => {
 			seedKimiSessionLog(

@@ -1,6 +1,7 @@
 import { INSTANCE_AGENT_SLUGS, isRunOutcomeFilter, RunOutcomeFilter } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
+import { CostFigure } from '../../../../../../components/cost-figures';
 import { InfiniteScrollSentinel } from '../../../../../../components/infinite-scroll-sentinel';
 import { Badge } from '../../../../../../components/ui/badge';
 import { FilterPills } from '../../../../../../components/ui/filter-pills';
@@ -128,9 +129,12 @@ function ExecutionRow({
 			<span className="order-6 text-text-3 whitespace-nowrap sm:order-none">{elapsed}</span>
 
 			{run.cost_cents != null && run.cost_cents > 0 && (
-				<span className="order-7 text-text-3 whitespace-nowrap sm:order-none">
-					${(run.cost_cents / 100).toFixed(2)}
-				</span>
+				<CostFigure
+					cents={run.cost_cents}
+					billed={run.cost_billed}
+					className="order-7 text-text-3 whitespace-nowrap sm:order-none"
+					testId="execution-row-cost"
+				/>
 			)}
 
 			{run.exit_code !== null && run.exit_code !== 0 && (

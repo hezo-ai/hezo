@@ -338,7 +338,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             m.member_type AS assignee_type,
             ${agentDisplayNameSql('ma_ps', 'm_ps')} AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM task_comments ic WHERE ic.task_id = i.id) AS comment_count,
-            ra.run_count, ra.total_duration_seconds, ca.total_cost_cents,
+            ra.run_count, ra.total_duration_seconds, ca.total_cost_cents, ca.notional_cost_cents,
             (ar.status IS NOT NULL) AS has_active_run,
             CASE WHEN ar.status IS NOT NULL THEN json_build_object(
               'id', ar.id,
@@ -415,7 +415,9 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        WHERE hr.task_id = i.id
      ) ra ON true
      LEFT JOIN LATERAL (
-       SELECT COALESCE(sum(ce.amount_cents), 0)::int AS total_cost_cents
+       SELECT COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cost_cents,
+              COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int
+                AS notional_cost_cents
        FROM cost_entries ce
        WHERE ce.task_id = i.id
      ) ca ON true

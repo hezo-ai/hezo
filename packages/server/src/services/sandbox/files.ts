@@ -1,10 +1,13 @@
 import {
 	chmodSync,
+	closeSync,
 	type Dirent,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
 	readFileSync,
+	readSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -32,6 +35,37 @@ import { dirname, join, relative, sep } from 'node:path';
  * Async because a remote file API cannot be anything else. The Docker
  * implementation is synchronous underneath and simply resolves immediately.
  */
+/**
+ * How {@link SandboxFiles.findByName} matches a filename.
+ *
+ * A bare string is an exact basename. The object form exists for names carrying
+ * a generated segment - a timestamp, a uuid - where the stable parts are the
+ * ends. Deliberately not a glob: the Docker backend shells out to `find -name`,
+ * so a glob would be expanded there while the host and Daytona walkers compare
+ * strings and silently match nothing.
+ */
+export type NameMatch = string | { prefix?: string; suffix?: string };
+
+/**
+ * Drop everything before the first newline.
+ *
+ * A tail read starts at an arbitrary byte, so its first line is almost always a
+ * fragment - and half a JSON object parses as nothing while looking like data.
+ * Shared by every backend so all three tails mean the same thing.
+ */
+export function dropPartialFirstLine(text: string): string {
+	const nl = text.indexOf('\n');
+	return nl === -1 ? '' : text.slice(nl + 1);
+}
+
+/** Does `name` satisfy `match`? */
+export function matchesName(name: string, match: NameMatch): boolean {
+	if (typeof match === 'string') return name === match;
+	if (match.prefix !== undefined && !name.startsWith(match.prefix)) return false;
+	if (match.suffix !== undefined && !name.endsWith(match.suffix)) return false;
+	return match.prefix !== undefined || match.suffix !== undefined;
+}
+
 export interface SandboxFiles {
 	exists(relPath: string): Promise<boolean>;
 	/** Contents as UTF-8. Rejects if the file is missing or unreadable. */
@@ -69,7 +103,21 @@ export interface SandboxFiles {
 	 * it. An unreadable directory yields nothing rather than throwing, because
 	 * every caller of this is a best-effort scrape.
 	 */
-	findByName(relDir: string, basename: string, maxDepth: number): Promise<string[]>;
+	findByName(relDir: string, match: NameMatch, maxDepth: number): Promise<string[]>;
+	/**
+	 * The last `maxBytes` of a file, decoded as UTF-8, starting at a line boundary.
+	 *
+	 * For a file too large to buffer: {@link readBytes} holds the whole thing in
+	 * memory, which is fine for a bundle bounded up front and an out-of-memory
+	 * fault for a runtime's own transcript, where hundreds of megabytes is
+	 * ordinary. A tail is enough whenever the information wanted is cumulative or
+	 * terminal.
+	 *
+	 * The first partial line is dropped, since a tail almost always starts
+	 * mid-line and half a JSON object parses as nothing. A file shorter than
+	 * `maxBytes` comes back whole, with no line dropped.
+	 */
+	readTail(relPath: string, maxBytes: number): Promise<string>;
 	/**
 	 * Write a whole file, creating its parent directories.
 	 *
@@ -133,7 +181,7 @@ function resolveWithin(root: string, relPath: string): string {
 function walk(
 	root: string,
 	dir: string,
-	basename: string,
+	match: NameMatch,
 	maxDepth: number,
 	depth: number,
 ): string[] {
@@ -149,8 +197,8 @@ function walk(
 		const full = join(dir, entry.name);
 		// `withFileTypes` reports a symlink as neither file nor directory, so
 		// following one is opt-in - and we never opt in.
-		if (entry.isDirectory()) out.push(...walk(root, full, basename, maxDepth, depth + 1));
-		else if (entry.isFile() && entry.name === basename) out.push(relative(root, full));
+		if (entry.isDirectory()) out.push(...walk(root, full, match, maxDepth, depth + 1));
+		else if (entry.isFile() && matchesName(entry.name, match)) out.push(relative(root, full));
 	}
 	return out;
 }
@@ -188,8 +236,21 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 				// and the whole per-run directory is removed at cleanup regardless.
 			}
 		},
-		findByName: async (relDir, basename, maxDepth) =>
-			walk(hostRoot, resolveWithin(hostRoot, relDir), basename, maxDepth, 0),
+		findByName: async (relDir, match, maxDepth) =>
+			walk(hostRoot, resolveWithin(hostRoot, relDir), match, maxDepth, 0),
+		readTail: async (relPath, maxBytes) => {
+			const full = resolveWithin(hostRoot, relPath);
+			const total = statSync(full).size;
+			if (total <= maxBytes) return readFileSync(full, 'utf8');
+			const fd = openSync(full, 'r');
+			try {
+				const buf = Buffer.alloc(maxBytes);
+				readSync(fd, buf, 0, maxBytes, total - maxBytes);
+				return dropPartialFirstLine(buf.toString('utf8'));
+			} finally {
+				closeSync(fd);
+			}
+		},
 		write: async (relPath, contents, opts = {}) => writeHostFile(hostRoot, relPath, contents, opts),
 		writeBytes: async (relPath, contents, opts = {}) =>
 			writeHostFile(hostRoot, relPath, contents, opts),

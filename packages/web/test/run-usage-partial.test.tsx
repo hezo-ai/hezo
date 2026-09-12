@@ -1,9 +1,12 @@
+// What the execution detail page's Usage card has to admit about a figure.
+//
 // A run the server killed mid-flight is marked failed with a partial usage
-// snapshot (usage_partial = true). The execution detail page must surface that
-// usage — prefixed "~" and tagged "interrupted" — instead of hiding it or
-// passing it off as a final total. Render-driven (no real layout / viewport /
-// WebSocket), so this lives in the component tier; the run + agent responses are
-// fetch-mocked the same way as agent-executions-project.test.tsx.
+// snapshot (usage_partial = true), and a run on a subscription is priced from
+// the same table while charging nobody (cost_billed = false). Either way the
+// card must say so rather than passing the number off as a final, real total.
+// Render-driven (no real layout / viewport / WebSocket), so this lives in the
+// component tier; the run + agent responses are fetch-mocked the same way as
+// agent-executions-project.test.tsx.
 
 import { afterEach, expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
@@ -22,6 +25,7 @@ function installMocks(opts: {
 	agentSlug: string;
 	teamId: string;
 	taskId: string;
+	runOverrides?: Record<string, unknown>;
 }) {
 	const agent = {
 		id: opts.agentId,
@@ -50,7 +54,7 @@ function installMocks(opts: {
 		created_at: new Date().toISOString(),
 	};
 
-	const run = {
+	const defaultRun = {
 		id: RUN_ID,
 		member_id: opts.agentId,
 		team_id: opts.teamId,
@@ -88,7 +92,10 @@ function installMocks(opts: {
 		created_docs: [],
 		created_skills: [],
 		proposed_skills: [],
+		model: null,
+		cost_billed: true,
 	};
+	const run = { ...defaultRun, ...opts.runOverrides };
 
 	const original = globalThis.fetch;
 	restoreFetch = () => {
@@ -128,9 +135,9 @@ function installMocks(opts: {
 	}) as typeof globalThis.fetch;
 }
 
-test('interrupted run shows its partial usage, prefixed "~" and tagged interrupted', async () => {
+async function renderRunDetail(runOverrides?: Record<string, unknown>) {
 	const seeded = { projectSlug: '', agentId: '' };
-	const { findByText, router } = await renderApp({
+	const helpers = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -144,14 +151,20 @@ test('interrupted run shows its partial usage, prefixed "~" and tagged interrupt
 				agentSlug: 'captain',
 				teamId: ws.team.id,
 				taskId: task.id,
+				runOverrides,
 			});
 		},
 	});
 
-	await router.navigate({
+	await helpers.router.navigate({
 		to: '/projects/$projectId/agents/$agentId/executions/$runId',
 		params: { projectId: seeded.projectSlug, agentId: seeded.agentId, runId: RUN_ID },
 	});
+	return helpers;
+}
+
+test('interrupted run shows its partial usage, prefixed "~" and tagged interrupted', async () => {
+	const { findByText } = await renderRunDetail();
 
 	// The partial-snapshot indicator and the "~"-prefixed cost both render only
 	// when usage_partial is true.
@@ -159,4 +172,20 @@ test('interrupted run shows its partial usage, prefixed "~" and tagged interrupt
 	await findByText('~$2.50');
 	// The token snapshot is shown (not a 0/0 placeholder), with the partial "~".
 	expect(document.body.textContent).toContain('~1,200,000 in · 30,000 out tokens');
+});
+
+test('a run nobody was billed for names its model and says the figure is not a charge', async () => {
+	const { findByTestId } = await renderRunDetail({
+		usage_partial: false,
+		cost_billed: false,
+		model: 'gpt-5-codex',
+	});
+
+	// The figure stands, qualified - hiding it is how 2.3 billion tokens showed
+	// up as $0.79 in the first place.
+	const cost = await findByTestId('run-cost', undefined, { timeout: 20_000 });
+	expect(cost.textContent).toBe('$2.50 not billed');
+	// And the card names what the price came from, which it never used to.
+	const model = await findByTestId('run-cost-model');
+	expect(model.textContent).toBe('gpt-5-codex');
 });
