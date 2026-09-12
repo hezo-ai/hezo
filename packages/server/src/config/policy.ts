@@ -94,12 +94,23 @@ export function loadPolicy(path: string | undefined): PolicyConfig | null | unde
  */
 const RELOAD_DEBOUNCE_MS = 150;
 
+/**
+ * How long to wait before watching again after the watch reported an error.
+ *
+ * Short, because the window is blind: nothing re-delivers an event that landed
+ * while the watch was down. Long enough that a directory being churned cannot
+ * spin this into a tight loop.
+ */
+const REWATCH_DELAY_MS = 100;
+
 export function watchPolicyFile(path: string | undefined): { close: () => void } {
 	if (!path) return { close: () => {} };
 
 	const directory = dirname(path);
 	let watcher: FSWatcher | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	let rewatch: ReturnType<typeof setTimeout> | null = null;
+	let closed = false;
 
 	const reload = () => {
 		const next = readPolicyFile(path);
@@ -112,20 +123,65 @@ export function watchPolicyFile(path: string | undefined): { close: () => void }
 		);
 	};
 
-	try {
-		watcher = watch(directory, () => {
-			if (timer) clearTimeout(timer);
-			timer = setTimeout(reload, RELOAD_DEBOUNCE_MS);
-		});
-	} catch (err) {
-		// A directory that does not exist yet is not an error: a deployment may
-		// create it after the server is up. Nothing is pinned until it does.
-		log.warn(`could not watch for a policy file at ${path}: ${(err as Error).message}`);
-	}
+	/**
+	 * What a watch error is, and why it cannot simply be swallowed.
+	 *
+	 * **An `FSWatcher` is an `EventEmitter`, and one that emits `error` with no
+	 * listener throws.** The `try` below covers only the synchronous `watch()`
+	 * call, so an error arriving later was an uncaught exception in the server
+	 * process - and the thing that produces one is the *documented* write
+	 * pattern: a deployment writes `<file>.tmp` and renames it over the target,
+	 * and the runtime can be told about the `.tmp` after it has already gone.
+	 * Bun reports that as `ENOENT` against a path nobody asked to watch.
+	 *
+	 * **Re-armed rather than left closed.** The runtime closes a watcher that
+	 * errored, so swallowing the error quietly would leave a server that had
+	 * stopped noticing policy changes with nothing to say about it - which is the
+	 * exact failure this whole file exists to prevent.
+	 */
+	const onError = (err: Error) => {
+		log.warn(`the policy watch on ${directory} reported an error: ${err.message}`);
+		watcher?.close();
+		watcher = null;
+		if (closed || rewatch) return;
+		rewatch = setTimeout(() => {
+			rewatch = null;
+			if (closed) return;
+			arm();
+			// **Re-read, because the window was blind.** The write that killed the
+			// watch is usually the very write we wanted: a rename moves its `.tmp`
+			// away, the runtime reports the vanished entry as an error, and nothing
+			// will ever re-deliver an event for a rename that already finished.
+			// Re-arming alone would leave the watch healthy and the value stale.
+			reload();
+		}, REWATCH_DELAY_MS);
+		// The server must not be held open by a retry nobody is waiting for.
+		rewatch.unref?.();
+	};
+
+	const arm = () => {
+		try {
+			const handle = watch(directory, () => {
+				if (timer) clearTimeout(timer);
+				timer = setTimeout(reload, RELOAD_DEBOUNCE_MS);
+			});
+			handle.on('error', onError);
+			watcher = handle;
+		} catch (err) {
+			// A directory that does not exist yet is not an error: a deployment may
+			// create it after the server is up. Nothing is pinned until it does.
+			log.warn(`could not watch for a policy file at ${path}: ${(err as Error).message}`);
+		}
+	};
+
+	arm();
 
 	return {
 		close: () => {
+			closed = true;
 			if (timer) clearTimeout(timer);
+			if (rewatch) clearTimeout(rewatch);
+			rewatch = null;
 			watcher?.close();
 			watcher = null;
 		},

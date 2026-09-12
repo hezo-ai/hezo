@@ -93,6 +93,34 @@ describe('the policy watcher under Bun', () => {
 		expect(await pinnedMemoryReaches(64)).toBe(64);
 	});
 
+	// **A sibling that vanishes must not take the process down.** An `FSWatcher`
+	// is an `EventEmitter`, and one that emits `error` with no listener throws -
+	// so an error arriving after the synchronous `watch()` call was an uncaught
+	// exception in the server. Bun raises exactly that for the `.tmp` a rename is
+	// about to move: it reports the path after the entry has already gone, as
+	// `ENOENT` against a file nobody asked to watch. This reproduced about three
+	// runs in ten before the watcher handled the event.
+	it('survives a transient neighbour, and keeps taking changes after one', async () => {
+		const directory = ownDirectory();
+		const path = join(directory, 'policy.json');
+		writeFileSync(path, policy(8));
+		watching(path);
+
+		// Churn the directory with entries that exist only for an instant, which
+		// is what the documented atomic-rename write looks like from outside.
+		for (let round = 0; round < 20; round += 1) {
+			const transient = join(directory, `neighbour-${round}.tmp`);
+			writeFileSync(transient, 'x');
+			rmSync(transient, { force: true });
+		}
+		// The watch is re-armed after an error and re-reads on the way back, so a
+		// change is taken whether it landed during the blind window or after it -
+		// a watcher that quietly stopped is the failure this file exists to
+		// prevent.
+		renameInto(path, policy(48));
+		expect(await pinnedMemoryReaches(48)).toBe(48);
+	});
+
 	// Reloading on any event in the directory means a neighbour's write reloads
 	// too. That must read the policy file and find it unchanged, never pick the
 	// neighbour up as one.
