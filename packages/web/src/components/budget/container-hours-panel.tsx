@@ -95,9 +95,21 @@ function Tile({ title, value, meta }: { title: string; value: string; meta: stri
  * month figure is already a tile above, and a bar with no ceiling is a bar that
  * can only ever read empty.
  */
+/**
+ * Window-to-date hours against the allowance.
+ *
+ * Rendered only where there is an allowance to be against. With none set the
+ * window figure is already a tile above, and a bar with no ceiling is a bar that
+ * can only ever read empty.
+ *
+ * **The period is the server's, never this page's.** The cap is enforced over a
+ * window a deployment may anchor to a billing day, so a page that assumed a
+ * calendar month drew a figure the gate disagreed with - and named a reset date
+ * that was not the one coming.
+ */
 function AllowanceHero({ totals, capHours }: { totals: ContainerHoursTotals; capHours: number }) {
-	const { t } = useI18n();
-	const usedHours = totals.month_seconds / 3600;
+	const { t, formatDate } = useI18n();
+	const usedHours = totals.window_seconds / 3600;
 	const remaining = Math.max(0, capHours - usedHours);
 	return (
 		<div
@@ -113,9 +125,12 @@ function AllowanceHero({ totals, capHours }: { totals: ContainerHoursTotals; cap
 					})}
 				</span>
 			</div>
-			<BudgetBar used={totals.month_seconds} total={capHours * 3600} />
+			<BudgetBar used={totals.window_seconds} total={capHours * 3600} />
 			<span className="text-[11.5px] text-text-3">
-				{t('budget.hours.allowance.remaining', { hours: remaining.toFixed(1) })}
+				{t('budget.hours.allowance.remaining', {
+					hours: remaining.toFixed(1),
+					date: formatDate(totals.window_end),
+				})}
 			</span>
 		</div>
 	);
@@ -128,10 +143,10 @@ function HoursTiles({
 	totals: ContainerHoursTotals;
 	chatVisible: boolean;
 }) {
-	const { t, plural } = useI18n();
-	const delta = totals.prev_month_seconds
+	const { t, plural, formatDate } = useI18n();
+	const delta = totals.prev_window_seconds
 		? Math.round(
-				((totals.month_seconds - totals.prev_month_seconds) / totals.prev_month_seconds) * 100,
+				((totals.window_seconds - totals.prev_window_seconds) / totals.prev_window_seconds) * 100,
 			)
 		: null;
 	return (
@@ -147,19 +162,19 @@ function HoursTiles({
 				meta={t('budget.hours.rollingWindow')}
 			/>
 			<Tile
-				title={t('budget.hours.thisMonth')}
-				value={formatDuration(totals.month_seconds)}
+				title={t('budget.hours.thisPeriod')}
+				value={formatDuration(totals.window_seconds)}
 				meta={
 					delta == null
-						? t('budget.hours.noPriorMonth')
-						: t('budget.hours.monthDelta', { delta: `${delta >= 0 ? '+' : ''}${delta}` })
+						? t('budget.hours.sincePeriodStart', { date: formatDate(totals.window_start) })
+						: t('budget.hours.periodDelta', { delta: `${delta >= 0 ? '+' : ''}${delta}` })
 				}
 			/>
 			{chatVisible && (
 				<Tile
 					title={t('budget.hours.chat')}
-					value={formatDuration(totals.month_chat_seconds)}
-					meta={t('budget.hours.monthToDate')}
+					value={formatDuration(totals.window_chat_seconds)}
+					meta={t('budget.hours.periodToDate')}
 				/>
 			)}
 		</div>
@@ -235,7 +250,7 @@ export function ProjectContainerHoursPanel({ projectId }: { projectId: string })
 
 	return (
 		<div className="flex flex-col gap-6">
-			{totals && <HoursTiles totals={totals} chatVisible={totals.month_chat_seconds > 0} />}
+			{totals && <HoursTiles totals={totals} chatVisible={totals.window_chat_seconds > 0} />}
 			<HoursChart
 				bucket={bucket}
 				setBucket={setBucket}
@@ -278,7 +293,10 @@ export function InstanceContainerHoursPanel() {
 			{/* The cap gates container starts instance-wide, so it belongs to this
 			    scope alone - and only where an hour costs something. */}
 			{data?.metered && (
-				<ManagedSetting pinned={data.monthly_hours_pinned}>
+				// **Named by what the tenant would actually do here.** A pinned
+				// allowance is not moved by asking again; it is moved by buying hours
+				// or changing plan, which is where `manage_url` already goes.
+				<ManagedSetting pinned={data.monthly_hours_pinned} manageLabel="budget.hours.cap.manage">
 					<MonthlyHoursCap monthlyHours={capHours} />
 				</ManagedSetting>
 			)}

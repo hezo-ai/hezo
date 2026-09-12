@@ -15,6 +15,7 @@ import {
 	isActiveRunStatus,
 	useHeartbeatRun,
 } from '../../hooks/use-heartbeat-runs';
+import { useInstanceSettings } from '../../hooks/use-instance-settings';
 import { useProjectMeta } from '../../hooks/use-projects';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
@@ -107,11 +108,26 @@ function containerNotReadyReason(health: ContainerHealth | null): string {
  * What each recognised wait means, in the operator's terms. A table rather than
  * a branch, so a reason added to the shared list is a compile error here until
  * someone writes the explanation for it.
+ *
+ * **`managedHelp` is the same explanation ending somewhere the reader can
+ * actually go.** Two of these waits end with advice to change a limit, and on an
+ * instance whose limits are fixed by whoever deployed it that advice names a
+ * control the reader will find inert. The branch is on *having* a policy, never
+ * on whose it is: core learns no deployment's name.
  */
-const QUEUED_REASON_COPY: Record<QueuedRunReason, { label: MessageKey; help: MessageKey }> = {
+const QUEUED_REASON_COPY: Record<
+	QueuedRunReason,
+	{ label: MessageKey; help: MessageKey; managedHelp?: MessageKey }
+> = {
 	[QueuedRunReason.CapacityPark]: {
 		label: 'thread.working.reason.capacity',
 		help: 'thread.working.reason.capacityHelp',
+		managedHelp: 'thread.working.reason.capacityHelpManaged',
+	},
+	[QueuedRunReason.HoursSpent]: {
+		label: 'thread.working.reason.hours',
+		help: 'thread.working.reason.hoursHelp',
+		managedHelp: 'thread.working.reason.hoursHelpManaged',
 	},
 	[QueuedRunReason.CredentialSerialized]: {
 		label: 'thread.working.reason.credential',
@@ -129,15 +145,18 @@ const QUEUED_REASON_COPY: Record<QueuedRunReason, { label: MessageKey; help: Mes
  */
 function QueuedReason({ reason }: { reason: string }) {
 	const { t } = useI18n();
+	const { data: settings } = useInstanceSettings();
+	const managed = Boolean(settings?.policy);
 	if (!isQueuedRunReason(reason)) return <span className="opacity-80"> - {reason}</span>;
 	const copy = QUEUED_REASON_COPY[reason];
+	const help = managed && copy.managedHelp ? copy.managedHelp : copy.help;
 	return (
 		<span className="opacity-80">
 			{' '}
 			- {t(copy.label)}{' '}
 			<InfoTooltip
 				label={t(copy.label)}
-				content={t(copy.help)}
+				content={t(help)}
 				className="inline-block align-text-bottom"
 				data-testid="queued-reason-help"
 			/>

@@ -714,12 +714,22 @@ gets invoiced. Overlapping intervals are summed, deliberately: two containers up
 hour is two container-hours. **The clip expression guards `alias.id IS NULL` and that guard
 is load-bearing on a LEFT JOIN** - without it `COALESCE(ended_at, now())` reads a missing
 row as still running and `GREATEST` swallows the NULL start, so a bucket in which nothing
-ran bills a full bucket of uptime. Enforcement is a monthly allowance
+ran bills a full bucket of uptime. Enforcement is an hours allowance
 (`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
 `hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
 memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
 project with a spare container is exempt from both. The cap read short-circuits before the
 ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
+
+**The allowance is measured over a window, which is the calendar month only by
+default.** `policy.pinned.containerHoursAnchorDay` moves it to the day a control plane
+bills on, and both bounds come from `containerHoursWindow` in `@hezo/shared` so the clamp
+— an anchor on the 31st, in a month that has no 31st — is written once. **The gate and
+the meter must read the same window, and once did not**: the admission path moved onto the
+anchor while `containerHoursTotals` stayed on `date_trunc('month')`, so a tenant anchored
+on the 20th was refused a container while the Budget page's bar read a third full. The
+totals now carry `window_start` and `window_end` beside the sums, and a test asserts the
+two reads agree rather than asserting a figure.
 
 ### Docs, skills & assets
 
@@ -2791,8 +2801,9 @@ never the run row itself.
 purpose: container capacity, and — when a credential opts into serialising (dormant today) —
 the provider credential. When the pool
 ladder can only queue (`PoolCapacityError`), `runAgent`
-does not return: it stamps `queued_reason` (`CAPACITY_PARK_QUEUED_REASON`,
-`services/run-concurrency.ts`) and re-tries the ladder on a short poll, up to a ceiling of
+does not return: it stamps `queued_reason` — `CAPACITY_PARK_QUEUED_REASON`
+(`services/run-concurrency.ts`) for the memory wait, `QueuedRunReason.HoursSpent` where the
+verdict says the hours allowance is what is spent — and re-tries the ladder on a short poll, up to a ceiling of
 its own that is deliberately shorter than the agent's `run_timeout_min` — running to that
 deadline would finalize the run `timed_out`, trading one errored row for another. Waiting
 *inside* `runAgent` is the whole mechanism: the run id is only in the live-run registry
@@ -2806,6 +2817,18 @@ consequences elsewhere: the idle-stop scan's busy set excludes a parked run
 (`BUSY_PROJECTS_SQL`), since it holds no container and is waiting on the very reclaim that
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
+
+**The two waits are stamped apart, and the exclusion covers both.** Memory clears when a
+neighbour hands a container back; hours clear when the window turns or the allowance grows.
+Sharing one reason told an operator whose allowance was spent to wait for a container while
+every container sat idle. `PARKED_HOLDING_NOTHING` (`@hezo/shared`) is the set that holds no
+container, `BUSY_PROJECTS_SQL` builds its predicate from that set rather than naming a
+member — with an explicit `IS NULL` arm, since `<> ALL` yields NULL for an ordinary queued
+run and would drop it out of the busy set — and the web's reason table gains a row per
+member, so a reason added upstream is a compile error until somebody writes its explanation.
+Where the explanation ends in advice to change a limit, an instance carrying a `policy`
+gets a variant ending somewhere its reader can actually go; the branch is on *having* a
+policy, never on whose.
 
 **Provider refusal.** The fourth handback cause, and the only one that *did* start the CLI.
 When a runtime's stream reports a `Transient` failure - the model at capacity, a rate limit,

@@ -1,13 +1,14 @@
 /**
  * Reading the container-hours ledger: the windowed series the Budget page's
- * Hours tab draws, and the month-to-date figure the admission check enforces
+ * Hours tab draws, and the window-to-date figure the admission check enforces
  * against.
  *
  * Separate from `sandbox/uptime-ledger.ts`, which only ever writes. They are
  * different jobs with different callers - the writer sits inside the pool's own
  * state transitions and must stay tiny, while this is read by two routes and by
  * the capacity gate, and the clipping arithmetic below has to be identical for
- * all three or the meter and the cap disagree about the same month.
+ * all three or the meter and the cap disagree about the same window - which is
+ * exactly what happened once the window stopped always being a calendar month.
  *
  * **Overlapping intervals are summed, and that is correct.** Two containers up
  * for one hour genuinely is two container-hours - which is exactly what a
@@ -15,7 +16,13 @@
  * since it merged concurrent runs that shared one container.
  */
 
-import { containerHoursWindowStart, HOURS_BUCKET_SPAN, type HoursBucket } from '@hezo/shared';
+import {
+	containerHoursWindow,
+	containerHoursWindowStart,
+	HOURS_BUCKET_SPAN,
+	type HoursBucket,
+	previousContainerHoursWindowStart,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { pinnedSetting } from '../lib/system-meta';
 
@@ -80,12 +87,29 @@ export interface ContainerHoursProjectBucket extends ContainerHoursBucket {
 export interface ContainerHoursTotals {
 	today_seconds: number;
 	week_seconds: number;
-	month_seconds: number;
-	month_chat_seconds: number;
-	prev_month_seconds: number;
+	/**
+	 * So far this container-hours window - the figure the cap is enforced
+	 * against.
+	 *
+	 * **Not a month, and named so it cannot be read as one.** A deployer may
+	 * anchor the window to a billing day, and a column called `month_seconds`
+	 * against a cap measured over an anchored window is a meter that disagrees
+	 * with the gate beside it: anchored on the 20th, a tenant was refused a
+	 * container while the bar read a third full.
+	 */
+	window_seconds: number;
+	window_chat_seconds: number;
+	/** The window before this one, whole, so the page can say which way it went. */
+	prev_window_seconds: number;
 	/** Stretches still open right now - containers currently accruing. */
 	open_intervals: number;
+	/** When this window opened and when it ends, so a reader can name the period. */
+	window_start: string;
+	window_end: string;
 }
+
+/** What the query yields: the sums alone, before the bounds are attached. */
+type WindowedTotals = Omit<ContainerHoursTotals, 'window_start' | 'window_end'>;
 
 /**
  * The bucket grid, as a CTE.
@@ -182,37 +206,51 @@ export async function containerHoursTotals(
 	db: Db,
 	projectId: string | null,
 ): Promise<ContainerHoursTotals> {
-	const scope = projectId === null ? '' : 'AND e.project_id = $1';
+	// **The same bounds the cap is enforced on**, from the one clamped helper, so
+	// the meter and the gate can never name different periods. Computed here
+	// rather than written into the SQL because the clamp - an anchor on the 31st,
+	// in a month that has no 31st - is arithmetic `date_trunc` cannot express.
+	const now = new Date();
+	const anchor = pinnedSetting('containerHoursAnchorDay');
+	const { start, end } = containerHoursWindow(anchor, now);
+	const prevStart = previousContainerHoursWindowStart(anchor, now);
+
+	const scope = projectId === null ? '' : 'AND e.project_id = $3';
 	const day = `date_trunc('day', now() AT TIME ZONE 'UTC')`;
 	const week = `date_trunc('week', now() AT TIME ZONE 'UTC')`;
-	const month = `date_trunc('month', now() AT TIME ZONE 'UTC')`;
-	const prevMonth = `(${month} - interval '1 month')`;
-	const res = await db.query<ContainerHoursTotals>(
+	const from = '$1::timestamptz';
+	const prevFrom = '$2::timestamptz';
+	const params: unknown[] = [start.toISOString(), prevStart.toISOString()];
+	if (projectId !== null) params.push(projectId);
+
+	const res = await db.query<WindowedTotals>(
 		`SELECT
 		   COALESCE(SUM(${clippedSeconds('e', day, 'now()')}), 0)::int   AS today_seconds,
 		   COALESCE(SUM(${clippedSeconds('e', week, 'now()')}), 0)::int  AS week_seconds,
-		   COALESCE(SUM(${clippedSeconds('e', month, 'now()')}), 0)::int AS month_seconds,
-		   COALESCE(SUM(${clippedSeconds('e', month, 'now()')})
-		     FILTER (WHERE e.reserved_for_chat), 0)::int                 AS month_chat_seconds,
-		   COALESCE(SUM(${clippedSeconds('e', prevMonth, month)}), 0)::int AS prev_month_seconds,
+		   COALESCE(SUM(${clippedSeconds('e', from, 'now()')}), 0)::int  AS window_seconds,
+		   COALESCE(SUM(${clippedSeconds('e', from, 'now()')})
+		     FILTER (WHERE e.reserved_for_chat), 0)::int                 AS window_chat_seconds,
+		   COALESCE(SUM(${clippedSeconds('e', prevFrom, from)}), 0)::int AS prev_window_seconds,
 		   count(*) FILTER (WHERE e.ended_at IS NULL)::int              AS open_intervals
 		 FROM container_uptime_entries e
 		 -- Bounded by the widest window any column above reads, so the scan stays
 		 -- on the index range rather than the whole table as the ledger grows.
-		 WHERE ${overlapsWindow('e', prevMonth, 'now()')}
+		 WHERE ${overlapsWindow('e', prevFrom, 'now()')}
 		   ${scope}`,
-		projectId === null ? [] : [projectId],
+		params,
 	);
-	return (
-		res.rows[0] ?? {
-			today_seconds: 0,
-			week_seconds: 0,
-			month_seconds: 0,
-			month_chat_seconds: 0,
-			prev_month_seconds: 0,
-			open_intervals: 0,
-		}
-	);
+
+	const row: WindowedTotals = res.rows[0] ?? {
+		today_seconds: 0,
+		week_seconds: 0,
+		window_seconds: 0,
+		window_chat_seconds: 0,
+		prev_window_seconds: 0,
+		open_intervals: 0,
+	};
+	// The bounds are the caller's answer as much as the sums are: a page that adds
+	// a month to the start would disagree with the gate in every short month.
+	return { ...row, window_start: start.toISOString(), window_end: end.toISOString() };
 }
 
 /**

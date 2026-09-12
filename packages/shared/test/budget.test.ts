@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
 	centsToDollars,
+	containerHoursWindow,
 	containerHoursWindowStart,
 	dollarsToCents,
 	minMonthlyCents,
 	minWeeklyCents,
 	normalizeBudgetWindowsUp,
+	previousContainerHoursWindowStart,
 	validateBudgetWindows,
 } from '../src/budget';
 
@@ -184,5 +186,71 @@ describe('containerHoursWindowStart', () => {
 				expect(containerHoursWindowStart(day, when).getTime()).toBeLessThanOrEqual(when.getTime());
 			}
 		}
+	});
+});
+
+/**
+ * The two bounds a reader needs, and the one before them.
+ *
+ * Both are built on the clamped start rather than by adding a month to
+ * something, which is the arithmetic that walks an anniversary backwards a day
+ * at a time through every short month.
+ */
+describe('containerHoursWindow', () => {
+	const at = (iso: string) => new Date(iso);
+
+	it('runs from the anchor to the next occurrence of it', () => {
+		const { start, end } = containerHoursWindow(20, at('2026-09-25T00:00:00Z'));
+		expect(start.toISOString()).toBe('2026-09-20T00:00:00.000Z');
+		expect(end.toISOString()).toBe('2026-10-20T00:00:00.000Z');
+	});
+
+	it('is the calendar month when nothing is anchored', () => {
+		const { start, end } = containerHoursWindow(undefined, at('2026-09-20T13:00:00Z'));
+		expect(start.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+		expect(end.toISOString()).toBe('2026-10-01T00:00:00.000Z');
+	});
+
+	// **The clamp, on the far end too.** A window opened on the 31st of January
+	// ends on the 28th of February, and the one after it opens on the 31st of
+	// March - never the 28th for ever after.
+	it('clamps the end into a month too short to hold the anchor', () => {
+		const january = containerHoursWindow(31, at('2026-01-31T06:00:00Z'));
+		expect(january.start.toISOString()).toBe('2026-01-31T00:00:00.000Z');
+		expect(january.end.toISOString()).toBe('2026-02-28T00:00:00.000Z');
+
+		// And the anniversary comes back, rather than staying where it was clamped.
+		expect(containerHoursWindow(31, at('2026-03-31T06:00:00Z')).start.toISOString()).toBe(
+			'2026-03-31T00:00:00.000Z',
+		);
+	});
+
+	it('ends where the next window starts, so no instant belongs to neither', () => {
+		const { end } = containerHoursWindow(20, at('2026-09-25T00:00:00Z'));
+		expect(containerHoursWindowStart(20, end).toISOString()).toBe(end.toISOString());
+	});
+});
+
+describe('previousContainerHoursWindowStart', () => {
+	const at = (iso: string) => new Date(iso);
+
+	it('is the window the instant before this one belongs to', () => {
+		expect(previousContainerHoursWindowStart(20, at('2026-09-25T00:00:00Z')).toISOString()).toBe(
+			'2026-08-20T00:00:00.000Z',
+		);
+	});
+
+	it('steps back a calendar month when nothing is anchored', () => {
+		expect(
+			previousContainerHoursWindowStart(undefined, at('2026-09-20T13:00:00Z')).toISOString(),
+		).toBe('2026-08-01T00:00:00.000Z');
+	});
+
+	// Stepping back from a clamped window lands on the anchor's own day, not on
+	// the day the clamp moved it to.
+	it('steps back out of a clamped window onto the anchor itself', () => {
+		expect(previousContainerHoursWindowStart(31, at('2026-02-28T12:00:00Z')).toISOString()).toBe(
+			'2026-01-31T00:00:00.000Z',
+		);
 	});
 });

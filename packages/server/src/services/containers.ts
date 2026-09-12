@@ -9,6 +9,7 @@ import {
 	ContainerStatus,
 	ContainerUptimeEndReason,
 	HeartbeatRunStatus,
+	PARKED_HOLDING_NOTHING,
 	TaskPriority,
 	TEST_CONTAINER_LABEL_KEY,
 	TEST_CONTAINER_LABEL_VALUE,
@@ -1902,8 +1903,9 @@ export async function stopContainerGracefully(
  * candidate scan and its under-lock recheck. Evaluated activity-side so an idle
  * instance's cost tracks activity inside the window, not table history. A
  * project is busy when it has: an active (queued/running) run, except one parked
- * waiting for container capacity — that run holds no container and is waiting on
- * the very reclaim this scan feeds, so counting it busy deadlocks it, exactly as
+ * holding no container at all — waiting for container capacity, or waiting for the
+ * hours allowance — since such a run is waiting on the very reclaim this scan
+ * feeds, so counting it busy deadlocks it, exactly as
  * capacity-skipped wakeups are excluded below; a run finished
  * inside the idle window (idx_runs_finished); a queued wakeup that could
  * actually dispatch — capacity-skipped wakeups deliberately do NOT hold a
@@ -1914,12 +1916,29 @@ export async function stopContainerGracefully(
  * `$1` is the idle window in minutes everywhere.
  */
 const UUID_RE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+/**
+ * The park reasons that hold no container, as a SQL array literal.
+ *
+ * **Built from the shared set, never spelled out here.** This predicate and the
+ * enum have to agree, and a member added to one and forgotten in the other
+ * deadlocks the run it describes rather than failing. The values are our own
+ * constants, never input.
+ *
+ * **The NULL arm is not optional.** An ordinary queued run carries no reason at
+ * all, and `NULL <> ALL (...)` is NULL rather than true - so without the explicit
+ * `IS NULL` test every ordinary queued run would drop out of the busy set and
+ * have its project's containers reclaimed underneath it. The single-value form
+ * this replaced got that for free from `IS DISTINCT FROM`; the set form does not.
+ */
+const PARKED_HOLDING_NOTHING_SQL = `ARRAY[${PARKED_HOLDING_NOTHING.map((reason: string) => `'${reason}'`).join(', ')}]`;
 const BUSY_PROJECTS_SQL = `
 	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
 	 JOIN tasks t ON t.id = hr.task_id
 	 WHERE (hr.status = 'running'
 	     OR (hr.status = 'queued'
-	         AND hr.queued_reason IS DISTINCT FROM '${CAPACITY_PARK_QUEUED_REASON}'))
+	         AND (hr.queued_reason IS NULL
+	              OR hr.queued_reason <> ALL (${PARKED_HOLDING_NOTHING_SQL}))))
 	UNION
 	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
 	 JOIN tasks t ON t.id = hr.task_id
