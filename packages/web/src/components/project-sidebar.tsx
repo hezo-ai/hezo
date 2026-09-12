@@ -1,26 +1,26 @@
-import { AgentAdminStatus } from '@hezo/shared';
-import { Link, useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, ChevronsLeft, Globe, Info } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { AlertTriangle, ChevronsLeft, Info, Users } from 'lucide-react';
 import { useState } from 'react';
+import { useLaunchChat } from '../contexts/chat-launch-context';
 import { useActiveProject } from '../hooks/use-active-project';
-import { useAgents } from '../hooks/use-agents';
+import {
+	type ProjectChatGroupSummary,
+	type ProjectChatRoomSummary,
+	useProjectChatRooms,
+} from '../hooks/use-chat';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { useI18n } from '../lib/i18n';
-import { agentDisplayName } from './agent-identity-tooltip';
-import { agentPageParams } from './agent-link';
-import { AgentStatusLabel } from './agent-status-label';
 import { CreateTaskDialog } from './create-task-dialog';
-import { HireAgentChooserDialog } from './hire-agent-chooser-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { Tooltip } from './ui/tooltip';
 
 /**
  * The project menu: the persistent panel shown beside the project rail whenever
  * a project is active. Dashboard leads, then Inbox; the project's pages
- * follow; the backing team's agents close it out under a Team section. The team
- * is presented as the project's own — there is no separate team-level view.
+ * follow; the chat launcher cards close it out. The roster lives on the
+ * Team & Budget page's Team tab - there is no separate team-level view.
  */
 export function ProjectSidebar({
 	onCollapse,
@@ -31,7 +31,6 @@ export function ProjectSidebar({
 } = {}) {
 	const { t } = useI18n();
 	const active = useActiveProject();
-	const navigate = useNavigate();
 	// The shell passes an explicit slug so the menu can fall back to HQ on a
 	// non-project route (e.g. /home before the first project is created); on a
 	// project route it passes the active slug, so the two agree.
@@ -39,9 +38,10 @@ export function ProjectSidebar({
 	const project = useProjectMeta(projectId);
 	const health = useContainerHealth(project);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
-	const { data: agents } = useAgents(projectId);
+	// The project's DM launcher cards. HQ answers with an empty list (its chat
+	// surface is the CEO stream behind the header monogram), so no gate needed.
+	const { rooms: chatRooms, groups: chatGroups } = useProjectChatRooms(projectId || null, true);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
-	const [hireOpen, setHireOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
 	// project index payload (the same source as open_task_count) rather than a separate per-page
 	// goals fetch — the dot shows only once the project has loaded and reports zero active goals.
@@ -57,14 +57,6 @@ export function ProjectSidebar({
 	// run needs one, so a spinner here would be on more often than off and would
 	// mark as noteworthy the most ordinary thing the system does.
 	const containerFailed = health?.kind === 'error';
-
-	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
-	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
-		new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-	// Own roster leads; HQ agents (virtual members) trail with a global marker and
-	// link to their canonical page in the HQ project.
-	const ownAgents = enabledAgents.filter((a) => !a.is_instance).sort(byCreatedAt);
-	const instanceAgents = enabledAgents.filter((a) => a.is_instance).sort(byCreatedAt);
 
 	// Container: top-level on HQ (which has no Settings page to nest under), but a
 	// sub-item of Settings on a normal project — see below.
@@ -89,17 +81,6 @@ export function ProjectSidebar({
 				)}
 			</span>
 		),
-	};
-	// Activity (what happened on the project, and the hours the team spent) is a
-	// top-level page on every project type, last in the list. Nested under
-	// Settings it only appeared once Settings was the active route, so it was
-	// invisible from every other page — and it is a surface the team reads, not
-	// configuration set once.
-	const activityPage = {
-		to: '/projects/$projectId/activity',
-		params: projectParams,
-		label: t('nav.activity'),
-		testId: 'project-sidebar-activity',
 	};
 	// Git (GitHub today; GitLab/others later) discloses under Settings on a
 	// normal project, like Container. HQ has no Git page.
@@ -176,8 +157,8 @@ export function ProjectSidebar({
 			},
 		},
 		// HQ (internal) exposes Documents (the chatbox memory doc) and Assets (where
-		// the CEO saves files it produces for the operator in chat); Budget and
-		// Settings stay hidden below.
+		// the CEO saves files it produces for the operator in chat); its Team &
+		// Budget link is added below, and only Settings stays hidden.
 		{
 			to: '/projects/$projectId/documents',
 			params: projectParams,
@@ -188,14 +169,16 @@ export function ProjectSidebar({
 			params: projectParams,
 			label: t('nav.assets'),
 		},
+		// Team & Budget replaces the old Budget entry and the Team link section:
+		// the roster now lives on that page's Team tab. The link lands on Team.
 		...(isInternal
-			? // HQ has no Spend and no Settings, but it does hold the assistant chat's
-				// container - which is metered like any other - so its Budget entry goes
-				// straight to Hours. Container stays at the top level, after Connectors
-				// and Skills, with Activity last as everywhere else.
+			? // HQ has no Settings, but it does hold the CEO/Coach singletons and
+				// the instance-scoped Hours allowance on its Budget page. Container
+				// stays at the top level, after Connectors and Skills.
 				[
 					{
-						to: '/projects/$projectId/budget/hours' as const,
+						to: '/projects/$projectId/budget/team' as const,
+						matchTo: '/projects/$projectId/budget',
 						params: projectParams,
 						label: t('nav.budget'),
 						testId: 'project-sidebar-budget',
@@ -203,11 +186,11 @@ export function ProjectSidebar({
 					connectorsPage,
 					skillsPage,
 					containerPage,
-					activityPage,
 				]
 			: [
 					{
-						to: '/projects/$projectId/budget',
+						to: '/projects/$projectId/budget/team' as const,
+						matchTo: '/projects/$projectId/budget',
 						params: projectParams,
 						label: t('nav.budget'),
 						testId: 'project-sidebar-budget',
@@ -223,10 +206,11 @@ export function ProjectSidebar({
 						// (or one of them) is the active route.
 						subItems: [gitPage, customPromptPage, containerPage],
 					},
-					activityPage,
 				]),
 	];
 
+	// No Team section: the roster lives on the Team & Budget page's Team tab,
+	// and the freed space below the links hosts the chat launcher cards.
 	const sections: SidebarNavSection[] = [
 		{
 			items: [
@@ -242,50 +226,6 @@ export function ProjectSidebar({
 			],
 		},
 		{ items: projectPages },
-		{
-			title: 'Team',
-			titleTo: '/projects/$projectId/agents',
-			titleParams: projectParams,
-			// HQ holds only the CEO and Coach singletons and is not staffed, so it gets
-			// no add affordance (the team page hides its button on the same rule).
-			onAdd: isInternal ? undefined : () => setHireOpen(true),
-			// Deliberately not the team page's "Hire agent": this is a `+` chip whose
-			// tooltip is its only label, and the two must stay distinguishable by
-			// accessible name (the hire form's submit button is "Hire agent" too).
-			addLabel: t('agents.hire.addTooltip'),
-			items: [
-				...ownAgents.map((agent) => ({
-					to: '/projects/$projectId/agents/$agentId',
-					params: { projectId, agentId: agent.slug },
-					label: (
-						<AgentStatusLabel
-							variant="sidebar"
-							name={agentDisplayName(agent)}
-							agent={agent}
-							runtimeStatus={agent.runtime_status}
-						/>
-					),
-				})),
-				...instanceAgents.map((agent) => ({
-					to: '/projects/$projectId/agents/$agentId',
-					params: agentPageParams(projectId, agent.slug, agent.is_instance),
-					label: (
-						<span className="flex flex-1 items-center gap-1.5 min-w-0">
-							<Globe
-								className="w-3 h-3 shrink-0 text-text-3"
-								aria-label="Global agent - works across all projects"
-							/>
-							<AgentStatusLabel
-								variant="sidebar"
-								name={agentDisplayName(agent)}
-								agent={agent}
-								runtimeStatus={agent.runtime_status}
-							/>
-						</span>
-					),
-				})),
-			],
-		},
 	];
 
 	return (
@@ -340,15 +280,132 @@ export function ProjectSidebar({
 			</div>
 			<div className="flex-1 min-h-0 overflow-y-auto">
 				<SidebarNav sections={sections} />
+				{chatRooms.length > 0 && (
+					<ProjectChatCards projectId={projectId} rooms={chatRooms} groups={chatGroups} />
+				)}
 			</div>
 			<CreateTaskDialog
 				projectId={projectId}
 				open={createTaskOpen}
 				onOpenChange={setCreateTaskOpen}
 			/>
-			{!isInternal && (
-				<HireAgentChooserDialog projectId={projectId} open={hireOpen} onOpenChange={setHireOpen} />
-			)}
+		</div>
+	);
+}
+
+/**
+ * The project menu's chat launcher cards: the group rooms (General first),
+ * then one bordered card per roster agent - unread first within each half. An
+ * unread card grows a one-line preview and a stronger border; clicking a card
+ * opens the dock on that room (no navigation - chat lives in rooms, not
+ * routes).
+ */
+function ProjectChatCards({
+	projectId,
+	rooms,
+	groups,
+}: {
+	projectId: string;
+	rooms: ProjectChatRoomSummary[];
+	groups: readonly ProjectChatGroupSummary[];
+}) {
+	const { t } = useI18n();
+	const launchChat = useLaunchChat();
+	// Unread first, then server order (roster order, which is stable and matches
+	// the Team section above).
+	const sorted = [...rooms.filter((r) => r.unread), ...rooms.filter((r) => !r.unread)];
+	const sortedGroups = [...groups.filter((g) => g.unread), ...groups.filter((g) => !g.unread)];
+	return (
+		<div className="px-2.5 pt-2.5 pb-1" data-testid="project-sidebar-chat">
+			<div className="uppercase text-[11px] text-text-3 font-medium tracking-wide pb-1">
+				{t('chat.section.title')}
+			</div>
+			<div className="flex flex-col gap-1.5">
+				{sortedGroups.map((group) => {
+					const title = group.title?.trim() || t('chat.group.untitled');
+					return (
+						<button
+							key={group.id}
+							type="button"
+							data-testid={`chat-card-group-${group.id}`}
+							onClick={() =>
+								launchChat({
+									room: {
+										kind: 'group',
+										projectSlug: projectId,
+										conversationId: group.id,
+										title,
+										isGeneral: group.is_general,
+									},
+									draft: '',
+								})
+							}
+							className={`w-full rounded-md border px-2 py-1.5 text-left transition-colors hover:bg-surface-2 ${
+								group.unread ? 'border-border-strong' : 'border-border'
+							}`}
+						>
+							<span className="flex min-w-0 items-center gap-1.5">
+								<Users className="h-3 w-3 shrink-0 text-text-3" aria-hidden="true" />
+								<span className="truncate text-[12px] font-medium text-text-1">{title}</span>
+								{group.unread && (
+									<span
+										className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-info"
+										data-testid={`chat-card-group-unread-${group.id}`}
+										aria-label={t('chat.card.unread')}
+										role="img"
+									/>
+								)}
+							</span>
+							{group.unread && group.last_message_preview && (
+								<span className="mt-0.5 block truncate text-[11px] text-text-2">
+									{group.last_message_preview}
+								</span>
+							)}
+						</button>
+					);
+				})}
+				{sorted.map((room) => (
+					<button
+						key={room.member_id}
+						type="button"
+						data-testid={`chat-card-${room.slug}`}
+						onClick={() =>
+							launchChat({
+								room: {
+									kind: 'agent',
+									projectSlug: projectId,
+									agentSlug: room.slug,
+									title: room.title,
+								},
+								draft: '',
+							})
+						}
+						className={`w-full rounded-md border px-2 py-1.5 text-left transition-colors hover:bg-surface-2 ${
+							room.unread ? 'border-border-strong' : 'border-border'
+						}`}
+					>
+						<span className="flex min-w-0 items-center gap-1.5">
+							<span className="truncate text-[12px] font-medium text-text-1">
+								{room.display_name}
+							</span>
+							<span className="min-w-0 truncate text-[11px] text-text-3">{room.title}</span>
+							{room.unread && (
+								<span
+									className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-info"
+									data-testid={`chat-card-unread-${room.slug}`}
+									aria-label={t('chat.card.unread')}
+									role="img"
+								/>
+							)}
+						</span>
+						{room.unread && room.last_message_preview && (
+							<span className="mt-0.5 block truncate text-[11px] text-text-2">
+								{room.last_message_preview}
+							</span>
+						)}
+					</button>
+				))}
+			</div>
 		</div>
 	);
 }

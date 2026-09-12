@@ -169,12 +169,6 @@ drains once running. Nothing here starts a pass on its own.
 | `logCompaction.maxPerTick` | `500` | Runs compacted per tick before yielding to the next. |
 | `logCompaction.preservedBytes` | `12288` | Trailing bytes of each old run's log kept - the slice holding the end-of-run summary and the token/cost line. Everything before it is discarded. |
 
-### Live chat
-
-| Setting | Default | Description |
-|---|---|---|
-| `chat.healthIntervalMs` | `10000` | How often a live chat session verifies its container is still healthy. |
-
 ### Settings fixed by the deployer
 
 Where someone other than the person using an instance decides its limits - a
@@ -188,7 +182,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 |---|---|---|
 | `policy.managedBy` | - | Who fixed these settings, as shown to the operator. Required when `policy` is set. |
 | `policy.manageUrl` | - | Where to change them. Must be `https:`. Omit it to lock the settings with no link. |
-| `policy.pinned.maxContainerMemoryGb` | - | Fixes the instance-wide container memory budget. |
+| `policy.pinned.maxContainerMemoryGb` | - | Fixes the global container memory budget. |
 | `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. |
 | `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |

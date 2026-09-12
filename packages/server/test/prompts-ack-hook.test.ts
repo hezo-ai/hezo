@@ -26,9 +26,10 @@ describe('prompt-bearing classification', () => {
 				'skills/code-review.md',
 				'marketplace/teams/investment.json',
 				'packages/server/src/services/template-resolver.ts',
+				'packages/server/src/services/chat-session-manager.ts',
 				'packages/server/src/services/project-intake.ts',
 			]),
-		).toHaveLength(6);
+		).toHaveLength(7);
 	});
 
 	it('ignores everything else, including tests and docs', () => {

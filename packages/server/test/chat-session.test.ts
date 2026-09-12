@@ -14,15 +14,22 @@ import {
 } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { decrypt, encrypt } from '../src/crypto/encryption';
-import { signChatSessionJwt, verifyToken } from '../src/middleware/auth';
+import { setMonthlyContainerHours } from '../src/lib/system-meta';
+import {
+	canAuthAccessTeam,
+	signChatSessionJwt,
+	verifyToken,
+	WORKER_SESSION_JWT_TTL_SECONDS,
+} from '../src/middleware/auth';
 import { acquireCredentialLock } from '../src/services/agent-runner';
 import { type CeoSessionDeps, ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { PricingService } from '../src/services/pricing/pricing-service';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker, seedProjectContainer } from './helpers/app';
+import { createStubDocker, seedCeoWebConversation, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -64,28 +71,35 @@ interface ChatDocker {
  * (mirrors a turn interrupted by a newer message). Captures each turn's prompt
  * by reading the host-mapped prompt file at exec time.
  */
-function makeChatDocker(dataDir: string, projectId: string): ChatDocker {
+function makeChatDocker(dataDir: string, projectId: string, teamId = DEFAULT_TEAM_ID): ChatDocker {
 	const prompts: string[] = [];
 	const scenario = { mode: 'reply' as 'reply' | 'block', entered: false };
+	// Only prompt-bearing execs act out the scenario. Every turn now runs its own
+	// aux execs (run-user probe, chowns, tunnel setup) through the same stub, and
+	// blocking those in `block` mode would wedge the turn before its exec.
+	const kinds = new Map<string, 'prompt' | 'aux'>();
+	let seq = 0;
 	const toHostPath = (containerPath: string) =>
-		join(
-			getWorkspacePath(dataDir, DEFAULT_TEAM_ID, projectId),
-			containerPath.replace(/^\/workspace\//, ''),
-		);
+		join(getWorkspacePath(dataDir, teamId, projectId), containerPath.replace(/^\/workspace\//, ''));
 
 	const docker = createStubDocker({
 		execCreate: async (_id: string, config: { Env?: string[] }) => {
+			const execId = `exec-${++seq}`;
 			const promptEntry = (config.Env ?? []).find((e) => e.startsWith('HEZO_PROMPT_FILE='));
 			if (promptEntry) {
 				const containerPath = promptEntry.slice('HEZO_PROMPT_FILE='.length);
 				prompts.push(readFileSync(toHostPath(containerPath), 'utf8'));
+				kinds.set(execId, 'prompt');
+			} else {
+				kinds.set(execId, 'aux');
 			}
-			return 'exec-1';
+			return execId;
 		},
 		execStart: async (
-			_execId: string,
+			execId: string,
 			opts: { signal?: AbortSignal; onChunk?: (c: ExecLogChunk) => void | Promise<void> },
 		) => {
+			if (kinds.get(execId) !== 'prompt') return { stdout: '', stderr: '' };
 			scenario.entered = true;
 			const onChunk = opts.onChunk ?? (() => undefined);
 			if (scenario.mode === 'reply') {
@@ -115,8 +129,13 @@ function makeTitleRoutingDocker(
 	dataDir: string,
 	projectId: string,
 	titleText: string,
-): { docker: ReturnType<typeof createStubDocker>; prompts: string[] } {
+): {
+	docker: ReturnType<typeof createStubDocker>;
+	prompts: string[];
+	flags: { replyEntered: boolean };
+} {
 	const prompts: string[] = [];
+	const flags = { replyEntered: false };
 	const toHostPath = (containerPath: string) =>
 		join(
 			getWorkspacePath(dataDir, DEFAULT_TEAM_ID, projectId),
@@ -125,7 +144,10 @@ function makeTitleRoutingDocker(
 	const docker = createStubDocker({
 		execCreate: async (_id: string, config: { Env?: string[] }) => {
 			const promptEntry = (config.Env ?? []).find((e) => e.startsWith('HEZO_PROMPT_FILE='));
-			if (!promptEntry) return 'exec-reply';
+			// Aux execs (run-user probe, chowns) return immediately - each turn runs
+			// its own through this stub, and blocking one wedges the turn before its
+			// exec.
+			if (!promptEntry) return 'exec-aux';
 			const prompt = readFileSync(
 				toHostPath(promptEntry.slice('HEZO_PROMPT_FILE='.length)),
 				'utf8',
@@ -139,11 +161,13 @@ function makeTitleRoutingDocker(
 			opts: { signal?: AbortSignal; onChunk?: (c: ExecLogChunk) => void | Promise<void> },
 		) => {
 			const onChunk = opts.onChunk ?? (() => undefined);
+			if (execId === 'exec-aux') return { stdout: '', stderr: '' };
 			if (execId === 'exec-title') {
 				await onChunk({ stream: 'stdout', text: assistantText(titleText) });
 				return { stdout: '', stderr: '' };
 			}
 			// Reply: emit a partial, then block until the turn is interrupted/torn down.
+			flags.replyEntered = true;
 			await onChunk({ stream: 'stdout', text: assistantText('working on it') });
 			await new Promise<void>((_resolve, reject) => {
 				opts.signal?.addEventListener('abort', () =>
@@ -153,14 +177,29 @@ function makeTitleRoutingDocker(
 			return { stdout: '', stderr: '' };
 		},
 	});
-	return { docker, prompts };
+	return { docker, prompts, flags };
 }
 
+/**
+ * Capture what an open chatbox receives: the global boundary-event room plus,
+ * lazily, each conversation's own room (deltas stream only there - the client
+ * joins a thread's room when it opens the thread). The lazy join keys off the
+ * conversationId on the first boundary event, mirroring the real client.
+ */
 function captureCeoRoom(wsManager: WebSocketManager): { events: Array<Record<string, unknown>> } {
 	const events: Array<Record<string, unknown>> = [];
+	const joined = new Set<string>();
 	const socket: WsSocket = {
 		data: { auth: { type: AuthType.Admin, isSuperuser: true }, rooms: new Set() },
-		send: (msg: string) => events.push(JSON.parse(msg)),
+		send: (msg: string) => {
+			const event = JSON.parse(msg) as Record<string, unknown>;
+			events.push(event);
+			const convoId = event.conversationId;
+			if (typeof convoId === 'string' && !joined.has(convoId)) {
+				joined.add(convoId);
+				wsManager.subscribe(socket, wsRoom.chatConversation(convoId));
+			}
+		},
 	};
 	wsManager.subscribe(socket, wsRoom.chat());
 	return { events };
@@ -225,6 +264,124 @@ describe('ChatSessionManager', () => {
 		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		projectId = await seedProviderAndContainer(ctx);
+	});
+
+	const ceoId = async (): Promise<string> => {
+		const r = await ctx.db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+			 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+			[DEFAULT_TEAM_ID],
+		);
+		return r.rows[0].id;
+	};
+
+	test('refuses a turn over budget: the message stands, a system row says why, no exec runs', async () => {
+		// Chat is metered, so the pre-turn gate mirrors a run's. The operator's
+		// message is persisted before the gate - a refusal must never eat it.
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+		const ceo = await ceoId();
+		await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 1 WHERE id = $1`, [ceo]);
+		await ctx.db.query(
+			`INSERT INTO cost_entries (member_id, amount_cents, description) VALUES ($1, 5, 'prior')`,
+			[ceo],
+		);
+		try {
+			const res = await manager.sendTurn({ text: 'hello?' });
+			const rows = await ctx.db.query<{
+				id: string;
+				role: string;
+				system_kind: string | null;
+				content: string;
+			}>(
+				`SELECT id, role::text AS role, system_kind, content FROM chat_messages
+				 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+				[res.conversationId],
+			);
+			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
+			expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+			expect(rows.rows[1].content).toContain('daily budget');
+			expect(res.assistantMessageId).toBe(rows.rows[1].id);
+			expect(chat.scenario.entered).toBe(false);
+		} finally {
+			await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 0 WHERE id = $1`, [ceo]);
+			await ctx.db.query(`DELETE FROM cost_entries WHERE member_id = $1`, [ceo]);
+			await manager.stop();
+		}
+	});
+
+	test('maps an exhausted hours allowance to the budget-exceeded row', async () => {
+		// Decision-level: an exhausted container-hours cap pauses the CEO chat too.
+		// No container to reuse and no project pointer to adopt, so the acquire
+		// must create - which is exactly what the spent allowance refuses.
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+		await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
+		await ctx.db.query(`UPDATE projects SET container_id = NULL WHERE id = $1`, [projectId]);
+		await setMonthlyContainerHours(ctx.db, 10);
+		await ctx.db.query(
+			`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+			 VALUES ('spent-chat-test', date_trunc('month', now() AT TIME ZONE 'UTC'),
+			         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '10 hours', 'docker')`,
+		);
+		try {
+			const res = await manager.sendTurn({ text: 'hello?' });
+			// The refusal happens in the background turn: the reply bubble fails and
+			// the budget-exceeded system row lands beside it.
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					`SELECT status::text AS status FROM chat_messages WHERE id = $1`,
+					[res.assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Failed;
+			});
+			const rows = await ctx.db.query<{ role: string; system_kind: string | null }>(
+				`SELECT role::text AS role, system_kind FROM chat_messages
+				 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+				[res.conversationId],
+			);
+			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'assistant', 'system']);
+			expect(rows.rows[2].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+		} finally {
+			await setMonthlyContainerHours(ctx.db, 0);
+			await ctx.db.query(
+				`DELETE FROM container_uptime_entries WHERE container_id = 'spent-chat-test'`,
+			);
+			await manager.stop();
+		}
+	});
+
+	test('bills a completed turn to cost_entries under the CEO and HQ', async () => {
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const pricing = { costCents: () => 3 } as unknown as PricingService;
+		const { manager } = makeManager(ctx, chat.docker, { pricing });
+		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				`SELECT status::text AS status FROM chat_messages WHERE id = $1`,
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+		await poll(async () => {
+			const r = await ctx.db.query<{ n: number }>(
+				`SELECT COUNT(*)::int AS n FROM cost_entries WHERE description = 'Chat turn'`,
+			);
+			return r.rows[0].n === 1;
+		});
+		const entry = await ctx.db.query<{
+			member_id: string;
+			project_id: string | null;
+			task_id: string | null;
+			amount_cents: number;
+		}>(`SELECT member_id, project_id, task_id, amount_cents FROM cost_entries
+		    WHERE description = 'Chat turn'`);
+		expect(entry.rows[0].member_id).toBe(await ceoId());
+		expect(entry.rows[0].project_id).toBe(projectId);
+		expect(entry.rows[0].task_id).toBeNull();
+		expect(entry.rows[0].amount_cents).toBe(3);
+		await manager.stop();
+		await ctx.db.query(`DELETE FROM cost_entries`);
 	});
 
 	test('points a file-delivery runtime at the turn its prompt was written for', async () => {
@@ -337,8 +494,11 @@ describe('ChatSessionManager', () => {
 			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
+		// A subscriber of both rooms receives each boundary event once per room;
+		// the client handles them idempotently, so distinctness is the contract.
 		const activity = captured.events.filter((e) => e.type === 'chat_message_tool_activity');
-		expect(activity.length).toBe(1);
+		expect(activity.length).toBeGreaterThanOrEqual(1);
+		expect(new Set(activity.map((a) => `${a.messageId}:${a.tool}`)).size).toBe(1);
 		expect(activity[0].tool).toBe('mcp__hezo__list_agents');
 		expect(activity[0].messageId).toBe(assistantMessageId);
 
@@ -587,14 +747,12 @@ describe('ChatSessionManager', () => {
 			expect(execScopeIds).toContain(kill.value);
 		}
 
-		// Stopping the manager tears the session down and reaps session-wide: every
-		// exec of this session carried HEZO_HEARTBEAT_RUN_ID=<sessionId>.
+		// Nothing is held between turns, so stop() has no session-wide teardown to
+		// do: every reap this episode fired was scoped to one exec, never to the
+		// shared session id all of them carried.
 		await manager.stop();
-		expect(kills).toContainEqual({
-			containerId: 'hq-container',
-			name: 'HEZO_HEARTBEAT_RUN_ID',
-			value: sessionId,
-		});
+		expect(kills.every((k) => k.name === 'HEZO_EXEC_SCOPE_ID')).toBe(true);
+		expect(kills.every((k) => k.value !== sessionId)).toBe(true);
 	});
 
 	test('ensureSession is idempotent (one live session per CEO)', async () => {
@@ -679,14 +837,15 @@ describe('ChatSessionManager', () => {
 		expect(afterMove.length).toBeGreaterThan(0);
 		expect(afterMove.every((env) => env.includes(deepseekBaseUrl))).toBe(true);
 
-		// The old session was retired rather than mutated, so exactly one is live.
+		// Every turn resolves its provider fresh, so nothing had to be retired for
+		// the move to land: the same singleton session row serves both turns.
 		const sessions = await ctx.db.query<{ n: number }>(
 			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
 			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(sessions.rows[0].n).toBe(1);
 		const all = await ctx.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM chat_sessions`);
-		expect(all.rows[0].n).toBe(2);
+		expect(all.rows[0].n).toBe(1);
 
 		await manager.stop();
 	});
@@ -808,42 +967,34 @@ describe('ChatSessionManager', () => {
 		await manager.stop();
 	});
 
-	test('titles a new thread from the first message while the reply is still streaming', async () => {
-		// The reply exec blocks (never completes); only the parallel title exec returns.
-		// If titling still waited for the reply to settle, the thread would stay untitled.
-		const { docker } = makeTitleRoutingDocker(ctx.dataDir, projectId, 'Deploy Pipeline Setup');
-		const { manager, wsManager } = makeManager(ctx, docker);
-		const captured = captureCeoRoom(wsManager);
+	test('does not title while the reply streams, and skips titling an interrupted turn', async () => {
+		// Titling is post-reply upkeep in the turn's own held container now - one
+		// exec at a time per claim - so nothing can title while the reply exec is
+		// still running, and a turn that never completes never titles.
+		const { docker, flags } = makeTitleRoutingDocker(
+			ctx.dataDir,
+			projectId,
+			'Deploy Pipeline Setup',
+		);
+		const { manager } = makeManager(ctx, docker);
 
-		const { conversationId, assistantMessageId } = await manager.sendTurn({
+		const { conversationId } = await manager.sendTurn({
 			text: 'How do I set up the deploy pipeline?',
 		});
+		// The reply exec is running and blocked mid-turn.
+		await poll(async () => flags.replyEntered);
+		expect((await manager.getConversation(conversationId))?.title).toBeNull();
 
-		await poll(async () => {
-			const convo = await manager.getConversation(conversationId);
-			return convo?.title != null;
-		});
-		const convo = await manager.getConversation(conversationId);
-		expect(convo?.title).toBe('Deploy Pipeline Setup');
-		// The reply is still streaming when the title lands — titling ran in parallel.
-		const reply = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM chat_messages WHERE id = $1',
-			[assistantMessageId],
-		);
-		expect(reply.rows[0].status).toBe(ChatMessageStatus.Streaming);
-		expect(
-			captured.events.some(
-				(e) => e.type === 'chat_conversation_updated' && e.title === 'Deploy Pipeline Setup',
-			),
-		).toBe(true);
-
+		// stop() interrupts the turn; an interrupted turn does no upkeep, so the
+		// thread stays untitled for the next turn to name.
 		await manager.stop();
+		expect((await manager.getConversation(conversationId))?.title).toBeNull();
 	});
 
 	test('does not overwrite an existing thread title', async () => {
 		const { docker } = makeChatDocker(ctx.dataDir, projectId);
 		const { manager } = makeManager(ctx, docker);
-		const titled = await manager.createWebConversation('Roadmap planning');
+		const titled = await seedCeoWebConversation(ctx.db, 'Roadmap planning');
 
 		const { assistantMessageId } = await manager.sendTurn({
 			text: 'Hello',
@@ -869,6 +1020,179 @@ describe('ChatSessionManager', () => {
 	 * used to take no lock and keep no write-back, so a turn overlapping a task run
 	 * invalidated that run's token and dropped whatever the CLI left behind.
 	 */
+	describe('worker DM turns', () => {
+		let n = 0;
+		/** A project team with one enabled worker agent and a warm pool container. */
+		async function seedWorker(): Promise<{
+			teamId: string;
+			projectId: string;
+			memberId: string;
+			containerId: string;
+		}> {
+			n += 1;
+			const team = await ctx.db.query<{ id: string }>(
+				`INSERT INTO teams (name, slug) VALUES ($1, $1) RETURNING id`,
+				[`worker-co-${n}`],
+			);
+			const teamId = team.rows[0].id;
+			const project = await ctx.db.query<{ id: string }>(
+				`INSERT INTO projects (team_id, name, slug, task_prefix)
+				 VALUES ($1, $2, $2, $3) RETURNING id`,
+				[teamId, `storefront-${n}`, `ST${n}`],
+			);
+			const projectId = project.rows[0].id;
+			const member = await ctx.db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 VALUES ($1, 'agent', 'Dev') RETURNING id`,
+				[teamId],
+			);
+			const memberId = member.rows[0].id;
+			await ctx.db.query(
+				`INSERT INTO member_agents (id, title, slug) VALUES ($1, 'Developer', 'dev')`,
+				[memberId],
+			);
+			const containerId = `worker-container-${n}`;
+			await seedProjectContainer(ctx.db, projectId, containerId);
+			return { teamId, projectId, memberId, containerId };
+		}
+
+		test('runs a DM turn end to end in the worker’s own scope', async () => {
+			const w = await seedWorker();
+			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
+			const pricing = { costCents: () => 2 } as unknown as PricingService;
+			const { manager } = makeManager(ctx, chat.docker, { pricing });
+			const res = await manager.sendWorkerTurn({
+				memberId: w.memberId,
+				teamId: w.teamId,
+				projectId: w.projectId,
+				text: 'how is the storefront going?',
+			});
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					`SELECT status::text AS status FROM chat_messages WHERE id = $1`,
+					[res.assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+
+			// The conversation is the worker's own DM in its project, not an HQ thread.
+			const convo = await ctx.db.query<{
+				member_id: string;
+				team_id: string;
+				project_id: string;
+			}>(`SELECT member_id, team_id, project_id FROM chat_conversations WHERE id = $1`, [
+				res.conversationId,
+			]);
+			expect(convo.rows[0]).toEqual({
+				member_id: w.memberId,
+				team_id: w.teamId,
+				project_id: w.projectId,
+			});
+
+			// The reply is authored by the worker, and its prompt got the worker
+			// guide on the chat diet - not the CEO's briefing, not the 80 KB task-run
+			// shared instructions.
+			const author = await ctx.db.query<{ author_member_id: string }>(
+				`SELECT author_member_id FROM chat_messages WHERE id = $1`,
+				[res.assistantMessageId],
+			);
+			expect(author.rows[0].author_member_id).toBe(w.memberId);
+			const prompt = chat.prompts.find((p) => p.includes('in your own role'));
+			expect(prompt).toBeDefined();
+			expect(prompt).toContain('Chat thinks, tasks work');
+			expect(prompt).toContain('Shared Guidance (chat)');
+			expect(prompt).not.toContain('Reply to the latest operator message as the CEO.');
+
+			// The session row is the worker's, scoped to its team; the container went
+			// back to the pool when the turn ended (released, never pinned).
+			const session = await ctx.db.query<{ member_id: string; team_id: string; status: string }>(
+				`SELECT member_id, team_id, status::text AS status FROM chat_sessions
+				 WHERE member_id = $1`,
+				[w.memberId],
+			);
+			expect(session.rows[0]).toMatchObject({
+				member_id: w.memberId,
+				team_id: w.teamId,
+				status: ChatSessionStatus.Running,
+			});
+			await poll(async () => {
+				const r = await ctx.db.query<{ state: string }>(
+					`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
+					[w.containerId],
+				);
+				return r.rows[0]?.state === 'idle';
+			});
+
+			// The spend landed under the worker and its project.
+			const cost = await ctx.db.query<{ member_id: string; project_id: string }>(
+				`SELECT member_id, project_id FROM cost_entries WHERE description = 'Chat turn'`,
+			);
+			expect(cost.rows).toHaveLength(1);
+			expect(cost.rows[0]).toEqual({ member_id: w.memberId, project_id: w.projectId });
+
+			await manager.stop();
+			// stop() closes the worker session row so its JWTs stop validating.
+			const after = await ctx.db.query<{ status: string }>(
+				`SELECT status::text AS status FROM chat_sessions WHERE member_id = $1`,
+				[w.memberId],
+			);
+			expect(after.rows[0].status).toBe(ChatSessionStatus.Stopped);
+			await ctx.db.query(`DELETE FROM cost_entries`);
+		});
+
+		test('gates the turn on the worker’s own budget, not HQ’s', async () => {
+			const w = await seedWorker();
+			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
+			const { manager } = makeManager(ctx, chat.docker);
+			await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 1 WHERE id = $1`, [
+				w.memberId,
+			]);
+			await ctx.db.query(
+				`INSERT INTO cost_entries (member_id, amount_cents, description) VALUES ($1, 5, 'prior')`,
+				[w.memberId],
+			);
+			try {
+				const res = await manager.sendWorkerTurn({
+					memberId: w.memberId,
+					teamId: w.teamId,
+					projectId: w.projectId,
+					text: 'hello?',
+				});
+				const rows = await ctx.db.query<{ role: string; system_kind: string | null }>(
+					`SELECT role::text AS role, system_kind FROM chat_messages
+					 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+					[res.conversationId],
+				);
+				expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
+				expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+				expect(chat.scenario.entered).toBe(false);
+			} finally {
+				await ctx.db.query(`DELETE FROM cost_entries WHERE member_id = $1`, [w.memberId]);
+				await manager.stop();
+			}
+		});
+
+		test('refuses an explicit conversation belonging to someone else', async () => {
+			const w = await seedWorker();
+			const { manager } = makeManager(
+				ctx,
+				makeChatDocker(ctx.dataDir, w.projectId, w.teamId).docker,
+			);
+			// The CEO's default HQ thread is not this worker's to write into.
+			const foreign = await manager.getConversationId();
+			await expect(
+				manager.sendWorkerTurn({
+					memberId: w.memberId,
+					teamId: w.teamId,
+					projectId: w.projectId,
+					conversationId: foreign,
+					text: 'hi',
+				}),
+			).rejects.toThrow('conversation not found');
+			await manager.stop();
+		});
+	});
+
 	describe('credential rotation', () => {
 		const ROTATED = JSON.stringify({
 			tokens: {
@@ -1201,10 +1525,11 @@ describe('ChatSessionManager', () => {
 				return r.rows[0]?.status === ChatMessageStatus.Complete;
 			});
 			await parkedRun;
-			// Every chat exec (the session's own probe, the reply, the title) lands
-			// before the run that was queued first.
-			expect(order.at(-1)).toBe('run');
-			expect(order.filter((o) => o === 'chat').length).toBeGreaterThan(0);
+			// The reply lands before the run that was queued first - a person watching
+			// the chat outranks a parked run. Post-reply upkeep execs hold no such
+			// priority, so only the ordering of the first chat exec is the claim.
+			expect(order.indexOf('chat')).toBeGreaterThanOrEqual(0);
+			expect(order.indexOf('chat')).toBeLessThan(order.indexOf('run'));
 			await manager.stop();
 		});
 
@@ -1352,6 +1677,7 @@ describe('CEO session auth', () => {
 			DEFAULT_TEAM_ID,
 			sessionId,
 			project.rows[0].id,
+			{ crossProject: true, crossTeam: true },
 		);
 
 		const auth = await verifyToken(token, ctx.db, ctx.masterKeyManager);
@@ -1365,5 +1691,51 @@ describe('CEO session auth', () => {
 		await ctx.db.query(`UPDATE chat_sessions SET status = 'stopped' WHERE id = $1`, [sessionId]);
 		const denied = await verifyToken(token, ctx.db, ctx.masterKeyManager);
 		expect(denied).toBeNull();
+	});
+
+	test('a worker-scoped session token carries no cross-project or cross-team power', async () => {
+		// The claim matrix: worker/Captain chat sessions are bound to their own
+		// project team. verifyToken must derive the scope from the payload - it
+		// used to hardcode crossProject:true for every session principal, which
+		// would have handed each worker DM the CEO's reach.
+		const team = await ctx.db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Growth', 'growth-auth-test') RETURNING id`,
+		);
+		const teamId = team.rows[0].id;
+		const project = await ctx.db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Growth', 'growth-auth-test', 'GRW') RETURNING id`,
+			[teamId],
+		);
+		const member = await ctx.db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'Maya') RETURNING id`,
+			[teamId],
+		);
+		const session = await ctx.db.query<{ id: string }>(
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
+			 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
+			[member.rows[0].id, teamId, project.rows[0].id],
+		);
+		const token = await signChatSessionJwt(
+			ctx.masterKeyManager,
+			member.rows[0].id,
+			teamId,
+			session.rows[0].id,
+			project.rows[0].id,
+			{ crossProject: false, crossTeam: false, ttlSeconds: WORKER_SESSION_JWT_TTL_SECONDS },
+		);
+
+		const auth = await verifyToken(token, ctx.db, ctx.masterKeyManager);
+		expect(auth?.type).toBe(AuthType.Agent);
+		if (auth?.type !== AuthType.Agent) throw new Error('expected agent auth');
+		expect(auth.crossProject).toBe(false);
+		expect(auth.crossTeam).toBe(false);
+		expect(auth.teamId).toBe(teamId);
+		expect(auth.projectId).toBe(project.rows[0].id);
+
+		// The team gate honours the scope: its own team yes, HQ no.
+		expect(await canAuthAccessTeam(ctx.db, auth, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(ctx.db, auth, DEFAULT_TEAM_ID)).toBe(false);
 	});
 });

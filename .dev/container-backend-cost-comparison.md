@@ -71,6 +71,11 @@ budget to 12 is what makes the 4 GB decision viable at all.
 
 ### The CEO chat container sits outside the budget — and is billed
 
+*(Superseded: the pinned chat container and its `reserved_for_chat` exemption were
+since removed — chat turns now claim ordinary pool members inside the budget, with
+one container's worth of admission headroom reserved for the chat workload. The
+arithmetic below records the state this comparison was priced against.)*
+
 A pool member flagged `reserved_for_chat` is excluded from `usedMemoryGb`
 (`services/run-concurrency.ts:136-156, 170, 191`). The **automatic**
 default prices that reservation in by holding back one container's cap; an

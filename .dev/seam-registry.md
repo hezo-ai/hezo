@@ -44,6 +44,8 @@ rather than here, is how a codebase ends up with two of everything.
 | "What does a manual dispatch that did not start answer with?" | `DISPATCH_OUTCOMES` (`routes/queued-wakeups.ts`) server-side, `queuedDispatchMessageKey` (`packages/web/src/lib/manual-dispatch.ts`) for the sentence naming the wait - the two halves are split so the queued copy reaches the reader translated |
 | "Is this approval a run-failure notice, and how does it present?" | `isAgentErrorApproval` / `AGENT_ERROR_ROW` (`packages/web/src/lib/inbox-row-kind.ts`) - the inbox, the project dashboard and home all ask it there |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
+| A system row in a chat thread, or a task's chat-origin stamp + receipt | `postChatSystemMessage` / `recordChatTaskOrigin` / `postTaskStatusBreadcrumb` (`services/chat-breadcrumbs.ts`) - the writers that have only (db, wsManager); the manager's own turns use its `postSystemMessage` |
+| The suggested-replies trailer contract (parse, caps, strip) | `parseSuggestedReplies` (`@hezo/shared`) - the server parses with it, the web renders what it stored; never a second parser |
 | Paging (lists and large content), and excerpting one field | `mcp/paging.ts` - `excerpt()` lives here rather than in `mcp/tools.ts`, which imports from `agent-runner` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |

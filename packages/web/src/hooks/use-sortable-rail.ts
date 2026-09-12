@@ -15,7 +15,6 @@ import { moveItem, shiftForIndex, targetIndexForOffset } from '../lib/list-reord
 /**
  * Below this pointer travel (px) a mouse press is a click and nothing moves;
  * beyond it the gesture becomes a drag and the resulting click is swallowed.
- * Same threshold and rationale as `use-draggable-fab.ts`.
  */
 const DRAG_THRESHOLD_PX = 8;
 
@@ -86,7 +85,7 @@ export interface UseSortableRailOptions<T> {
 
 /**
  * Drag-to-reorder for the vertical project rail, hand-rolled on Pointer Events
- * in the shape of `use-draggable-fab.ts` (the repo carries no DnD library).
+ * (the repo carries no DnD library).
  *
  * Everything moves via `translateY` *inside* the scroll container: the dragged
  * item follows the pointer, the items it passes slide one pitch out of the way.

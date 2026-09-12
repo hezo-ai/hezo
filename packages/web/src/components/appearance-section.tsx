@@ -2,6 +2,7 @@ import type { TaskView } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useInstanceSettings, useUpdateInstanceSettings } from '../hooks/use-instance-settings';
+import { type LandingPreference, useLandingPreference } from '../hooks/use-landing-preference';
 import { useMe } from '../hooks/use-me';
 import { useI18n } from '../lib/i18n';
 import { TASK_VIEW_META, useTaskViewOptions } from '../lib/task-view-options';
@@ -61,7 +62,7 @@ function SettingBlock({
 	);
 }
 
-/** Theme, task view and a pointer at the locale editor. */
+/** Theme, landing view, task view and a pointer at the locale editor. */
 export function AppearanceSection() {
 	const { t } = useI18n();
 	const { preference, setPreference } = useTheme();
@@ -69,6 +70,7 @@ export function AppearanceSection() {
 	const { data: settings } = useInstanceSettings();
 	const updateSettings = useUpdateInstanceSettings();
 	const viewOptions = useTaskViewOptions();
+	const landing = useLandingPreference();
 
 	// The option list carries an icon and a value; the words are this app's, and
 	// the theme menu in the header does the same lookup against the same keys.
@@ -77,6 +79,11 @@ export function AppearanceSection() {
 		label: t(`theme.${value}`),
 		icon,
 	}));
+	const landingOptions: Array<{ value: LandingPreference; label: string }> = [
+		{ value: 'adaptive', label: t('appearance.landing.adaptive') },
+		{ value: 'dashboard', label: t('appearance.landing.dashboard') },
+		{ value: 'chat', label: t('appearance.landing.chat') },
+	];
 
 	return (
 		<div className="max-w-[640px]">
@@ -99,6 +106,25 @@ export function AppearanceSection() {
 					className="max-w-[300px]"
 					testId="appearance-theme-control"
 				/>
+			</SettingBlock>
+
+			<SettingBlock
+				title={t('appearance.landing.title')}
+				scope={<ScopeBadge>{t('appearance.scope.account')}</ScopeBadge>}
+				help={t('appearance.landing.help')}
+				testId="appearance-landing"
+			>
+				{landing.loaded && (
+					<SegmentedControl
+						options={landingOptions}
+						value={landing.preference}
+						// Response-driven: the server's merged settings echo reseeds the cache.
+						onChange={(next: LandingPreference) => landing.setPreference(next)}
+						label={t('appearance.landing.title')}
+						className="max-w-[380px]"
+						testId="appearance-landing-control"
+					/>
+				)}
 			</SettingBlock>
 
 			<SettingBlock

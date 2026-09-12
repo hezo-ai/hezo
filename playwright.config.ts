@@ -40,14 +40,18 @@ const webCommand = (port: number) =>
 // buys (two retries, halved workers, the preview build) stops exactly where the
 // process starts, on the tightest budget in the config.
 //
-// The backend is the slow one: `--reset` means PGlite initdb plus every
-// migration plus seeding before /api/status answers. Measured cold on a fast
-// 8-core box that is ~10s — comfortable against 60s alone, but all three servers
-// here boot concurrently against a 2-core CI runner, which is the same
-// contention the preview-build note above exists to describe. A cold runner that
-// lands 6x slower than a laptop is not a race to be fixed; it is a cold start
-// that needs a budget, so give it the same 180s the tests get rather than a
-// third of it.
+// `--reset` means PGlite initdb plus every migration plus seeding before
+// /api/status answers, and all three servers here boot concurrently against a
+// 2-core CI runner - the same contention the preview-build note above exists to
+// describe. A cold runner that lands several times slower than a laptop is not a
+// race to be fixed; it is a cold start that needs a budget, so give it the same
+// 180s the tests get rather than a third of it.
+//
+// The budget is not tight on the backend: measured cold, `--reset` to a 200 on
+// /api/status is ~1s, so even a 6x-slower runner spends single-digit seconds of
+// it. Every server below therefore pipes stdout, because when the budget *is*
+// blown the only question that matters is which of the three did it, and the
+// timeout itself names none of them.
 const WEB_SERVER_TIMEOUT_MS = 180_000;
 
 export default defineConfig({
@@ -155,12 +159,7 @@ export default defineConfig({
 			// Playwright ignores a webServer's stdout by default and pipes only its
 			// stderr, and Hezo's logger writes at INFO to stdout - so a boot that is
 			// slow rather than broken produces *nothing*. `test-browser (3)` died
-			// exactly that way: three webServers must come up (this one plus the two
-			// vite previews below), the timeout names none of them, and the 180s
-			// between launch and failure held not one line of log. A crash would have
-			// shown on stderr; the silence is what a server still working through
-			// migrations and seeding looks like, and it left the failure impossible
-			// to attribute.
+			// exactly that way, with not one line of log across the whole budget.
 			//
 			// Cheap, because the log is activity-gated rather than per-tick: the 1Hz
 			// wakeup and heartbeat crons say nothing on a quiet tick, so this costs
@@ -197,6 +196,12 @@ export default defineConfig({
 			port: WEB_PORT,
 			reuseExistingServer: false,
 			timeout: WEB_SERVER_TIMEOUT_MS,
+			// Vite announces its listening URL on stdout, so piping it is the line
+			// that distinguishes "this preview came up and something else stalled"
+			// from "this preview is the one that never answered". Without it a
+			// preview that misses the budget is indistinguishable from the other
+			// two, which is how a shard dies leaving nothing to attribute it to.
+			stdout: 'pipe',
 			env: {
 				HEZO_WEB_PORT: String(WEB_PORT),
 				HEZO_SERVER_PORT: String(SERVER_PORT),
@@ -208,6 +213,7 @@ export default defineConfig({
 			port: GATE_WEB_PORT,
 			reuseExistingServer: false,
 			timeout: WEB_SERVER_TIMEOUT_MS,
+			stdout: 'pipe',
 			env: {
 				HEZO_WEB_PORT: String(GATE_WEB_PORT),
 				HEZO_SERVER_PORT: String(GATE_SERVER_PORT),

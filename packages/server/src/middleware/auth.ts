@@ -140,7 +140,10 @@ export async function verifyToken(
 					runId: null,
 					taskId: null,
 					projectId: sessionRow.project_id,
-					crossProject: true,
+					// Derived from the payload like the run branch below - never assumed.
+					// The CEO session mints true/true; a worker's chat session is scoped
+					// to its own project team and must stay there.
+					crossProject: payload.cross_project === true,
 					sessionId,
 					crossTeam: payload.cross_team === true,
 				};
@@ -347,12 +350,30 @@ export async function signAgentJwt(
  * the TTL is long; the caller is responsible for asserting the member is the
  * instance CEO in the HQ team before minting.
  */
+/**
+ * The scope a chat session's turns act with. Every mint site states it - the
+ * claim matrix is: CEO session true/true (instance-wide coordination is its
+ * job); worker and Captain sessions false/false, bound to their project team.
+ * `verifyToken` derives the AuthInfo from these claims, never assumes them.
+ */
+export interface ChatSessionScope {
+	crossProject: boolean;
+	crossTeam: boolean;
+	/** Defaults to the CEO session TTL (30d). Worker sessions pass the shorter
+	 * {@link WORKER_SESSION_JWT_TTL_SECONDS} - re-minting on resume is cheap. */
+	ttlSeconds?: number;
+}
+
+/** Worker/Captain chat-session token lifetime. */
+export const WORKER_SESSION_JWT_TTL_SECONDS = 60 * 60 * 24;
+
 export async function signChatSessionJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
 	memberId: string,
 	teamId: string,
 	sessionId: string,
 	projectId: string,
+	scope: ChatSessionScope,
 ): Promise<string> {
 	const jwtKey = await masterKeyManager.getJwtKey();
 	const secret = jwtKey.toString('base64');
@@ -363,10 +384,10 @@ export async function signChatSessionJwt(
 			team_id: teamId,
 			session_id: sessionId,
 			project_id: projectId,
-			cross_project: true,
-			cross_team: true,
+			cross_project: scope.crossProject,
+			cross_team: scope.crossTeam,
 			iat: now,
-			exp: now + CEO_SESSION_JWT_TTL_SECONDS,
+			exp: now + (scope.ttlSeconds ?? CEO_SESSION_JWT_TTL_SECONDS),
 		},
 		secret,
 		'HS256',

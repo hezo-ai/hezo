@@ -11,7 +11,7 @@ tune how each agent behaves - both from the web app and by asking the CEO.
 
 ## Hiring a new agent
 
-**Hire agent** on the Team page (or the **+** beside Team in the project menu) asks how you
+**Hire agent** on the **Team** tab of the project's **Team & Budget** page asks how you
 want to go about it, and offers three ways:
 
 - **Browse the marketplace** - take a proven role out of one of the ready-made teams. It

@@ -290,7 +290,7 @@ describe('auditEntryLink — remaining targets', () => {
 
 	test('an agent row links into its project, or null when instance-scoped', () => {
 		expect(auditEntryLink(entry({ entity_type: 'agent' }))).toEqual({
-			to: '/projects/$projectId/agents',
+			to: '/projects/$projectId/budget/team',
 			params: { projectId: 'ops' },
 		});
 		expect(auditEntryLink(entry({ entity_type: 'agent', project_slug: null }))).toBeNull();

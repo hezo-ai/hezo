@@ -6,12 +6,12 @@ section: Security
 
 # Activity log & audit trail
 
-Every project keeps an automatic **activity log** - an append-only record of supported
+Hezo keeps an automatic **activity log** - an append-only record of supported
 project changes, newest first. You never switch it on, and nothing can quietly edit or
 delete an entry after the fact. When you need to know *who did what, and when* - a person
 or an agent - this is where you look.
 
-Open a project and choose **Activity** in the sidebar.
+Open **Settings** and choose **Activity** under the instance section (Admin only).
 
 ## What gets recorded
 
@@ -49,24 +49,21 @@ whole history as far as you need without waiting for it all up front.
 
 ## How long it took
 
-The log says what happened; the **Budget** page says what it cost, in both senses. Each
-agent's run time for the month sits beside its spend on the **Spend** tab, and the
+The log says what happened; the **Team & Budget** page says what it cost, in both senses.
+Each agent's run time for the month sits beside its spend on the **Budget** tab, and the
 **Hours** tab reports what the project's containers cost in uptime - a different figure,
 since containers are billed while they build and while they sit warm between runs, and
 concurrent runs share one. See
 [Budgets & cost control](/docs/concepts/budgets-and-costs).
 
-## Project and instance views
+## One global view
 
-There are two scopes:
-
-- **Project Activity** - everything for a single project, on its **Activity** page. This is
-  what your project team uses day to day.
-- **Instance Activity** - an Admin-only view under instance settings that combines the
-  activity of **all projects** plus instance-level admin actions that aren't tied to any one
-  project (managing credentials, connectors, and skills). It's the single place to
-  reconstruct what happened across the whole instance, and adds a **Project** column so you
-  can see where each action belongs.
+The Activity view is Admin-only and global: it combines the activity of **all
+projects** plus instance-level admin actions that aren't tied to any one project
+(managing credentials, connectors, and skills), with a **Project** column so you can see
+where each action belongs. It's the single place to reconstruct what happened across the
+whole instance. The per-project data is still recorded per project - and agents can read
+their own project's log through the API - the Admin view is simply where people read it.
 
 ## Why it matters
 

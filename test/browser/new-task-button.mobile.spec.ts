@@ -61,18 +61,20 @@ test.describe('Header new-task button responsiveness', () => {
 		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
 	});
 
-	test('project-menu "+" chips (Tasks, Team) are hidden on mobile, shown on desktop', async ({
+	test('the project-menu Tasks "+" chip is hidden on mobile, shown on desktop', async ({
 		page,
 		sharedWorkspace,
 	}) => {
+		// The Team section (and its hire "+") left the menu — hiring lives on the
+		// Team & Budget page's Team tab now — so Tasks carries the only menu chip.
 		const { token } = sharedWorkspace;
 		const project = await createProjectAndClearPlanning(page, '', token, {
 			name: uniqueName('Menu Plus'),
 			description: 'E2E project-menu plus chips.',
 		});
 
-		// --- Mobile: open the nav drawer; the "+" chips are too easy to fat-finger,
-		// so they're `hidden md:inline-flex` — present in the DOM but not visible. ---
+		// --- Mobile: open the nav drawer; the "+" chip is too easy to fat-finger,
+		// so it's `hidden md:inline-flex` — present in the DOM but not visible. ---
 		await page.setViewportSize({ width: 375, height: 800 });
 		await page.goto(`/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
@@ -81,15 +83,13 @@ test.describe('Header new-task button responsiveness', () => {
 		const drawer = page.getByTestId('mobile-nav-drawer');
 		await expect(drawer).toBeVisible();
 		await expect(drawer.getByTestId('project-sidebar-new-task')).toBeHidden();
-		await expect(drawer.getByRole('button', { name: 'Hire a new agent' })).toBeHidden();
 
-		// --- Desktop: the persistent menu shows both chips. Scope to the persistent
+		// --- Desktop: the persistent menu shows the chip. Scope to the persistent
 		// sidebar (content-well): the drawer opened above stays mounted (just
-		// `lg:hidden`), so the project menu — and its chips' testids — exist twice. ---
+		// `lg:hidden`), so the project menu — and its chip's testid — exist twice. ---
 		await page.setViewportSize({ width: 1280, height: 900 });
 		const persistentMenu = page.getByTestId('content-well');
 		await expect(persistentMenu.getByTestId('project-sidebar-new-task')).toBeVisible();
-		await expect(persistentMenu.getByRole('button', { name: 'Hire a new agent' })).toBeVisible();
 	});
 
 	test('the filter bar and its icon create button share one row on mobile', async ({

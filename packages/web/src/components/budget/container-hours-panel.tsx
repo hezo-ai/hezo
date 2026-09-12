@@ -18,45 +18,28 @@ import { SectionHeader } from '../ui/section-header';
 import { SegmentedControl } from '../ui/segmented-control';
 import { MonthlyHoursCap } from './monthly-hours-cap';
 
-/** The chat's share is a series of its own, so it can be read off the same chart. */
-const CHAT_KEY = 'chat';
-const TASK_KEY = 'task';
+const HOURS_KEY = 'hours';
 
 /**
- * One project's buckets, split into task and chat time.
+ * One project's buckets as a single uptime series - containers are shared by
+ * task runs and chat turns alike, so there is no per-workload split to draw.
  *
- * Split rather than stacked-by-container: a container id means nothing to an
- * operator and there are as many of them as the fleet has churned through, so a
- * legend keyed on them would be unreadable and unstable between refreshes.
+ * One series rather than stacked-by-container: a container id means nothing to
+ * an operator and there are as many of them as the fleet has churned through,
+ * so a legend keyed on them would be unreadable and unstable between refreshes.
  */
-function toScopeCells(
-	buckets: ContainerHoursBucket[] | undefined,
-	taskLabel: string,
-	chatLabel: string,
-): SeriesCell[] {
+function toScopeCells(buckets: ContainerHoursBucket[] | undefined, label: string): SeriesCell[] {
 	// The series carries every bucket in the window, quiet ones included, so the
 	// axis stays continuous across a gap. When they are ALL quiet there is no gap
 	// to bridge and no axis worth drawing: emit nothing, and the chart says so in
 	// words instead of rendering a row of zero-height bars.
 	if (!(buckets ?? []).some((b) => b.seconds > 0)) return [];
-	const cells: SeriesCell[] = [];
-	for (const b of buckets ?? []) {
-		cells.push({
-			bucket: b.bucket,
-			seriesKey: TASK_KEY,
-			seriesLabel: taskLabel,
-			value: b.seconds - b.chat_seconds,
-		});
-		if (b.chat_seconds > 0) {
-			cells.push({
-				bucket: b.bucket,
-				seriesKey: CHAT_KEY,
-				seriesLabel: chatLabel,
-				value: b.chat_seconds,
-			});
-		}
-	}
-	return cells;
+	return (buckets ?? []).map((b) => ({
+		bucket: b.bucket,
+		seriesKey: HOURS_KEY,
+		seriesLabel: label,
+		value: b.seconds,
+	}));
 }
 
 /** The instance series, one segment per project. */
@@ -121,13 +104,7 @@ function AllowanceHero({ totals, capHours }: { totals: ContainerHoursTotals; cap
 	);
 }
 
-function HoursTiles({
-	totals,
-	chatVisible,
-}: {
-	totals: ContainerHoursTotals;
-	chatVisible: boolean;
-}) {
+function HoursTiles({ totals }: { totals: ContainerHoursTotals }) {
 	const { t, plural } = useI18n();
 	const delta = totals.prev_month_seconds
 		? Math.round(
@@ -135,7 +112,7 @@ function HoursTiles({
 			)
 		: null;
 	return (
-		<div data-testid="container-hours-tiles" className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+		<div data-testid="container-hours-tiles" className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
 			<Tile
 				title={t('budget.hours.today')}
 				value={formatDuration(totals.today_seconds)}
@@ -155,13 +132,6 @@ function HoursTiles({
 						: t('budget.hours.monthDelta', { delta: `${delta >= 0 ? '+' : ''}${delta}` })
 				}
 			/>
-			{chatVisible && (
-				<Tile
-					title={t('budget.hours.chat')}
-					value={formatDuration(totals.month_chat_seconds)}
-					meta={t('budget.hours.monthToDate')}
-				/>
-			)}
 		</div>
 	);
 }
@@ -219,8 +189,9 @@ function HoursChart({
 }
 
 /**
- * The Budget page's Hours tab, project scope: how long this project's containers
- * were up, split into task time and assistant-chat time.
+ * The Budget page's Hours tab, project scope: how long this project's
+ * containers were up. Task runs and chat turns share the same containers, so
+ * uptime is one series, not a per-workload split.
  *
  * **Not the same question as the Spend tab, and not the same as run time.** Spend
  * answers what the agents cost in tokens; this answers what the containers cost
@@ -235,15 +206,11 @@ export function ProjectContainerHoursPanel({ projectId }: { projectId: string })
 
 	return (
 		<div className="flex flex-col gap-6">
-			{totals && <HoursTiles totals={totals} chatVisible={totals.month_chat_seconds > 0} />}
+			{totals && <HoursTiles totals={totals} />}
 			<HoursChart
 				bucket={bucket}
 				setBucket={setBucket}
-				cells={toScopeCells(
-					data?.buckets,
-					t('budget.hours.series.task'),
-					t('budget.hours.series.chat'),
-				)}
+				cells={toScopeCells(data?.buckets, t('budget.hours.series.uptime'))}
 				isLoading={isLoading}
 				title={t('budget.hours.chart.project')}
 				testId="container-hours-chart"
@@ -265,7 +232,7 @@ export function InstanceContainerHoursPanel() {
 
 	return (
 		<div className="flex flex-col gap-6">
-			{totals && <HoursTiles totals={totals} chatVisible />}
+			{totals && <HoursTiles totals={totals} />}
 			{totals && capHours > 0 && <AllowanceHero totals={totals} capHours={capHours} />}
 			<HoursChart
 				bucket={bucket}
