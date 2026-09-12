@@ -210,6 +210,24 @@ test('a progress-update run is labelled as the goals-and-progress automation reg
 	expect(label.text).toBe('Automation: goals and progress report');
 });
 
+test('a retrospective run is labelled as the retrospective automation regardless of source', () => {
+	const label = formatTriggerReason(
+		run({ kind: HeartbeatRunKind.Retrospective, trigger_source: WakeupSource.Heartbeat }),
+		TEAM,
+		t,
+	);
+	expect(label.text).toBe('Automation: project retrospective');
+});
+
+test('every taskless run kind is named by what the run does, not by its wakeup', () => {
+	for (const kind of Object.values(HeartbeatRunKind)) {
+		if (kind === HeartbeatRunKind.Task) continue;
+		const label = formatTriggerReason(run({ kind, trigger_source: null }), TEAM, t);
+		expect(label.text, `no label for ${kind}`).not.toMatch(/^runTrigger\./);
+		expect(label.text, `${kind} fell through to the trigger source`).not.toBe('Unknown trigger');
+	}
+});
+
 test('heartbeat is a fixed label', () => {
 	const label = formatTriggerReason(run({ trigger_source: WakeupSource.Heartbeat }), TEAM, t);
 	expect(label.text).toBe('Scheduled heartbeat');

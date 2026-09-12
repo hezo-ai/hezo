@@ -398,9 +398,12 @@ never in the vault (§ 8).
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
 execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, the
 success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distinguishes a
-normal `task` run from a `progress_update` run (the Captain's task-less goal assessment —
-`task_id IS NULL`); progress-update runs reuse the full run lifecycle but skip the task comment,
-status flip, and code worktree. **They do not depend on goals**: a run is due on the Captain's
+normal `task` run from the two **task-less** kinds (`task_id IS NULL`): a `progress_update` run
+(the Captain's goal assessment) and a `retrospective` run (the Coach's pass over one project's
+recent shape). Both reuse the full run lifecycle but skip the task comment, status flip, and code
+worktree, and both launch through `JobManager.launchTaskLessRun`, which holds every gate below the
+choice of subject — busy, capacity and budget checks, the runtime-status flip, the project-run
+lock, and the release on each exit. **They do not depend on goals**: a run is due on the Captain's
 heartbeat when a goal is due (`getDueGoals`) *or* when the summary has gone stale and a task
 has moved since (`JobManager.isProgressSnapshotDue`, over `PROGRESS_REFRESH_INTERVAL_HOURS`). Its
 anchor is `COALESCE(GREATEST(progress_summary_updated_at, last progress-update run), created_at)`:
@@ -431,7 +434,80 @@ carry no trigger tag, so they are never surfaced or cancellable here). The isola
 two-way: `createProgressUpdateWakeup` never coalesces onto a heartbeat wakeup, and
 `createWakeup`'s generic coalescing skips marker-carrying (`payload.trigger`) rows — so a
 scheduled heartbeat firing while a manual run is queued gets its own row instead of
-claiming (and then mis-dispatching) the queued manual run. Token usage is flushed to the
+claiming (and then mis-dispatching) the queued manual run. **The Coach's retrospective.** Every `RETROSPECTIVE_INTERVAL_HOURS`, per project, the Coach reads
+the structural shape of the last `RETROSPECTIVE_WINDOW_DAYS` and judges whether the team is
+converging. It exists because the pathology it looks for is invisible per task: a project can spend
+a week's tokens on a loop while every individual task reviews clean. `selectDueRetrospectiveProject`
+is the plural analogue of `isProgressSnapshotDue` — the Captain is handed its team and asks whether
+that one project is due, while the Coach is an instance singleton and must *choose*. Same two
+conditions: the anchor (the team's last retrospective run) is older than the interval, **and**
+something has run since. Activity is measured on `heartbeat_runs`, not `tasks.updated_at`, because
+the pathology is runs. Anchoring on the run row rather than on whether the run reported anything is
+what makes a pass that finds a healthy project cost one run rather than one per heartbeat forever.
+Oldest anchor first, one project per pass, internal and archived projects excluded.
+
+**Role-doc sync.** An agent's live prompt is a `documents` row of type
+`agent_system_prompt`, copied out of `agent_types.system_prompt_template` once at hire time
+and never refreshed - the agent's learned rules and the admin's edits accumulate there, so a
+rewrite would destroy both. The boot seed keeps the *catalog* row current from this repo's
+role docs, but nothing carried that forward, so **every role-doc change reached new
+instances and no existing one** - hardest for the CEO and Coach, hired on an instance's
+first boot and never hired again.
+
+`services/role-prompt-sync.ts` closes that. The base (the role doc as it stood at hire time)
+is exact and free: `document_revisions` holds content as it was *before* each change and
+`insertDocument` records none, so the first revision is the original and a document with no
+revisions is its own original. No column records which release a prompt came from, so
+nothing can fall out of step with it. `spliceRolePrompt(base, current, target)` then
+separates the release's text from everyone else's: `current === base` takes the new role
+whole, `current.startsWith(base)` reproduces the appendix byte for byte (agents are
+instructed to append only, so this is the designed case, not a heuristic), and anything else
+is a conflict offering the new role plus the learned rules. Scoped to `is_builtin` agent
+types - a hire, a marketplace role and a template snapshot all carry a `custom` type whose
+template records what was provisioned, not what the release ships.
+
+Nothing is written without a person accepting. `fileRolePromptUpdates` runs after the seed
+in `runSeed` and files one `ApprovalType.RoleUpdate` per agent, keyed on a hash of the
+target so a standing offer is *rewritten* when the role doc moves again rather than joined
+by a second, and a **declined** row is the memory - keyed on the version refused, so the
+next improvement is still offered. `approval-handlers/role-update.ts` writes the content the
+card carried (not a fresh splice: the admin approved a specific text) through
+`upsertDocument`, which records a revision, so the existing rollback undoes it.
+
+`services/project-retrospective.ts` computes the signals — the deterministic half — and the Coach
+judges them; the block is composed by the server into the run prompt (`buildRetrospectivePrompt`)
+rather than exposed as a tool, so the run economics stay out of every other agent's hands (the same
+boundary `routes/agent-hours.ts` draws). **Every rule of the pass is in that builder rather than in
+`coach.md`**, and deliberately: a role doc is copied into an agent's stored prompt document once, at
+hire time, and no path refreshes it afterwards (the boot seed rewrites `agent_types`, which only new
+hires read). The Coach is hired on an instance's first boot, so a rule written into its role doc
+reaches new instances and no existing one — while the dispatch needing that rule ships to every
+instance with the binary. This also settles the collision with
+`_partials/common/coach-summary-comment.md`, whose passive-reference rule an upgraded instance still
+carries unscoped: the builder states the exception explicitly rather than relying on prose the
+stored prompt may predate. It carries `task_burn` ordered by **tokens, never runs** (a
+task that runs constantly and costs little is a standing task doing its job), `fan_out`,
+`title_clusters`, `assets`, `asset_repeats`, and `already_flagged`. Each arm is row-capped by a
+module constant and each free-text field goes through `excerpt()`, so the block cannot grow with the
+project; `PROMPT_SECTION_CEILINGS.retrospectiveSignals` is the backstop under those caps.
+De-duplication is structural: `already_flagged` is derived from `task_comments.created_by_run_id`
+joined to runs of `kind = 'retrospective'`, so no label or column records it. **Run now** is
+`POST /projects/:projectId/retrospective/run-now` → `JobManager.dispatchRetrospectiveNow`.
+
+A finding is one `create_comment` carrying an active `@admin`, which is both the task comment and
+the Inbox notice (`fireCommentWakeups` → `fireAdminMention`). Because a Coach-authored `@admin` is
+not the assignee's own ask, `parkedOnAdminAsk` does not park anything for it — the
+`retrospectiveHoldActive` suppression below does.
+
+**The Coach's missed-review sweep.** A task closing wakes the Coach with the task named
+(`COACH_REVIEW_TRIGGER`), and that wakeup can be lost. Nothing else picks the task up afterwards:
+the Coach is never an assignee, so the assignment-based selection every other agent uses cannot see
+it. On the Coach's heartbeat, `selectMissedReviewTask` finds a recently closed task with no run by
+the Coach against it and synthesizes the same trigger, so the recovered run is the run the lost
+wakeup would have produced. It is bounded to recent closes; unbounded, the first heartbeat after it
+ships walks every task the instance ever completed.
+
+Token usage is flushed to the
 row *during* the run (alongside the log), so a run the server kills mid-flight still
 reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
 until a clean completion supersedes it. `agent_task_sessions` persists
@@ -1221,7 +1297,8 @@ project.
   sites (prompt/Custom Prompt/role/`reports_to`/enable-disable changes) create no agents and stamp
   nothing.
 - **Coach** — reviews completed tickets across **every** project to improve agent system
-  prompts; woken on any task completion.
+  prompts; woken on any task completion, sweeping on its heartbeat for a close whose wakeup was
+  lost, and running a periodic retrospective over one project at a time.
 
 The **HQ container** is warmed as early as possible after boot: once the master key is
 unlocked (provisioning needs secrets/egress), `JobManager.ensureHqContainerRunning` runs
@@ -2818,7 +2895,18 @@ is never logged quietly: parking a task is a standing state, not a backoff that 
 clock, so it also files an Inbox notice through `fileExhaustedAttemptsApproval`, which clears
 itself on the next successful run.
 
-**The provider-refusal cooldown.** The fourth suppression, and the only one applied *before*
+**The retrospective hold.** The fourth applied after task resolution, and the one that gives a
+retrospective finding teeth. A finding is an `@admin` the Coach wrote, and `parkedOnAdminAsk` reads
+only the *assignee's* own ask - so without this a finding would raise an Inbox row, suppress
+nothing, and watch the loop it named run for another week. `retrospectiveHoldActive`
+(`services/no-work-backoff.ts`) holds while a comment authored by a `retrospective` run stands on
+the task with no `author_user_id` comment after it. The author's run kind is the whole condition:
+no label, no column, nothing another path must remember to set. Like the attempts bound it is never
+logged quietly - parking a task is a standing state - and the shared exempt sources lift it, so a
+mention, a reply or "Run now" always gets through. Marked with
+`last_skipped_reason = retrospective_hold`.
+
+**The provider-refusal cooldown.** The last suppression, and the only one applied *before*
 the claim rather than after task resolution - `processWakeups` NULLs `last_skipped_at` and
 `last_skipped_reason` when it claims a row, so a predicate placed beside the three above could
 not read the very fields this one keys on. `providerRefusalCooldownSql`

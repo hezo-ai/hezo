@@ -698,6 +698,7 @@
 	"runTrigger.progressUpdate": "自动化：目标与进度报告",
 	"runTrigger.reply": "对您此前评论的回复",
 	"runTrigger.replyFromIn": "@{actor} 在 {task} 中的回复",
+	"runTrigger.retrospective": "自动化：项目回顾",
 	"runTrigger.timer": "恢复计时器",
 	"runTrigger.timerReason": "恢复计时器：{reason}",
 	"runTrigger.unknown": "未知触发来源",

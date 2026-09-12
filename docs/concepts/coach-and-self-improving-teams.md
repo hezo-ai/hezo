@@ -18,8 +18,9 @@ The **Coach** is one of two global roles that live in
 [CEO](/docs/concepts/roles-and-coordination#the-ceo)). There is exactly one Coach for the
 whole instance, it isn't a member of any single project team, and it reports to you - the
 admin. Unlike a worker, it doesn't pick up tasks, write features, or review code. Its sole
-purpose is **organisational learning**: reviewing how completed tasks actually went and
-improving the agents involved.
+purpose is **organisational learning**. It makes two kinds of pass: a **task review** after a
+task is completed, and a **retrospective** over one project's recent work. The first is about a
+task, the second is about a team.
 
 The Coach's behaviour comes from its
 [system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).
@@ -32,8 +33,9 @@ the back-and-forth, any rejections or rework, and what each agent actually did (
 fact and mines it for patterns.
 
 1. **A task is completed.** When a task is marked **Done** - in any project, in any
-   team - the Coach is woken automatically with that task's full history. It also runs
-   on its own heartbeat to catch any completed tasks that slipped through.
+   team - the Coach is woken automatically with that task's full history. If that wake is ever
+   missed, the Coach picks the task up on its own heartbeat, so a completed task is not left
+   unreviewed.
 2. **It reviews the whole thread.** The Coach reads the comments and the agents' work
    end to end, looking for the moments that matter: work that got sent back, an agent that
    received corrective feedback or made a wrong assumption, an approach that was tried and
@@ -53,6 +55,36 @@ fact and mines it for patterns.
 This sits at the very end of the task lifecycle: **Done** is the final, completed state;
 the Coach's post-mortem runs against a done task without moving it anywhere. The review
 happens in the background - you don't have to trigger it or wait on it.
+
+## The retrospective
+
+Some problems are invisible one task at a time. A team can look healthy in every single
+review and still be going in circles: the same work re-filed under a new title each week,
+one task spawning a dozen children that spawn a dozen more, a folder of documents nobody
+will read again. Every task passes. The pattern is in how they add up.
+
+So the Coach also makes a second pass. Every couple of days it takes one project and reads
+the **shape** of its recent work rather than the work itself: where the effort went, what
+spawned what, which tasks look like each other, and what the team produced. Those are
+counted for it, so the judgement is about the numbers rather than about reading everything
+again.
+
+- **It reports at most three findings, worst first.** A busy project is not a finding. A
+  quiet week is the expected outcome, and the Coach says so and stops.
+- **A finding is one comment on the task it is about**, tagging you. Tagging you is also what
+  raises the inbox item, so the finding reaches you wherever you already look.
+- **The task stops being picked up until you answer.** A finding says work is not
+  converging; letting that work carry on while the question sits unread would be the same
+  week over again. Replying releases it, and so does **Run now**.
+- **It gives you counts and shares**, not totals - "31 runs in 17 hours", "70% of the
+  documents here were made this week" - because those are the figures you can act on.
+- **It does not repeat itself.** Something an earlier retrospective raised is not raised
+  again unless the figures have got materially worse.
+
+A retrospective changes no prompts. It infers from aggregates, and a lesson worth writing
+into an agent comes from what someone actually said - which is the task review's job.
+
+A project nobody has worked in is skipped entirely, so a quiet project costs nothing.
 
 ## Learned rules
 
@@ -86,7 +118,7 @@ instructions.
 ## Beyond prompts: docs and skills
 
 Improving system prompts is the Coach's main lever, but not its only one. When a
-retrospective surfaces a reusable procedure, a team convention, or a project document
+review surfaces a reusable procedure, a team convention, or a project document
 that's gone stale or missing, the Coach can also update a **project document** or create a
 **skill** for that team - lifting the team's productivity in whatever form fits the lesson
 best. See [Documents & memory](/docs/concepts/documents-and-memory).

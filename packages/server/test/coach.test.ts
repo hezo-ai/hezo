@@ -342,7 +342,7 @@ describe('Coach review prompt builder', () => {
 		);
 		expect(res.rows.length).toBe(1);
 		const template = res.rows[0].system_prompt_template;
-		expect(template).toContain('End every review with exactly one `create_comment`');
+		expect(template).toContain('End every task review with exactly one `create_comment`');
 		expect(template).toMatch(/do not end the turn without posting it/i);
 		// The summary is a wrap-up, never an ask: every reference in it must be
 		// passive so it can't wake teammates or land rows in the admin inbox.

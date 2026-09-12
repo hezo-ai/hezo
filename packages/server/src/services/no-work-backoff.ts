@@ -1,4 +1,10 @@
-import { HeartbeatRunStatus, RunCancelReason, WakeupSkipReason, WakeupSource } from '@hezo/shared';
+import {
+	HeartbeatRunKind,
+	HeartbeatRunStatus,
+	RunCancelReason,
+	WakeupSkipReason,
+	WakeupSource,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
@@ -334,4 +340,65 @@ export async function attemptsExhaustedOnTask(
 		],
 	);
 	return Number(r.rows[0]?.attempts ?? 0) >= MAX_TASK_ATTEMPT_GIVEUPS;
+}
+
+/**
+ * Has a retrospective flagged this task, with nobody having answered since?
+ *
+ * The fourth suppression applied after task resolution, and the only one raised by a
+ * third party rather than by the agent's own last run. The Coach's retrospective looks across a project
+ * for work that is not converging; when it finds some, reporting it is not enough.
+ * An `@admin` comment raises an Inbox row and reorders the task list, but it
+ * suppresses no dispatches at all, so the loop it just described would carry on
+ * spending while the notice sat unread. This is what makes the report a brake.
+ *
+ * Two conditions:
+ *
+ * 1. A comment on this task was written by a retrospective run. That attribution is
+ *    the whole signal - it comes off `created_by_run_id`, which the schema already
+ *    carries, so there is no label to keep in step and no phrase to match.
+ * 2. No **person** has spoken since. An agent replying to the finding does not clear
+ *    it; the question was addressed to a human, which is where this parts company
+ *    with {@link parkedOnAdminAsk}, where any other member counts. A person speaks
+ *    two ways and both are read: a comment they authored, and a choice they made on
+ *    a card. The second stamps `chosen_at` on the **agent's** row rather than
+ *    writing one of their own, so testing authorship alone would miss it.
+ *
+ * Deliberately unbounded in time, like {@link parkedOnAdminAsk}: a judgement handed
+ * to a person goes stale when they answer, not on a clock. The exempt sources carry
+ * every form that answer takes, and "Run now" is always the operator's override.
+ *
+ * Returns false for a task-less wakeup and for every exempt source.
+ */
+export async function retrospectiveHoldActive(
+	db: Db,
+	_memberId: string,
+	taskId: string | null | undefined,
+	source: string,
+): Promise<boolean> {
+	if (!taskId) return false;
+	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+
+	const r = await db.query<{ held: boolean }>(
+		`WITH finding AS (
+		   SELECT max(c.created_at) AS at
+		     FROM task_comments c
+		     JOIN heartbeat_runs r ON r.id = c.created_by_run_id
+		    WHERE c.task_id = $1 AND r.kind = $2::heartbeat_run_kind
+		 )
+		 SELECT (
+		   f.at IS NOT NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_comments h
+		      WHERE h.task_id = $1
+		        AND (
+		          (h.author_user_id IS NOT NULL AND h.created_at > f.at)
+		          OR (h.chosen_at IS NOT NULL AND h.chosen_at > f.at)
+		        )
+		   )
+		 ) AS held
+		 FROM finding f`,
+		[taskId, HeartbeatRunKind.Retrospective],
+	);
+	return r.rows[0]?.held === true;
 }

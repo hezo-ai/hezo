@@ -698,6 +698,7 @@
 	"runTrigger.progressUpdate": "Automatisation : rapport sur les objectifs et l'avancement",
 	"runTrigger.reply": "Réponse à votre commentaire précédent",
 	"runTrigger.replyFromIn": "Réponse de @{actor} dans {task}",
+	"runTrigger.retrospective": "Automatisation : rétrospective du projet",
 	"runTrigger.timer": "Minuteur de reprise",
 	"runTrigger.timerReason": "Minuteur de reprise : {reason}",
 	"runTrigger.unknown": "Déclencheur inconnu",

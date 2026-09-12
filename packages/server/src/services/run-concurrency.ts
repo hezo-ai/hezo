@@ -437,12 +437,32 @@ export async function containerCapacityVerdictInDb(
  * (reset, re-clone) on the project being quiet, and the idle-stop recheck uses
  * the same figure.
  */
+/**
+ * SQL matching the runs that belong to one project.
+ *
+ * A run reaches its project two ways, and reading only the first is the defect this
+ * exists to prevent. An ordinary run gets there through its task. A task-less run -
+ * a progress update, a retrospective - has no task and gets there through its team,
+ * a team and a project being one to one. Joined to `tasks` alone, every task-less
+ * run is invisible, so a concurrency gate built that way lets a second such
+ * container start in a project that already has one.
+ *
+ * `projectParam` is the placeholder holding the project id, and `runAlias` is what
+ * the caller named the run table.
+ */
+export function runInProjectSql(projectParam: string, runAlias = 'hr'): string {
+	return `(EXISTS (SELECT 1 FROM tasks t
+	                  WHERE t.id = ${runAlias}.task_id AND t.project_id = ${projectParam})
+	         OR (${runAlias}.task_id IS NULL
+	             AND EXISTS (SELECT 1 FROM projects p
+	                          WHERE p.id = ${projectParam} AND p.team_id = ${runAlias}.team_id)))`;
+}
+
 export async function countActiveRunsInProject(db: Db, projectId: string): Promise<number> {
 	const row = await db.query<{ active: number }>(
-		`SELECT count(*)::int AS active FROM heartbeat_runs r
-		 JOIN tasks t ON t.id = r.task_id
-		 WHERE t.project_id = $1
-		   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+		`SELECT count(*)::int AS active FROM heartbeat_runs hr
+		 WHERE ${runInProjectSql('$1')}
+		   AND hr.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
 		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
 	);
 	return row.rows[0]?.active ?? 0;
@@ -456,8 +476,7 @@ export async function countActiveRunsInProject(db: Db, projectId: string): Promi
 export async function getBusyAgentIdsInProject(db: Db, projectId: string): Promise<Set<string>> {
 	const res = await db.query<{ member_id: string }>(
 		`SELECT DISTINCT hr.member_id FROM heartbeat_runs hr
-		 JOIN tasks t ON t.id = hr.task_id
-		 WHERE t.project_id = $1
+		 WHERE ${runInProjectSql('$1')}
 		   AND hr.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
 		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
 	);

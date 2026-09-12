@@ -1,4 +1,10 @@
-import { CommentContentType, HeartbeatRunStatus, TaskStatus, WakeupSource } from '@hezo/shared';
+import {
+	CommentContentType,
+	HeartbeatRunKind,
+	HeartbeatRunStatus,
+	TaskStatus,
+	WakeupSource,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -8,6 +14,7 @@ import {
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
+	retrospectiveHoldActive,
 	TASK_ATTEMPT_WINDOW_HOURS,
 } from '../src/services/no-work-backoff';
 import { safeClose } from './helpers';
@@ -494,5 +501,116 @@ describe('attemptsExhaustedOnTask', () => {
 
 	it('is inert for a task-less wakeup', async () => {
 		expect(await attemptsExhaustedOnTask(db, agentId, null, WakeupSource.Heartbeat)).toBe(false);
+	});
+});
+
+describe('retrospectiveHoldActive', () => {
+	/** A comment written by a retrospective run, which is what a finding is. */
+	async function insertFinding(minutesAgo: number): Promise<string> {
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, $3::heartbeat_run_kind)
+			 RETURNING id`,
+			[teamId, agentId, HeartbeatRunKind.Retrospective],
+		);
+		const c = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content,
+			                            created_by_run_id, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb, $4,
+			         now() - ($5 || ' minutes')::interval)
+			 RETURNING id`,
+			[
+				taskId,
+				agentId,
+				JSON.stringify({ text: 'This task is not converging. @admin' }),
+				run.rows[0].id,
+				String(minutesAgo),
+			],
+		);
+		return c.rows[0].id;
+	}
+
+	async function insertHumanReply(minutesAgo: number): Promise<void> {
+		const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_user_id, content_type, content, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb,
+			         now() - ($4 || ' minutes')::interval)`,
+			[
+				taskId,
+				user.rows[0].id,
+				JSON.stringify({ text: 'Looked at it, carry on.' }),
+				String(minutesAgo),
+			],
+		);
+	}
+
+	it('holds the task while a retrospective finding waits on a person', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		// Reporting a loop without stopping it is what this exists to prevent: an
+		// @admin comment alone raises the Inbox row and suppresses no dispatches.
+		expect(await retrospectiveHoldActive(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('lifts the moment a person replies', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		await insertHumanReply(5);
+		expect(await retrospectiveHoldActive(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('lifts when the person answers a choice card instead of writing a comment', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		// The card is the agent's own row; choosing stamps `chosen_at` on it and writes
+		// nothing of the person's own. Read for authorship alone, this answer is
+		// invisible and the task stays parked after the admin has already decided.
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content,
+			                            chosen_at, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb,
+			         now() - interval '5 minutes', now() - interval '20 minutes')`,
+			[taskId, agentId, JSON.stringify({ text: 'Which of these should I drop?' })],
+		);
+		expect(await retrospectiveHoldActive(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('is not lifted by a card the person has not answered', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb, now() - interval '5 minutes')`,
+			[taskId, agentId, JSON.stringify({ text: 'Which of these should I drop?' })],
+		);
+		expect(await retrospectiveHoldActive(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('is not lifted by an agent talking to itself', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb)`,
+			[taskId, agentId, JSON.stringify({ text: 'Acknowledged, continuing.' })],
+		);
+		// The question was addressed to a human; an agent answering it is the loop
+		// arguing with the brake.
+		expect(await retrospectiveHoldActive(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('never suppresses a source a person raised', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		for (const source of [WakeupSource.Mention, WakeupSource.Reply, WakeupSource.OnDemand]) {
+			expect(await retrospectiveHoldActive(db, agentId, taskId, source), source).toBe(false);
+		}
+	});
+
+	it('holds nothing when no retrospective has spoken', async () => {
+		await clearRuns();
+		expect(await retrospectiveHoldActive(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+		expect(await retrospectiveHoldActive(db, agentId, null, WakeupSource.Heartbeat)).toBe(false);
 	});
 });

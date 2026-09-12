@@ -63,6 +63,16 @@ export const PROMPT_SECTION_CEILINGS = {
 	recentComment: 2_000,
 	/** One row of the Coach's review window. */
 	reviewComment: 2_000,
+	/**
+	 * The whole counted block a retrospective reads.
+	 *
+	 * A backstop rather than the bound. The block is capped by construction - a row
+	 * limit on each arm times an excerpt width on each field - so it cannot grow with
+	 * the project, and this ceiling sits well above what that construction can reach.
+	 * It firing at all means an arm lost its row cap, which is the defect it is here
+	 * to make visible rather than a size it is here to manage.
+	 */
+	retrospectiveSignals: 16_000,
 } as const;
 
 export type PromptSection = keyof typeof PROMPT_SECTION_CEILINGS;

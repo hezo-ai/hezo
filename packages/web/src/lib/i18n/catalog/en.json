@@ -698,6 +698,7 @@
 	"runTrigger.progressUpdate": "Automation: goals and progress report",
 	"runTrigger.reply": "Reply to your earlier comment",
 	"runTrigger.replyFromIn": "Reply from @{actor} in {task}",
+	"runTrigger.retrospective": "Automation: project retrospective",
 	"runTrigger.timer": "Recovery timer",
 	"runTrigger.timerReason": "Recovery timer: {reason}",
 	"runTrigger.unknown": "Unknown trigger",

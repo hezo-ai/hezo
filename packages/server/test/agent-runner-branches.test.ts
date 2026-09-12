@@ -16,6 +16,7 @@ import {
 	buildCoachReviewPrompt,
 	buildProgressUpdatePrompt,
 	buildProviderEnv,
+	buildRetrospectivePrompt,
 	buildTaskPrompt,
 	formatReactionLine,
 	loadAgentAttachmentsForComments,
@@ -28,6 +29,7 @@ import {
 	shellQuoteArg,
 	type TaskInfo,
 } from '../src/services/agent-runner';
+import type { RetrospectiveSignals } from '../src/services/project-retrospective';
 import type { ReactionGroup } from '../src/services/reactions';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
@@ -347,6 +349,161 @@ describe('buildProgressUpdatePrompt', () => {
 		// measurement empty → the explicit "Not specified." fallback.
 		expect(out).toContain('- Achieved when: Not specified.');
 		expect(out).toContain('### Second  `g2`');
+	});
+});
+
+// --------------------------------------------------------------------------
+// buildRetrospectivePrompt — every arm, an empty arm, and the bound on the block.
+// --------------------------------------------------------------------------
+describe('buildRetrospectivePrompt', () => {
+	function signals(over: Partial<RetrospectiveSignals> = {}): RetrospectiveSignals {
+		return {
+			window_days: 7,
+			window_start: '2026-09-05T00:00:00.000Z',
+			totals: {
+				runs: 240,
+				input_tokens: 1_780_000_000,
+				output_tokens: 4_000_000,
+				tasks_created: 58,
+				instance_input_tokens: 2_300_000_000,
+			},
+			task_burn: [
+				{
+					identifier: 'INV-288',
+					title: 'Regenerate synchronized delivery evidence package',
+					status: 'in_progress',
+					assignee: 'verifier',
+					parent: 'INV-201',
+					runs: 31,
+					unproductive: 11,
+					avg_minutes: 42,
+					input_tokens: 900_000_000,
+					output_tokens: 1_000_000,
+				},
+			],
+			fan_out: [
+				{
+					parent_identifier: 'INV-201',
+					parent_title: 'Independently reverify remediated package',
+					children_in_window: 18,
+					children_total: 24,
+				},
+			],
+			title_clusters: [
+				{
+					stem: 'review team coherence after',
+					count: 21,
+					creator: null,
+					identifiers: ['INV-1', 'INV-2'],
+				},
+			],
+			assets: {
+				added: 1_015,
+				added_bytes: 168_000_000,
+				total: 1_442,
+				total_bytes: 190_000_000,
+				ever_archived: 0,
+			},
+			asset_repeats: [
+				{ stem: 'cumulative-matrix', copies: 13, first_bytes: 10_000, last_bytes: 90_000 },
+			],
+			already_flagged: ['INV-99'],
+			...over,
+		};
+	}
+
+	it('renders every arm, and states shares rather than the totals behind them', () => {
+		const out = buildRetrospectivePrompt('SYS', signals());
+		expect(out.startsWith('SYS')).toBe(true);
+		expect(out).toContain('### Where the effort went');
+		expect(out).toContain('### Work that spawned more work');
+		expect(out).toContain('### Tasks that look like each other');
+		expect(out).toContain('### What the team produced');
+		expect(out).toContain('### Already raised');
+		expect(out).toContain('INV-288');
+		expect(out).toContain('31 runs');
+		expect(out).toContain('11 failed or timed out');
+		expect(out).toContain('18 new children');
+		expect(out).toContain('21x "review team coherence after..."');
+		expect(out).toContain('each copy larger');
+		expect(out).toContain('INV-99');
+		// The figures a person acts on are counts and shares. A raw token total is the
+		// one thing this pass must never put in front of the Coach - it is the number
+		// that turns a finding into a cost argument nobody can check.
+		expect(out).toContain('%');
+		expect(out).not.toContain('1780000000');
+		expect(out).not.toContain('1,780,000,000');
+	});
+
+	it('renders a project with nothing to report without an empty heading', () => {
+		const out = buildRetrospectivePrompt(
+			'SYS',
+			signals({
+				task_burn: [],
+				fan_out: [],
+				title_clusters: [],
+				asset_repeats: [],
+				already_flagged: [],
+				assets: { added: 0, added_bytes: 0, total: 12, total_bytes: 900, ever_archived: 3 },
+			}),
+		);
+		expect(out).not.toContain('### Where the effort went');
+		expect(out).not.toContain('### What the team produced');
+		expect(out).not.toContain('### Already raised');
+		// The framing and the instruction still stand, so a quiet week reads as one.
+		expect(out).toContain('### What to do');
+		expect(out).toContain('If nothing here is wrong, say so and stop');
+	});
+
+	it('carries every rule of the pass, because the role doc cannot reach an upgraded instance', () => {
+		// The upgrade property, and the reason these rules are here rather than in
+		// `coach.md`. A role doc is copied into an agent's stored prompt once, at hire
+		// time; the Coach is hired on an instance's first boot and never re-hired. A
+		// rule added to the role doc therefore reaches new instances only, while the
+		// dispatch that needs it ships to every instance with the binary.
+		const out = buildRetrospectivePrompt('SYS', signals());
+		expect(out).toContain('Report at most three findings');
+		expect(out).toContain('Comment once per finding, on the task the finding is about');
+		expect(out).toContain('Put an active `@admin` in that comment');
+		expect(out).toContain('Give counts and shares, never token or money totals');
+		expect(out).toContain('Say what you would change');
+		expect(out).toContain('Change no prompts on this pass');
+		// The stored prompt tells the Coach to keep every reference passive. On an
+		// instance that upgraded, that text is the unscoped wording, so the exception
+		// has to be stated here or the finding is raised passively - which files no
+		// inbox row and holds no dispatch, leaving the loop it named running.
+		expect(out).toContain('overrides the passive-reference rule');
+	});
+
+	it('does not re-raise what an earlier pass flagged, and says so only when there is something', () => {
+		expect(buildRetrospectivePrompt('SYS', signals())).toContain(
+			'Do not raise these again unless the figures have got materially worse',
+		);
+		const clean = buildRetrospectivePrompt('SYS', signals({ already_flagged: [] }));
+		expect(clean).not.toContain('Do not raise these again');
+	});
+
+	it('bounds the counted block however many rows are behind it', () => {
+		// The construction caps are the real bound; this is the backstop under them.
+		// An arm that lost its row cap gets cut here rather than eating the run.
+		const many = Array.from({ length: 5_000 }, (_, i) => ({
+			identifier: `INV-${i}`,
+			title: 'Regenerate synchronized delivery evidence package'.repeat(4),
+			status: 'in_progress',
+			assignee: 'verifier',
+			parent: null,
+			runs: 31,
+			unproductive: 11,
+			avg_minutes: 42,
+			input_tokens: 900_000,
+			output_tokens: 1_000,
+		}));
+		const out = buildRetrospectivePrompt('SYS', signals({ task_burn: many }));
+		expect(out.length).toBeLessThan(20_000);
+		expect(out).toContain('the counted block was cut at');
+		// Cut or not, the instruction that tells the Coach what to do with the block
+		// is never the part that gets dropped.
+		expect(out).toContain('### What to do');
 	});
 });
 

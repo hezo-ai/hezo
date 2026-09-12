@@ -1044,6 +1044,19 @@ async function runSeed(db: Db): Promise<void> {
 	// upgrading shouldn't have 15 skills materialize unasked. The operator installs
 	// them from the global Skills page (a button offers the missing ones behind a
 	// confirmation); see db/default-skills.ts and routes/skills.ts.
+
+	// The seed above refreshed the agent catalog from this release's role docs, but
+	// a hired agent's prompt is a copy taken once and never refreshed — so a role
+	// improvement reaches new instances and no existing one. This offers the new
+	// text per agent, and applies nothing without a person accepting: the same
+	// posture as the skills above, for the same reason.
+	try {
+		const { fileRolePromptUpdates } = await import('./services/role-prompt-sync.js');
+		await fileRolePromptUpdates(db);
+	} catch (err) {
+		// An instance must boot even if this cannot run; the offer is not the product.
+		log.error('Role prompt sync failed:', err);
+	}
 }
 
 async function resolveMasterKeyState(

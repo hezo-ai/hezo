@@ -7,6 +7,7 @@ import {
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	type AiProvider,
+	COACH_REVIEW_TRIGGER,
 	CommentContentType,
 	ContainerStatus,
 	type CostTokens,
@@ -157,6 +158,7 @@ import {
 } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
+import type { RetrospectiveSignals } from './project-retrospective';
 import {
 	budgetedSection,
 	omittedRowsNote,
@@ -1058,7 +1060,7 @@ async function buildRunContext(
 	bridge: BridgeRunnerArgs | null,
 	egress: EgressEnvDescriptor | null,
 	runUser: ContainerRunUser,
-	progressUpdate: ProgressUpdateContext | null,
+	taskLess: TaskLessRunContext | null,
 	endpoints: RunEndpoints,
 	// Loaded before the tunnel starts, because the tunnel's split-routing policy
 	// needs the connector hosts and the tunnel is up before this runs. Passed in
@@ -1114,7 +1116,7 @@ async function buildRunContext(
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
-	const isCoachReview = wakeupPayload?.trigger === 'task_done';
+	const isCoachReview = wakeupPayload?.trigger === COACH_REVIEW_TRIGGER;
 	const mentionContext =
 		wakeupPayload?.source === WakeupSource.Mention
 			? await loadMentionContext(deps.db, agent.id, runTeamId, wakeupPayload)
@@ -1139,8 +1141,8 @@ async function buildRunContext(
 	const systemPromptToFile = RUNTIME_SYSTEM_PROMPT_FILE[runtimeType] ? resolvedPrompt : null;
 	const inlineSystemPrompt = systemPromptToFile ? '' : resolvedPrompt;
 	let basePrompt: string;
-	if (progressUpdate) {
-		basePrompt = buildProgressUpdatePrompt(inlineSystemPrompt, progressUpdate);
+	if (taskLess) {
+		basePrompt = buildTaskLessPrompt(inlineSystemPrompt, taskLess);
 	} else if (isCoachReview) {
 		// task is non-null on every non-progress-update path (enforced by runAgent).
 		basePrompt = await buildCoachReviewPrompt(
@@ -1509,7 +1511,7 @@ export async function runAgent(
 	signal?: AbortSignal,
 	onRunRegistered?: RunRegistrationHook,
 	wakeupId?: string,
-	progressUpdate?: ProgressUpdateContext | null,
+	taskLess?: TaskLessRunContext | null,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -1550,7 +1552,7 @@ export async function runAgent(
 		runBroadcast,
 		effectiveWakeupId,
 		extractTriggeredBy(wakeupPayload),
-		progressUpdate ? HeartbeatRunKind.ProgressUpdate : HeartbeatRunKind.Task,
+		taskLess?.kind ?? HeartbeatRunKind.Task,
 		extractReplacedRun(wakeupPayload),
 	);
 	const onContainerAcquired = onRunRegistered?.(heartbeatRunId);
@@ -2430,7 +2432,7 @@ export async function runAgent(
 			bridge,
 			egressEnv,
 			runUser,
-			progressUpdate ?? null,
+			taskLess ?? null,
 			endpoints,
 			connectorDescriptors,
 		);
@@ -4475,6 +4477,18 @@ export interface ProgressUpdateContext {
 	activityCandidates?: ProgressActivityCandidates;
 }
 
+/**
+ * A run that carries no task and looks across a whole project.
+ *
+ * The tag **is** the run kind, so the kind is read off the context rather than
+ * derived from which optional argument happened to be non-null - which is how a
+ * second task-less run kind would otherwise arrive as a second boolean, and a third
+ * as a third.
+ */
+export type TaskLessRunContext =
+	| ({ kind: typeof HeartbeatRunKind.ProgressUpdate } & ProgressUpdateContext)
+	| { kind: typeof HeartbeatRunKind.Retrospective; signals: RetrospectiveSignals };
+
 /** One candidate group rendered into the prompt, with what its tasks tell the Captain. */
 const ACTIVITY_COLUMN_PROMPTS: {
 	kind: ProgressActivityKind;
@@ -4531,6 +4545,197 @@ function renderActivityCandidates(candidates?: Partial<ProgressActivityCandidate
  * (RUNTIME_SYSTEM_PROMPT_FILE). Emitting the separator on its own would open the
  * prompt with a stray rule and read as a truncated message.
  */
+/** Bytes rendered as the operator would read them. */
+function mib(bytes: number): string {
+	return bytes >= 1_048_576
+		? `${(bytes / 1_048_576).toFixed(1)} MB`
+		: `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** A share of a whole, or null when there is no whole to divide by. */
+function share(part: number, whole: number): string | null {
+	if (whole <= 0) return null;
+	return `${Math.round((part / whole) * 100)}%`;
+}
+
+/**
+ * The user-message body for a Coach retrospective run. No task is attached.
+ *
+ * Each block says what its numbers *mean*, the same way the progress-update prompt
+ * explains its columns - guidance about reading a signal belongs beside the signal,
+ * where it changes when the signal does, not in the Coach's standing prompt.
+ *
+ * **Counts and shares, never absolute tokens.** The Coach quotes these into a task
+ * comment every agent on that task can read, and run economics are deliberately not
+ * agent-readable elsewhere. A share is also the more useful sentence: "this task is
+ * 78% of the project's week" is actionable, "1.78 billion tokens" is not.
+ */
+export function buildRetrospectivePrompt(
+	systemPrompt: string,
+	signals: RetrospectiveSignals,
+): string {
+	const t = signals.totals;
+	const parts = [...systemPromptParts(systemPrompt), '## Retrospective', ''];
+	// The counted arms are gathered before they are rendered, so the whole block is
+	// one thing the budget can bound. Nothing else on a task-less run competes for
+	// the allowance - there is no task, and no comment woke it.
+	const signalParts: string[] = [];
+	parts.push(
+		`This is the shape of the last ${signals.window_days} days in this project. You are looking ` +
+			'for work that is not converging: the same thing done again and again, tasks that multiply ' +
+			'rather than close, effort with nothing to show for it. None of this is visible in any ' +
+			'single task, which is why it is counted here rather than read.',
+	);
+	parts.push('');
+
+	const projectShare = share(t.input_tokens, t.instance_input_tokens);
+	parts.push(
+		`**This project ran ${t.runs} times and filed ${t.tasks_created} tasks in the window` +
+			(projectShare ? `, and is ${projectShare} of everything this instance spent` : '') +
+			'.**',
+	);
+	parts.push('');
+
+	if (signals.task_burn.length > 0) {
+		signalParts.push('### Where the effort went');
+		signalParts.push(
+			'Ranked by spend, not by run count - a task that runs constantly and costs little is a ' +
+				'standing task doing its job, and is not a finding. Look for the opposite: few tasks ' +
+				'taking most of the window.',
+		);
+		for (const b of signals.task_burn) {
+			const s = share(b.input_tokens + b.output_tokens, t.input_tokens + t.output_tokens);
+			const bits = [`${b.runs} runs`];
+			if (b.unproductive > 0) bits.push(`${b.unproductive} failed or timed out`);
+			bits.push(`~${b.avg_minutes} min each`);
+			if (s) bits.push(`${s} of the project's spend`);
+			signalParts.push(`- \`${b.identifier}\` ${b.title} (${b.status}) - ${bits.join(', ')}`);
+		}
+		signalParts.push('');
+	}
+
+	if (signals.fan_out.length > 0) {
+		signalParts.push('### Work that spawned more work');
+		signalParts.push(
+			'Children filed under one parent inside the window. A plan breaking into steps looks ' +
+				'like this once; a loop looks like this every week.',
+		);
+		for (const f of signals.fan_out) {
+			signalParts.push(
+				`- \`${f.parent_identifier}\` ${f.parent_title} - ${f.children_in_window} new children ` +
+					`in the window, ${f.children_total} in total`,
+			);
+		}
+		signalParts.push('');
+	}
+
+	if (signals.title_clusters.length > 0) {
+		signalParts.push('### Tasks that look like each other');
+		signalParts.push(
+			'Grouped on the opening words of the title. Repetition here is the team re-filing the ' +
+				'same work rather than finishing it.',
+		);
+		for (const c of signals.title_clusters) {
+			const who = c.creator ? ` (filed by ${c.creator})` : ' (system-created)';
+			signalParts.push(`- ${c.count}x "${c.stem}..."${who}: ${c.identifiers.join(', ')}`);
+		}
+		signalParts.push('');
+	}
+
+	const a = signals.assets;
+	if (a.added > 0) {
+		const libShare = share(a.added, a.total);
+		signalParts.push('### What the team produced');
+		signalParts.push(
+			`${a.added} files (${mib(a.added_bytes)}) added in the window against a library of ` +
+				`${a.total} (${mib(a.total_bytes)})` +
+				(libShare ? `, so ${libShare} of everything here was made this window` : '') +
+				`. ${a.ever_archived} have ever been archived. A library that only grows is re-read in ` +
+				'full by every run that touches it.',
+		);
+		for (const r of signals.asset_repeats) {
+			const grew = r.last_bytes > r.first_bytes ? ', each copy larger' : '';
+			signalParts.push(`- "${r.stem}" rewritten ${r.copies} times${grew}`);
+		}
+		signalParts.push('');
+	}
+
+	if (signals.already_flagged.length > 0) {
+		signalParts.push('### Already raised');
+		signalParts.push(
+			`A previous retrospective has commented on ${signals.already_flagged.join(', ')}. Do not ` +
+				'raise these again unless the figures have got materially worse - say so explicitly if ' +
+				'they have.',
+		);
+		signalParts.push('');
+	}
+
+	const cut = new PromptBudget().take('retrospectiveSignals', signalParts.join('\n'));
+	parts.push(cut.text);
+	if (cut.truncated) {
+		parts.push(
+			`_(the counted block was cut at ${cut.text.length} of ${cut.length} characters; report only ` +
+				'on what is above)_',
+		);
+		parts.push('');
+	}
+
+	// Every rule of the pass, stated here rather than in the role doc.
+	//
+	// A role doc is copied into an agent's stored prompt once, when it is hired, and
+	// never refreshed - so a rule added there reaches new instances and no existing
+	// one. The Coach is a singleton hired on an instance's first boot, so for every
+	// instance already running, "there" means nowhere. The dispatch, the signals and
+	// the rules for reading them all arrive with the binary this way, together.
+	parts.push('### What to do');
+	parts.push(
+		'- **Report at most three findings, the worst first**, and only where the numbers show work ' +
+			'that is not converging. A busy project is not a finding. If nothing here is wrong, say ' +
+			'so and stop - a quiet week is the expected outcome.',
+	);
+	parts.push(
+		'- **Comment once per finding, on the task the finding is about** - the parent for work that ' +
+			'spawned more work, the heaviest member of a cluster, otherwise the task itself.',
+	);
+	parts.push(
+		'- **Put an active `@admin` in that comment.** A retrospective finding is the one comment ' +
+			'where you do: it asks a person to decide, and dispatch onto that task stops until they ' +
+			'answer. This overrides the passive-reference rule your summary comment follows, which ' +
+			'covers a task review and not this.',
+	);
+	parts.push(
+		'- **Give counts and shares, never token or money totals.** "31 runs in 17 hours" and "70% ' +
+			'of the library made this window" are what a person acts on.',
+	);
+	parts.push('- **Say what you would change.** A finding without a next step is an observation.');
+	parts.push(
+		'- **Change no prompts on this pass.** A retrospective infers from aggregates; a task review ' +
+			'learns from what someone actually said. Lessons come from the second.',
+	);
+	return parts.join('\n');
+}
+
+/**
+ * Which prompt a task-less run gets.
+ *
+ * Switched on the context's own tag with an exhaustiveness guard, so a new
+ * task-less run kind is a compile error here until it has a prompt rather than
+ * silently falling through to the task path. (A keyed record reads better but
+ * cannot narrow the union per key, which costs a cast in every arm.)
+ */
+function buildTaskLessPrompt(systemPrompt: string, ctx: TaskLessRunContext): string {
+	switch (ctx.kind) {
+		case HeartbeatRunKind.ProgressUpdate:
+			return buildProgressUpdatePrompt(systemPrompt, ctx);
+		case HeartbeatRunKind.Retrospective:
+			return buildRetrospectivePrompt(systemPrompt, ctx.signals);
+		default: {
+			const unreachable: never = ctx;
+			throw new Error(`no prompt builder for task-less run ${JSON.stringify(unreachable)}`);
+		}
+	}
+}
+
 function systemPromptParts(systemPrompt: string): string[] {
 	return systemPrompt ? [systemPrompt, '', '---', ''] : [];
 }

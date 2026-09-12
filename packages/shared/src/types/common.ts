@@ -799,6 +799,12 @@ export const ApprovalType = {
 	DesignatedRepoRequest: 'designated_repo_request',
 	SkillProposal: 'skill_proposal',
 	GoalSuggestion: 'goal_suggestion',
+	/**
+	 * A built-in agent's role doc has improved since it was hired, and the new text
+	 * is offered for the admin to accept. Never applied without one, because the
+	 * prompt document carries their edits and the agent's learned rules.
+	 */
+	RoleUpdate: 'role_update',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 
@@ -897,6 +903,14 @@ export const WakeupSource = {
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];
 
+/**
+ * The trigger a wakeup carries when a task closes and the Coach is asked to review
+ * it. Written by the close, read by the run to compose a review rather than an
+ * ordinary task prompt, and written again by the Coach's own sweep so a review it
+ * recovers is indistinguishable from one the close delivered.
+ */
+export const COACH_REVIEW_TRIGGER = 'task_done';
+
 export const WakeupStatus = {
 	Queued: 'queued',
 	Claimed: 'claimed',
@@ -964,6 +978,17 @@ export const WakeupSkipReason = {
 	 * `services/no-work-backoff.ts`.
 	 */
 	AttemptsExhausted: 'attempts_exhausted',
+	/**
+	 * A retrospective found this task is not converging and nobody has answered yet.
+	 *
+	 * Unlike the other holds this one is not the agent's own verdict: a third party
+	 * looked across the project, judged this work to be going in circles, and asked
+	 * the admin. Dispatch stops until a person replies, because the alternative is
+	 * raising the alarm and letting the burn continue. Lifts on any human reply, and
+	 * the exempt sources always get through. See `retrospectiveHoldActive` in
+	 * `services/no-work-backoff.ts`.
+	 */
+	RetrospectiveHold: 'retrospective_hold',
 	/**
 	 * Another run still held the rotating provider credential when this one gave
 	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
@@ -1056,11 +1081,19 @@ export const HeartbeatRunStatus = {
 } as const;
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
 
-/** Classifies a heartbeat run. 'task' is the normal task-scoped run; 'progress_update' is a
- * Captain run with no task that estimates progress across the project's due goals. */
+/**
+ * Classifies a heartbeat run.
+ *
+ * 'task' is the normal task-scoped run. The other two carry no task and look
+ * across a whole project: 'progress_update' is a Captain run estimating progress
+ * against due goals, and 'retrospective' is a Coach run reading the structural
+ * shape of the last several days - how work multiplied, repeated and converged -
+ * which is the one thing a per-task review structurally cannot see.
+ */
 export const HeartbeatRunKind = {
 	Task: 'task',
 	ProgressUpdate: 'progress_update',
+	Retrospective: 'retrospective',
 } as const;
 export type HeartbeatRunKind = (typeof HeartbeatRunKind)[keyof typeof HeartbeatRunKind];
 

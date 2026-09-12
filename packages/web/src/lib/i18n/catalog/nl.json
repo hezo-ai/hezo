@@ -698,6 +698,7 @@
 	"runTrigger.progressUpdate": "Automatisering: doelen en voortgangsrapport",
 	"runTrigger.reply": "Antwoord op je eerdere reactie",
 	"runTrigger.replyFromIn": "Antwoord van @{actor} in {task}",
+	"runTrigger.retrospective": "Automatisering: projectretrospectief",
 	"runTrigger.timer": "Hersteltimer",
 	"runTrigger.timerReason": "Hersteltimer: {reason}",
 	"runTrigger.unknown": "Onbekende trigger",

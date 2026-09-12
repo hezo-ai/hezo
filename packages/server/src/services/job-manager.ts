@@ -5,6 +5,8 @@ import {
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
 	CAPTAIN_AGENT_SLUG,
+	COACH_AGENT_SLUG,
+	COACH_REVIEW_TRIGGER,
 	CONTAINER_DORMANT_RETIRE_MIN,
 	CONTAINER_IDLE_TIMEOUT_MIN,
 	CommentContentType,
@@ -15,6 +17,7 @@ import {
 	INSTANCE_AGENT_SLUGS,
 	RepoSetupStatus,
 	TaskPriority,
+	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	UpdateState,
 	WakeupSkipReason,
@@ -42,6 +45,7 @@ import {
 	type RunResult,
 	recordRunCostAndEnforce,
 	runAgent,
+	type TaskLessRunContext,
 } from './agent-runner';
 import {
 	pauseAgentForBudget,
@@ -87,6 +91,7 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	providerRefusalCooldownSql,
+	retrospectiveHoldActive,
 	TASK_ATTEMPT_WINDOW_HOURS,
 } from './no-work-backoff';
 import {
@@ -98,12 +103,14 @@ import {
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { buildProgressActivityCandidates } from './project-activity';
+import { buildRetrospectiveSignals } from './project-retrospective';
 import { ensureRepoSetupAction } from './repo-setup';
 import {
 	getActiveContainers,
 	isTaskBusyInDb,
 	projectContainerMemoryGb,
 	reclaimableForOthers,
+	runInProjectSql,
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
 import { recordHandbackOutcome } from './run-handback';
@@ -134,6 +141,31 @@ const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
 // "has anything changed since?" guard in `isProgressSnapshotDue`, it means an active project
 // gets at most one progress run a day from this path and a dormant one gets none.
 const PROGRESS_REFRESH_INTERVAL_HOURS = 24;
+/**
+ * How often the Coach looks across a project for work that is not converging.
+ *
+ * Every other day rather than weekly: the incident this exists to catch spent 1.78
+ * billion input tokens in seven days, so a weekly pass would have found it on average
+ * three and a half days late and at worst after the money was gone. The cost of the
+ * tighter cadence is bounded by the dormancy half of the due-check - a project that
+ * has not run since its last retrospective is never selected.
+ *
+ * Separate from the window the run *reads*, which stays at a week: a two-day window
+ * cannot show "70% of this library was made recently" or a title cluster building
+ * over five days. Overlapping windows are intended; `already_flagged` is what stops
+ * a developing finding being reported twice.
+ */
+const RETROSPECTIVE_INTERVAL_HOURS = 48;
+/**
+ * How far back the Coach sweeps for a completed task whose review never ran.
+ *
+ * A missed `task_done` wakeup is a recent event. Bounding the sweep is what stops
+ * the first heartbeat after this ships walking an instance's entire completed
+ * history one container at a time.
+ */
+const COACH_SWEEP_WINDOW_HOURS = 72;
+/** How far back a retrospective reads, whatever the cadence above. */
+const RETROSPECTIVE_WINDOW_DAYS = 7;
 const FAILURE_PING_ERROR_MAX_LEN = 500;
 /**
  * The outcomes that must never post a failure notice: a cancel is the user's own
@@ -231,13 +263,21 @@ export type DispatchNowResult =
 				| 'not_found';
 	  };
 
-/** Why a progress-update ("Run now") dispatch did or didn't start. `no_captain`/`captain_disabled`/
- * `no_project` only arise on the manual `dispatchProgressUpdateNow` path; `not_due` only on the
- * scheduled path, which is the only one that runs the due-check. */
-export type ProgressUpdateDispatchReason =
+/**
+ * Why a task-less "Run now" dispatch did or didn't start.
+ *
+ * Shared by both kinds, and named for neither: the gates are the same whichever
+ * agent is being asked to run, and a reason naming one role would have to be read
+ * as meaning another. The caller supplies the role when it turns a reason into a
+ * sentence.
+ *
+ * `no_agent`/`agent_disabled`/`no_project` only arise on the manual path; `not_due`
+ * only on the scheduled one, which is the only one that runs the due-check.
+ */
+export type TaskLessDispatchReason =
 	| 'no_project'
-	| 'no_captain'
-	| 'captain_disabled'
+	| 'no_agent'
+	| 'agent_disabled'
 	| 'not_due'
 	| 'agent_busy'
 	| 'instance_at_capacity'
@@ -245,16 +285,39 @@ export type ProgressUpdateDispatchReason =
 	| 'over_budget'
 	| 'launch_conflict';
 
+/** The agent fields a task-less launch needs. Shared by both dispatchers. */
+export interface TaskLessAgentRow {
+	id: string;
+	title: string;
+	slug: string;
+	default_effort: string;
+	model_override_provider: AiProvider | null;
+	model_override_model: string | null;
+	run_timeout_min: number;
+}
+
+/** The project fields a task-less launch needs. Shared by both dispatchers. */
+export interface TaskLessProjectRow {
+	id: string;
+	slug: string;
+	team_id: string;
+	team_slug: string;
+	container_id: string | null;
+	container_status: string;
+	designated_repo_id: string | null;
+	is_internal: boolean;
+}
+
 /** Outcome of a single dispatch attempt (`tryDispatchProgressUpdate`). Never queues. */
-export type TryProgressUpdateResult =
+export type TaskLessDispatchResult =
 	| { dispatched: true }
-	| { dispatched: false; reason: ProgressUpdateDispatchReason };
+	| { dispatched: false; reason: TaskLessDispatchReason };
 
 /** What the manual `dispatchProgressUpdateNow` path returns to the route: a single
  * attempt outcome, or — for a transient conflict — a queued wakeup that runs when
  * the Captain frees up. */
 export type ProgressUpdateDispatchResult =
-	| TryProgressUpdateResult
+	| TaskLessDispatchResult
 	| { queued: true; wakeupId: string };
 
 export interface JobManagerDeps {
@@ -807,17 +870,31 @@ export class JobManager {
 	}
 
 	/**
-	 * True when this agent already holds a dispatched run for any project. Used
-	 * by the heartbeat scheduler to skip redundant idle pings while a task-driven
-	 * run is in flight (heartbeats don't carry a project so we can't fall back to
-	 * the per-project guard).
+	 * True when a dispatched run's launch key starts with this prefix.
+	 *
+	 * Launch keys read agent, then project, then what kind of run it is, and the
+	 * last part is absent on an ordinary task run. Matching on a prefix is what lets
+	 * one question - "is this agent busy here?" - see a task run and a task-less one
+	 * alike. Asking for an exact key instead is how a task-less run becomes invisible
+	 * and a second container starts alongside it.
+	 *
+	 * Keys are colon-separated fixed-width ids, so a prefix cannot straddle one.
 	 */
-	isMemberRunning(memberId: string): boolean {
-		const prefix = `${memberId}:`;
+	private hasRunningTaskWithPrefix(prefix: string): boolean {
 		for (const key of this.runningTasks.keys()) {
-			if (key.startsWith(prefix)) return true;
+			if (key === prefix || key.startsWith(`${prefix}:`)) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * True when this agent already holds a dispatched run for any project. Used
+	 * by the heartbeat scheduler to skip redundant idle pings while a run is in
+	 * flight (heartbeats don't carry a project so we can't fall back to the
+	 * per-project guard).
+	 */
+	isMemberRunning(memberId: string): boolean {
+		return this.hasRunningTaskWithPrefix(memberId);
 	}
 
 	getRunningTasks(): Map<string, RunningTask> {
@@ -1826,12 +1903,11 @@ export class JobManager {
 	 * `heartbeat_runs` query is authoritative once the row exists.
 	 */
 	private async isAgentBusyInProject(memberId: string, projectId: string): Promise<boolean> {
-		if (this.isTaskRunning(`${memberId}:${projectId}`)) return true;
+		if (this.hasRunningTaskWithPrefix(`${memberId}:${projectId}`)) return true;
 		const active = await this.deps.db.query(
 			`SELECT 1 FROM heartbeat_runs hr
-			 JOIN tasks t ON t.id = hr.task_id
 			 WHERE hr.member_id = $1
-			   AND t.project_id = $2
+			   AND ${runInProjectSql('$2')}
 			   AND hr.status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
 			 LIMIT 1`,
 			[memberId, projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
@@ -2235,6 +2311,10 @@ export class JobManager {
 		};
 
 		let task: TaskRow | undefined;
+		// What the run is told it was woken for. The selected task and the payload
+		// describing it travel together, so a task found by a sweep produces the same
+		// run as the wakeup that should have delivered it.
+		let runPayload = wakeupPayload;
 
 		// Wakeups with an explicit task_id (mentions, comments, coach triggers) target
 		// that specific task — even if the agent isn't the assignee.
@@ -2265,26 +2345,35 @@ export class JobManager {
 			}
 			task = payloadTask.rows[0];
 		} else {
-			// The Captain's periodic heartbeat first checks whether any of the project's
-			// goals are due for a progress assessment. If so, it runs one progress-update run
-			// (no task, kind=progress_update) and yields this activation; ordinary task work
-			// resumes on the next heartbeat. Goals not yet due are skipped entirely.
-			if (agent.rows[0].slug === CAPTAIN_AGENT_SLUG) {
-				const result = await this.tryDispatchProgressUpdate(
-					memberId,
-					teamId,
-					{
-						id: memberId,
-						title: agent.rows[0].title,
-						slug: agent.rows[0].slug,
-						default_effort: agent.rows[0].default_effort,
-						model_override_provider: agent.rows[0].model_override_provider,
-						model_override_model: agent.rows[0].model_override_model,
-						run_timeout_min: agent.rows[0].run_timeout_min,
-					},
-					wakeupId,
-					wakeupPayload,
-				);
+			// Two roles have periodic work that carries no task, and each checks for it
+			// before falling through to ordinary task selection: the Captain assesses
+			// progress against due goals, and the Coach looks across a project for work
+			// that is not converging. Keyed by slug rather than chained as `if`s so a
+			// third such role is one row, and so neither can silently shadow the other.
+			const taskLessRow: TaskLessAgentRow = {
+				id: memberId,
+				title: agent.rows[0].title,
+				slug: agent.rows[0].slug,
+				default_effort: agent.rows[0].default_effort,
+				model_override_provider: agent.rows[0].model_override_provider,
+				model_override_model: agent.rows[0].model_override_model,
+				run_timeout_min: agent.rows[0].run_timeout_min,
+			};
+			const taskLessDispatch: Record<string, () => Promise<TaskLessDispatchResult>> = {
+				[CAPTAIN_AGENT_SLUG]: () =>
+					this.tryDispatchProgressUpdate(memberId, teamId, taskLessRow, wakeupId, wakeupPayload),
+				[COACH_AGENT_SLUG]: () =>
+					this.tryDispatchRetrospective(
+						memberId,
+						taskLessRow,
+						wakeupId,
+						wakeupPayload,
+						wakeupPayload?.project_id as string | undefined,
+					),
+			};
+			const dispatchTaskLess = taskLessDispatch[agent.rows[0].slug];
+			if (dispatchTaskLess) {
+				const result = await dispatchTaskLess();
 				// Yield this activation when a progress-update run launched, or when a concurrent
 				// one already holds the key (the wakeup was requeued to retry). Any other reason
 				// (no due goals, over budget, …) falls through to normal task selection.
@@ -2331,6 +2420,20 @@ export class JobManager {
 				}
 			}
 
+			// The Coach's own sweep, run before ordinary selection because ordinary
+			// selection cannot see what it looks for.
+			if (agent.rows[0].slug === COACH_AGENT_SLUG) {
+				const missed = await this.selectMissedReviewTask<TaskRow>(memberId);
+				if (missed) {
+					task = missed;
+					// The run is made indistinguishable from the one the lost wakeup would
+					// have produced, by carrying the same trigger. Without it the Coach
+					// gets an ordinary task prompt and treats a finished task as work to
+					// do rather than work to review.
+					runPayload = { ...wakeupPayload, task_id: task.id, trigger: COACH_REVIEW_TRIGGER };
+				}
+			}
+
 			// Instance agents (CEO/Coach) select across every team; everyone else is
 			// scoped to their own team. Build the params positionally so the team
 			// filter is only present when its placeholder is.
@@ -2345,8 +2448,10 @@ export class JobManager {
 			const termList = TERMINAL_TASK_STATUSES.map((_, i) => `$${termStart + i}`).join(', ');
 			const prStart = params.length + 1;
 			params.push(TaskPriority.Urgent, TaskPriority.High, TaskPriority.Medium, TaskPriority.Low);
-			const tasks = await db.query<TaskRow>(
-				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+			const tasks = task
+				? { rows: [task] }
+				: await db.query<TaskRow>(
+						`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
 				 -- An archived project's tasks are not actionable: it has no container
 				 -- and may not be given one. Filtered in the selection rather than
@@ -2365,8 +2470,8 @@ export class JobManager {
 				   CASE i.priority WHEN $${prStart} THEN 0 WHEN $${prStart + 1} THEN 1 WHEN $${prStart + 2} THEN 2 WHEN $${prStart + 3} THEN 3 END,
 				   i.created_at ASC
 				 LIMIT 1`,
-				params,
-			);
+						params,
+					);
 			if (tasks.rows.length === 0) {
 				log.debug(`No actionable tasks for agent ${ref(agent.rows[0].slug, memberId)}`);
 				// The agent woke (heartbeat / task-less nudge) and found nothing to do.
@@ -2417,7 +2522,12 @@ export class JobManager {
 							reason: WakeupSkipReason.AttemptsExhausted,
 							detail: `has given up on ${ref(task.identifier, task.id)} ${MAX_TASK_ATTEMPT_GIVEUPS} times in the last ${TASK_ATTEMPT_WINDOW_HOURS}h without finishing it`,
 						}
-					: null;
+					: (await retrospectiveHoldActive(db, memberId, task.id, wakeupSource))
+						? {
+								reason: WakeupSkipReason.RetrospectiveHold,
+								detail: `is held on ${ref(task.identifier, task.id)} while a retrospective finding waits on the admin`,
+							}
+						: null;
 		if (suppression) {
 			// Warned, not debugged, for every source but the two the system raises on a
 			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its
@@ -2431,6 +2541,7 @@ export class JobManager {
 			// task until a person acts.
 			const quiet =
 				suppression.reason !== WakeupSkipReason.AttemptsExhausted &&
+				suppression.reason !== WakeupSkipReason.RetrospectiveHold &&
 				(wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer);
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
@@ -2706,7 +2817,7 @@ export class JobManager {
 						},
 						task,
 						project.rows[0],
-						wakeupPayload,
+						runPayload,
 						signal,
 						(runId) => {
 							registeredRunId = runId;
@@ -2732,7 +2843,7 @@ export class JobManager {
 						task.identifier,
 						teamId,
 						wakeupId,
-						wakeupPayload,
+						runPayload,
 						result,
 					);
 					return result;
@@ -2761,7 +2872,7 @@ export class JobManager {
 							task.identifier,
 							teamId,
 							wakeupId,
-							wakeupPayload,
+							runPayload,
 							{
 								success: false,
 								exitCode: -1,
@@ -2954,14 +3065,159 @@ export class JobManager {
 	}
 
 	/**
-	 * If the Captain has goals due for a check, launch one progress-update run (no task) covering
-	 * all of them, and refreshes the project's progress summary either way. Returns
-	 * `{ dispatched: true }` so the scheduled caller yields this activation; returns
-	 * `{ dispatched: false, reason }` when nothing is due or the run can't start right now (the
-	 * scheduled caller then falls through to normal task selection and the work stays due for the
-	 * next heartbeat). Shared by the scheduled heartbeat and the manual `dispatchProgressUpdateNow`
-	 * ("Run now") path, which passes `manual` to bypass the due-check.
+	 * A recently completed task the Coach never reviewed, or undefined.
+	 *
+	 * Closing a task fires a wakeup naming it, and that wakeup can be lost - dropped
+	 * by a dispatch suppression, or never delivered because the instance was down.
+	 * Nothing else picks the task up afterwards: the Coach is never an assignee, so
+	 * the assignment-based selection every other agent uses cannot see it. This is
+	 * the recovery, and it is why the role doc can promise one.
+	 *
+	 * "Never reviewed" is read from the runs themselves - the absence of any run by
+	 * this agent against this task - rather than from a flag some other path would
+	 * have to remember to set.
+	 *
+	 * **Bounded to recently closed tasks, and that bound is load-bearing.** Unbounded,
+	 * the first heartbeat after this ships finds every task the instance ever
+	 * completed unreviewed and works through the entire backlog one container at a
+	 * time. A lost wakeup is a recent event; an old close is history, not a gap.
+	 * Oldest close first, so a short burst of misses drains in the order it happened.
 	 */
+	private async selectMissedReviewTask<T>(memberId: string): Promise<T | undefined> {
+		const r = await this.deps.db.query<T>(
+			`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+			   FROM tasks i
+			   JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
+			  WHERE i.status = $1::task_status
+			    AND i.updated_at > now() - ($2 || ' hours')::interval
+			    AND NOT EXISTS (
+			      SELECT 1 FROM heartbeat_runs hr
+			       WHERE hr.task_id = i.id AND hr.member_id = $3
+			    )
+			  ORDER BY i.updated_at ASC
+			  LIMIT 1`,
+			[TaskStatus.Done, String(COACH_SWEEP_WINDOW_HOURS), memberId],
+		);
+		return r.rows[0];
+	}
+
+	/**
+	 * The project most overdue a retrospective, or null when none is.
+	 *
+	 * The plural analogue of {@link isProgressSnapshotDue}: the Captain is handed its
+	 * team and asks whether that one project is due, while the Coach is an instance
+	 * singleton whose heartbeat arrives carrying HQ's team, so it must *choose*.
+	 *
+	 * Same two conditions, and the same reason for each. **Stale**: the anchor is
+	 * older than the interval. **Active**: something has run since. The anchor is the
+	 * last retrospective run for the team - including one that reported nothing -
+	 * which is what makes the cadence about how often we look rather than how often
+	 * we find something, and is the only thing standing between this and a hot loop.
+	 *
+	 * Activity is measured on runs, not on `tasks.updated_at` as the progress
+	 * due-check measures it, because the pathology *is* runs: a project can spend a
+	 * billion tokens without a task row changing.
+	 *
+	 * Oldest anchor first, one project per pass. The Coach is a singleton, so
+	 * selecting one keeps at most one retrospective in flight instance-wide and lets
+	 * a fleet of due projects drain in turn rather than race for the same agent.
+	 */
+	private async selectDueRetrospectiveProject(): Promise<{
+		projectId: string;
+		teamId: string;
+	} | null> {
+		const r = await this.deps.db.query<{ id: string; team_id: string }>(
+			`SELECT p.id, p.team_id
+			   FROM projects p,
+			        LATERAL (
+			          SELECT COALESCE(
+			            (SELECT max(COALESCE(hr.started_at, hr.created_at))
+			               FROM heartbeat_runs hr
+			              WHERE hr.team_id = p.team_id
+			                AND hr.task_id IS NULL
+			                AND hr.kind = $1),
+			            p.created_at
+			          ) AS anchor
+			        ) a
+			  WHERE p.is_internal = false
+			    AND p.archived_at IS NULL
+			    AND a.anchor < now() - ($2 || ' hours')::interval
+			    AND EXISTS (
+			      SELECT 1 FROM heartbeat_runs r2
+			       WHERE r2.team_id = p.team_id AND COALESCE(r2.started_at, r2.created_at) > a.anchor
+			    )
+			  ORDER BY a.anchor ASC
+			  LIMIT 1`,
+			[HeartbeatRunKind.Retrospective, String(RETROSPECTIVE_INTERVAL_HOURS)],
+		);
+		const row = r.rows[0];
+		return row ? { projectId: row.id, teamId: row.team_id } : null;
+	}
+
+	/**
+	 * Run one retrospective, if a project is due one.
+	 *
+	 * Selection differs from the progress path - a project chosen across every team
+	 * rather than derived from one - and everything below it is shared through
+	 * {@link launchTaskLessRun}.
+	 */
+	private async tryDispatchRetrospective(
+		memberId: string,
+		agentRow: TaskLessAgentRow,
+		wakeupId: string | undefined,
+		wakeupPayload: Record<string, unknown>,
+		forProjectId?: string,
+	): Promise<TaskLessDispatchResult> {
+		const { db } = this.deps;
+		const due = forProjectId
+			? await (async () => {
+					const r = await db.query<{ id: string; team_id: string }>(
+						`SELECT id, team_id FROM projects
+						  WHERE id = $1 AND is_internal = false AND archived_at IS NULL`,
+						[forProjectId],
+					);
+					const row = r.rows[0];
+					return row ? { projectId: row.id, teamId: row.team_id } : null;
+				})()
+			: await this.selectDueRetrospectiveProject();
+		if (!due) return { dispatched: false, reason: 'not_due' };
+
+		const project = await db.query<TaskLessProjectRow>(
+			`SELECT p.id, p.slug, p.team_id, c.slug AS team_slug,
+			        p.container_id, p.container_status, p.designated_repo_id, p.is_internal
+			   FROM projects p JOIN teams c ON c.id = p.team_id
+			  WHERE p.id = $1`,
+			[due.projectId],
+		);
+		const projectRow = project.rows[0];
+		if (!projectRow) return { dispatched: false, reason: 'no_project' };
+
+		const signals = await buildRetrospectiveSignals(
+			db,
+			projectRow.id,
+			projectRow.team_id,
+			RETROSPECTIVE_WINDOW_DAYS,
+		);
+
+		return await this.launchTaskLessRun({
+			memberId,
+			// The run is scoped to the project's team, not the Coach's own: the same
+			// run-team split every cross-team Coach review already uses, so its tools,
+			// roster and container all resolve against the team whose work it is
+			// reading, while its prompt still loads from HQ.
+			teamId: projectRow.team_id,
+			agentRow,
+			projectRow,
+			wakeupId,
+			wakeupPayload,
+			keySuffix: 'retrospective',
+			label: 'retrospective',
+			context: { kind: HeartbeatRunKind.Retrospective, signals },
+			onComplete: (result) =>
+				this.onProgressUpdateComplete(memberId, projectRow.team_id, wakeupId, result),
+		});
+	}
+
 	/**
 	 * Is the project's progress summary stale enough to rebuild, independently of goals?
 	 *
@@ -3014,22 +3270,23 @@ export class JobManager {
 		return r.rows[0]?.due ?? false;
 	}
 
+	/**
+	 * If the Captain has goals due for a check, launch one progress-update run (no task) covering
+	 * all of them, and refreshes the project's progress summary either way. Returns
+	 * `{ dispatched: true }` so the scheduled caller yields this activation; returns
+	 * `{ dispatched: false, reason }` when nothing is due or the run can't start right now (the
+	 * scheduled caller then falls through to normal task selection and the work stays due for the
+	 * next heartbeat). Shared by the scheduled heartbeat and the manual `dispatchProgressUpdateNow`
+	 * ("Run now") path, which passes `manual` to bypass the due-check.
+	 */
 	private async tryDispatchProgressUpdate(
 		memberId: string,
 		teamId: string,
-		agentRow: {
-			id: string;
-			title: string;
-			slug: string;
-			default_effort: string;
-			model_override_provider: AiProvider | null;
-			model_override_model: string | null;
-			run_timeout_min: number;
-		},
+		agentRow: TaskLessAgentRow,
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown>,
 		manual = false,
-	): Promise<TryProgressUpdateResult> {
+	): Promise<TaskLessDispatchResult> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
 		// The Captain's project is its team's single non-internal project - unless it
@@ -3102,6 +3359,55 @@ export class JobManager {
 			})),
 		};
 
+		return await this.launchTaskLessRun({
+			memberId,
+			teamId,
+			agentRow,
+			projectRow,
+			wakeupId,
+			wakeupPayload,
+			keySuffix: 'progressupdate',
+			label: 'progress-update',
+			context: { kind: HeartbeatRunKind.ProgressUpdate, ...progressUpdate },
+			onComplete: (result) => this.onProgressUpdateComplete(memberId, teamId, wakeupId, result),
+		});
+	}
+
+	/**
+	 * Gate, launch and account for a run that carries no task.
+	 *
+	 * Everything a task-less run does below choosing its subject: the busy, capacity
+	 * and budget gates, the runtime-status flip, the pool and pending-start
+	 * accounting, the launch, and the release on every exit. The two callers differ
+	 * only in *which* subject they picked and what they do when the run finishes -
+	 * `tryDispatchProgressUpdate` resolves a project from a team, and
+	 * `tryDispatchRetrospective` picks a project across every team, because the Coach
+	 * is an instance singleton and its heartbeat arrives carrying HQ's team.
+	 *
+	 * Extracted rather than copied: this block is ~120 lines and the release paths in
+	 * its `finally` are the half that goes wrong when a second copy drifts.
+	 */
+	private async launchTaskLessRun(opts: {
+		memberId: string;
+		teamId: string;
+		agentRow: TaskLessAgentRow;
+		projectRow: TaskLessProjectRow;
+		wakeupId: string | undefined;
+		wakeupPayload: Record<string, unknown> | undefined;
+		/**
+		 * Tails the launch key, which serialises concurrent dispatches per project.
+		 * Distinct per kind of task-less run so two kinds do not block each other,
+		 * while the agent and project leading the key keep both busy-checks able to
+		 * see the run.
+		 */
+		keySuffix: string;
+		/** Names this kind of run in a log line. */
+		label: string;
+		context: TaskLessRunContext;
+		onComplete: (result: RunResult) => Promise<void>;
+	}): Promise<TaskLessDispatchResult> {
+		const { memberId, teamId, agentRow, projectRow, wakeupId, wakeupPayload } = opts;
+		const { db, docker, masterKeyManager, serverPort } = this.deps;
 		const runProject = { ...projectRow, container_id: projectRow.container_id };
 
 		await db.query(
@@ -3129,7 +3435,7 @@ export class JobManager {
 			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agentRow.run_timeout_min * 60 * 1000;
-		const key = `progressupdate:${memberId}:${projectRow.id}`;
+		const key = `${memberId}:${projectRow.id}:${opts.keySuffix}`;
 		this.acquireProjectRun(projectRow.id);
 		// Same pending-start accounting as activateAgent: a progress-update run
 		// into a stopped project lazy-starts its container.
@@ -3170,26 +3476,28 @@ export class JobManager {
 							return (containerId) => this.attachLiveRunContainer(runId, containerId);
 						},
 						wakeupId,
-						progressUpdate,
+						opts.context,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
-					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, result);
+					await opts.onComplete(result);
 					return result;
 				} catch (err) {
 					log.error(
-						`Background progress-update run for Captain ${ref('captain', memberId)} failed:`,
+						`Background ${opts.label} run for ${ref(agentRow.slug, memberId)} failed:`,
 						err,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
 					// Before the completion bookkeeping, which reads the row.
 					if (registeredRunId) await this.finalizeThrownRun(registeredRunId, err);
-					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, {
-						success: false,
-						exitCode: -1,
-						stderr: err instanceof Error ? err.message : String(err),
-						durationMs: 0,
-						heartbeatRunId: registeredRunId,
-					}).catch((e) => log.error('Progress-update completion bookkeeping failed:', e));
+					await opts
+						.onComplete({
+							success: false,
+							exitCode: -1,
+							stderr: err instanceof Error ? err.message : String(err),
+							durationMs: 0,
+							heartbeatRunId: registeredRunId,
+						})
+						.catch((e) => log.error(`${opts.label} completion bookkeeping failed:`, e));
 					return null;
 				} finally {
 					this.releaseProjectRun(projectRow.id);
@@ -3311,6 +3619,42 @@ export class JobManager {
 	 * synthesises an on-demand wakeup, so there is no queued row for the 5s cron to double-dispatch.
 	 * Returns the discriminated result the route maps to HTTP.
 	 */
+	/**
+	 * Run a retrospective on one project now, whether or not it is due.
+	 *
+	 * Pressing the button is explicit intent, so the cadence check is skipped and the
+	 * project is passed through directly. Only the busy, capacity and budget gates
+	 * still apply. Without this there is no way to see the pass work, or to answer
+	 * "is this thing running" inside two days.
+	 */
+	async dispatchRetrospectiveNow(projectId: string): Promise<TaskLessDispatchResult> {
+		const { db } = this.deps;
+
+		// The Coach is an instance singleton, so it is resolved by slug alone rather
+		// than within the project's team.
+		const coach = await db.query<TaskLessAgentRow & { admin_status: string }>(
+			`SELECT ma.id, ma.title, ma.slug, ma.admin_status, ma.default_effort,
+			        ma.run_timeout_min, ma.model_override_provider, ma.model_override_model
+			   FROM member_agents ma
+			  WHERE ma.slug = $1
+			  LIMIT 1`,
+			[COACH_AGENT_SLUG],
+		);
+		const coachRow = coach.rows[0];
+		if (!coachRow) return { dispatched: false, reason: 'no_agent' };
+		if (coachRow.admin_status !== AgentAdminStatus.Enabled) {
+			return { dispatched: false, reason: 'agent_disabled' };
+		}
+
+		return await this.tryDispatchRetrospective(
+			coachRow.id,
+			coachRow,
+			undefined,
+			{ source: WakeupSource.OnDemand, trigger: 'retrospective_now', project_id: projectId },
+			projectId,
+		);
+	}
+
 	async dispatchProgressUpdateNow(
 		projectId: string,
 		triggeredBy?: { member_id: string; name: string } | null,
@@ -3343,9 +3687,9 @@ export class JobManager {
 			[teamId, CAPTAIN_AGENT_SLUG],
 		);
 		const captainRow = captain.rows[0];
-		if (!captainRow) return { dispatched: false, reason: 'no_captain' };
+		if (!captainRow) return { dispatched: false, reason: 'no_agent' };
 		if (captainRow.admin_status !== AgentAdminStatus.Enabled) {
-			return { dispatched: false, reason: 'captain_disabled' };
+			return { dispatched: false, reason: 'agent_disabled' };
 		}
 
 		// First attempt is synchronous: when the Captain is free this launches
