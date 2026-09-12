@@ -1,6 +1,6 @@
 {
 	"name": "@hezo/shared",
-	"version": "0.63.0",
+	"version": "0.64.0",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"

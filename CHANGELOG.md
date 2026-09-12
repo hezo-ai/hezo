@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.64.0 - 2026-09-12
+
+### Features
+
+- **coach:** a periodic retrospective, and a way to carry role-doc improvements into existing instances ([#1108](https://github.com/hezo-ai/hezo/pull/1108))
+- **runs:** price subscription runs, and bound the loops that ran up 2.3B tokens ([#1107](https://github.com/hezo-ai/hezo/pull/1107))
+- **chat:** team chat - DM any agent + group rooms (Phases 0-2, all in one PR) ([#1046](https://github.com/hezo-ai/hezo/pull/1046))
+
+### Bug Fixes
+
+- **web:** render generated avatars in Budget rows ([#1105](https://github.com/hezo-ai/hezo/pull/1105))
+- **hours:** measure the window the cap is enforced on, and stop hours borrowing capacity's words ([#1106](https://github.com/hezo-ai/hezo/pull/1106))
+
+### Other
+
+- **test-s3:** pull MinIO from quay.io, pinned by digest ([#1104](https://github.com/hezo-ai/hezo/pull/1104))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.63.0...0.64.0
+
 ## 0.63.0 - 2026-09-11
 
 ### Features
