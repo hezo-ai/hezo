@@ -68,7 +68,7 @@ test('CEO replies render unique refs as links; unknown and backticked refs stay 
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	const ident = refs.taskIdentifier;
@@ -115,7 +115,7 @@ test('CEO replies linkify backticked doc and asset references', async () => {
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	// The exact shape that misfired in production: an LLM-authored reply that wraps
@@ -150,7 +150,7 @@ test('clicking a chat comment link navigates client-side with the chat still ope
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedCeoReply(`Answered in ${refs.taskIdentifier}#comment-${refs.commentId}.`);
@@ -178,7 +178,7 @@ test('agent mentions link to the agent home project; HQ singletons resolve to hq
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedCeoReply('Ask @@ceo to review.');
@@ -201,7 +201,7 @@ test('an unresolved passive @@mention sheds its @@ prefix and renders as the bar
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedCeoReply('HM-70 is with @@nonexistentrole — two focused amendments.');

@@ -653,7 +653,7 @@ test('blocks the app when no provider is configured and drops once one is added'
 	await waitFor(
 		() => {
 			expect(
-				container.querySelector('[data-testid="home-welcome-card"]') ??
+				container.querySelector('[data-testid="home-ceo-landing"]') ??
 					container.querySelector('[data-testid="home-onboarding-choice-section"]') ??
 					container.querySelector('nav'),
 			).toBeTruthy();

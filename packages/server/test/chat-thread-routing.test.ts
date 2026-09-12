@@ -5,7 +5,7 @@ import { ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker, seedProjectContainer } from './helpers/app';
+import { createStubDocker, seedCeoWebConversation, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -109,7 +109,7 @@ describe('per-surface chat thread routing', () => {
 		const manager = makeManager(replyDocker());
 		manager.setChannelHooks(spy.hooks);
 
-		const id = await manager.createWebConversation('Launch prep');
+		const id = await seedCeoWebConversation(ctx.db, 'Launch prep');
 		const listed = await manager.listConversations();
 		const row = listed.find((c) => c.id === id);
 		expect(row?.channel).toBe('web');

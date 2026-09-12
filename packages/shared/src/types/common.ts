@@ -82,7 +82,7 @@ export const EFFORT_ORDER: Record<AgentEffort, number> = {
 	[AgentEffort.Max]: 4,
 };
 
-export const DEFAULT_EFFORT: AgentEffort = AgentEffort.Medium;
+export const DEFAULT_EFFORT: AgentEffort = AgentEffort.High;
 
 export function isAgentEffort(value: unknown): value is AgentEffort {
 	return typeof value === 'string' && value in EFFORT_ORDER;
@@ -1285,6 +1285,8 @@ export function isChatChannel(value: string): value is ChatChannel {
 export const ChatConversationKind = {
 	Assistant: 'assistant',
 	Coworker: 'coworker',
+	/** A multi-agent room: several roster agents, mention-driven turns. */
+	Group: 'group',
 } as const;
 export type ChatConversationKind = (typeof ChatConversationKind)[keyof typeof ChatConversationKind];
 
@@ -1328,6 +1330,24 @@ export const ChatSystemMessageKind = {
 	 * content names that execution and links to it when it is a task run.
 	 */
 	CredentialWait: 'credential_wait',
+	/**
+	 * The turn was refused before it ran: the agent's or project's spend budget,
+	 * or the instance container-hours allowance, is exhausted. The chat resumes
+	 * when the window rolls over or the operator raises the cap.
+	 */
+	BudgetExceeded: 'budget_exceeded',
+	/**
+	 * The turn is parked until a container fits the instance memory budget. A
+	 * task run parks invisibly on its run row; a chat turn parks in front of a
+	 * person, so the wait is said in the thread.
+	 */
+	CapacityWait: 'capacity_wait',
+	/** Breadcrumb: a task was created from this conversation. Links the task. */
+	TaskCreated: 'task_created',
+	/** Breadcrumb: a task this conversation created was completed. */
+	TaskCompleted: 'task_completed',
+	/** Breadcrumb: a task this conversation created is blocked and needs a human. */
+	TaskBlocked: 'task_blocked',
 } as const;
 export type ChatSystemMessageKind =
 	(typeof ChatSystemMessageKind)[keyof typeof ChatSystemMessageKind];

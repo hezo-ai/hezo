@@ -12,9 +12,10 @@ test.describe('app header + project rail responsiveness', () => {
 		await page.goto('/home');
 
 		await expect(page.getByTestId('app-header')).toBeVisible({ timeout: 15000 });
-		// The header's top-right group: Inbox + Settings (Skills now lives in the
-		// Settings sidebar, and the All Tasks view was removed).
+		// The header's top-right group: CEO monogram + Inbox + Settings (Skills now
+		// lives in the Settings sidebar, and the All Tasks view was removed).
 		await expect(page.getByTestId('app-header-settings')).toBeVisible();
+		await expect(page.getByTestId('app-header-chat')).toBeVisible();
 		await expect(page.getByTestId('app-header-inbox')).toBeVisible();
 		await expect(page.getByTestId('app-header-skills')).toHaveCount(0);
 		await expect(page.getByTestId('app-header-all-tasks')).toHaveCount(0);

@@ -8,6 +8,7 @@ import {
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
+import { setMonthlyContainerHours } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt, signChatSessionJwt } from '../src/middleware/auth';
 import { ChatSessionManager } from '../src/services/chat-session-manager';
@@ -15,7 +16,7 @@ import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
 import { buildApp } from '../src/startup';
-import { authHeader, createStubDocker, seedProjectContainer } from './helpers/app';
+import { authHeader, createStubDocker, createTestApp, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -153,19 +154,21 @@ describe('CEO chat HTTP routes', () => {
 	}
 
 	describe('when no ChatSessionManager is wired', () => {
-		// ctx.app is the stock test app, built without a manager → every CEO chat
-		// endpoint reports 503 UNAVAILABLE rather than crashing.
+		// The stock test app now carries a real manager; build one explicitly
+		// without it to reproduce the pre-init state → every CEO chat endpoint
+		// reports 503 UNAVAILABLE rather than crashing.
 		test('all four endpoints return 503 UNAVAILABLE', async () => {
-			const h = { ...authHeader(ctx.token), 'Content-Type': 'application/json' };
-			const conv = await ctx.app.request('/api/chat/conversation', { headers: h });
+			const bare = await createTestApp({ chat: false });
+			const h = { ...authHeader(bare.token), 'Content-Type': 'application/json' };
+			const conv = await bare.app.request('/api/chat/conversation', { headers: h });
 			expect(conv.status).toBe(503);
 			expect((await conv.json()).error.code).toBe('UNAVAILABLE');
 
-			const msgs = await ctx.app.request('/api/chat/messages', { headers: h });
+			const msgs = await bare.app.request('/api/chat/messages', { headers: h });
 			expect(msgs.status).toBe(503);
 			expect((await msgs.json()).error.code).toBe('UNAVAILABLE');
 
-			const post = await ctx.app.request('/api/chat/messages', {
+			const post = await bare.app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({ text: 'hello' }),
@@ -173,7 +176,7 @@ describe('CEO chat HTTP routes', () => {
 			expect(post.status).toBe(503);
 			expect((await post.json()).error.code).toBe('UNAVAILABLE');
 
-			const restart = await ctx.app.request('/api/chat/session/restart', {
+			const restart = await bare.app.request('/api/chat/session/restart', {
 				method: 'POST',
 				headers: h,
 			});
@@ -219,6 +222,48 @@ describe('CEO chat HTTP routes', () => {
 		});
 	});
 
+	describe('an id that cannot name a conversation', () => {
+		// `chat_conversations.id` is a uuid column, so binding an unparseable route
+		// param to it threw out of the query and left a 500 in the log. Every one of
+		// these is a conversation that does not exist, and 404 is the honest answer -
+		// asserted per route because each reaches the table by a different path.
+		test('answers 404, never a 500, on every route that takes one', async () => {
+			const h = { ...authHeader(ctx.token), 'Content-Type': 'application/json' };
+
+			const read = await app.request('/api/chat/conversations/not-a-uuid/read', {
+				method: 'POST',
+				headers: h,
+				body: JSON.stringify({ last_read_message_id: 'also-not-a-uuid' }),
+			});
+			expect(read.status).toBe(404);
+
+			const close = await app.request('/api/chat/conversations/not-a-uuid/close', {
+				method: 'POST',
+				headers: h,
+			});
+			expect(close.status).toBe(404);
+
+			const convert = await app.request('/api/chat/conversations/not-a-uuid/convert-message', {
+				method: 'POST',
+				headers: h,
+				body: JSON.stringify({ message_id: 'not-a-uuid-either' }),
+			});
+			expect(convert.status).toBe(404);
+
+			// The reads take it as a query string rather than a path segment, and
+			// resolve it through the same guard.
+			const conv = await app.request('/api/chat/conversation?conversation_id=not-a-uuid', {
+				headers: h,
+			});
+			expect(conv.status).toBe(404);
+
+			const msgs = await app.request('/api/chat/messages?conversation_id=not-a-uuid', {
+				headers: h,
+			});
+			expect(msgs.status).toBe(404);
+		});
+	});
+
 	describe('GET /api/chat/conversation', () => {
 		test('returns the active window plus the compacted count', async () => {
 			const conversationId = await manager.getConversationId();
@@ -250,6 +295,35 @@ describe('CEO chat HTTP routes', () => {
 				'second active',
 			]);
 			expect(body.messages[1].role).toBe('assistant');
+		});
+
+		test('reports the spent hours allowance so the composer can warn before a send', async () => {
+			// The whole point of carrying it on the read: the operator sees the
+			// warning while typing, instead of discovering the refusal from a failed
+			// bubble after the round trip. Same predicate the pool admits on.
+			const before = await app.request('/api/chat/conversation', {
+				headers: authHeader(ctx.token),
+			});
+			expect((await before.json()).data.hours_exhausted).toBe(false);
+
+			await setMonthlyContainerHours(ctx.db, 10);
+			await ctx.db.query(
+				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+				 VALUES ('spent-hours-read', date_trunc('month', now() AT TIME ZONE 'UTC'),
+				         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '10 hours', 'docker')`,
+			);
+			try {
+				const res = await app.request('/api/chat/conversation', {
+					headers: authHeader(ctx.token),
+				});
+				expect(res.status).toBe(200);
+				expect((await res.json()).data.hours_exhausted).toBe(true);
+			} finally {
+				await setMonthlyContainerHours(ctx.db, 0);
+				await ctx.db.query(
+					`DELETE FROM container_uptime_entries WHERE container_id = 'spent-hours-read'`,
+				);
+			}
 		});
 
 		test('creates the conversation on first use and returns an empty window', async () => {
@@ -421,6 +495,7 @@ describe('CEO chat HTTP routes', () => {
 				DEFAULT_TEAM_ID,
 				session.rows[0].id,
 				hqProjectId,
+				{ crossProject: true, crossTeam: true },
 			);
 
 			const res = await app.request('/api/chat/messages', {

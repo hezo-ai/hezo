@@ -425,12 +425,23 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       # A plain docker run, not a service container: services can't override
-      # the image command and minio/minio requires `server /data`.
+      # the image command and MinIO requires `server /data`.
+      #
+      # Pulled from quay.io, which is MinIO's own registry. The Docker Hub
+      # mirror this used to name was withdrawn between 2026-09-11 and
+      # 2026-09-12 - an anonymous pull of `minio/minio` now answers 401 and
+      # docker reports it as "pull access denied", so every run failed here.
+      #
+      # Pinned by digest, tag alongside it for readability: the server under
+      # test is the one thing in this job with no lockfile behind it, and an
+      # image that moves on its own changes what the S3 driver is proved
+      # against with no commit and no signal. Bump it as its own change.
       - name: Start MinIO
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=hezo -e MINIO_ROOT_PASSWORD=hezo-secret-key \
-            minio/minio:latest server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
           timeout 60 bash -c 'until curl -sf http://127.0.0.1:9000/minio/health/ready; do sleep 1; done'
       - name: Create test bucket
         env:

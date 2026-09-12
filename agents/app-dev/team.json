@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 32,
+			"notes": "Engineer, UI Designer, DevOps Engineer and Marketing Lead now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
+		},
+		{
 			"version": 31,
 			"notes": "Reviewing a teammate's finished work now fans out to adversarial sub-agents, one per review dimension, and the reviewer reconciles their reports into one ranked findings list after verifying each finding themselves. That rule reaches every agent on every team, so the QA Engineer's own prompt now carries only what is specific to it: the eight dimensions a code review covers - correctness, security, performance, scalability, maintainability, architectural elegance, testing and documentation - stated once and read by both the post-implementation review and the heartbeat audit, which previously kept two lists that could drift apart."
 		},
@@ -260,7 +264,7 @@
 			},
 			"reports_to_slug": "architect",
 			"sort_order": 3,
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,
@@ -326,7 +330,7 @@
 			},
 			"reports_to_slug": "architect",
 			"sort_order": 6,
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,
@@ -348,7 +352,7 @@
 			},
 			"reports_to_slug": "architect",
 			"sort_order": 7,
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,
@@ -370,7 +374,7 @@
 			},
 			"reports_to_slug": "captain",
 			"sort_order": 8,
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,

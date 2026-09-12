@@ -14,7 +14,7 @@ import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { getWorkspacePath } from '../src/services/workspace';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker, seedProjectContainer } from './helpers/app';
+import { createStubDocker, seedCeoWebConversation, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -185,7 +185,7 @@ describe('group/coworker ingest path', () => {
 
 		// The conversation's home is the Slack thread — its own row is the routing
 		// key. The web hub lists it alongside ordinary threads, badged by kind.
-		const webId = await manager.createWebConversation('Ops sync');
+		const webId = await seedCeoWebConversation(ctx.db, 'Ops sync');
 		const listed = await manager.listConversations({ includeClosed: true });
 		const coworkerRow = listed.find((c) => c.id === convo.id);
 		expect(coworkerRow?.kind).toBe('coworker');

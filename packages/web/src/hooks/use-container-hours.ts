@@ -8,16 +8,15 @@ import { queryKeys } from '../lib/query-keys';
  *
  * **A different quantity from `use-agent-hours`, and the one that gets billed.**
  * That one sums per-agent run wall clock, which over-counts (concurrent runs
- * share one container) and under-counts (build time, warm-idle time and the
- * assistant chat's container are all billed and none of them is a run). This
- * reads the uptime ledger: one row per running stretch.
+ * share one container) and under-counts (build time, warm-idle time and chat
+ * turns are all billed and none of them is a run). This reads the uptime
+ * ledger: one row per running stretch.
  */
 
-/** One bucket of the series. `chat_seconds` is the part the assistant chat held. */
+/** One bucket of the series. */
 export interface ContainerHoursBucket {
 	bucket: string;
 	seconds: number;
-	chat_seconds: number;
 }
 
 /** One project's share of a bucket, for the instance-wide stacked view. */
@@ -39,7 +38,6 @@ export interface ContainerHoursTotals {
 	 * assuming one.
 	 */
 	window_seconds: number;
-	window_chat_seconds: number;
 	prev_window_seconds: number;
 	/** Stretches open right now - containers currently accruing. */
 	open_intervals: number;

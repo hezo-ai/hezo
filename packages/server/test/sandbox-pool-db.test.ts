@@ -534,7 +534,7 @@ describe('reclaiming budget from members whose work has ended', () => {
 	const chargedContainers = async (): Promise<string[]> => {
 		const r = await db.query<{ container_id: string }>(
 			`SELECT container_id FROM container_pool_members
-			  WHERE state IN ('creating', 'idle', 'busy') AND NOT reserved_for_chat
+			  WHERE state IN ('creating', 'idle', 'busy')
 			  ORDER BY container_id`,
 		);
 		return r.rows.map((x) => x.container_id);

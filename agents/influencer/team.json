@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 23,
+			"notes": "Content Writer, Media Producer and Distribution Manager now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
+		},
+		{
 			"version": 22,
 			"notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
 		},
@@ -208,7 +212,7 @@
 			"role_description": "Drafts posts, scripts, threads, and captions in the creator's voice against the content calendar.",
 			"summary": "The Content Writer drafts posts, captions, scripts, and newsletters in the creator's voice against the content calendar. They report to the Brand Strategist and send every draft to the Content Editor.",
 			"team_context": "You report to the @brand-strategist. You draft posts, captions, scripts, and newsletters in the creator's voice, then hand every draft to the @content-editor. You don't publish.",
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,
@@ -230,7 +234,7 @@
 			"role_description": "Generates images, video, and audio for content via connected media-generation providers.",
 			"summary": "The Media Producer generates images, video, and audio for content via connected media-generation providers. They report to the Brand Strategist.",
 			"team_context": "You report to the @brand-strategist. You generate images, video, and audio via connected media providers and send produced media to the @content-editor. You reference credentials by placeholder only.",
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,
@@ -274,7 +278,7 @@
 			"role_description": "Schedules and publishes approved content through connected platforms, cross-posts, and runs the engagement and analytics loop.",
 			"summary": "The Distribution Manager publishes approved content to connected platforms, cross-posts, and runs the engagement and analytics loop. They report to the Captain and publish only after the admin approves.",
 			"team_context": "You report to the @captain. You publish approved content to connected platforms and run the analytics loop. You publish only after the admin approves, unless the content-approval gate is disabled in team preferences.",
-			"default_effort": "medium",
+			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
 			"monthly_budget_cents": 0,

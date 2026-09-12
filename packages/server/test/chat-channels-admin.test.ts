@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ChatSessionManager } from '../src/services/chat-session-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker } from './helpers/app';
+import { createStubDocker, seedCeoWebConversation } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 describe('chat channel + identity admin routes', () => {
@@ -166,8 +166,8 @@ describe('ChatSessionManager conversation lifecycle', () => {
 
 	it('creates, lists (open-only), and closes web threads', async () => {
 		const defaultId = await manager.getConversationId();
-		const a = await manager.createWebConversation('Thread A');
-		const b = await manager.createWebConversation('Thread B');
+		const a = await seedCeoWebConversation(ctx.db, 'Thread A');
+		const b = await seedCeoWebConversation(ctx.db, 'Thread B');
 
 		let open = await manager.listConversations();
 		const ids = open.map((c) => c.id);

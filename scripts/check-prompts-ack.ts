@@ -26,6 +26,7 @@ export const PROMPT_BEARING_PATTERNS: RegExp[] = [
 	/^skills\//,
 	/^marketplace\//,
 	/^packages\/server\/src\/services\/template-resolver\.ts$/,
+	/^packages\/server\/src\/services\/chat-session-manager\.ts$/,
 	// The CEO's intake greeting and task body: prose an agent reads, authored
 	// in TypeScript template strings rather than a role doc.
 	/^packages\/server\/src\/services\/project-intake\.ts$/,

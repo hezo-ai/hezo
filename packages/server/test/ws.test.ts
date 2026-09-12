@@ -123,3 +123,84 @@ describe('broadcastEvent helper', () => {
 		expect(parsed.status).toBe('idle');
 	});
 });
+
+describe('WebSocketManager - backpressure shedding', () => {
+	function createStuckWs(result: number): WsSocket & { _closed: boolean; _attempts: number } {
+		const socket = {
+			data: {
+				auth: { type: 'admin', userId: 'test-user' },
+				rooms: new Set<string>(),
+			},
+			_closed: false,
+			_attempts: 0,
+			send(_msg: string): number {
+				socket._attempts += 1;
+				return result;
+			},
+			close() {
+				socket._closed = true;
+			},
+		};
+		return socket;
+	}
+
+	it('sheds a socket after sustained backpressure and closes it', () => {
+		const mgr = new WebSocketManager();
+		const stuck = createStuckWs(-1);
+		const healthy = createMockWs();
+		mgr.subscribe(stuck, 'team:abc');
+		mgr.subscribe(healthy, 'team:abc');
+
+		for (let i = 0; i < 100; i++) mgr.broadcast('team:abc', { type: 'tick', i });
+
+		// The stuck socket is out of every room and closed; the healthy one
+		// received every frame untouched.
+		expect(mgr.getRoomSize('team:abc')).toBe(1);
+		expect(stuck._closed).toBe(true);
+		expect(stuck.data.rooms.size).toBe(0);
+		expect(healthy._sent).toHaveLength(100);
+	});
+
+	it('a dropped-frame socket (send returns 0) is shed the same way', () => {
+		const mgr = new WebSocketManager();
+		const broken = createStuckWs(0);
+		mgr.subscribe(broken, 'team:abc');
+		for (let i = 0; i < 100; i++) mgr.broadcast('team:abc', { type: 'tick', i });
+		expect(mgr.getRoomSize('team:abc')).toBe(0);
+		expect(broken._closed).toBe(true);
+	});
+
+	it('a recovering socket clears its strikes and stays subscribed', () => {
+		const mgr = new WebSocketManager();
+		let result = -1;
+		const socket = {
+			data: {
+				auth: { type: 'admin', userId: 'test-user' },
+				rooms: new Set<string>(),
+			},
+			send(_msg: string): number {
+				return result;
+			},
+			close() {
+				throw new Error('must not close a recovering socket');
+			},
+		};
+		mgr.subscribe(socket, 'team:abc');
+		for (let i = 0; i < 99; i++) mgr.broadcast('team:abc', { type: 'tick', i });
+		// One delivered frame resets the strike count entirely.
+		result = 10;
+		mgr.broadcast('team:abc', { type: 'tick' });
+		result = -1;
+		for (let i = 0; i < 99; i++) mgr.broadcast('team:abc', { type: 'tick', i });
+		expect(mgr.getRoomSize('team:abc')).toBe(1);
+	});
+
+	it('a void-returning send (test doubles) is treated as delivered', () => {
+		const mgr = new WebSocketManager();
+		const ws = createMockWs();
+		mgr.subscribe(ws, 'team:abc');
+		for (let i = 0; i < 200; i++) mgr.broadcast('team:abc', { type: 'tick', i });
+		expect(mgr.getRoomSize('team:abc')).toBe(1);
+		expect(ws._sent).toHaveLength(200);
+	});
+});

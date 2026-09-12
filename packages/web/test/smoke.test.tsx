@@ -5,10 +5,10 @@ import { getTestContext, renderApp } from './helpers/render';
 // hydrates against the in-process Hono server. If this passes, the harness
 // is wired up correctly and we can migrate spec by spec.
 test('harness boots the app against the in-process server', async () => {
-	const { findByText } = await renderApp({ initialPath: '/home' });
-	// The /home route renders the onboarding welcome card. With no team yet
-	// the heading "Welcome to Hezo" is what mounts first.
-	await findByText(/Welcome to Hezo|Get started|Onboarding/i, undefined, { timeout: 10_000 });
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	// The fresh /home route lands on the full-pane CEO room - its greeting is
+	// what mounts first when no project exists yet.
+	await findByTestId('home-ceo-landing', undefined, { timeout: 10_000 });
 });
 
 test('test context exposes a fetchable backend', async () => {

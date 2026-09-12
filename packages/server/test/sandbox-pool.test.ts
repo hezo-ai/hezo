@@ -28,7 +28,6 @@ function member(id: string, over: Partial<PoolMember> = {}): PoolMember {
 		hasUnpushedCommits: false,
 		atDiskCeiling: false,
 		memoryBytes: CAP,
-		reservedForChat: false,
 		...over,
 	};
 }
@@ -162,13 +161,6 @@ describe('selectPoolMember exclusions', () => {
 		expect(decision).toEqual({ kind: 'create' });
 	});
 
-	it('never hands the chat’s container to a task run', () => {
-		// A queued task run is invisible and harmless; a queued chat turn is a
-		// person watching a spinner.
-		const decision = selectPoolMember('t', [member('chat', { reservedForChat: true })], ROOM, CAP);
-		expect(decision).toEqual({ kind: 'create' });
-	});
-
 	it('never reuses a container that is out of disk', () => {
 		// It would fail its run partway through, which is worse than paying for a
 		// fresh one.
@@ -179,7 +171,7 @@ describe('selectPoolMember exclusions', () => {
 	it('queues rather than taking an excluded container when the cap is reached', () => {
 		const decision = selectPoolMember(
 			't',
-			[member('busy', { state: 'busy' }), member('chat', { reservedForChat: true })],
+			[member('busy', { state: 'busy' }), member('full', { atDiskCeiling: true })],
 			FULL,
 			CAP,
 		);
@@ -325,18 +317,6 @@ describe('planIdleShutdown', () => {
 		expect(plan.destroy.map((m) => m.id)).toEqual(['safe']);
 	});
 
-	it('suspends the chat’s container once the project itself is idle', () => {
-		// The reservation keeps a *task run* off this container; it is not a pin
-		// against stopping. Reaching here means the project-level predicate already
-		// judged the project idle, and that predicate treats a live or recently
-		// active chat session as busy - so a reserved container that gets this far
-		// belongs to a session that has gone quiet. Parking it is the point:
-		// otherwise the chat's container runs, and bills, forever.
-		const plan = planIdleShutdown([member('chat', { reservedForChat: true })]);
-		expect(plan.suspend.map((m) => m.id)).toEqual(['chat']);
-		expect(plan.destroy).toEqual([]);
-	});
-
 	it('leaves busy containers alone', () => {
 		const plan = planIdleShutdown([member('busy', { state: 'busy' })]);
 		expect(plan.suspend).toEqual([]);
@@ -409,17 +389,6 @@ describe('planSurplusIdleRetirement', () => {
 		expect(plan.destroy.map((m) => m.id)).toEqual(['a']);
 	});
 
-	it('does not count the chat member as a warm start for task runs', () => {
-		// `usable` excludes a chat-reserved member from the ladder, so it is no
-		// route to serving a task run and cannot discharge the floor.
-		const plan = planSurplusIdleRetirement(
-			[member('chat', { state: 'suspended', reservedForChat: true }), member('a'), member('b')],
-			stale('a', 'b'),
-		);
-		expect(plan.suspend.map((m) => m.id)).toEqual(['a']);
-		expect(plan.destroy.map((m) => m.id)).toEqual(['b']);
-	});
-
 	it('leaves an idle container that has not yet gone stale', () => {
 		const plan = planSurplusIdleRetirement(
 			[member('busy', { state: 'busy' }), member('fresh'), member('old')],
@@ -437,16 +406,12 @@ describe('planSurplusIdleRetirement', () => {
 		expect(plan.destroy).toEqual([]);
 	});
 
-	it('never touches the chat’s container or a busy one', () => {
-		// The chat's member is excluded from the memory budget already, so retiring
-		// it frees nothing and only interrupts a session.
+	it('never touches a busy container, even a stale-listed one', () => {
+		// A busy member is mid-exec - a task run or a held chat turn - and
+		// retiring it is an interruption, not a saving.
 		const plan = planSurplusIdleRetirement(
-			[
-				member('busy', { state: 'busy' }),
-				member('chat', { reservedForChat: true }),
-				member('other-busy', { state: 'busy' }),
-			],
-			stale('chat', 'other-busy'),
+			[member('busy', { state: 'busy' }), member('other-busy', { state: 'busy' })],
+			stale('other-busy'),
 		);
 		expect(plan).toEqual({ suspend: [], destroy: [] });
 	});

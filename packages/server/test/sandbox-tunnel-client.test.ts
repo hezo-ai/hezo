@@ -47,12 +47,36 @@ interface Harness {
 	ports: { proxy: number; mcp: number; ssh: number };
 }
 
-/** Boot the real client with a mux on the other end of its stdio. */
-async function startTunnel(opts: {
+interface TunnelOptions {
 	/** Where each target key resolves on the "Hezo" side. */
 	targets: { proxy?: number; mcp?: number; ssh?: number };
 	policy?: { proxiedHosts: string[]; proxyEverything: boolean };
-}): Promise<Harness> {
+}
+
+/**
+ * Boot the real client with a mux on the other end of its stdio.
+ *
+ * Retried, because {@link freePort} can only report a port that was free a
+ * moment ago: it closes its probe before the client binds, so anything else on
+ * the machine - a sibling test, another shard on the same runner - can take the
+ * port in that gap, and the client then fails to bind one this harness has
+ * already written into its config. That is the harness losing a race, not the
+ * client misbehaving, and a fresh set of ports settles it. A genuine bind
+ * failure fails all three attempts and arrives with the client's own stderr.
+ */
+async function startTunnel(opts: TunnelOptions): Promise<Harness> {
+	let last: unknown;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			return await bootTunnel(opts);
+		} catch (e) {
+			last = e;
+		}
+	}
+	throw last;
+}
+
+async function bootTunnel(opts: TunnelOptions): Promise<Harness> {
 	const ports = { proxy: await freePort(), mcp: await freePort(), ssh: await freePort() };
 	const dir = mkdtempSync(join(tmpdir(), 'hezo-tunnel-'));
 	cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -85,12 +109,26 @@ async function startTunnel(opts: {
 	});
 	cleanups.push(() => mux.closeAll());
 	child.stdout.on('data', (chunk: Buffer) => void mux.handleChunk(new Uint8Array(chunk)));
+	// Kept for the failure message: without it a client that refused to bind says
+	// only that nothing ever listened, when it printed the reason on stderr.
+	let stderr = '';
+	child.stderr.on('data', (chunk: Buffer) => {
+		stderr += String(chunk);
+	});
 
 	// The client binds its three listeners asynchronously after start-up. Poll
 	// until they actually accept rather than sleeping a fixed amount: a fixed wait
 	// is only ever long enough on an unloaded machine, and on a busy CI runner it
 	// surfaces as an ECONNREFUSED that reads like a protocol bug.
-	await Promise.all(Object.values(ports).map((port) => waitForListener(port)));
+	try {
+		await Promise.all(Object.values(ports).map((port) => waitForListener(port)));
+	} catch (e) {
+		// Free the ports before the retry asks for a new set, rather than leaving a
+		// half-started client holding them until the suite's own cleanup runs.
+		child.kill('SIGKILL');
+		mux.closeAll();
+		throw new Error(`${String(e)}${stderr ? ` - client stderr: ${stderr.trim()}` : ''}`);
+	}
 	return { child, ports };
 }
 

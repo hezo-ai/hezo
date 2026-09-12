@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.63.0 - 2026-09-11
+
+### Features
+
+- **agents:** default new agents to high reasoning effort ([#1102](https://github.com/hezo-ai/hezo/pull/1102))
+
+### Bug Fixes
+
+- **prompts:** bound the assembled run prompt in row width, not just row count ([#1101](https://github.com/hezo-ai/hezo/pull/1101))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.62.2...0.63.0
+
 ## 0.62.2 - 2026-09-09
 
 ### Other

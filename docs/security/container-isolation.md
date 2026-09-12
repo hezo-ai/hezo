@@ -44,9 +44,9 @@ quiet instance runs zero containers.
 What a burst of agent activity can consume is bounded in **Settings -> Containers**, and
 every ceiling is enforced per container:
 
-- a **global memory budget** all project containers share - a run whose container will
-  not fit waits in the queue, while the assistant chat's container is reserved on top of
-  the budget so a chat always starts;
+- a **global memory budget** every container shares, the assistant chat's included - a
+  run whose container will not fit waits in the queue, while one container's worth of
+  the budget is off limits to task runs so a chat turn always has room to start;
 - a **RAM cap per container** (2 GB by default, with a per-project override) - a
   container at its cap is stopped, or has its biggest process killed, and the run reports
   the cap by name rather than failing mysteriously;

@@ -28,7 +28,7 @@ type AuditFilters = { entity_type?: string; action?: string };
  * The activity feed is keyset-paginated: it reads an append-only table that is
  * never pruned, so a `total` would cost a full-table count per page load to
  * render a number nobody acts on, and offsets would drift as rows land while
- * someone reads. Both hooks return the flattened entries plus the load-older
+ * someone reads. The hook returns the flattened entries plus the load-older
  * controls; the cursor is opaque and passed straight back.
  */
 const PAGE_SIZE = '50';
@@ -49,23 +49,6 @@ function flatten(query: ReturnType<typeof useInfiniteQuery<{ data: AuditEntry[] 
 		},
 		isLoadingMore: query.isFetchingNextPage,
 	};
-}
-
-// Per-project view — a filtered slice of the instance log scoped to one project.
-export function useProjectAuditLog(projectId: string, filters?: AuditFilters): AuditLogFeed {
-	const query = useInfiniteQuery({
-		queryKey: queryKeys.projects.auditLog(projectId, filters),
-		initialPageParam: undefined as string | undefined,
-		queryFn: ({ pageParam }) =>
-			api.getCursorPaginated<AuditEntry>(`/api/projects/${projectId}/audit-log`, {
-				entity_type: filters?.entity_type,
-				action: filters?.action,
-				limit: PAGE_SIZE,
-				cursor: pageParam,
-			}),
-		getNextPageParam: nextCursorPageParam,
-	});
-	return flatten(query);
 }
 
 // Instance-level view — every project plus instance-scoped (project_id NULL) rows.

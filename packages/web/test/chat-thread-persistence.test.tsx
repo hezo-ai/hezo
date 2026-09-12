@@ -4,12 +4,12 @@ import { queryKeys } from '@hezo/web/lib/query-keys';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
-// The chatbox remembers the thread you switched to, so closing and reopening it
+// The dock remembers the room you switched to, so closing and reopening it
 // — or a reload, or the remount a bare route forces — resumes that conversation
-// instead of snapping back to the server's default web thread. Nothing here
-// needs a real layout pass or a live WebSocket, so it stays a component test
-// (decision tree: none of 1-6 apply). Like chat-threads.test.tsx, the harness has
-// no ChatSessionManager (chat endpoints 503), so the query caches the hooks read
+// instead of snapping back to the CEO stream. Nothing here needs a real layout
+// pass or a live WebSocket, so it stays a component test (decision tree: none
+// of 1-6 apply). Like chat-threads.test.tsx, the harness has no
+// ChatSessionManager (chat endpoints 503), so the query caches the hooks read
 // from are seeded directly.
 
 const now = () => new Date().toISOString();
@@ -18,7 +18,11 @@ function msg(id: string, content: string): ChatMessage {
 	return { id, role: 'assistant', channel: 'web', status: 'complete', content, created_at: now() };
 }
 
-function thread(id: string, title: string | null): ChatConversationSummary {
+function thread(
+	id: string,
+	title: string | null,
+	overrides: Partial<ChatConversationSummary> = {},
+): ChatConversationSummary {
 	return {
 		id,
 		channel: 'web',
@@ -29,68 +33,73 @@ function thread(id: string, title: string | null): ChatConversationSummary {
 		closed_at: null,
 		converted_task_id: null,
 		converted_task: null,
+		...overrides,
 	};
 }
 
-/** thread-1 is the server's default web thread; thread-2 is a second thread. */
-function seedThreads(threads = [thread('thread-1', 'First'), thread('thread-2', 'Second')]) {
+/** The CEO live stream plus one external (Telegram) DM thread. */
+function seedRooms(
+	threads = [thread('thread-2', 'Ops', { channel: 'telegram', external_thread_id: '999' })],
+) {
 	queryClient.setQueryData(queryKeys.chatConversations(), { conversations: threads });
 	queryClient.setQueryData(queryKeys.chatConversation(), {
 		conversation_id: 'thread-1',
-		messages: [msg('m1', 'hello from the first thread')],
+		messages: [msg('m1', 'hello from the live stream')],
 		compacted_count: 0,
 	});
 	queryClient.setQueryData(queryKeys.chatConversation('thread-2'), {
 		conversation_id: 'thread-2',
-		messages: [msg('m2', 'hello from the second thread')],
+		messages: [msg('m2', 'hello from the telegram dm')],
 		compacted_count: 0,
 	});
 }
 
-test('switching threads is remembered, and a later open resumes that thread', async () => {
-	seedThreads();
+test('switching rooms is remembered, and a later open resumes that room', async () => {
+	seedRooms();
 	const { findByTestId, findByText, user } = await renderApp({ initialPath: '/home' });
 
-	(await findByTestId('chat-launcher')).click();
-	const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
-	expect(select.value).toBe('thread-1');
+	(await findByTestId('app-header-chat')).click();
+	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
+	expect(select.value).toBe('ceo');
 
-	await user.selectOptions(select, 'thread-2');
-	expect(await findByText('hello from the second thread')).toBeTruthy();
+	await user.selectOptions(select, 'thread:thread-2');
+	expect(await findByText('hello from the telegram dm')).toBeTruthy();
 
 	// The switch is durable, not just component state: it survives a full remount
 	// of the app shell (what a reload or a bare-route round trip produces).
-	expect(localStorage.getItem('hezo_chat_thread')).toBe('thread-2');
+	expect(JSON.parse(localStorage.getItem('hezo_chat_room') ?? 'null')).toEqual({
+		kind: 'thread',
+		id: 'thread-2',
+	});
 });
 
-test('a remembered thread is restored on mount instead of the default thread', async () => {
-	localStorage.setItem('hezo_chat_thread', 'thread-2');
-	seedThreads();
+test('a remembered room is restored on mount instead of the CEO stream', async () => {
+	localStorage.setItem('hezo_chat_room', JSON.stringify({ kind: 'thread', id: 'thread-2' }));
+	seedRooms();
 	const { findByTestId, findByText, queryByText } = await renderApp({ initialPath: '/home' });
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 
-	// Opens straight into the remembered thread — the default thread's history is
-	// never shown.
-	expect(await findByText('hello from the second thread')).toBeTruthy();
-	expect(queryByText('hello from the first thread')).toBeNull();
-	const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
-	expect(select.value).toBe('thread-2');
+	// Opens straight into the remembered room — the stream's history is never shown.
+	expect(await findByText('hello from the telegram dm')).toBeTruthy();
+	expect(queryByText('hello from the live stream')).toBeNull();
+	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
+	expect(select.value).toBe('thread:thread-2');
 });
 
-test('a remembered thread that is no longer open falls back to the default thread', async () => {
-	// The remembered thread was closed since (here, in another tab, or on its own
-	// platform) so it is gone from the list. The server would still serve its
-	// history by id, which would restore a thread that reads fine but rejects every
-	// send — so the stale id must be dropped rather than used.
-	localStorage.setItem('hezo_chat_thread', 'thread-gone');
-	seedThreads([thread('thread-1', 'First'), thread('thread-2', 'Second')]);
+test('a remembered thread that no longer exists falls back to the CEO stream', async () => {
+	// The remembered thread is gone from the list (deleted, or its agent removed).
+	// The server would still serve its history by id, which would restore a room
+	// that reads fine but rejects every send — so the stale id must be dropped
+	// rather than used.
+	localStorage.setItem('hezo_chat_room', JSON.stringify({ kind: 'thread', id: 'thread-gone' }));
+	seedRooms();
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 
-	expect(await findByText('hello from the first thread')).toBeTruthy();
-	const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
-	expect(select.value).toBe('thread-1');
-	expect(localStorage.getItem('hezo_chat_thread')).toBeNull();
+	expect(await findByText('hello from the live stream')).toBeTruthy();
+	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
+	expect(select.value).toBe('ceo');
+	expect(localStorage.getItem('hezo_chat_room')).toBeNull();
 });

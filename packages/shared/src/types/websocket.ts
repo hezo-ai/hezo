@@ -20,6 +20,7 @@ export enum WsMessageType {
 	ChatMessageComplete = 'chat_message_complete',
 	ChatCompacted = 'chat_compacted',
 	ChatConversationUpdated = 'chat_conversation_updated',
+	ChatGroupPendingTurns = 'chat_group_pending_turns',
 	ProjectsChanged = 'projects_changed',
 	Pong = 'pong',
 	Error = 'error',
@@ -150,6 +151,8 @@ export interface WsChatMessageStartMessage {
 	attachments?: CommentAttachment[];
 	/** Set on a `system` row: which marker it is, so it renders right without a refetch. */
 	systemKind?: ChatSystemMessageKind;
+	/** The replying agent, on assistant rows - author bubbles need the identity live. */
+	authorMemberId?: string;
 }
 
 /** Incremental assistant text appended to the bubble keyed by `messageId`. */
@@ -189,6 +192,12 @@ export interface WsChatMessageCompleteMessage {
 	costCents: number;
 	/** Set on a failed message: the reason, in the words the server recorded. */
 	error: string | null;
+	/**
+	 * Up to three one-tap replies the agent offered, parsed out of the reply's
+	 * trailer at completion (the stored body is already clean). Absent when the
+	 * reply offered none.
+	 */
+	suggestedReplies?: string[];
 }
 
 /**
@@ -218,6 +227,26 @@ export interface WsChatConversationUpdatedMessage {
 	convertedTaskId?: string | null;
 }
 
+/** One queued group reply the pending-turn strip renders as a cancellable chip. */
+export interface WsChatGroupPendingTurn {
+	memberId: string;
+	slug: string;
+	label: string;
+}
+
+/**
+ * The turns still queued behind a group message — the agents brought in by the
+ * operator's mentions (or the conversational locus) whose replies have not
+ * started streaming yet. Sent whenever the queue changes: on send, as each
+ * turn starts, on a cancel, and empty when the queue drains, so every open
+ * view of the room renders the same strip.
+ */
+export interface WsChatGroupPendingTurnsMessage {
+	type: WsMessageType.ChatGroupPendingTurns;
+	conversationId: string;
+	pending: WsChatGroupPendingTurn[];
+}
+
 /** Any CEO chat WebSocket event, all carrying `conversationId` for thread routing. */
 export type WsChatServerMessage =
 	| WsChatMessageStartMessage
@@ -225,7 +254,8 @@ export type WsChatServerMessage =
 	| WsChatMessageToolActivityMessage
 	| WsChatMessageCompleteMessage
 	| WsChatCompactedMessage
-	| WsChatConversationUpdatedMessage;
+	| WsChatConversationUpdatedMessage
+	| WsChatGroupPendingTurnsMessage;
 
 export type WsServerMessage =
 	| WsRowChangeMessage
@@ -239,6 +269,7 @@ export type WsServerMessage =
 	| WsChatMessageCompleteMessage
 	| WsChatCompactedMessage
 	| WsChatConversationUpdatedMessage
+	| WsChatGroupPendingTurnsMessage
 	| WsProjectsChangedMessage
 	| WsConnectedMessage
 	| WsPongMessage

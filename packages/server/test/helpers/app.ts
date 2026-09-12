@@ -6,6 +6,7 @@ import {
 	buildLoginMessage,
 	buildUnlockMessage,
 	CAPTAIN_AGENT_SLUG,
+	DEFAULT_TEAM_ID,
 	deriveAuthKeyPair,
 	derivePasswordKeyPair,
 	deriveUnlockKey,
@@ -28,6 +29,7 @@ import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import { getDefaultRamCapPerContainerGb } from '../../src/lib/system-meta';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
+import { ChatSessionManager } from '../../src/services/chat-session-manager';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
 import { createFakeDockerClient } from '../../src/services/fake-docker';
 import { JobManager } from '../../src/services/job-manager';
@@ -39,7 +41,7 @@ import {
 } from '../../src/services/project-create';
 import type { SandboxFiles } from '../../src/services/sandbox/files';
 import { SandboxBackendHolder } from '../../src/services/sandbox/holder';
-import type { ContainerEngine } from '../../src/services/sandbox/types';
+import type { ContainerEngine, ExecLogChunk } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
@@ -277,6 +279,12 @@ export async function createTestApp(
 		 */
 		docker?: ContainerEngine;
 		sandboxBackendInfo?: SandboxBackendInfo;
+		/**
+		 * Wire a real ChatSessionManager over the stub engine (the production
+		 * boot always has one, so this is the default). `false` reproduces the
+		 * pre-init state where every chat endpoint answers 503 UNAVAILABLE.
+		 */
+		chat?: boolean;
 	} = {},
 ) {
 	const db = await createTestDbWithMigrations();
@@ -307,6 +315,53 @@ export async function createTestApp(
 		logs,
 		containerLogStreamer,
 	});
+	// A real manager over a scripted stub engine, not a hand-rolled partial:
+	// the chat routes then behave in tests exactly as they do on a booted
+	// instance, and the "complete test double" rule applies to the manager as
+	// much as to docker. Sessions only spin up when a test actually sends a
+	// chat turn. Built via createStubDocker so the tunnel-readiness wrapper
+	// still answers port probes; its agent execs answer with one canned reply
+	// (the app docker's execCreate deliberately throws - run tests must script
+	// their own - which here would fail every turn and spray teardown noise
+	// into green runs).
+	const chatSessionManager =
+		opts.chat === false
+			? undefined
+			: new ChatSessionManager({
+					db,
+					docker: createStubDocker(
+						{
+							execCreate: async () => `chat-exec-${Math.random().toString(36).slice(2)}`,
+							execStart: async (
+								_id: string,
+								execOpts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> } = {},
+							) => {
+								const onChunk = execOpts.onChunk ?? (() => undefined);
+								await onChunk({
+									stream: 'stdout',
+									text: `${JSON.stringify({
+										type: 'assistant',
+										message: {
+											role: 'assistant',
+											content: [{ type: 'text', text: 'Canned CEO reply (test harness)' }],
+										},
+									})}\n`,
+								});
+								await onChunk({
+									stream: 'stdout',
+									text: `${JSON.stringify({ type: 'result', usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+								});
+								return { stdout: '', stderr: '' };
+							},
+						},
+						{ db, dataDir },
+					),
+					masterKeyManager,
+					serverPort: 0,
+					dataDir,
+					wsManager,
+					logs,
+				});
 	const app = buildApp(
 		db,
 		masterKeyManager,
@@ -327,7 +382,7 @@ export async function createTestApp(
 		null,
 		containerLogStreamer,
 		events,
-		undefined,
+		chatSessionManager,
 		undefined,
 		opts.assetStore,
 	);
@@ -370,6 +425,7 @@ export async function createTestApp(
 		dataDir,
 		password,
 		passwordSalt,
+		chatSessionManager,
 	};
 }
 
@@ -562,6 +618,30 @@ export async function projectSlugFor(db: Db, teamId: string): Promise<string> {
  * `memoryGb` defaults to the instance-wide cap, which is what a container
  * provisioned by a project that never overrode it actually gets.
  */
+/**
+ * Seed an extra open CEO web conversation directly. The UI no longer creates
+ * parallel web threads (the CEO chat is single-stream), but the per-thread
+ * machinery - routing, listing, titling - still needs exercising against more
+ * than one, and the DB carries them fine (older threads are History).
+ */
+export async function seedCeoWebConversation(db: Db, title?: string): Promise<string> {
+	const ceo = await db.query<{ id: string }>(
+		`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+		 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+		[DEFAULT_TEAM_ID],
+	);
+	const proj = await db.query<{ id: string }>(
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[DEFAULT_TEAM_ID],
+	);
+	const created = await db.query<{ id: string }>(
+		`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, title)
+		 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
+		[ceo.rows[0].id, DEFAULT_TEAM_ID, proj.rows[0].id, title ?? null],
+	);
+	return created.rows[0].id;
+}
+
 export async function seedProjectContainer(
 	db: Db,
 	projectId: string,

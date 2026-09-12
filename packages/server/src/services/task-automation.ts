@@ -14,6 +14,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
+import { postTaskStatusBreadcrumb } from './chat-breadcrumbs';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { removeTaskWorktrees } from './repo-sync';
 import { recordStatusChange } from './task-events';
@@ -222,6 +223,11 @@ export async function triggerStatusAutomations(
 			log.error('Failed to recompute downstream readiness:', e);
 		}
 	}
+
+	// The task<->chat receipt: a task born in a chat conversation reports its
+	// completion (and a block that needs a human) back into that conversation.
+	// Fired here so the REST close and the MCP update_task path both emit it.
+	await postTaskStatusBreadcrumb(db, wsManager, taskId, newStatus);
 
 	if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(newStatus)) {
 		try {

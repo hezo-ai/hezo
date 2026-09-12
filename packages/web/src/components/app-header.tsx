@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { Inbox, Plus, Search, Settings, Store } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useCeoUnread } from '../hooks/use-chat';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useI18n } from '../lib/i18n';
 import { CreateTaskDialog } from './create-task-dialog';
@@ -14,21 +15,28 @@ const iconLinkClass =
 
 /**
  * The global top header: instance-wide navigation. Only Home sits at the
- * top-left; everything else (New task below lg, Search, Inbox, Settings, and
- * the theme switcher) lives in the top-right group. Skills, Connectors, and
- * Credentials are reached through the Settings sidebar.
+ * top-left; everything else (New task below lg, the CEO chat monogram, Inbox,
+ * Search, Settings, and the theme switcher) lives in the top-right group.
+ * Skills, Connectors, and Credentials are reached through the Settings sidebar.
  * Below `lg` the navigation is a side drawer, so the logo doubles as the drawer
  * toggle; at `lg`+ the rail/sidebar are persistent and the logo links home.
  */
 export function AppHeader({
 	onOpenDrawer,
 	onOpenSearch,
+	chatOpen,
+	onToggleChat,
 }: {
 	onOpenDrawer: () => void;
 	onOpenSearch: () => void;
+	chatOpen: boolean;
+	onToggleChat: () => void;
 }) {
 	const { t } = useI18n();
 	const inboxUnread = useGlobalInboxUnreadCount();
+	// HQ-scope unread only: replies landing in the CEO stream while the dock is
+	// closed. Project DMs badge their own cards in the project menu instead.
+	const ceoUnread = useCeoUnread(chatOpen);
 	// The mobile "New task" entry point: a create-task dialog with a project
 	// picker defaulting to the currently viewed project. Scoped `lg:hidden`
 	// because at lg+ the persistent project menu carries its own "+" next to
@@ -89,15 +97,28 @@ export function AppHeader({
 					open={newTaskOpen}
 					onOpenChange={setNewTaskOpen}
 				/>
+				{/* The CEO chat launcher: a monogram, not an icon - chat is a person.
+				    Toggles the dock; unread CEO replies overlay it while it's closed. */}
 				<button
 					type="button"
-					onClick={onOpenSearch}
-					aria-label="Search"
-					title="Search (⌘K)"
-					data-testid="app-header-search"
+					onClick={onToggleChat}
+					aria-label={t('chat.launcher.label')}
+					title={t('chat.launcher.label')}
+					data-testid="app-header-chat"
 					className={iconLinkClass}
 				>
-					<Search className="w-4 h-4" />
+					<span className="relative inline-flex">
+						<span
+							className={`flex h-[22px] w-[22px] items-center justify-center rounded-full border text-[7px] font-semibold tracking-wide ${
+								chatOpen
+									? 'border-text-1 bg-surface-3 text-text-1'
+									: 'border-border bg-surface-3 text-text-2'
+							}`}
+						>
+							CEO
+						</span>
+						<CountOverlayBadge count={ceoUnread} testId="app-header-chat-badge" />
+					</span>
 				</button>
 				<Link
 					to="/home/inbox"
@@ -111,6 +132,16 @@ export function AppHeader({
 						<CountOverlayBadge count={inboxUnread} testId="app-header-inbox-badge" />
 					</span>
 				</Link>
+				<button
+					type="button"
+					onClick={onOpenSearch}
+					aria-label="Search"
+					title="Search (⌘K)"
+					data-testid="app-header-search"
+					className={iconLinkClass}
+				>
+					<Search className="w-4 h-4" />
+				</button>
 				<Link
 					to="/marketplace"
 					aria-label="Marketplace"

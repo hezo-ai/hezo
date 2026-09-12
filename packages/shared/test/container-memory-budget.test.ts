@@ -76,11 +76,12 @@ describe('computeDefaultMaxContainerMemoryGb', () => {
 		expect(computeDefaultMaxContainerMemoryGb(null, 8)).toBe(DEFAULT_MAX_CONTAINER_MEMORY_GB);
 	});
 
-	it('leaves the flat default room for three task containers plus the chat', () => {
-		// The flat default is a TOTAL, so the chat's share comes out of it like
-		// anywhere else. If a future edit starts subtracting the cap from it as
-		// well, the task share drops to two containers and this catches it.
-		expect(taskContainerMemoryBudgetGb(computeDefaultMaxContainerMemoryGb(null, 2), 2)).toBe(6);
+	it('leaves the flat default room for five task containers plus the chat lane', () => {
+		// The flat default is a TOTAL - six default-sized containers - so the chat
+		// lane comes out of it like anywhere else. If a future edit starts
+		// subtracting the cap from it as well, the task share drops to four
+		// containers and this catches it.
+		expect(taskContainerMemoryBudgetGb(computeDefaultMaxContainerMemoryGb(null, 2), 2)).toBe(10);
 	});
 });
 

@@ -88,7 +88,6 @@ const JOB_CRONS: Record<string, string> = {
 	HEZO_LOG_COMPACTION_BATCH: 'logCompaction.batch',
 	HEZO_LOG_COMPACTION_MAX_PER_TICK: 'logCompaction.maxPerTick',
 	HEZO_LOG_COMPACTION_PRESERVED_BYTES: 'logCompaction.preservedBytes',
-	HEZO_CHAT_HEALTH_INTERVAL_MS: 'chat.healthIntervalMs',
 };
 
 const warnOnly = (replacement: string, redact?: (value: string) => string): RemovedEnvVar => ({
@@ -165,6 +164,9 @@ export const REMOVED_ENV_VARS: Record<string, RemovedEnvVar> = {
 	HEZO_MARKETPLACE_REF: warnOnly('the `marketplace.ref` config-file key'),
 	HEZO_MARKETPLACE_BASE_URL: warnOnly('the `marketplace.baseUrl` config-file key'),
 	GITHUB_OAUTH_CLIENT_ID: warnOnly('the `github.oauthClientId` config-file key'),
+	HEZO_CHAT_HEALTH_INTERVAL_MS: warnOnly(
+		'nothing - the pinned chat container and its health check were removed; chat turns claim pool containers per turn',
+	),
 
 	...Object.fromEntries(
 		Object.entries(JOB_CRONS).map(([name, key]) => [

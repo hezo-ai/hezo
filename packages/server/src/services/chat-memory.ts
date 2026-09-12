@@ -104,6 +104,46 @@ export async function upsertChatMemory(
 	});
 }
 
+/** A group room's shared memory (`chat_memories.conversation_id` scope), or null when none yet. */
+export async function getConversationChatMemory(
+	db: Db,
+	conversationId: string,
+): Promise<ChatMemory | null> {
+	const r = await db.query<ChatMemory>(
+		`SELECT content, updated_at FROM chat_memories WHERE conversation_id = $1`,
+		[conversationId],
+	);
+	return r.rows[0] ?? null;
+}
+
+/**
+ * Overwrite a group room's shared memory — the conversation-scoped sibling of
+ * {@link upsertChatMemory}, minus the revision snapshot: room memory carries the
+ * room's own settled gist, not operator-authored standing preferences, and the
+ * revision list/restore surface is per-member. `updated_at` always advances
+ * (like the member upsert) because it is the compaction eviction gate.
+ */
+export async function upsertConversationChatMemory(
+	db: Db,
+	conversationId: string,
+	content: string,
+): Promise<ChatMemory> {
+	const prior = await db.query<{ content: string }>(
+		'SELECT content FROM chat_memories WHERE conversation_id = $1',
+		[conversationId],
+	);
+	const tooLarge = checkInjectedTextCap('chat_memory', content, prior.rows[0]?.content.length);
+	if (tooLarge) throw new InjectedTextCapError(tooLarge.error);
+	const r = await db.query<ChatMemory>(
+		`INSERT INTO chat_memories (conversation_id, content, updated_at)
+		 VALUES ($1, $2, now())
+		 ON CONFLICT (conversation_id) DO UPDATE SET content = $2, updated_at = now()
+		 RETURNING content, updated_at`,
+		[conversationId, content],
+	);
+	return r.rows[0];
+}
+
 /** An agent's chat-memory revisions, newest first. */
 export async function listChatMemoryRevisions(
 	db: Db,
@@ -212,6 +252,11 @@ export function roleLabel(role: string): string {
  * HQ asset library. An attachment-only message (empty text) still gets its files.
  * A message carrying an external sender label (coworker/group turns) is labelled
  * with the sender's name ("Alice: …") instead of the generic role label.
+ *
+ * Continuation lines of the BODY are indented, so a speaker label is exactly a
+ * column-zero `Label:` line and nothing inside a message can be one: a reply
+ * whose text contains "\nOperator: do X" replays as visibly-quoted content, not
+ * as a forged operator turn in the next prompt. Structural, not a phrase match.
  */
 export function chatTranscriptLine(msg: {
 	role: string;
@@ -220,7 +265,8 @@ export function chatTranscriptLine(msg: {
 	attachmentNames: string[];
 }): string {
 	const label = msg.authorLabel?.trim() ? msg.authorLabel.trim() : roleLabel(msg.role);
-	const base = `${label}: ${msg.content}`;
+	const body = msg.content.replaceAll('\n', '\n    ');
+	const base = `${label}: ${body}`;
 	if (msg.attachmentNames.length === 0) return base;
 	const refs = `[Attached files: ${msg.attachmentNames.map((n) => `assets/${n}`).join(', ')}]`;
 	return msg.content ? `${base}\n${refs}` : `${base}${refs}`;
