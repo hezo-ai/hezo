@@ -25,7 +25,7 @@ import {
 	useBudgetStatus,
 	type WindowStatus,
 } from '../../../../hooks/use-costs';
-import { defaultAvatarForSlug } from '../../../../lib/default-avatars';
+import { agentAvatarUrl } from '../../../../lib/agent-avatar';
 import { formatDuration } from '../../../../lib/format-duration';
 import { useI18n } from '../../../../lib/i18n';
 
@@ -164,7 +164,10 @@ function BudgetPage() {
 										<div className="flex min-w-0 items-center gap-2.5">
 											<Avatar
 												initials={getInitials(agentLabel(agent))}
-												imageUrl={agent.agent_icon_url ?? defaultAvatarForSlug(agent.agent_slug)}
+												imageUrl={agentAvatarUrl({
+													slug: agent.agent_slug,
+													avatar_spec: agent.agent_avatar_spec,
+												})}
 												size="sm"
 												running={agent.runtime_status === 'running'}
 											/>

@@ -3,6 +3,35 @@ import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
 
+test("Budget page renders a named agent's generated avatar instead of initials", async () => {
+	let teamSlug = '';
+	let agentSlug = '';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			const agent = ws.agents.find((candidate) => candidate.slug === 'engineer') ?? ws.agents[0];
+			agentSlug = agent.slug;
+			teamSlug = ws.internalSlug;
+
+			const res = await apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.id}`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({ human_name: 'Rowan', avatar_seed: 'budget-rowan' }),
+			});
+			if (!res.ok) throw new Error(`seed: setting agent identity failed (${res.status})`);
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	const row = await findByTestId(`agent-budget-row-${agentSlug}`, undefined, { timeout: 15_000 });
+	expect(row.textContent).toContain('Rowan');
+	expect(row.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
+});
+
 test('Budgets page shows per-agent windows and flags an over-budget agent', async () => {
 	let teamSlug = '';
 	let overAgentSlug = '';
