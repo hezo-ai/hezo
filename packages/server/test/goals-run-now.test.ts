@@ -156,3 +156,60 @@ describe('POST /projects/:projectId/progress/run-now', () => {
 		expect(recancel.status).toBe(409);
 	});
 });
+
+describe('POST /projects/:projectId/retrospective/run-now', () => {
+	// The escape hatch from a 48-hour cadence: without it there is no way to exercise
+	// a retrospective end to end, or to answer "is it working" inside two days.
+	it('bypasses the due-check, because pressing the button is the intent', async () => {
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+		const templateId = (await typesRes.json()).data.find(
+			(t: { name: string }) => t.name === 'App Team',
+		).id;
+		const teamRes = await createTestTeam(db, { name: 'Retro Now Co', template_id: templateId });
+		const retroTeamId = (await teamRes.json()).data.id;
+		const projectRes = await createTestProject(db, retroTeamId, { name: 'Retro Now Project' });
+		const slug = (await projectRes.json()).data.slug;
+
+		// Nothing has run here, so the scheduled path would report the project dormant
+		// and select nothing at all.
+		const runs = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM heartbeat_runs WHERE team_id = $1`,
+			[retroTeamId],
+		);
+		expect(runs.rows[0].c).toBe(0);
+
+		const res = await app.request(`/api/projects/${slug}/retrospective/run-now`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: '{}',
+		});
+		// Either it launched, or a gate below the due-check turned it away - never
+		// `not_due`, which is the one answer the button exists to rule out.
+		if (res.status === 200) {
+			expect((await res.json()).data.dispatched).toBe(true);
+		} else {
+			expect(await res.text()).not.toContain('No retrospective is due');
+		}
+	});
+
+	it('answers about the retrospective, not about a progress update', async () => {
+		// One reason set serves both task-less runs, so the sentences are composed per
+		// caller. Shared wording would tell someone pressing this button about the
+		// Captain and about progress updates.
+		await db.query(
+			`UPDATE member_agents SET admin_status = 'disabled'::agent_admin_status WHERE slug = 'coach'`,
+		);
+		const res = await app.request(`/api/projects/${projectSlug}/retrospective/run-now`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: '{}',
+		});
+		expect(res.status).toBe(409);
+		const text = await res.text();
+		expect(text).toContain('Coach');
+		expect(text).not.toContain('Captain');
+		await db.query(
+			`UPDATE member_agents SET admin_status = 'enabled'::agent_admin_status WHERE slug = 'coach'`,
+		);
+	});
+});

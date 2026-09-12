@@ -19,7 +19,7 @@ import {
 	type UpdateGoalInput,
 	updateGoal,
 } from '../services/goals';
-import type { ProgressUpdateDispatchReason } from '../services/job-manager';
+import type { TaskLessDispatchReason } from '../services/job-manager';
 import { resolveActorName } from '../services/task-events';
 
 export const goalsRoutes = new Hono<Env>();
@@ -95,19 +95,31 @@ goalsRoutes.post('/projects/:projectId/goals', async (c) => {
 	}
 });
 
-const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
-	no_project: 'Project not found.',
-	no_captain: 'This project has no Captain to run progress updates.',
-	captain_disabled: 'The Captain is currently disabled.',
-	not_due: 'No progress update is due for this project right now.',
-	agent_busy: 'The Captain is already running in this project.',
-	instance_at_capacity:
-		'Hezo is at its active-container limit; the run will start when a container goes idle.',
-	hours_exhausted:
-		'Hezo has used its container-hours allowance for this month; the run will start when the allowance resets or the limit is raised.',
-	over_budget: 'The Captain or project is over its budget.',
-	launch_conflict: 'A progress-update run is already starting.',
-};
+/**
+ * Why a "Run now" did not start, said in the caller's own terms.
+ *
+ * One list for both task-less runs: the gates they pass are the same, and only the
+ * role and the name of the run differ. Composed rather than copied so a reason
+ * added to the shared set reaches both sentences instead of one.
+ */
+function dispatchMessages(role: string, run: string): Record<TaskLessDispatchReason, string> {
+	return {
+		no_project: 'Project not found.',
+		no_agent: `There is no ${role} to run ${run}s.`,
+		agent_disabled: `The ${role} is currently disabled.`,
+		not_due: `No ${run} is due for this project right now.`,
+		agent_busy: `The ${role} is already running in this project.`,
+		instance_at_capacity:
+			'Hezo is at its active-container limit; the run will start when a container goes idle.',
+		hours_exhausted:
+			'Hezo has used its container-hours allowance for this month; the run will start when the allowance resets or the limit is raised.',
+		over_budget: `The ${role} or project is over its budget.`,
+		launch_conflict: `A ${run} run is already starting.`,
+	};
+}
+
+const PROGRESS_UPDATE_MESSAGES = dispatchMessages('Captain', 'progress update');
+const RETROSPECTIVE_MESSAGES = dispatchMessages('Coach', 'retrospective');
 
 // Manually run the Captain's progress-update ("Run now" on the project dashboard). Reuses the
 // scheduled logic, minus its due-check: pressing the button is explicit intent, so this always
@@ -130,7 +142,24 @@ goalsRoutes.post('/projects/:projectId/progress/run-now', async (c) => {
 	if ('queued' in result) return ok(c, { queued: true, wakeup_id: result.wakeupId });
 
 	const message = PROGRESS_UPDATE_MESSAGES[result.reason];
-	if (result.reason === 'no_project' || result.reason === 'no_captain') {
+	if (result.reason === 'no_project' || result.reason === 'no_agent') {
+		return err(c, 'NOT_FOUND', message, 404);
+	}
+	return err(c, 'CONFLICT', message, 409);
+});
+
+// Manually run the Coach's retrospective on this project. Reuses the scheduled
+// logic minus its cadence check: pressing the button is explicit intent, so it runs
+// whether or not the project is due. No MCP twin, deliberately - the same line
+// `agent-hours` and `container-hours` draw. A retrospective reads run economics, and
+// an agent that could trigger one could read figures it is not meant to act on.
+goalsRoutes.post('/projects/:projectId/retrospective/run-now', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const result = await c.get('jobManager').dispatchRetrospectiveNow(projectId);
+	if (result.dispatched) return ok(c, { dispatched: true });
+
+	const message = RETROSPECTIVE_MESSAGES[result.reason];
+	if (result.reason === 'no_project' || result.reason === 'no_agent') {
 		return err(c, 'NOT_FOUND', message, 404);
 	}
 	return err(c, 'CONFLICT', message, 409);

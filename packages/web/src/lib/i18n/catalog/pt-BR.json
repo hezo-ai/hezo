@@ -701,6 +701,7 @@
 	"runTrigger.progressUpdate": "Automação: relatório de objetivos e progresso",
 	"runTrigger.reply": "Resposta ao seu comentário anterior",
 	"runTrigger.replyFromIn": "Resposta de @{actor} em {task}",
+	"runTrigger.retrospective": "Automação: retrospectiva do projeto",
 	"runTrigger.timer": "Temporizador de recuperação",
 	"runTrigger.timerReason": "Temporizador de recuperação: {reason}",
 	"runTrigger.unknown": "Gatilho desconhecido",

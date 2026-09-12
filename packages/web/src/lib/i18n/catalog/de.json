@@ -701,6 +701,7 @@
 	"runTrigger.progressUpdate": "Automatisierung: Ziele und Fortschrittsbericht",
 	"runTrigger.reply": "Antwort auf Ihren früheren Kommentar",
 	"runTrigger.replyFromIn": "Antwort von @{actor} in {task}",
+	"runTrigger.retrospective": "Automatisierung: Projektrückblick",
 	"runTrigger.timer": "Wiederherstellungs-Timer",
 	"runTrigger.timerReason": "Wiederherstellungs-Timer: {reason}",
 	"runTrigger.unknown": "Unbekannter Auslöser",

@@ -701,6 +701,7 @@
 	"runTrigger.progressUpdate": "Automazione: report su obiettivi e avanzamento",
 	"runTrigger.reply": "Risposta al tuo commento precedente",
 	"runTrigger.replyFromIn": "Risposta di @{actor} in {task}",
+	"runTrigger.retrospective": "Automazione: retrospettiva del progetto",
 	"runTrigger.timer": "Timer di ripristino",
 	"runTrigger.timerReason": "Timer di ripristino: {reason}",
 	"runTrigger.unknown": "Origine sconosciuta",

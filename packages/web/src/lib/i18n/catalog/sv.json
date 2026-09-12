@@ -701,6 +701,7 @@
 	"runTrigger.progressUpdate": "Automatisering: mål och lägesrapport",
 	"runTrigger.reply": "Svar på din tidigare kommentar",
 	"runTrigger.replyFromIn": "Svar från @{actor} i {task}",
+	"runTrigger.retrospective": "Automatisering: projektretrospektiv",
 	"runTrigger.timer": "Återställningstimer",
 	"runTrigger.timerReason": "Återställningstimer: {reason}",
 	"runTrigger.unknown": "Okänd utlösare",

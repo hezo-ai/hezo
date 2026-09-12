@@ -14,7 +14,9 @@ import {
 	setSystemMeta,
 } from '../src/lib/system-meta';
 import {
+	countActiveRunsInProject,
 	getActiveContainers,
+	getBusyAgentIdsInProject,
 	isContainerCapacityBlockedInDb,
 	reclaimableForOthers,
 } from '../src/services/run-concurrency';
@@ -481,5 +483,101 @@ describe('automatic budget source', () => {
 		expect((await getActiveContainers(db, remoteEngine)).budgetGb).toBe(expected);
 		expect((await getActiveContainers(db, engine)).budgetGb).toBe(expected);
 		expect((await getActiveContainers(db, engine)).totalBudgetGb).toBe(32);
+	});
+});
+
+/**
+ * Which runs count as being "in" a project.
+ *
+ * A run reaches its project two ways: an ordinary run through its task, a
+ * task-less one - a progress update, a retrospective - through its team. Read
+ * through `tasks` alone, the second kind is invisible, and every gate built on the
+ * question then lets a second container start in a project that already has one.
+ */
+describe('runs belonging to a project', () => {
+	let db: PgliteDb;
+	let projectId: string;
+	let teamId: string;
+	let otherTeamId: string;
+	let memberId: string;
+
+	beforeEach(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Acme', 'acme') RETURNING id`,
+		);
+		teamId = team.rows[0].id;
+		const other = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Other', 'other') RETURNING id`,
+		);
+		otherTeamId = other.rows[0].id;
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Acme', 'acme', 'AC') RETURNING id`,
+			[teamId],
+		);
+		projectId = project.rows[0].id;
+		await db.query(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Other', 'other', 'OT')`,
+			[otherTeamId],
+		);
+		const member = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'Captain') RETURNING id`,
+			[teamId],
+		);
+		memberId = member.rows[0].id;
+	});
+	afterEach(() => db.close());
+
+	/** A running run, against a task when given one and task-less otherwise. */
+	async function seedRun(opts: { taskId?: string; team?: string } = {}): Promise<void> {
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status)`,
+			[opts.team ?? teamId, memberId, opts.taskId ?? null],
+		);
+	}
+
+	async function seedTask(): Promise<string> {
+		const t = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status)
+			 VALUES ($1, $2, 1, 'AC-1', 'Ship it', 'in_progress'::task_status) RETURNING id`,
+			[teamId, projectId],
+		);
+		return t.rows[0].id;
+	}
+
+	it('counts a run against a task in the project', async () => {
+		await seedRun({ taskId: await seedTask() });
+		expect(await countActiveRunsInProject(db, projectId)).toBe(1);
+		expect(await getBusyAgentIdsInProject(db, projectId)).toContain(memberId);
+	});
+
+	it('counts a task-less run, which reaches the project through its team', async () => {
+		// The defect. A progress update or a retrospective carries no task, so a
+		// membership test that only joins tasks reports the project idle while one of
+		// its containers is running.
+		await seedRun();
+		expect(await countActiveRunsInProject(db, projectId)).toBe(1);
+		expect(await getBusyAgentIdsInProject(db, projectId)).toContain(memberId);
+	});
+
+	it('leaves out a task-less run belonging to another project', async () => {
+		await seedRun({ team: otherTeamId });
+		expect(await countActiveRunsInProject(db, projectId)).toBe(0);
+		expect(await getBusyAgentIdsInProject(db, projectId)).not.toContain(memberId);
+	});
+
+	it('leaves out a finished run of either kind', async () => {
+		const taskId = await seedTask();
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status),
+			        ($1, $2, NULL, 'failed'::heartbeat_run_status)`,
+			[teamId, memberId, taskId],
+		);
+		expect(await countActiveRunsInProject(db, projectId)).toBe(0);
 	});
 });

@@ -701,6 +701,7 @@
 	"runTrigger.progressUpdate": "自動化: 目標と進捗レポート",
 	"runTrigger.reply": "以前のコメントへの返信",
 	"runTrigger.replyFromIn": "{task} での @{actor} からの返信",
+	"runTrigger.retrospective": "自動化: プロジェクトの振り返り",
 	"runTrigger.timer": "復旧タイマー",
 	"runTrigger.timerReason": "復旧タイマー: {reason}",
 	"runTrigger.unknown": "不明なトリガー",

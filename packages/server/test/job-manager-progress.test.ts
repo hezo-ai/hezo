@@ -410,23 +410,23 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('returns no_captain when the team has no captain-slug agent', async () => {
+		it('returns no_agent when the team has no captain-slug agent', async () => {
 			const manager = createJobManager();
 			await ctx.db.query("UPDATE member_agents SET slug = 'skipper' WHERE id = $1", [captainId]);
 			const result = await manager.dispatchProgressUpdateNow(projectId);
-			expect(result).toEqual({ dispatched: false, reason: 'no_captain' });
+			expect(result).toEqual({ dispatched: false, reason: 'no_agent' });
 			await ctx.db.query("UPDATE member_agents SET slug = 'captain' WHERE id = $1", [captainId]);
 			manager.shutdown();
 		});
 
-		it('returns captain_disabled when the Captain is administratively disabled', async () => {
+		it('returns agent_disabled when the Captain is administratively disabled', async () => {
 			const manager = createJobManager();
 			await ctx.db.query('UPDATE member_agents SET admin_status = $1 WHERE id = $2', [
 				AgentAdminStatus.Disabled,
 				captainId,
 			]);
 			const result = await manager.dispatchProgressUpdateNow(projectId);
-			expect(result).toEqual({ dispatched: false, reason: 'captain_disabled' });
+			expect(result).toEqual({ dispatched: false, reason: 'agent_disabled' });
 			manager.shutdown();
 		});
 
@@ -535,7 +535,7 @@ describe('JobManager progress-update flows', () => {
 			);
 			expect(idle.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
 			expect(internals(manager).activeProjectRuns.has(projectId)).toBe(false);
-			expect(manager.isTaskRunning(`progressupdate:${captainId}:${projectId}`)).toBe(false);
+			expect(manager.isTaskRunning(`${captainId}:${projectId}:progressupdate`)).toBe(false);
 			manager.shutdown();
 		});
 	});
@@ -563,13 +563,15 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('re-queues a claimed heartbeat wakeup on a progress-update launch conflict', async () => {
+		it('re-queues a claimed heartbeat wakeup rather than starting a second run in the project', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Conflict goal');
-			// Occupy the progress-update launch key: the Captain per-project key is
-			// free, so the conflict only surfaces at launchTask.
+			// A task-less run already in flight for this agent in this project. Its key
+			// is not the key a task run would take, so the guard has to recognise it by
+			// the agent and project leading the key - an exact-key check sees nothing
+			// here and starts a second container beside the first.
 			manager.launchTask(
-				`progressupdate:${captainId}:${projectId}`,
+				`${captainId}:${projectId}:progressupdate`,
 				(signal) =>
 					new Promise<void>((resolve) => {
 						signal.addEventListener('abort', () => resolve());

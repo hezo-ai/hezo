@@ -8,6 +8,7 @@ import {
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
+	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	WakeupSource,
 } from '@hezo/shared';
@@ -266,6 +267,7 @@ describe('runAgent — progress-update run (no task)', () => {
 			undefined,
 			undefined,
 			{
+				kind: HeartbeatRunKind.ProgressUpdate,
 				goals: [
 					{
 						id: 'goal-1',

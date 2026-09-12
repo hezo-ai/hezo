@@ -11,6 +11,17 @@ export interface TriggerLabel {
 /** The catalog lookup, threaded in from the component rendering the label. */
 type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
+/**
+ * Runs that describe themselves by what the run does rather than by the wakeup that scheduled
+ * them: they carry no task and reuse a shared wakeup, so the raw source says nothing useful.
+ * A kind mapped to null is described by its trigger source instead.
+ */
+const KIND_LABEL_KEYS: Record<HeartbeatRunKind, MessageKey | null> = {
+	[HeartbeatRunKind.Task]: null,
+	[HeartbeatRunKind.ProgressUpdate]: 'runTrigger.progressUpdate',
+	[HeartbeatRunKind.Retrospective]: 'runTrigger.retrospective',
+};
+
 function getString(payload: Record<string, unknown> | null, key: string): string | undefined {
 	if (!payload) return undefined;
 	const v = payload[key];
@@ -41,11 +52,8 @@ export function formatTriggerReason(
 	const taskId = run.trigger_comment_task_identifier ?? run.task_identifier;
 	const actor = run.trigger_actor_slug;
 
-	// Progress-update runs are the Captain's periodic progress assessment. They have no task and
-	// reuse the heartbeat wakeup, so describe them by what the run does, not the raw source.
-	if (run.kind === HeartbeatRunKind.ProgressUpdate) {
-		return { source, text: t('runTrigger.progressUpdate') };
-	}
+	const kindKey = KIND_LABEL_KEYS[run.kind];
+	if (kindKey) return { source, text: t(kindKey) };
 
 	switch (source) {
 		case WakeupSource.Mention: {
