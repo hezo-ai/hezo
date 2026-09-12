@@ -219,6 +219,30 @@ test('a designated-repo request with no reason links to the team general setting
 	expect((repoCard as HTMLElement).getAttribute('href')).toContain('/team-settings/general');
 });
 
+test('a role-update approval names the agent and what accepting does', async () => {
+	// The card is the whole interface for carrying a role-doc improvement into an
+	// agent hired before it. Without its own branch it renders as "role update" and
+	// the admin is asked to approve something the page never describes.
+	const { findByText } = await renderTeamInbox(async ({ ws }) => {
+		await insertApproval(ws, {
+			type: 'role_update',
+			payload: {
+				// A real member id: the list query casts `payload->>'member_id'` to uuid
+				// to name the agent, so a placeholder here fails the whole query.
+				member_id: ws.agents[0].id,
+				agent_slug: 'coach',
+				agent_title: 'Coach',
+				outcome: 'clean',
+				message: 'Accepting keeps everything added since.',
+			},
+		});
+	});
+
+	await findByText(/Updated role available/, undefined, { timeout: 15_000 });
+	await findByText('Coach');
+	await findByText('Accepting keeps everything added since.');
+});
+
 test('an approval type with no dedicated message branch falls back to the de-underscored type label', async () => {
 	const { findAllByText } = await renderTeamInbox(async ({ ws }) => {
 		await insertApproval(ws, {

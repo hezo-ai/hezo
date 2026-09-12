@@ -799,6 +799,12 @@ export const ApprovalType = {
 	DesignatedRepoRequest: 'designated_repo_request',
 	SkillProposal: 'skill_proposal',
 	GoalSuggestion: 'goal_suggestion',
+	/**
+	 * A built-in agent's role doc has improved since it was hired, and the new text
+	 * is offered for the admin to accept. Never applied without one, because the
+	 * prompt document carries their edits and the agent's learned rules.
+	 */
+	RoleUpdate: 'role_update',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 

@@ -38,6 +38,8 @@ rather than here, is how a codebase ends up with two of everything.
 | Which prompt a task-less run gets | `buildTaskLessPrompt` (`services/agent-runner.ts`) - a switch over the context tag with a `never` guard, so a new kind cannot fall through to the task path |
 | "Which runs are in this project?" | `runInProjectSql` (`services/run-concurrency.ts`) - a task-less run reaches its project through its team, so a join to `tasks` alone reports the project idle while one of its containers runs |
 | The counted shape of a project's recent work | `buildRetrospectiveSignals` (`services/project-retrospective.ts`), sibling of `buildProgressActivityCandidates` - server-internal prompt scaffolding, never a wire type and never a tool |
+| "Which release's role text is this agent running, and what would the current one give it?" | `spliceRolePrompt` / `recoverBaseTemplate` (`services/role-prompt-sync.ts`) - the base comes from the first `document_revisions` row, never from a column recording a version |
+| One approval type's side effect | `APPROVAL_HANDLERS` (`services/approval-handlers/`) - a new type is one row plus one file, never a branch in the resolver |
 | What happens to the work a finished run was woken for | `settleWakeupForRun` (`services/wakeup.ts`) - it reports `handback_failed`, so no caller may assume the work is queued |
 | "Is this cancelled run still owed, and can a human act on it?" | `heartbeat_runs.cancel_reason` read through `RUN_CANCEL_BEHAVIOUR` (`@hezo/shared`) - never the `error` prose |
 | "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |

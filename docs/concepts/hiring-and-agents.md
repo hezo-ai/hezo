@@ -89,6 +89,30 @@ convention, change tone - without rebuilding anything. An edit can never cost th
 identity or live context: Hezo composes both around whatever you save. Switch to
 **Preview** to read the whole prompt as the agent receives it, with every value filled in.
 
+## When a built-in role improves
+
+The built-in roles - the Captain, the CEO, the Coach and the rest - keep getting better
+between releases. Your agents do not pick those improvements up on their own, and that is
+deliberate: an agent's prompt is yours once it is hired. It carries whatever the Coach has
+taught it and whatever you have edited, and a release has no business overwriting either.
+
+So Hezo offers instead. After an upgrade, any built-in agent whose role has moved on gets a
+card in your inbox: **Updated role available**. Accepting rewrites the role's own
+instructions and keeps everything added since, learned rules and your own additions alike.
+
+Two things make this safe to accept:
+
+- **Your additions are kept exactly**, not re-formatted or summarised. Hezo knows the role
+  text the agent was hired on, so it can tell the release's words from everyone else's.
+- **It is one click back.** The change is recorded as a revision like any other prompt
+  edit, so the agent's settings page can roll it back if you don't like the result.
+
+If you have edited the role's own instructions rather than adding to them, the card says
+so: the two versions disagree about the same lines, and accepting keeps the new role and
+the learned rules while dropping your edits. Declining keeps exactly what you have, and
+Hezo does not ask again for that version - though it will offer the next improvement when
+one arrives.
+
 ## Reviewing an agent's runs
 
 Every agent has an **Executions** tab listing its runs - what triggered each one, how long

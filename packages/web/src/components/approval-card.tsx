@@ -171,6 +171,19 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 				</>
 			);
 		}
+		case ApprovalType.RoleUpdate: {
+			const who = (p.agent_title as string) ?? (p.agent_slug as string) ?? 'an agent';
+			return (
+				<>
+					<span>
+						Updated role available for <span className="font-medium">{who}</span>
+					</span>
+					{p.message && (
+						<span className="block text-xs text-text-2 mt-1">{p.message as string}</span>
+					)}
+				</>
+			);
+		}
 		default:
 			return <span>{approval.type.replace(/_/g, ' ')}</span>;
 	}

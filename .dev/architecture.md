@@ -446,6 +446,34 @@ the pathology is runs. Anchoring on the run row rather than on whether the run r
 what makes a pass that finds a healthy project cost one run rather than one per heartbeat forever.
 Oldest anchor first, one project per pass, internal and archived projects excluded.
 
+**Role-doc sync.** An agent's live prompt is a `documents` row of type
+`agent_system_prompt`, copied out of `agent_types.system_prompt_template` once at hire time
+and never refreshed - the agent's learned rules and the admin's edits accumulate there, so a
+rewrite would destroy both. The boot seed keeps the *catalog* row current from this repo's
+role docs, but nothing carried that forward, so **every role-doc change reached new
+instances and no existing one** - hardest for the CEO and Coach, hired on an instance's
+first boot and never hired again.
+
+`services/role-prompt-sync.ts` closes that. The base (the role doc as it stood at hire time)
+is exact and free: `document_revisions` holds content as it was *before* each change and
+`insertDocument` records none, so the first revision is the original and a document with no
+revisions is its own original. No column records which release a prompt came from, so
+nothing can fall out of step with it. `spliceRolePrompt(base, current, target)` then
+separates the release's text from everyone else's: `current === base` takes the new role
+whole, `current.startsWith(base)` reproduces the appendix byte for byte (agents are
+instructed to append only, so this is the designed case, not a heuristic), and anything else
+is a conflict offering the new role plus the learned rules. Scoped to `is_builtin` agent
+types - a hire, a marketplace role and a template snapshot all carry a `custom` type whose
+template records what was provisioned, not what the release ships.
+
+Nothing is written without a person accepting. `fileRolePromptUpdates` runs after the seed
+in `runSeed` and files one `ApprovalType.RoleUpdate` per agent, keyed on a hash of the
+target so a standing offer is *rewritten* when the role doc moves again rather than joined
+by a second, and a **declined** row is the memory - keyed on the version refused, so the
+next improvement is still offered. `approval-handlers/role-update.ts` writes the content the
+card carried (not a fresh splice: the admin approved a specific text) through
+`upsertDocument`, which records a revision, so the existing rollback undoes it.
+
 `services/project-retrospective.ts` computes the signals — the deterministic half — and the Coach
 judges them; the block is composed by the server into the run prompt (`buildRetrospectivePrompt`)
 rather than exposed as a tool, so the run economics stay out of every other agent's hands (the same

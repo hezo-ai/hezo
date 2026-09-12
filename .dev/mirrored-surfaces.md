@@ -18,6 +18,7 @@ one to read: where it says *nothing*, no test will catch you.
 | A prompt-style rule | `packages/shared/src/prompt-style.ts`, its `{{prompt_style_rules}}` render, the authoring tool descriptions, `.dev/writing-agent-prompts.md` | `mcp-reference.test.ts` for the tool docs, **nothing for the rest** |
 | A new surface that accepts an authored prompt | its `checkPromptStyle` call | **nothing - on you** |
 | A new server-wired wakeup path reachable from an agent run | `created_by_run_id` on the wakeup it creates | **nothing - on you** |
+| A new `ApprovalType` value | the `approval_type` Postgres enum (a migration), `APPROVAL_TYPE_COLORS` (web), and a case in `approval-card.tsx` - without the case the card renders the raw slug with underscores | the colour table is an exhaustive `Record` and fails `typecheck`; **nothing for the card arm** |
 | A new `WakeupSource` value | the `wakeup_source` Postgres enum (a migration), `DISPATCH_SUPPRESSION_EXEMPT_SOURCES` if it carries an answer rather than a system ping, and a `runTrigger.*` label in all twelve catalogs - without the label the run list calls it "Unknown trigger" | `run-trigger.test.ts` covers the label; **nothing for the other two** |
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
 | A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
