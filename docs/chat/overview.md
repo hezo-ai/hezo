@@ -112,16 +112,6 @@ the dots disappear.
 You never have to wait for them. Typing during that window queues your next message
 (see below), and holding the send button cuts in.
 
-## When a comment an agent posted reached nobody
-
-The CEO can comment on any project's task from chat. If one of those comments names a
-teammate without actually notifying them - writing the name plainly, or with the
-passive `@@name` form - nobody is woken, and the task can sit waiting on someone who
-was never told. When that happens a short note appears in the conversation naming the
-task and the teammate, so you can ask for a proper `@name` mention. It is a notice,
-not an error: if the agent was only referring to a teammate rather than handing work
-over, nothing needs doing.
-
 ## Sending while the agent is still replying
 
 You don't have to wait for a reply to finish before typing the next thing. While the

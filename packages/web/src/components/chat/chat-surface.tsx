@@ -56,6 +56,24 @@ import { Tooltip } from '../ui/tooltip';
 import { ConvertMessageDialog } from './convert-message-dialog';
 
 /**
+ * System-message kinds written for the AGENT, not the operator. They stay in the
+ * transcript - `loadActiveWindow` has no role filter, so the row rides the next
+ * turn's prompt window and the agent reads it - and draw nothing.
+ *
+ * `HandoffNotDelivered` is the no-wake exit finding: the agent named a teammate
+ * without an active `@`-mention and left the task open. That is a fact about the
+ * agent's own tool use, and its remedy is a comment only the agent can post, so
+ * putting it in front of the operator asks them to chase plumbing they cannot
+ * fix. `create_comment` now reports the same condition to the agent as
+ * `strands_handoff` at the moment it posts. The task-run path is unaffected: it
+ * writes the finding to the run log, where the reader is looking at plumbing
+ * already.
+ */
+const AGENT_ONLY_SYSTEM_KINDS: readonly ChatSystemMessageKind[] = [
+	ChatSystemMessageKind.HandoffNotDelivered,
+];
+
+/**
  * System-message kinds rendered as a full-sentence row rather than a marker,
  * and how each row looks: a warning is amber, a wait or pause is quiet. Any
  * kind not listed here renders as a centred marker row.
@@ -63,10 +81,6 @@ import { ConvertMessageDialog } from './convert-message-dialog';
 const SYSTEM_ROW_STYLE: Partial<
 	Record<ChatSystemMessageKind, { icon: typeof TriangleAlert; className: string }>
 > = {
-	[ChatSystemMessageKind.HandoffNotDelivered]: {
-		icon: TriangleAlert,
-		className: 'bg-warning-soft text-warning-soft-fg',
-	},
 	[ChatSystemMessageKind.ConnectorRefused]: {
 		icon: TriangleAlert,
 		className: 'bg-warning-soft text-warning-soft-fg',
@@ -839,6 +853,7 @@ function MessageBubble({
 		message.role === 'system' && message.system_kind
 			? SYSTEM_ROW_STYLE[message.system_kind]
 			: undefined;
+	if (message.system_kind && AGENT_ONLY_SYSTEM_KINDS.includes(message.system_kind)) return null;
 	if (rowStyle) {
 		const Icon = rowStyle.icon;
 		return (

@@ -71,6 +71,18 @@ export interface CommentWakeReceipt {
 	 * author "named" someone because a role word appeared in a sentence.
 	 */
 	named_not_woken: string[];
+	/**
+	 * This comment woke nobody, names a roster teammate, and sits on a task that
+	 * is still open - the stranded-handoff condition, stated at the moment it is
+	 * created rather than after the turn ends.
+	 *
+	 * `woke` and `named_not_woken` already carry the facts; what the author has
+	 * to infer from them is the consequence, and the whole failure is authors not
+	 * making that inference. The aggregate check in {@link detectNoWakeExits}
+	 * applies the same predicate per task once the execution is over, which is
+	 * too late for the run that caused it.
+	 */
+	strands_handoff: boolean;
 }
 
 export interface FireCommentWakeupsParams {
@@ -208,6 +220,9 @@ export function buildWakeReceipt(
 	content: unknown,
 	woke: string[],
 	roster: string[],
+	/** The task's status, when the caller already holds it. Omitted → the receipt
+	 *  reports `strands_handoff: false`, since it cannot know the task is open. */
+	taskStatus?: string | null,
 ): CommentWakeReceipt {
 	const known = new Set(roster.map((s) => s.toLowerCase()));
 	const wokeSet = new Set(woke.map((s) => s.toLowerCase()));
@@ -220,7 +235,38 @@ export function buildWakeReceipt(
 	for (const slug of detectUnlinkedTeammateReferences(content, roster)) {
 		if (!wokeSet.has(slug)) named.add(slug);
 	}
-	return { woke: Array.from(wokeSet), named_not_woken: Array.from(named) };
+	const namedList = Array.from(named);
+	return {
+		woke: Array.from(wokeSet),
+		named_not_woken: namedList,
+		strands_handoff:
+			wokeSet.size === 0 &&
+			namedList.length > 0 &&
+			taskStatus != null &&
+			!(TERMINAL_TASK_STATUSES as readonly string[]).includes(taskStatus),
+	};
+}
+
+/**
+ * {@link buildWakeReceipt}, reading the task's status only when it can change
+ * the answer - `strands_handoff` needs it solely in the case where the comment
+ * woke nobody AND named someone, so the common comment costs no extra round
+ * trip. A failed read degrades to `false` rather than failing the write, which
+ * has already been persisted.
+ */
+export async function buildWakeReceiptForTask(
+	db: Db,
+	taskId: string,
+	content: unknown,
+	woke: string[],
+	roster: string[],
+): Promise<CommentWakeReceipt> {
+	const receipt = buildWakeReceipt(content, woke, roster);
+	if (receipt.woke.length > 0 || receipt.named_not_woken.length === 0) return receipt;
+	const r = await db
+		.query<{ status: string }>('SELECT status::text AS status FROM tasks WHERE id = $1', [taskId])
+		.catch(() => null);
+	return buildWakeReceipt(content, woke, roster, r?.rows[0]?.status ?? null);
 }
 
 /** One comment considered by {@link detectNoWakeExits}. */

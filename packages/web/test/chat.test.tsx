@@ -719,8 +719,11 @@ test('a streaming reply shows no per-message copy button until it settles', asyn
 	expect(queryAllByTestId('chat-message-copy')).toHaveLength(0);
 });
 
-test('a handoff warning renders as its own meta row, wrapping rather than as a bubble', async () => {
-	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
+test('a no-wake handoff finding is written to the thread but drawn for nobody', async () => {
+	// It is a fact about the agent's own tool use, and its remedy is a comment
+	// only the agent can post - so the operator is not asked to chase it. The row
+	// stays in the transcript, where the next turn's prompt window picks it up.
+	const { findByTestId, queryByText, queryByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
@@ -747,13 +750,11 @@ test('a handoff warning renders as its own meta row, wrapping rather than as a b
 		},
 	]);
 
-	// The whole sentence is present: naming the task and the teammate is the point
-	// of the warning, so unlike the converted marker this row must not truncate.
-	expect(await findByText(warning)).toBeTruthy();
-	const row = document.querySelector('[data-system-kind="handoff_not_delivered"]');
-	expect(row).toBeTruthy();
-	expect(row?.getAttribute('data-role')).toBe('system');
-	// Never mistaken for the CEO speaking.
+	// The agent's reply is there; the finding is not drawn at all.
+	expect(await findByTestId('chat-panel')).toBeTruthy();
+	expect(queryByText(warning)).toBeNull();
+	expect(document.querySelector('[data-system-kind="handoff_not_delivered"]')).toBeNull();
+	// And it is not silently upgraded into some other row either.
 	expect(queryByTestId('chat-converted-task-link')).toBeNull();
 });
 
