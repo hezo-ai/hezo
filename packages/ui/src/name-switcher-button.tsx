@@ -11,6 +11,8 @@ export interface NameSwitcherButtonProps {
 	label: string;
 	searchPlaceholder?: string;
 	emptyLabel?: string;
+	/** Accessible name for an option's `badge` dot. Pass a translated string. */
+	badgeLabel?: string;
 	testId?: string;
 }
 
@@ -29,6 +31,7 @@ export function NameSwitcherButton({
 	label,
 	searchPlaceholder = 'Search…',
 	emptyLabel = 'No matches',
+	badgeLabel,
 	testId,
 }: NameSwitcherButtonProps) {
 	return (
@@ -38,6 +41,7 @@ export function NameSwitcherButton({
 			onChange={onSelect}
 			searchPlaceholder={searchPlaceholder}
 			emptyLabel={emptyLabel}
+			badgeLabel={badgeLabel}
 			testId={testId}
 			align="start"
 			trigger={
