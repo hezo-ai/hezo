@@ -3,10 +3,11 @@ import { waitForPageLoad } from './helpers';
 
 // Kept in Playwright by decision-tree items 1 & 2 (real CSS layout +
 // viewport-conditional behavior): the chat dock is a near-full-screen sheet on
-// mobile and an anchored ~420px panel from md up. happy-dom doesn't run media
-// queries against a real layout pass, so boundingBox must come from Chromium.
+// mobile and a full-height ~420px rail down the right edge from md up.
+// happy-dom doesn't run media queries against a real layout pass, so
+// boundingBox must come from Chromium.
 test.describe('chat dock — responsive layout', () => {
-	test('mobile is a near-full-screen sheet; desktop is an anchored panel', async ({
+	test('mobile is a near-full-screen sheet; desktop is a full-height right rail', async ({
 		sharedPage,
 		sharedWorkspace,
 	}) => {
@@ -37,8 +38,8 @@ test.describe('chat dock — responsive layout', () => {
 		const overlayBox = await overlay.boundingBox();
 		expect(overlayBox?.width ?? 0).toBeGreaterThan(370);
 
-		// Desktop: the same open panel re-lays out to the anchored ~420px width.
-		// There is no expand mode - the anchored panel is the whole desktop chat.
+		// Desktop: the same open panel re-lays out to the ~420px rail.
+		// There is no expand mode - the rail is the whole desktop chat.
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await expect(panel).toBeVisible();
 		const desktopBox = await panel.boundingBox();
@@ -46,8 +47,30 @@ test.describe('chat dock — responsive layout', () => {
 		expect(desktopBox?.width ?? 0).toBeGreaterThan(340);
 		expect(desktopBox?.width ?? 0).toBeLessThan(440);
 
-		// …and the anchored corner panel needs no scrim, so it's gone on desktop.
+		// It starts BELOW the h-12 (48px) shell header, so the top bar stays
+		// reachable while chat is open, and runs to the bottom of the viewport.
+		// This is the whole claim of "rail" over "corner panel", and only a real
+		// layout pass can say it.
+		expect(desktopBox?.y ?? 0).toBeGreaterThanOrEqual(40);
+		expect(desktopBox?.y ?? 0).toBeLessThanOrEqual(56);
+		expect(desktopBox?.height ?? 0).toBeGreaterThan(700);
+
+		// …and it is flush to the right edge rather than inset from the corner.
+		// Tolerant of a scrollbar gutter; the old panel sat 16px in AND 16px up.
+		expect((desktopBox?.x ?? 0) + (desktopBox?.width ?? 0)).toBeGreaterThan(1260);
+
+		// The rail is a persistent companion, not a modal, so no scrim on desktop.
 		await expect(overlay).toBeHidden();
+
+		// The resize handle is desktop-only. Only its presence and side are real
+		// layout facts; the drag arithmetic, the viewport clamp and persistence
+		// are deterministic and covered in packages/web/test/resizable-split.test.tsx,
+		// so they do not pay for a browser.
+		const handle = page.getByTestId('chat-rail-resize');
+		await expect(handle).toBeVisible();
+		const handleBox = await handle.boundingBox();
+		// On the rail's inner (page-facing) edge, not its outer one.
+		expect(handleBox?.x ?? 0).toBeLessThan((desktopBox?.x ?? 0) + 20);
 	});
 
 	test('Escape closes the chat', async ({ sharedPage, sharedWorkspace }) => {
