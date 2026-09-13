@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Sortieren",
 	"inbox.filters.title": "Posteingang filtern",
 	"inbox.markAllRead": "Alle als gelesen markieren",
+	"inbox.row.unread": "Ungelesener Eintrag",
 	"inbox.search.label": "Posteingang durchsuchen",
 	"inbox.search.placeholder": "Posteingang durchsuchen...",
 	"inbox.sort.newest": "Neueste",

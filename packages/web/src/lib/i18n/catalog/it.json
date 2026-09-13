@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Ordina",
 	"inbox.filters.title": "Filtra la posta",
 	"inbox.markAllRead": "Segna tutto come letto",
+	"inbox.row.unread": "Elemento non letto",
 	"inbox.search.label": "Cerca nella posta",
 	"inbox.search.placeholder": "Cerca nella posta...",
 	"inbox.sort.newest": "Più recenti",

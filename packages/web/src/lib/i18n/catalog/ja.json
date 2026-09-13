@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "並べ替え",
 	"inbox.filters.title": "受信トレイを絞り込む",
 	"inbox.markAllRead": "すべて既読にする",
+	"inbox.row.unread": "未読の項目",
 	"inbox.search.label": "受信トレイを検索",
 	"inbox.search.placeholder": "受信トレイを検索...",
 	"inbox.sort.newest": "新しい順",

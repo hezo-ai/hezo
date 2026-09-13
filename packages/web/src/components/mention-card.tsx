@@ -3,6 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { useMarkMentionRead } from '../hooks/use-admin-mentions';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { formatDateTime, formatRelativeTime } from '../lib/format-date';
+import { useI18n } from '../lib/i18n';
 import { inboxRowKind, inboxRowLead } from '../lib/inbox-row-kind';
 import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
@@ -16,6 +17,7 @@ const baseCardClass = 'block p-4 border border-border rounded-md text-left w-ful
 const linkCardClass = `${baseCardClass} hover:bg-surface-2 transition-colors`;
 
 export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
+	const { t } = useI18n();
 	const navigate = useNavigate();
 	const markRead = useMarkMentionRead();
 
@@ -55,13 +57,11 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 			data-unread={unread}
 		>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
-				{unread && (
-					<span
-						role="img"
-						aria-label="Unread"
-						className="w-2.5 h-2.5 rounded-full bg-accent shrink-0"
-					/>
-				)}
+				{/* Unread reads visually as the highlighted row; a screen reader has
+				    no row highlight, so it gets the word. Not the filter's own
+				    "Unread" - one label per row would put that text on the page a
+				    dozen times over. */}
+				{unread && <span className="sr-only">{t('inbox.row.unread')}</span>}
 				<Badge variant="dot" color={kind.tagColor}>
 					{kind.tag}
 				</Badge>

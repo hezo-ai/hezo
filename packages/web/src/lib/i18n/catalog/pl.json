@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Sortuj",
 	"inbox.filters.title": "Filtruj skrzynkę odbiorczą",
 	"inbox.markAllRead": "Oznacz wszystko jako przeczytane",
+	"inbox.row.unread": "Nieprzeczytany element",
 	"inbox.search.label": "Szukaj w skrzynce odbiorczej",
 	"inbox.search.placeholder": "Szukaj w skrzynce odbiorczej...",
 	"inbox.sort.newest": "Najnowsze",
