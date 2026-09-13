@@ -42,6 +42,13 @@ test.describe('chat dock — responsive layout', () => {
 		// There is no expand mode - the rail is the whole desktop chat.
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await expect(panel).toBeVisible();
+		// setViewportSize does not block on the re-layout, so measuring straight
+		// after it can still read the mobile sheet. That went unnoticed for as long
+		// as the only desktop assertions were `width > 340` and `width < 440`: the
+		// 359px mobile sheet satisfies both, so the whole desktop half of this test
+		// passed on a stale box. Poll on the one number that separates the two
+		// layouts - the sheet's top is 64px, the rail's is 48px - before measuring.
+		await expect.poll(async () => (await panel.boundingBox())?.y ?? -1).toBeLessThanOrEqual(56);
 		const desktopBox = await panel.boundingBox();
 		expect(desktopBox).not.toBeNull();
 		expect(desktopBox?.width ?? 0).toBeGreaterThan(340);
@@ -52,7 +59,6 @@ test.describe('chat dock — responsive layout', () => {
 		// This is the whole claim of "rail" over "corner panel", and only a real
 		// layout pass can say it.
 		expect(desktopBox?.y ?? 0).toBeGreaterThanOrEqual(40);
-		expect(desktopBox?.y ?? 0).toBeLessThanOrEqual(56);
 		expect(desktopBox?.height ?? 0).toBeGreaterThan(700);
 
 		// …and it is flush to the right edge rather than inset from the corner.
