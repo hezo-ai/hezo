@@ -101,6 +101,10 @@ const completeEvent = (id: string, extra: Record<string, unknown> = {}) => ({
 beforeEach(() => {
 	socket.handlers.clear();
 	localStorage.removeItem('hezo_chat_unread');
+	// A conversation with messages marks itself read on a fire-and-forget POST.
+	// Unmocked it outlives the test and dials the real port, so a green run logs
+	// a connection error per test. No test here asserts on a post.
+	vi.spyOn(api, 'post').mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -274,4 +278,97 @@ test('a throwing localStorage (private mode) degrades gracefully on read and wri
 	expect(latestUnread).toBe(1);
 	getSpy.mockRestore();
 	setSpy.mockRestore();
+});
+
+// --- Signal-room preview frames (the 140-char truncation bug) ---------------
+//
+// A project room's events fan to TWO rooms: the conversation's own (full body)
+// and the team signal room (a CHAT_MESSAGE_PREVIEW_CHARS slice, for list rows).
+// A room's FIRST message creates the conversation, so at that moment the dock
+// has only joined the team room - and rows dedupe on first write, so a slice
+// applied then would never be repaired. These two lock that down.
+
+const LONG_MESSAGE =
+	'The X Engagement agent should only be used for fetching data from X, and if we are ' +
+	'aiming for e.g 20-30 tweets to reply to then it should fetch enough of them in one ' +
+	'pass rather than paging one tweet at a time.';
+const PREVIEW_SLICE = LONG_MESSAGE.slice(0, 140);
+
+test('a preview start frame anchors the room but never renders its slice as the message', async () => {
+	// The server row, as the REST read serves it once the conversation exists.
+	let serverMessages: unknown[] = [];
+	vi.spyOn(api, 'get').mockImplementation(async () => ({
+		conversation_id: 'convo-1',
+		messages: serverMessages,
+		compacted_count: 0,
+	}));
+	mount(true);
+	await waitFor(() => expect(latest.loaded).toBe(true));
+
+	serverMessages = [
+		{
+			id: 'u1',
+			role: 'user',
+			channel: 'web',
+			status: ChatMessageStatus.Complete,
+			content: LONG_MESSAGE,
+			created_at: '2026-07-06T10:00:00.000Z',
+		},
+	];
+
+	act(() => {
+		socket.emit(WsMessageType.ChatMessageStart, {
+			type: WsMessageType.ChatMessageStart,
+			conversationId: 'convo-1',
+			messageId: 'u1',
+			role: 'user',
+			channel: 'web',
+			content: PREVIEW_SLICE,
+			createdAt: '2026-07-06T10:00:00.000Z',
+			preview: true,
+		});
+	});
+
+	// The refetch the preview frame triggers supplies the whole row.
+	await waitFor(() => expect(latest.messages).toHaveLength(1));
+	expect(latest.messages[0]?.content).toBe(LONG_MESSAGE);
+	// The specific regression: the slice must never have been written, because a
+	// first-write-wins insert would pin it there for the life of the thread.
+	expect(latest.messages[0]?.content).not.toBe(PREVIEW_SLICE);
+});
+
+test('a preview complete frame does not truncate a reply that already arrived whole', async () => {
+	vi.spyOn(api, 'get').mockResolvedValue({
+		conversation_id: 'convo-1',
+		messages: [],
+		compacted_count: 0,
+	});
+	mount(true);
+	await waitFor(() => expect(latest.loaded).toBe(true));
+
+	// The untruncated copy, over the conversation's own room.
+	act(() => {
+		socket.emit(WsMessageType.ChatMessageStart, {
+			type: WsMessageType.ChatMessageStart,
+			conversationId: 'convo-1',
+			messageId: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			content: '',
+			createdAt: '2026-07-06T10:00:00.000Z',
+		});
+		socket.emit(WsMessageType.ChatMessageComplete, completeEvent('a1', { content: LONG_MESSAGE }));
+	});
+	await waitFor(() => expect(latest.messages[0]?.content).toBe(LONG_MESSAGE));
+
+	// The signal-room copy of the same completion lands second. Completion
+	// OVERWRITES content, so an unguarded apply would cut the settled reply.
+	act(() => {
+		socket.emit(
+			WsMessageType.ChatMessageComplete,
+			completeEvent('a1', { content: PREVIEW_SLICE, preview: true }),
+		);
+	});
+	await waitFor(() => expect(latest.streaming).toBe(false));
+	expect(latest.messages[0]?.content).toBe(LONG_MESSAGE);
 });

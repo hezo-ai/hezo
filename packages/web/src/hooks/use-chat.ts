@@ -591,6 +591,20 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		// always-joined global room (a CEO reply from another device, a task
 		// breadcrumb) would render in the empty DM and anchor it to the CEO's
 		// conversation for good.
+		// A team signal-room frame carries a CHAT_MESSAGE_PREVIEW_CHARS slice, not
+		// the message. Its ids are true, its text is not. The room's own copy is
+		// untruncated, so the only case needing action is the one where this view
+		// cannot have seen that copy: a room's FIRST message, which creates the
+		// conversation, arrives while the dock has joined the team room alone.
+		// Rows dedupe on first write and completion overwrites, so a slice applied
+		// in that window would stick. Refetch for the real row, and only when the
+		// row is genuinely absent - once it is here, the conversation room owns it
+		// and a refetch is a wasted round trip on every message the team sends.
+		const refetchIfMissing = (messageId: string) => {
+			const cached = queryClient.getQueryData<ConversationData>(queryKey);
+			if (cached?.messages.some((x) => x.id === messageId)) return;
+			queryClient.invalidateQueries({ queryKey });
+		};
 		const forThisRoom = (cid?: string): boolean => {
 			if (!cid) return true;
 			if (resolvedIdRef.current) return cid === resolvedIdRef.current;
@@ -609,6 +623,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 					? { ...prev, conversation_id: m.conversationId }
 					: prev,
 			);
+			if (m.preview) return refetchIfMissing(m.messageId);
 			patch((messages) =>
 				messages.some((x) => x.id === m.messageId)
 					? messages
@@ -644,6 +659,9 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		const offComplete = subscribe(WsMessageType.ChatMessageComplete, (raw) => {
 			const m = raw as WsChatMessageCompleteMessage;
 			if (!forThisRoom(m.conversationId)) return;
+			// Completion OVERWRITES content, so a preview slice here would truncate a
+			// reply that already arrived whole.
+			if (m.preview) return refetchIfMissing(m.messageId);
 			patch((messages) =>
 				messages.map((x) =>
 					x.id === m.messageId

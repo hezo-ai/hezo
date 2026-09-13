@@ -3518,11 +3518,18 @@ export class ChatSessionManager {
 		if (teamId && teamId !== DEFAULT_TEAM_ID) {
 			// The signal room drives list ordering, previews and unread badges, so
 			// it gets the list's row width: a preview-sized slice, never the whole
-			// body. Whoever has the room open is in the conversation room above and
-			// received the full copy.
+			// body. It is NOT safe to assume an open dock is in the conversation
+			// room above and already has the full copy - a room's first message
+			// creates the conversation, so the dock is still in this room only and
+			// would render the slice as the message. `preview` says which copy this
+			// is; a conversation view reads ids off it and never its content.
 			const slim =
 				'content' in message && typeof message.content === 'string'
-					? { ...message, content: message.content.slice(0, CHAT_MESSAGE_PREVIEW_CHARS) }
+					? {
+							...message,
+							content: message.content.slice(0, CHAT_MESSAGE_PREVIEW_CHARS),
+							preview: true as const,
+						}
 					: { ...message };
 			this.deps.wsManager.broadcast(wsRoom.chatTeam(teamId), slim);
 		} else {

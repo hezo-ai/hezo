@@ -2583,7 +2583,13 @@ State/Team/Teammates stay; effort is the agent's configured default via `resolve
 (Captain/CEO stay Max). Boundary events for a project DM fan to `chat:team:<teamUuid>`
 (gated `canAccessTeam`, resolved through the manager's per-conversation scope map) instead
 of `chat:global`, which stays HQ/CEO-only; deltas stream only on the per-conversation room
-either way.
+either way. That team copy is list-shaped - `content` sliced to
+`CHAT_MESSAGE_PREVIEW_CHARS` - and carries `preview: true` to say so, because the same
+`WsMessageType` then arrives in two payload shapes. A conversation view reads ids off a
+`preview` frame and never its text: a room's first message creates the conversation, so it
+is broadcast while the dock has joined the team room alone, and rows dedupe on first write
+(completion overwrites), so a slice applied in that window would stick for the life of the
+thread. `use-chat` refetches instead, and only when the row is absent.
 
 **The DM route surface** lives under `/api/projects/:projectId/chat/*` behind
 `requireProjectAccessMiddleware`, and every query still binds `project_id` AND `team_id` in
