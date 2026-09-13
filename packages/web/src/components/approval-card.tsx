@@ -211,13 +211,11 @@ function CardBody({
 	return (
 		<>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
-				{unread && (
-					<span
-						role="img"
-						aria-label="Unread"
-						className="w-2 h-2 rounded-full bg-inverse shrink-0"
-					/>
-				)}
+				{/* Unread reads visually as the highlighted row; a screen reader has
+				    no row highlight, so it gets the word. Not the filter's own
+				    "Unread" - one label per row would put that text on the page a
+				    dozen times over. */}
+				{unread && <span className="sr-only">{t('inbox.row.unread')}</span>}
 				{isAgentErrorApproval(approval) ? (
 					<Badge variant="dot" color={AGENT_ERROR_ROW.color}>
 						{t(AGENT_ERROR_ROW.label)}

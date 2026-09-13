@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "排序",
 	"inbox.filters.title": "筛选收件箱",
 	"inbox.markAllRead": "全部标为已读",
+	"inbox.row.unread": "未读条目",
 	"inbox.search.label": "搜索收件箱",
 	"inbox.search.placeholder": "搜索收件箱...",
 	"inbox.sort.newest": "最新优先",

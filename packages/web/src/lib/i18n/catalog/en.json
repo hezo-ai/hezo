@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Sort",
 	"inbox.filters.title": "Filter inbox",
 	"inbox.markAllRead": "Mark all as read",
+	"inbox.row.unread": "Unread item",
 	"inbox.search.label": "Search inbox",
 	"inbox.search.placeholder": "Search inbox...",
 	"inbox.sort.newest": "Newest",

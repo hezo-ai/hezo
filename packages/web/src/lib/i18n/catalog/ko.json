@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "정렬",
 	"inbox.filters.title": "받은 편지함 필터",
 	"inbox.markAllRead": "모두 읽음으로 표시",
+	"inbox.row.unread": "읽지 않은 항목",
 	"inbox.search.label": "받은 편지함 검색",
 	"inbox.search.placeholder": "받은 편지함 검색...",
 	"inbox.sort.newest": "최신순",

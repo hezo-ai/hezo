@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Sorteren",
 	"inbox.filters.title": "Postvak IN filteren",
 	"inbox.markAllRead": "Alles als gelezen markeren",
+	"inbox.row.unread": "Ongelezen item",
 	"inbox.search.label": "Postvak IN doorzoeken",
 	"inbox.search.placeholder": "Postvak IN doorzoeken...",
 	"inbox.sort.newest": "Nieuwste",

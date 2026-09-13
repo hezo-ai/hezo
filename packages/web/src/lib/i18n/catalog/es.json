@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Ordenar",
 	"inbox.filters.title": "Filtrar la bandeja de entrada",
 	"inbox.markAllRead": "Marcar todo como leído",
+	"inbox.row.unread": "Elemento no leído",
 	"inbox.search.label": "Buscar en la bandeja de entrada",
 	"inbox.search.placeholder": "Buscar en la bandeja de entrada...",
 	"inbox.sort.newest": "Más recientes",

@@ -520,6 +520,7 @@
 	"inbox.filters.sortLabel": "Sortera",
 	"inbox.filters.title": "Filtrera inkorgen",
 	"inbox.markAllRead": "Markera allt som läst",
+	"inbox.row.unread": "Oläst post",
 	"inbox.search.label": "Sök i inkorgen",
 	"inbox.search.placeholder": "Sök i inkorgen...",
 	"inbox.sort.newest": "Nyaste",
