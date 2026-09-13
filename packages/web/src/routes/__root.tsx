@@ -31,6 +31,7 @@ import { type ChatLaunch, ChatLaunchContext } from '../contexts/chat-launch-cont
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { CEO_ROOM } from '../hooks/use-chat';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
@@ -343,7 +344,13 @@ function ShellLayout() {
 					drawerOpen={drawerOpen}
 					setDrawerOpen={setDrawerOpen}
 					chatOpen={chatOpen}
-					onToggleChat={() => setChatOpen((v) => !v)}
+					// The monogram is the CEO's button - it carries the CEO's name and
+					// the CEO's unread badge - so opening from it lands on the CEO, not
+					// on whichever room the dock was last left in. Room memory still
+					// serves the project menu's chat cards, which launch their own room.
+					onToggleChat={() =>
+						chatOpen ? setChatOpen(false) : launchChat({ room: CEO_ROOM, draft: '' })
+					}
 				/>
 				<ChatWidget open={chatOpen} onOpenChange={setChatOpen} launch={chatLaunch} />
 				<PwaInstallPrompt />

@@ -20,6 +20,10 @@ and the CEO is pinned on top, the current project's agents follow, then the proj
 **group rooms**, conversations from connected chat apps and, under **History**, closed
 conversations that remain readable.
 
+The **CEO monogram in the top bar always opens the CEO**, whatever room you were last
+in. To come back to a specific agent or room, open it from the project menu's chat
+cards.
+
 ## Chat thinks, tasks work
 
 A chat turn is for discussing, deciding and coordinating. The moment something needs

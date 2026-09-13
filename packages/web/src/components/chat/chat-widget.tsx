@@ -10,10 +10,8 @@ import {
 	type ChatRoom,
 	chatRoomKey,
 	type ProjectChatGroupSummary,
-	readStoredRoom,
 	useChatConversations,
 	useProjectChatRooms,
-	writeStoredRoom,
 } from '../../hooks/use-chat';
 import { useCloseOnRouteChange } from '../../hooks/use-close-on-route-change';
 import { useMediaQuery } from '../../hooks/use-media-query';
@@ -59,13 +57,11 @@ const viewportWidth = () => (typeof window === 'undefined' ? undefined : window.
 
 export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProps) {
 	const setOpen = onOpenChange;
-	// The selected room (default: the CEO's live stream). Seeded from the last
-	// room the operator switched to, so reopening the dock resumes it.
-	const [room, setRoom] = useState<ChatRoom>(() => readStoredRoom() ?? CEO_ROOM);
-	const selectRoom = useCallback((next: ChatRoom) => {
-		setRoom(next);
-		writeStoredRoom(next);
-	}, []);
+	// The selected room. Every surface that opens the dock names the room it
+	// wants - the header monogram the CEO, a project card its own DM - so there
+	// is nothing to restore here and the CEO is the standing default.
+	const [room, setRoom] = useState<ChatRoom>(CEO_ROOM);
+	const selectRoom = useCallback((next: ChatRoom) => setRoom(next), []);
 	const { conversations, loaded: threadsLoaded } = useChatConversations(open);
 	// The current (non-internal) project's DM rooms for the switcher section.
 	const active = useActiveProject();

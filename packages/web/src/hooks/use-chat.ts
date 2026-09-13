@@ -217,39 +217,6 @@ export function useCeoUnread(chatOpen: boolean): number {
 	return unread;
 }
 
-/**
- * The room the operator last had open, restored on the next mount (same
- * localStorage convention as the unread tally). Selecting the CEO clears the
- * key so an untouched dock keeps the default behaviour.
- */
-const CHAT_ROOM_KEY = 'hezo_chat_room';
-
-export function readStoredRoom(): ChatRoom | undefined {
-	try {
-		const raw = localStorage.getItem(CHAT_ROOM_KEY);
-		if (!raw) return undefined;
-		const parsed = JSON.parse(raw) as ChatRoom;
-		if (
-			parsed &&
-			(parsed.kind === 'thread' || parsed.kind === 'agent' || parsed.kind === 'group')
-		) {
-			return parsed;
-		}
-		return undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-export function writeStoredRoom(room: ChatRoom | undefined): void {
-	try {
-		if (room && room.kind !== 'ceo') localStorage.setItem(CHAT_ROOM_KEY, JSON.stringify(room));
-		else localStorage.removeItem(CHAT_ROOM_KEY);
-	} catch {
-		// localStorage may be unavailable (private mode); the selection just won't persist.
-	}
-}
-
 /** The task a converted thread became — drives the meta message and banner link. */
 export interface ChatConvertedTaskRef {
 	id: string;
