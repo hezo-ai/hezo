@@ -1,6 +1,7 @@
 import { HQ_PROJECT_NAME } from '@hezo/shared';
+import { NameSwitcherButton, type SearchableSelectOption } from '@hezo/ui';
 import { Check, Copy, Plus, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useState } from 'react';
 import type { ChatLaunch } from '../../contexts/chat-launch-context';
 import { useActiveProject } from '../../hooks/use-active-project';
 import {
@@ -9,25 +10,29 @@ import {
 	type ChatRoom,
 	chatRoomKey,
 	type ProjectChatGroupSummary,
-	readStoredRoom,
 	useChatConversations,
 	useProjectChatRooms,
-	writeStoredRoom,
 } from '../../hooks/use-chat';
 import { useCloseOnRouteChange } from '../../hooks/use-close-on-route-change';
 import { useMediaQuery } from '../../hooks/use-media-query';
 import { useProjectMeta } from '../../hooks/use-projects';
 import { useI18n } from '../../lib/i18n';
+import { PANEL_MOTION_TRANSITION } from '../../lib/panel-motion';
+import { MAX_PANEL_WIDTH, MIN_PANEL_WIDTH } from '../../lib/panel-width-storage';
+import { useResizableSplit } from '../ui/resizable-split';
 import { Tooltip } from '../ui/tooltip';
 import { ChatSurface, Dots } from './chat-surface';
 import { CreateGroupDialog } from './create-group-dialog';
 
 /**
- * The chat dock: the app-wide chat surface, anchored bottom-right on desktop
- * and near-full-screen on mobile. Chat lives in rooms, not routes - the dock's
- * switcher carries the pinned CEO (HQ) on top and, inside a project, that
- * project's agent DMs; team channels and History follow. There is no expand
- * mode and no separate chat page.
+ * The chat dock: the app-wide chat surface. On desktop it is a right-hand rail,
+ * flush to the edge and running from under the shell header to the bottom, which
+ * the operator can drag wider; on mobile it stays a near-full-screen sheet. It
+ * overlays the page rather than displacing it - nothing below reflows when chat
+ * opens. Chat lives in rooms, not routes - the switcher on the room title
+ * carries the pinned CEO (HQ) on top and, inside a project, that project's agent
+ * DMs; team channels and History follow. There is no expand mode and no separate
+ * chat page.
  *
  * The dock owns room selection and the panel chrome; everything inside a room
  * (messages, queue, composer, attachments) is `ChatSurface`, shared with the
@@ -44,15 +49,19 @@ interface ChatWidgetProps {
 	launch?: ChatLaunch | null;
 }
 
+/** The rail's width before the operator has ever dragged it. */
+const DEFAULT_RAIL_WIDTH = 420;
+
+/** The rail shares the viewport, not a grid track - see `measureContainer`. */
+const viewportWidth = () => (typeof window === 'undefined' ? undefined : window.innerWidth);
+
 export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProps) {
 	const setOpen = onOpenChange;
-	// The selected room (default: the CEO's live stream). Seeded from the last
-	// room the operator switched to, so reopening the dock resumes it.
-	const [room, setRoom] = useState<ChatRoom>(() => readStoredRoom() ?? CEO_ROOM);
-	const selectRoom = useCallback((next: ChatRoom) => {
-		setRoom(next);
-		writeStoredRoom(next);
-	}, []);
+	// The selected room. Every surface that opens the dock names the room it
+	// wants - the header monogram the CEO, a project card its own DM - so there
+	// is nothing to restore here and the CEO is the standing default.
+	const [room, setRoom] = useState<ChatRoom>(CEO_ROOM);
+	const selectRoom = useCallback((next: ChatRoom) => setRoom(next), []);
 	const { conversations, loaded: threadsLoaded } = useChatConversations(open);
 	// The current (non-internal) project's DM rooms for the switcher section.
 	const active = useActiveProject();
@@ -69,8 +78,24 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		room.kind === 'agent' || room.kind === 'group' ? room.projectSlug : '',
 	);
 	const { t } = useI18n();
-	// The create-room dialog (the "+" beside the switcher). Project rooms only.
+	// The create-room dialog (the "+" in the header). Project rooms only.
 	const [creatingGroup, setCreatingGroup] = useState(false);
+	// Whether the room switcher's panel is open. Escape has two meanings once a
+	// popover lives inside the dock, and the inner one wins - see the key handler.
+	const [switcherOpen, setSwitcherOpen] = useState(false);
+	// Drag-to-resize for the desktop rail. The rail is `fixed`, so it shares the
+	// viewport rather than a grid track - hence `measureContainer`, which keeps
+	// MIN_MAIN_WIDTH of page uncovered however wide the operator drags.
+	const {
+		width: railWidth,
+		isResizing,
+		panelCellRef,
+		handleProps,
+	} = useResizableSplit({
+		side: 'right',
+		storageKey: 'hezo_chat_rail_width',
+		measureContainer: viewportWidth,
+	});
 
 	// Apply a launch request's room side; the composer side (draft, focus) is
 	// the surface's, keyed on the same nonce.
@@ -80,15 +105,19 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		selectRoom(launch.room);
 	}, [launch?.nonce]);
 
-	// Escape closes the chat.
+	// Escape closes the chat - unless the room switcher's panel is open, which
+	// takes Escape for itself. Radix dismisses the popover on document, then this
+	// listener runs on window with the pre-update value still `true`, so without
+	// the guard one Escape would dismiss the panel AND close the dock behind it.
 	useEffect(() => {
 		if (!open) return;
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') setOpen(false);
+			if (e.key !== 'Escape' || switcherOpen) return;
+			setOpen(false);
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [open, setOpen]);
+	}, [open, setOpen, switcherOpen]);
 
 	// Navigating away only strands the reader in the blocking presentation - the
 	// mobile full-screen panel with its backdrop. The anchored desktop corner
@@ -202,125 +231,158 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		}
 	};
 
-	const switcher = (
-		<div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
-			{/* Room switcher: the pinned CEO on top, the current project's DMs and
-			    group rooms, then team channels and History. No "All chats" - the
-			    dock and the project menu are the whole chat surface. */}
-			<select
-				data-testid="chat-room-select"
-				aria-label={t('chat.room.switcher')}
-				value={roomValue}
-				onChange={(e) => onSwitcherChange(e.target.value)}
-				className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
-			>
-				<option value="ceo">CEO · {HQ_PROJECT_NAME}</option>
-				{foreignAgentRoom && (
-					<option value={roomValue}>
-						{foreignAgentRoom.title} · {foreignAgentRoom.projectSlug}
-					</option>
-				)}
-				{foreignGroupRoom && (
-					<option value={roomValue}>
-						{foreignGroupRoom.title} · {foreignGroupRoom.projectSlug}
-					</option>
-				)}
-				{projectSlug && projectRooms.length > 0 && (
-					<optgroup label={activeProjectMeta?.name ?? projectSlug}>
-						{projectRooms.map((r) => (
-							<option key={r.member_id} value={`agent:${r.slug}`}>
-								{r.title}
-								{r.unread ? ' ●' : ''}
-							</option>
-						))}
-					</optgroup>
-				)}
-				{projectSlug && projectGroups.length > 0 && (
-					<optgroup label={t('chat.room.groupsGroup')}>
-						{projectGroups.map((g) => (
-							<option key={g.id} value={`group:${g.id}`}>
-								{groupLabel(g)}
-								{g.unread ? ' ●' : ''}
-							</option>
-						))}
-					</optgroup>
-				)}
-				{externalThreads.length > 0 && (
-					<optgroup label={t('chat.room.externalGroup')}>
-						{externalThreads.map((c) => (
-							<option key={c.id} value={`thread:${c.id}`}>
-								{threadLabel(c)}
-								{channelChip(c) ? ` · ${channelChip(c)}` : ''}
-							</option>
-						))}
-					</optgroup>
-				)}
-				{coworkerThreads.length > 0 && (
-					<optgroup label={t('chat.room.channelsGroup')}>
-						{coworkerThreads.map((c) => (
-							<option key={c.id} value={`thread:${c.id}`}>
-								{threadLabel(c)} 🔒{channelChip(c) ? ` · ${channelChip(c)}` : ''}
-							</option>
-						))}
-					</optgroup>
-				)}
-				{historyThreads.length > 0 && (
-					<optgroup label={t('chat.room.historyGroup')}>
-						{historyThreads.map((c) => (
-							<option key={c.id} value={`thread:${c.id}`}>
-								{threadLabel(c)}
-							</option>
-						))}
-					</optgroup>
-				)}
-			</select>
-			{projectSlug && (
-				<Tooltip content={t('chat.group.new')} side="bottom">
-					<button
-						type="button"
-						onClick={() => setCreatingGroup(true)}
-						aria-label={t('chat.group.new')}
-						data-testid="chat-new-group"
-						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-text-2 hover:border-border-strong hover:text-text-1"
-					>
-						<Plus className="h-3.5 w-3.5" />
-					</button>
-				</Tooltip>
-			)}
-		</div>
-	);
+	// The switcher's options, in the order the panel draws them: the pinned CEO,
+	// a foreign room the operator navigated away from, then the current project's
+	// DMs and group rooms, external chats, read-only channels and History. Each
+	// section is a `group`, which the panel labels once and drops when a filter
+	// empties it.
+	const roomOptions: SearchableSelectOption[] = (() => {
+		const opts: SearchableSelectOption[] = [{ value: 'ceo', label: `CEO · ${HQ_PROJECT_NAME}` }];
+		if (foreignAgentRoom) {
+			opts.push({
+				value: roomValue,
+				label: foreignAgentRoom.title,
+				description: foreignAgentRoom.projectSlug,
+			});
+		}
+		if (foreignGroupRoom) {
+			opts.push({
+				value: roomValue,
+				label: foreignGroupRoom.title,
+				description: foreignGroupRoom.projectSlug,
+			});
+		}
+		if (projectSlug && projectRooms.length > 0) {
+			const label = activeProjectMeta?.name ?? projectSlug;
+			for (const r of projectRooms) {
+				opts.push({
+					value: `agent:${r.slug}`,
+					label: r.title,
+					group: label,
+					badge: r.unread ? 'dot' : undefined,
+				});
+			}
+		}
+		if (projectSlug && projectGroups.length > 0) {
+			for (const g of projectGroups) {
+				opts.push({
+					value: `group:${g.id}`,
+					label: groupLabel(g),
+					group: t('chat.room.groupsGroup'),
+					badge: g.unread ? 'dot' : undefined,
+				});
+			}
+		}
+		for (const c of externalThreads) {
+			opts.push({
+				value: `thread:${c.id}`,
+				label: threadLabel(c),
+				description: channelChip(c) ?? undefined,
+				group: t('chat.room.externalGroup'),
+			});
+		}
+		for (const c of coworkerThreads) {
+			opts.push({
+				value: `thread:${c.id}`,
+				// The lock says the thread is read-only here; replies go to its home
+				// surface, which the chip names.
+				label: `${threadLabel(c)} 🔒`,
+				description: channelChip(c) ?? undefined,
+				group: t('chat.room.channelsGroup'),
+			});
+		}
+		for (const c of historyThreads) {
+			opts.push({
+				value: `thread:${c.id}`,
+				label: threadLabel(c),
+				group: t('chat.room.historyGroup'),
+			});
+		}
+		return opts;
+	})();
 
 	return (
 		<>
-			{/* Modal scrim on mobile, where the panel floats over the page. The
-			    anchored desktop corner panel is a persistent companion and needs none. */}
+			{/* Modal scrim on mobile, where the sheet floats over the page. The
+			    desktop rail is a persistent companion that survives navigation, so it
+			    takes none - a scrim would make it modal. */}
 			<button
 				type="button"
 				aria-label="Close chat"
 				data-testid="chat-overlay"
 				onClick={() => setOpen(false)}
-				className="fixed inset-x-0 bottom-0 top-12 z-40 bg-[var(--overlay)] cursor-default md:hidden"
+				className="fixed inset-x-0 bottom-0 top-12 z-40 bg-overlay cursor-default md:hidden"
 			/>
 			<div
+				ref={panelCellRef}
 				data-testid="chat-panel"
-				className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl inset-x-2 bottom-2 top-16 md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[420px]"
+				// Mobile: a near-full-screen sheet. Desktop: a rail flush to the right
+				// edge, starting below the h-12 shell header so the top bar stays
+				// reachable while chat is open, and running to the bottom. The width
+				// is the dragged one once there is one; until then the default below.
+				style={
+					railWidth != null ? ({ '--chat-rail-w': `${railWidth}px` } as CSSProperties) : undefined
+				}
+				className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl inset-x-2 bottom-2 top-16 md:inset-auto md:right-0 md:top-12 md:bottom-0 md:h-auto md:rounded-none md:border-y-0 md:border-r-0 md:w-[var(--chat-rail-w,420px)] ${
+					isResizing ? '' : PANEL_MOTION_TRANSITION
+				}`}
 			>
+				{/* Resize handle on the rail's inner edge. Desktop only - the mobile
+				    sheet is sized by the viewport. Keyboard-resizable through the same
+				    props, so the drag is not the only way to widen it. */}
+				{/* The WAI-ARIA window-splitter pattern, as `ResizableSplit` draws it: a
+				    focusable `separator` with value semantics. An `<hr>`
+				    (useSemanticElements' suggestion) cannot be focused. */}
+				{/* biome-ignore lint/a11y/useSemanticElements: focusable resize separator, not an <hr> */}
+				<div
+					role="separator"
+					aria-orientation="vertical"
+					aria-label={t('chat.rail.resize')}
+					// A focusable separator is the window-splitter pattern: it reports the
+					// width it is set to, and the bounds it may be dragged between.
+					aria-valuenow={railWidth ?? DEFAULT_RAIL_WIDTH}
+					aria-valuemin={MIN_PANEL_WIDTH}
+					aria-valuemax={MAX_PANEL_WIDTH}
+					tabIndex={0}
+					data-testid="chat-rail-resize"
+					{...handleProps}
+					className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize md:block hover:bg-border-strong focus-visible:bg-border-strong focus-visible:outline-none"
+				/>
 				<ChatSurface
 					room={room}
 					active={open}
 					launch={launch}
 					thread={activeThread}
-					beforeMessages={switcher}
 					header={({ streaming, queued, copyConversation, copied, canCopy }) => (
-						<header className="flex items-center justify-between border-b border-border px-4 py-3">
+						<header className="flex items-center justify-between gap-1 border-b border-border px-4 py-3">
 							<div className="flex min-w-0 items-center gap-2">
 								<span
 									className="truncate text-sm font-semibold text-text-1"
 									data-testid="chat-room-title"
+									// The room the dock is on, without opening the switcher to read
+									// its checked option - the native <select> used to answer this
+									// with `.value`.
+									data-room={roomValue}
 								>
 									{roomTitle}
 								</span>
-								<span className="rounded-sm border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-2">
+								{/* The room title IS the switcher: a whole row back, which a tall
+								    rail spends on messages and a phone needs outright. */}
+								<NameSwitcherButton
+									options={roomOptions}
+									value={roomValue}
+									onSelect={onSwitcherChange}
+									label={t('chat.room.switcher')}
+									searchPlaceholder={t('chat.room.searchPlaceholder')}
+									emptyLabel={t('chat.room.noMatches')}
+									badgeLabel={t('chat.room.unread')}
+									onOpenChange={setSwitcherOpen}
+									testId="chat-room-select"
+								/>
+								{/* Hidden at phone width: with the longest roster name plus the
+								    dots and a queued chip the header overflows 359px, and the
+								    scope is already the switcher's group heading. */}
+								<span className="hidden shrink-0 rounded-sm border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-2 sm:inline-block">
 									{roomScope}
 								</span>
 								{streaming && (
@@ -337,7 +399,20 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 									</span>
 								)}
 							</div>
-							<div className="flex items-center gap-1">
+							<div className="flex shrink-0 items-center gap-1">
+								{projectSlug && (
+									<Tooltip content={t('chat.group.new')} side="bottom">
+										<button
+											type="button"
+											onClick={() => setCreatingGroup(true)}
+											aria-label={t('chat.group.new')}
+											data-testid="chat-new-group"
+											className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+										>
+											<Plus className="h-4 w-4" />
+										</button>
+									</Tooltip>
+								)}
 								<button
 									type="button"
 									onClick={copyConversation}

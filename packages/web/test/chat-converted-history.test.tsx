@@ -6,6 +6,7 @@ import type {
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { expect, test } from 'vitest';
+import { selectRoom } from './helpers/chat-switcher';
 import { renderApp } from './helpers/render';
 
 // Threads converted to tasks under the old whole-thread convert stay readable as
@@ -75,8 +76,7 @@ test('a converted History thread renders the meta message, banner link and locke
 	await findByTestId('chat-panel');
 
 	// The converted thread lists under History; select it.
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	await user.selectOptions(select, 'thread:thread-1');
+	await selectRoom(user, 'thread:thread-1');
 
 	// The task link renders twice — the in-thread meta marker and the composer
 	// banner — both pointing at the task page.
@@ -99,11 +99,13 @@ test('a converted History thread renders the meta message, banner link and locke
 	expect(input.placeholder).toContain('WEB-12');
 });
 
-test('a handoff warning in a converted thread stays a warning, not a second task link', async () => {
+test('a handoff finding in a converted thread draws nothing, and never a second task link', async () => {
 	// The regression the message-level `system_kind` exists to prevent: the
 	// converted marker is chosen by the THREAD's converted-task reference, so
 	// without a discriminator every system row in a converted thread rendered as
-	// that link — including a warning written before the conversion.
+	// that link — including a finding written before the conversion. The finding
+	// is agent-only now, so it draws nothing; the link count is what proves it was
+	// not swept into the converted marker instead.
 	seedConvertedThread([
 		msg('m1', 'The hero feels stale', 'user'),
 		{
@@ -116,18 +118,18 @@ test('a handoff warning in a converted thread stays a warning, not a second task
 		},
 	]);
 
-	const { findByTestId, findAllByTestId, user } = await renderApp({ initialPath: '/home' });
+	const { findByTestId, findAllByTestId, queryByText, user } = await renderApp({
+		initialPath: '/home',
+	});
 	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	await user.selectOptions(select, 'thread:thread-1');
+	await selectRoom(user, 'thread:thread-1');
 
 	// The converted marker still links the task (in-thread + composer banner)…
 	const links = await findAllByTestId('chat-converted-task-link');
 	expect(links.length).toBe(2);
-	// …while the warning keeps its own text and never becomes a task link.
-	const warningRow = document.querySelector('[data-system-kind="handoff_not_delivered"]');
-	expect(warningRow).toBeTruthy();
-	expect(warningRow?.textContent).toContain('WEB-9');
-	expect(warningRow?.querySelector('[data-testid="chat-converted-task-link"]')).toBeNull();
+	// …while the handoff finding draws nothing. Two links, not three: had it been
+	// rendered as the converted marker, this is where that would show.
+	expect(document.querySelector('[data-system-kind="handoff_not_delivered"]')).toBeNull();
+	expect(queryByText(/WEB-9/)).toBeNull();
 });

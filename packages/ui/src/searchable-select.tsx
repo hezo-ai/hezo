@@ -15,6 +15,19 @@ export interface SearchableSelectOption {
 	 * once a filter makes the option the first row.
 	 */
 	separatorBefore?: boolean;
+	/**
+	 * Section heading above this option. Consecutive options sharing a group draw
+	 * it once, and a group left with no matching options draws nothing - headings
+	 * come off the FILTERED list, so filtering never strands a heading over an
+	 * empty section. Options of one group must be adjacent; this renders the list
+	 * given, it does not reorder it.
+	 */
+	group?: string;
+	/**
+	 * Trailing state marker on the row. A flag rather than a caller-supplied node
+	 * so every consumer draws the same dot in the same place.
+	 */
+	badge?: 'dot';
 }
 
 export interface SearchableSelectProps {
@@ -63,6 +76,8 @@ export interface SearchableSelectProps {
 	 * lazily on first open instead of on mount.
 	 */
 	onOpenChange?: (open: boolean) => void;
+	/** Accessible name for an option's `badge` dot. Pass a translated string. */
+	badgeLabel?: string;
 }
 
 /**
@@ -88,6 +103,7 @@ export function SearchableSelect({
 	loadingLabel = 'Loading…',
 	errorLabel = null,
 	onOpenChange,
+	badgeLabel = 'Unread',
 }: SearchableSelectProps) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState('');
@@ -169,6 +185,17 @@ export function SearchableSelect({
 									{/* A divider above the first row would read as a stray rule, so the
 									    pinned head loses it once a filter promotes it to the top. */}
 									{opt.separatorBefore && i > 0 && <div className="mx-1.5 my-1 h-px bg-border" />}
+									{opt.group && opt.group !== filtered[i - 1]?.group && (
+										<div
+											// Presentational: the heading names the section for a sighted reader,
+											// and each option label already carries it for a screen reader. A role
+											// here would put a non-option inside the listbox.
+											aria-hidden
+											className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-text-3"
+										>
+											{opt.group}
+										</div>
+									)}
 									<button
 										type="button"
 										role="option"
@@ -196,6 +223,14 @@ export function SearchableSelect({
 												</span>
 											)}
 										</span>
+										{opt.badge === 'dot' && (
+											<span
+												title={badgeLabel}
+												className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+											>
+												<span className="sr-only">{badgeLabel}</span>
+											</span>
+										)}
 									</button>
 								</Fragment>
 							);

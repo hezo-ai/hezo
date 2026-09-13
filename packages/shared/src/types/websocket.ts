@@ -153,6 +153,14 @@ export interface WsChatMessageStartMessage {
 	systemKind?: ChatSystemMessageKind;
 	/** The replying agent, on assistant rows - author bubbles need the identity live. */
 	authorMemberId?: string;
+	/**
+	 * Set on the copy fanned to a team's signal room, whose `content` is a
+	 * {@link CHAT_MESSAGE_PREVIEW_CHARS} slice for list rows rather than the
+	 * message. A conversation view may read the ids off such a frame but must
+	 * never apply its `content` - the untruncated copy goes to the
+	 * conversation's own room.
+	 */
+	preview?: true;
 }
 
 /** Incremental assistant text appended to the bubble keyed by `messageId`. */
@@ -198,6 +206,8 @@ export interface WsChatMessageCompleteMessage {
 	 * reply offered none.
 	 */
 	suggestedReplies?: string[];
+	/** See {@link WsChatMessageStartMessage.preview} - never apply this `content`. */
+	preview?: true;
 }
 
 /**

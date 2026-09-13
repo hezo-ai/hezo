@@ -12,11 +12,17 @@ bar**, and every project agent has a **direct message** of its own, opened from 
 chat cards at the bottom of the project menu. Ask what's blocked, think out loud,
 have a project spun up, or talk a piece of work through with the teammate who owns it.
 
-Chat opens in the **dock** - a compact panel anchored to the bottom-right corner (near
-full-screen on a phone). The dropdown at the top of the dock switches rooms: the CEO
-is pinned on top, the current project's agents follow, then the project's **group
-rooms**, conversations from connected chat apps and, under **History**, closed
+Chat opens in the **dock** - a panel down the right-hand side of the window, running
+from under the top bar to the bottom (near full-screen on a phone). It sits over the
+page rather than squeezing it, and you can drag its left edge to make it wider; the
+width is remembered. Selecting the room name at the top switches rooms: type to filter,
+and the CEO is pinned on top, the current project's agents follow, then the project's
+**group rooms**, conversations from connected chat apps and, under **History**, closed
 conversations that remain readable.
+
+The **CEO monogram in the top bar always opens the CEO**, whatever room you were last
+in. To come back to a specific agent or room, open it from the project menu's chat
+cards.
 
 ## Chat thinks, tasks work
 
@@ -105,16 +111,6 @@ the dots disappear.
 
 You never have to wait for them. Typing during that window queues your next message
 (see below), and holding the send button cuts in.
-
-## When a comment an agent posted reached nobody
-
-The CEO can comment on any project's task from chat. If one of those comments names a
-teammate without actually notifying them - writing the name plainly, or with the
-passive `@@name` form - nobody is woken, and the task can sit waiting on someone who
-was never told. When that happens a short note appears in the conversation naming the
-task and the teammate, so you can ask for a proper `@name` mention. It is a notice,
-not an error: if the agent was only referring to a teammate rather than handing work
-over, nothing needs doing.
 
 ## Sending while the agent is still replying
 

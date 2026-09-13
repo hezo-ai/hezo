@@ -44,6 +44,14 @@ interface UseResizableSplitOptions {
 	side: Side;
 	/** Persist the dragged width under this localStorage key; omit → resets on reload. */
 	storageKey?: string;
+	/**
+	 * Measure the space the panel shares, when it is not a grid cell. `gridRef`
+	 * is the default source, but a `fixed` overlay panel has no grid: its
+	 * container is the viewport, so it passes `() => window.innerWidth`. Supplying
+	 * this also swaps the container `ResizeObserver` for a `window` resize
+	 * listener, since there is no element to observe.
+	 */
+	measureContainer?: () => number | undefined;
 }
 
 interface UseResizableSplitResult {
@@ -69,6 +77,7 @@ interface UseResizableSplitResult {
 export function useResizableSplit({
 	side,
 	storageKey,
+	measureContainer,
 }: UseResizableSplitOptions): UseResizableSplitResult {
 	const [width, setWidth] = useState<number | null>(() =>
 		storageKey ? readStoredPanelWidth(storageKey) : null,
@@ -81,7 +90,10 @@ export function useResizableSplit({
 	const widthRef = useRef<number | null>(width);
 	widthRef.current = width;
 
-	const containerWidth = useCallback(() => gridRef.current?.getBoundingClientRect().width, []);
+	const containerWidth = useCallback(
+		() => measureContainer?.() ?? gridRef.current?.getBoundingClientRect().width,
+		[measureContainer],
+	);
 
 	const persist = useCallback(
 		(w: number) => {
@@ -164,17 +176,25 @@ export function useResizableSplit({
 
 	// Re-clamp a stored/dragged width when the container shrinks (e.g. viewport
 	// resize), so the panel can never leave the main column below its minimum.
+	const reclamp = useCallback((available: number | undefined) => {
+		if (widthRef.current == null) return;
+		const clamped = clampPanelWidth(widthRef.current, available);
+		if (clamped !== widthRef.current) setWidth(clamped);
+	}, []);
 	useEffect(() => {
+		// A caller measuring its own container has no element to observe - the
+		// viewport is the container, and `resize` is its only signal.
+		if (measureContainer) {
+			const onResize = () => reclamp(measureContainer());
+			window.addEventListener('resize', onResize);
+			return () => window.removeEventListener('resize', onResize);
+		}
 		const grid = gridRef.current;
 		if (!grid || typeof ResizeObserver === 'undefined') return;
-		const ro = new ResizeObserver(() => {
-			if (widthRef.current == null) return;
-			const clamped = clampPanelWidth(widthRef.current, grid.getBoundingClientRect().width);
-			if (clamped !== widthRef.current) setWidth(clamped);
-		});
+		const ro = new ResizeObserver(() => reclamp(grid.getBoundingClientRect().width));
 		ro.observe(grid);
 		return () => ro.disconnect();
-	}, []);
+	}, [measureContainer, reclamp]);
 
 	return { width, isResizing, gridRef, panelCellRef, handleProps: { onPointerDown, onKeyDown } };
 }

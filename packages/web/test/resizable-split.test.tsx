@@ -8,7 +8,7 @@
 // real pixel behavior by test/browser/task-doc-preview-resize.spec.ts.
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { ResizableSplit } from '../src/components/ui/resizable-split';
+import { ResizableSplit, useResizableSplit } from '../src/components/ui/resizable-split';
 import { PANEL_MOTION_MS } from '../src/lib/panel-motion';
 
 const KEY = 'hezo:test-resizable-split';
@@ -236,4 +236,78 @@ test('does not arm the track transition for a resize', () => {
 	fireEvent(document, pointerEvent('pointerup', { clientX: 900 }));
 	fireEvent.keyDown(handle, { key: 'ArrowLeft' });
 	expect(grid.className).not.toContain(TRACK_MOTION);
+});
+
+// --- measureContainer: a panel that shares the viewport, not a grid track ----
+//
+// The chat rail is `fixed`, so it has no grid cell to measure. `measureContainer`
+// replaces the gridRef measurement and, since there is no element to observe,
+// swaps the container ResizeObserver for a `window` resize listener.
+
+/** Drive `useResizableSplit` directly - there is no grid to render around it. */
+function RailProbe({ measure }: { measure: () => number | undefined }) {
+	const { width, panelCellRef, handleProps } = useResizableSplit({
+		side: 'right',
+		storageKey: RAIL_KEY,
+		measureContainer: measure,
+	});
+	railWidth = width;
+	return (
+		<div>
+			<div ref={panelCellRef} data-testid="rail" />
+			{/* biome-ignore lint/a11y/useSemanticElements: focusable resize separator, not an <hr> */}
+			{/* biome-ignore lint/a11y/useAriaPropsForRole: value semantics are the consumer's */}
+			<div role="separator" tabIndex={0} data-testid="rail-handle" {...handleProps} />
+		</div>
+	);
+}
+
+const RAIL_KEY = 'hezo:test-chat-rail';
+let railWidth: number | null = null;
+
+test('measureContainer clamps a drag against the supplied width, not a grid cell', () => {
+	localStorage.removeItem(RAIL_KEY);
+	// A narrow "viewport": MIN_MAIN_WIDTH (380) must stay uncovered, so the rail
+	// can reach 1000 - 380 = 620 and no further, however far the pointer goes.
+	stubLayout(420);
+	const { getByTestId } = render(<RailProbe measure={() => 1000} />);
+
+	const handle = getByTestId('rail-handle');
+	act(() => {
+		handle.dispatchEvent(pointerEvent('pointerdown', { clientX: 800 }));
+	});
+	act(() => {
+		// Dragging left (toward the page) widens a right-side panel — far past the
+		// bound, so only the clamp can decide the answer.
+		document.dispatchEvent(pointerEvent('pointermove', { clientX: 0 }));
+	});
+	act(() => {
+		document.dispatchEvent(pointerEvent('pointerup', { clientX: 0 }));
+	});
+
+	expect(railWidth).toBe(620);
+	// And the clamped width is what persists, never the unclamped drag.
+	expect(localStorage.getItem(RAIL_KEY)).toBe('620');
+	localStorage.removeItem(RAIL_KEY);
+});
+
+test('a window resize re-clamps a stored width that no longer fits', () => {
+	// The rail has no element to observe, so the ResizeObserver path cannot run.
+	// Without the window listener a stored width would keep covering the page
+	// after the viewport shrank.
+	localStorage.setItem(RAIL_KEY, '600');
+	stubLayout(420);
+	let viewport = 1200;
+	const { unmount } = render(<RailProbe measure={() => viewport} />);
+	expect(railWidth).toBe(600);
+
+	viewport = 800;
+	act(() => {
+		window.dispatchEvent(new Event('resize'));
+	});
+	// 800 - MIN_MAIN_WIDTH (380) = 420.
+	expect(railWidth).toBe(420);
+
+	unmount();
+	localStorage.removeItem(RAIL_KEY);
 });

@@ -141,7 +141,7 @@ import { resolveApproval } from '../services/approval-resolve';
 import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
 import { upsertChatMemory, upsertConversationChatMemory } from '../services/chat-memory';
 import {
-	buildWakeReceipt,
+	buildWakeReceiptForTask,
 	fireAdminMention,
 	fireCommentWakeups,
 	postAgentComment,
@@ -3722,7 +3722,7 @@ export function registerTools(
 				// the comment delivered, not an advisory that fires when a heuristic guessed
 				// right. An agent that meant to ask sees `woke: []` with the teammate it
 				// addressed sitting in `named_not_woken`.
-				const wake = buildWakeReceipt(commentText, woke, knownSlugs);
+				const wake = await buildWakeReceiptForTask(db, taskId, commentText, woke, knownSlugs);
 				if (warning) return { ...row, wake, warning };
 				return { ...row, wake };
 			}
@@ -3822,7 +3822,13 @@ export function registerTools(
 			);
 			// One roster read, shared by the receipt and the three mention advisories.
 			const knownSlugs = await resolveWarnableSlugs(db, teamId, auth.memberId);
-			const wake = buildWakeReceipt(args.content as string, woke, knownSlugs);
+			const wake = await buildWakeReceiptForTask(
+				db,
+				taskId,
+				args.content as string,
+				woke,
+				knownSlugs,
+			);
 			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(
 				[
 					buildUnlinkedMentionWarning(knownSlugs, args.content as string).catch((e) => {

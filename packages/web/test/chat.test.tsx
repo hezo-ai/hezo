@@ -6,6 +6,7 @@ import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
+import { openRoomSwitcher } from './helpers/chat-switcher';
 import { getTestContext, renderApp } from './helpers/render';
 
 // The component harness builds the backend without a ChatSessionManager (the chat
@@ -491,19 +492,31 @@ test('opening the chat clears the unread overlay and its persisted count', async
 	expect(localStorage.getItem('hezo_chat_unread')).toBeNull();
 });
 
-test('the dock is an anchored corner panel with a mobile-only scrim', async () => {
+test('the dock is a full-height right rail on desktop, a sheet with a scrim on mobile', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('app-header-chat')).click();
 	const panel = await findByTestId('chat-panel');
 
-	// Anchored desktop panel, clear of the 48px header; near-full-screen below md.
-	expect(panel.className).toContain('md:w-[420px]');
+	// Desktop: flush to the right edge, running from under the h-12 shell header
+	// to the bottom, so the top bar stays reachable while chat is open. Its width
+	// is the dragged one when there is one, 420px until then.
+	expect(panel.className).toContain('md:right-0');
+	expect(panel.className).toContain('md:top-12');
+	expect(panel.className).toContain('md:bottom-0');
+	expect(panel.className).toContain('md:w-[var(--chat-rail-w,420px)]');
+	// Mobile: the near-full-screen sheet, unchanged by the rail work.
 	expect(panel.className).toContain('top-16');
-	// The scrim is scoped to mobile (`md:hidden`) - the desktop corner panel is a
+	expect(panel.className).toContain('inset-x-2');
+	// The scrim is scoped to mobile (`md:hidden`) - the desktop rail is a
 	// persistent companion that leaves the rest of the page interactive. There is
-	// no expand mode: the dock is the whole desktop chat surface.
+	// no expand mode: the rail is the whole desktop chat surface.
 	const overlay = await findByTestId('chat-overlay');
 	expect(overlay.className).toContain('md:hidden');
+	// The rail is draggable; the handle is desktop-only, and keyboard-reachable
+	// so a drag is not the only way to widen it.
+	const handle = await findByTestId('chat-rail-resize');
+	expect(handle.className).toContain('md:block');
+	expect(handle.getAttribute('tabindex')).toBe('0');
 });
 
 test('Escape closes the dock', async () => {
@@ -516,6 +529,25 @@ test('Escape closes the dock', async () => {
 	await user.keyboard('{Escape}');
 	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
 	expect(queryByTestId('chat-overlay')).toBeNull();
+});
+
+test('Escape dismisses the open room switcher without closing the dock behind it', async () => {
+	// Two things now answer to Escape. The inner one wins, or opening the
+	// switcher and changing your mind would shut the whole conversation.
+	const { findByTestId, queryByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('app-header-chat')).click();
+	await findByTestId('chat-panel');
+
+	await openRoomSwitcher(user);
+	await user.keyboard('{Escape}');
+	await waitFor(() =>
+		expect(document.body.querySelector('[data-testid="chat-room-select-content"]')).toBeNull(),
+	);
+	expect(queryByTestId('chat-panel')).toBeTruthy();
+
+	// With the panel dismissed, Escape reaches the dock again.
+	await user.keyboard('{Escape}');
+	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
 });
 
 test('a user message is shown as typed, not parsed as markdown', async () => {
@@ -687,8 +719,11 @@ test('a streaming reply shows no per-message copy button until it settles', asyn
 	expect(queryAllByTestId('chat-message-copy')).toHaveLength(0);
 });
 
-test('a handoff warning renders as its own meta row, wrapping rather than as a bubble', async () => {
-	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
+test('a no-wake handoff finding is written to the thread but drawn for nobody', async () => {
+	// It is a fact about the agent's own tool use, and its remedy is a comment
+	// only the agent can post - so the operator is not asked to chase it. The row
+	// stays in the transcript, where the next turn's prompt window picks it up.
+	const { findByTestId, queryByText, queryByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
@@ -715,13 +750,11 @@ test('a handoff warning renders as its own meta row, wrapping rather than as a b
 		},
 	]);
 
-	// The whole sentence is present: naming the task and the teammate is the point
-	// of the warning, so unlike the converted marker this row must not truncate.
-	expect(await findByText(warning)).toBeTruthy();
-	const row = document.querySelector('[data-system-kind="handoff_not_delivered"]');
-	expect(row).toBeTruthy();
-	expect(row?.getAttribute('data-role')).toBe('system');
-	// Never mistaken for the CEO speaking.
+	// The agent's reply is there; the finding is not drawn at all.
+	expect(await findByTestId('chat-panel')).toBeTruthy();
+	expect(queryByText(warning)).toBeNull();
+	expect(document.querySelector('[data-system-kind="handoff_not_delivered"]')).toBeNull();
+	// And it is not silently upgraded into some other row either.
 	expect(queryByTestId('chat-converted-task-link')).toBeNull();
 });
 

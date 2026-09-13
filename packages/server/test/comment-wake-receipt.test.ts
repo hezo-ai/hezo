@@ -21,6 +21,7 @@ import {
 interface WakeReceipt {
 	woke: string[];
 	named_not_woken: string[];
+	strands_handoff: boolean;
 }
 
 describe('comment wake receipt', () => {
@@ -120,6 +121,8 @@ describe('comment wake receipt', () => {
 		});
 		expect(r.wake.woke).toEqual(['architect']);
 		expect(r.wake.named_not_woken).toEqual([]);
+		// Somebody was woken, so nothing is stranded.
+		expect(r.wake.strands_handoff).toBe(false);
 	});
 
 	it('reports a passive mention as named but NOT woken', async () => {
@@ -140,6 +143,33 @@ describe('comment wake receipt', () => {
 		});
 		expect(r.wake.woke).toEqual([]);
 		expect(r.wake.named_not_woken).toEqual(['architect']);
+		// Woke nobody, named someone, task still open: the stranded-handoff
+		// condition, stated at post time rather than after the turn ends. The two
+		// lists above already carry the facts; this is the consequence the author
+		// otherwise has to infer, and not inferring it IS the failure.
+		expect(r.wake.strands_handoff).toBe(true);
+	});
+
+	it('a passive mention on a CLOSED task does not read as a stranded handoff', async () => {
+		// Nobody is expected to act next on a terminal task, so naming someone
+		// there strands nothing - the same line the aggregate check draws.
+		const taskId = await insertTask(captainId, 'Already finished');
+		await db.query(`UPDATE tasks SET status = 'done' WHERE id = $1`, [taskId]);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			taskId,
+		);
+		const r = await createComment(agentToken, {
+			project: projectSlug,
+			task_id: taskId,
+			content: 'Shipped. @@architect reviewed the schema.',
+		});
+		expect(r.wake.woke).toEqual([]);
+		expect(r.wake.named_not_woken).toEqual(['architect']);
+		expect(r.wake.strands_handoff).toBe(false);
 	});
 
 	it('reports the admin fan-out as a wake', async () => {
@@ -223,7 +253,7 @@ describe('comment wake receipt', () => {
 		});
 		// Always present, so an agent can rely on reading it rather than on a
 		// warning happening to fire.
-		expect(r.wake).toEqual({ woke: [], named_not_woken: [] });
+		expect(r.wake).toEqual({ woke: [], named_not_woken: [], strands_handoff: false });
 	});
 
 	it('counts a bare-name address as named-not-woken', async () => {
