@@ -1,6 +1,7 @@
 import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import { currentRoomValue } from './helpers/chat-switcher';
 import { getTestContext, renderApp } from './helpers/render';
 
 /**
@@ -164,8 +165,7 @@ test('"Ask the CEO" opens the CEO stream with the message written but not sent',
 		// per-project scope of its own - and deliberately NOT sent, so they can say
 		// what they actually need before the CEO has to ask.
 		await findByTestId('chat-panel');
-		const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-		expect(select.value).toBe('ceo');
+		expect(currentRoomValue()).toBe('ceo');
 		const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 		await waitFor(() => {
 			expect(input.value).toContain('add an agent to the Storefront project');

@@ -3,6 +3,13 @@ import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import {
+	currentRoomValue,
+	openRoomSwitcher,
+	roomGroupHeadings,
+	roomOptionLabels,
+	roomOptionLabelsInGroup,
+} from './helpers/chat-switcher';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
@@ -43,8 +50,7 @@ test('the project menu lists a chat card per roster agent and opens the dock on 
 	// Clicking a card opens the dock on that agent's DM - no navigation.
 	await user.click(card);
 	await findByTestId('chat-panel');
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	expect(select.value).toBe(`agent:${agent.slug}`);
+	expect(currentRoomValue()).toBe(`agent:${agent.slug}`);
 	expect((await findByTestId('chat-room-title')).textContent).toBe(agent.title);
 	// The composer addresses the agent by name; the empty state introduces the DM.
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
@@ -58,7 +64,7 @@ test('the project menu lists a chat card per roster agent and opens the dock on 
 test('the dock switcher groups the current project DMs under the project name', async () => {
 	let projectSlug = '';
 	let agentCount = 0;
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -76,15 +82,15 @@ test('the dock switcher groups the current project DMs under the project name', 
 	});
 
 	(await findByTestId('app-header-chat')).click();
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	// Pinned CEO first, then the project's DM optgroup with the full roster.
-	expect(select.options[0].value).toBe('ceo');
+	await openRoomSwitcher(user);
+	// Pinned CEO first, then the project's own section with the full roster under
+	// one heading - the project name, drawn once however many agents follow it.
 	await waitFor(() => {
-		const group = Array.from(select.querySelectorAll('optgroup')).find(
-			(g) => g.label === 'Demo Project',
-		);
-		expect(group).toBeTruthy();
-		expect(group?.querySelectorAll('option').length).toBe(agentCount);
+		expect(roomOptionLabels()[0]).toBe('CEO · HQ');
+		expect(roomGroupHeadings()).toContain('Demo Project');
+		// Every roster agent sits under that one heading - counted in its own
+		// section, so the Rooms and History sections cannot shift the number.
+		expect(roomOptionLabelsInGroup('Demo Project')).toHaveLength(agentCount);
 	});
 });
 

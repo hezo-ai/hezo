@@ -13,6 +13,8 @@ export interface NameSwitcherButtonProps {
 	emptyLabel?: string;
 	/** Accessible name for an option's `badge` dot. Pass a translated string. */
 	badgeLabel?: string;
+	/** Notified when the panel opens or closes. */
+	onOpenChange?: (open: boolean) => void;
 	testId?: string;
 }
 
@@ -32,6 +34,7 @@ export function NameSwitcherButton({
 	searchPlaceholder = 'Search…',
 	emptyLabel = 'No matches',
 	badgeLabel,
+	onOpenChange,
 	testId,
 }: NameSwitcherButtonProps) {
 	return (
@@ -42,6 +45,7 @@ export function NameSwitcherButton({
 			searchPlaceholder={searchPlaceholder}
 			emptyLabel={emptyLabel}
 			badgeLabel={badgeLabel}
+			onOpenChange={onOpenChange}
 			testId={testId}
 			align="start"
 			trigger={

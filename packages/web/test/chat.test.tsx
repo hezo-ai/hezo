@@ -6,6 +6,7 @@ import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
+import { openRoomSwitcher } from './helpers/chat-switcher';
 import { getTestContext, renderApp } from './helpers/render';
 
 // The component harness builds the backend without a ChatSessionManager (the chat
@@ -491,19 +492,31 @@ test('opening the chat clears the unread overlay and its persisted count', async
 	expect(localStorage.getItem('hezo_chat_unread')).toBeNull();
 });
 
-test('the dock is an anchored corner panel with a mobile-only scrim', async () => {
+test('the dock is a full-height right rail on desktop, a sheet with a scrim on mobile', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('app-header-chat')).click();
 	const panel = await findByTestId('chat-panel');
 
-	// Anchored desktop panel, clear of the 48px header; near-full-screen below md.
-	expect(panel.className).toContain('md:w-[420px]');
+	// Desktop: flush to the right edge, running from under the h-12 shell header
+	// to the bottom, so the top bar stays reachable while chat is open. Its width
+	// is the dragged one when there is one, 420px until then.
+	expect(panel.className).toContain('md:right-0');
+	expect(panel.className).toContain('md:top-12');
+	expect(panel.className).toContain('md:bottom-0');
+	expect(panel.className).toContain('md:w-[var(--chat-rail-w,420px)]');
+	// Mobile: the near-full-screen sheet, unchanged by the rail work.
 	expect(panel.className).toContain('top-16');
-	// The scrim is scoped to mobile (`md:hidden`) - the desktop corner panel is a
+	expect(panel.className).toContain('inset-x-2');
+	// The scrim is scoped to mobile (`md:hidden`) - the desktop rail is a
 	// persistent companion that leaves the rest of the page interactive. There is
-	// no expand mode: the dock is the whole desktop chat surface.
+	// no expand mode: the rail is the whole desktop chat surface.
 	const overlay = await findByTestId('chat-overlay');
 	expect(overlay.className).toContain('md:hidden');
+	// The rail is draggable; the handle is desktop-only, and keyboard-reachable
+	// so a drag is not the only way to widen it.
+	const handle = await findByTestId('chat-rail-resize');
+	expect(handle.className).toContain('md:block');
+	expect(handle.getAttribute('tabindex')).toBe('0');
 });
 
 test('Escape closes the dock', async () => {
@@ -516,6 +529,25 @@ test('Escape closes the dock', async () => {
 	await user.keyboard('{Escape}');
 	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
 	expect(queryByTestId('chat-overlay')).toBeNull();
+});
+
+test('Escape dismisses the open room switcher without closing the dock behind it', async () => {
+	// Two things now answer to Escape. The inner one wins, or opening the
+	// switcher and changing your mind would shut the whole conversation.
+	const { findByTestId, queryByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('app-header-chat')).click();
+	await findByTestId('chat-panel');
+
+	await openRoomSwitcher(user);
+	await user.keyboard('{Escape}');
+	await waitFor(() =>
+		expect(document.body.querySelector('[data-testid="chat-room-select-content"]')).toBeNull(),
+	);
+	expect(queryByTestId('chat-panel')).toBeTruthy();
+
+	// With the panel dismissed, Escape reaches the dock again.
+	await user.keyboard('{Escape}');
+	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
 });
 
 test('a user message is shown as typed, not parsed as markdown', async () => {

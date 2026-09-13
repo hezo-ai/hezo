@@ -5996,9 +5996,15 @@ assets folder) and a hash is an in-page jump (the comment deep-link executor str
 route rather than in each link's `onClick` is deliberate — the global Cmd/Ctrl+K handler is a
 `window` keydown listener and Radix only intercepts Escape, so the palette opens on top of an
 open modal and navigates from somewhere that modal never sees. The CEO chat is
-**viewport-conditional**: only its blocking presentations (the mobile full-screen sheet, the
-desktop expanded view) react, and expanded collapses back to anchored rather than closing; the
-anchored desktop panel is a deliberately persistent companion that survives navigation.
+**viewport-conditional**: only its blocking presentation - the mobile full-screen sheet, which
+takes the scrim - reacts and closes on navigation; the desktop **right rail** is a deliberately
+persistent companion that survives navigation and takes no scrim. There is no expand mode. The
+rail runs from under the `h-12` shell header to the bottom, flush to the right edge, overlaying
+the page rather than displacing it, and is drag-resizable through `useResizableSplit` with
+`measureContainer` - a `fixed` panel shares the viewport rather than a grid track, so it also
+re-clamps on `window` resize instead of observing a cell - persisted under
+`hezo_chat_rail_width`. The room switcher is a `SearchableSelect` on the room title (grouped,
+type-to-filter), not a row of its own; its panel takes Escape before the dock does.
 
 **Connection indicator.** `useConnectionMonitor` (`hooks/use-connection-status.ts`) drives a
 module-level store from two signals - `navigator.onLine` (catches a dropped network an

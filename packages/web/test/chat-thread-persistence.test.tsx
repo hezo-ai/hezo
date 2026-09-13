@@ -1,7 +1,9 @@
 import type { ChatConversationSummary, ChatMessage } from '@hezo/web/hooks/use-chat';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import { currentRoomValue, selectRoom } from './helpers/chat-switcher';
 import { renderApp } from './helpers/render';
 
 // The dock remembers the room you switched to, so closing and reopening it
@@ -59,10 +61,9 @@ test('switching rooms is remembered, and a later open resumes that room', async 
 	const { findByTestId, findByText, user } = await renderApp({ initialPath: '/home' });
 
 	(await findByTestId('app-header-chat')).click();
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	expect(select.value).toBe('ceo');
+	await waitFor(() => expect(currentRoomValue()).toBe('ceo'));
 
-	await user.selectOptions(select, 'thread:thread-2');
+	await selectRoom(user, 'thread:thread-2');
 	expect(await findByText('hello from the telegram dm')).toBeTruthy();
 
 	// The switch is durable, not just component state: it survives a full remount
@@ -83,8 +84,7 @@ test('a remembered room is restored on mount instead of the CEO stream', async (
 	// Opens straight into the remembered room — the stream's history is never shown.
 	expect(await findByText('hello from the telegram dm')).toBeTruthy();
 	expect(queryByText('hello from the live stream')).toBeNull();
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	expect(select.value).toBe('thread:thread-2');
+	expect(currentRoomValue()).toBe('thread:thread-2');
 });
 
 test('a remembered thread that no longer exists falls back to the CEO stream', async () => {
@@ -99,7 +99,6 @@ test('a remembered thread that no longer exists falls back to the CEO stream', a
 	(await findByTestId('app-header-chat')).click();
 
 	expect(await findByText('hello from the live stream')).toBeTruthy();
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	expect(select.value).toBe('ceo');
+	expect(currentRoomValue()).toBe('ceo');
 	expect(localStorage.getItem('hezo_chat_room')).toBeNull();
 });

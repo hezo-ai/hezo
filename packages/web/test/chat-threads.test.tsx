@@ -2,6 +2,13 @@ import type { ChatConversationSummary, ChatMessage } from '@hezo/web/hooks/use-c
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { expect, test } from 'vitest';
+import {
+	openRoomSwitcher,
+	roomGroupHeadings,
+	roomOptionLabels,
+	selectedRoomLabel,
+	selectRoom,
+} from './helpers/chat-switcher';
 import { renderApp } from './helpers/render';
 
 // The component harness has no ChatSessionManager (chat endpoints 503), so we seed
@@ -60,13 +67,14 @@ test('the room switcher re-keys the dock to the selected conversation', async ()
 	await findByTestId('chat-panel');
 
 	// The switcher opens on the pinned CEO stream and shows its messages.
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	expect(select.value).toBe('ceo');
+	await openRoomSwitcher(user);
+	expect(selectedRoomLabel()).toBe('CEO · HQ');
+	await user.keyboard('{Escape}');
 	expect(getByText('hello from the live stream')).toBeTruthy();
 	expect(queryByText('hello from the telegram dm')).toBeNull();
 
 	// Switching to the external DM swaps the dock to that thread's history.
-	await user.selectOptions(select, 'thread:thread-2');
+	await selectRoom(user, 'thread:thread-2');
 	expect(await findByText('hello from the telegram dm')).toBeTruthy();
 	expect(queryByText('hello from the live stream')).toBeNull();
 });
@@ -86,12 +94,12 @@ test('open web threads are not listed - the live stream is the pinned CEO entry'
 		compacted_count: 0,
 	});
 
-	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	const { findByTestId, user } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	const labels = Array.from(select.options).map((o) => o.textContent?.trim());
+	await openRoomSwitcher(user);
+	const labels = roomOptionLabels();
 	expect(labels[0]).toBe('CEO · HQ');
 	// The open web thread is reached through the pinned CEO entry, not listed twice.
 	expect(labels).not.toContain('First');
@@ -128,17 +136,17 @@ test('external and team-channel threads list with origin chips; coworker threads
 
 	// Every surface's threads list, badged by their home channel; the coworker
 	// thread sits in the "Linked channels" optgroup with the read-only lock.
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	const labels = Array.from(select.options).map((o) => o.textContent?.trim());
+	await openRoomSwitcher(user);
+	const labels = roomOptionLabels();
 	expect(labels).toContain('Ops · TG DM');
 	expect(labels).toContain('Launch · SLACK DM');
 	expect(labels).toContain('#product 🔒 · SLACK');
-	const groups = Array.from(select.querySelectorAll('optgroup')).map((g) => g.label);
+	const groups = roomGroupHeadings();
 	expect(groups).toContain('Linked channels');
 	expect(groups).toContain('External chats');
 
 	// Selecting the coworker thread locks the composer and shows the banner.
-	await user.selectOptions(select, 'thread:thread-4');
+	await selectRoom(user, 'thread:thread-4');
 	const banner = await findByTestId('chat-readonly-banner');
 	expect(banner.textContent).toContain('#product');
 	expect(banner.textContent).toContain('Slack');
@@ -165,13 +173,12 @@ test('a closed thread lists under History, readable with a locked composer', asy
 	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	const groups = Array.from(select.querySelectorAll('optgroup')).map((g) => g.label);
-	expect(groups).toContain('History');
+	await openRoomSwitcher(user);
+	expect(roomGroupHeadings()).toContain('History');
 
 	// The old conversation stays fully readable; the composer locks (the live
 	// conversation continues in the pinned stream).
-	await user.selectOptions(select, 'thread:thread-9');
+	await selectRoom(user, 'thread:thread-9');
 	expect(await findByText('what we decided back then')).toBeTruthy();
 	expect(await findByTestId('chat-history-banner')).toBeTruthy();
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;

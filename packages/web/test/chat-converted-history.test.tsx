@@ -6,6 +6,7 @@ import type {
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { expect, test } from 'vitest';
+import { selectRoom } from './helpers/chat-switcher';
 import { renderApp } from './helpers/render';
 
 // Threads converted to tasks under the old whole-thread convert stay readable as
@@ -75,8 +76,7 @@ test('a converted History thread renders the meta message, banner link and locke
 	await findByTestId('chat-panel');
 
 	// The converted thread lists under History; select it.
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	await user.selectOptions(select, 'thread:thread-1');
+	await selectRoom(user, 'thread:thread-1');
 
 	// The task link renders twice — the in-thread meta marker and the composer
 	// banner — both pointing at the task page.
@@ -119,8 +119,7 @@ test('a handoff warning in a converted thread stays a warning, not a second task
 	const { findByTestId, findAllByTestId, user } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	await user.selectOptions(select, 'thread:thread-1');
+	await selectRoom(user, 'thread:thread-1');
 
 	// The converted marker still links the task (in-thread + composer banner)…
 	const links = await findAllByTestId('chat-converted-task-link');

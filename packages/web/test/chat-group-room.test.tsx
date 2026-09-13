@@ -1,6 +1,12 @@
 import { queryClient } from '@hezo/web/lib/query-client';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import {
+	currentRoomValue,
+	openRoomSwitcher,
+	roomGroupHeadings,
+	roomOptionLabels,
+} from './helpers/chat-switcher';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
@@ -34,18 +40,18 @@ test('the built-in General room is provisioned, carded, and opens in the dock', 
 	// Clicking the card opens the dock on the room - no navigation.
 	await user.click(groupCards[0]);
 	await findByTestId('chat-panel');
-	const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-	await waitFor(() => expect(select.value).toMatch(/^group:/));
+	await waitFor(() => expect(currentRoomValue()).toMatch(/^group:/));
 	expect((await findByTestId('chat-room-title')).textContent).toBe('General');
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 	expect(input.placeholder).toContain('Message the room');
 
-	// The switcher carries the Rooms optgroup with the General room in it.
+	// The switcher carries a Rooms section with the General room in it.
+	await openRoomSwitcher(user);
 	await waitFor(() => {
-		const rooms = Array.from(select.querySelectorAll('optgroup')).find((g) => g.label === 'Rooms');
-		expect(rooms).toBeTruthy();
-		expect(rooms?.querySelectorAll('option').length).toBe(1);
+		expect(roomGroupHeadings()).toContain('Rooms');
+		expect(roomOptionLabels()).toContain('General');
 	});
+	await user.keyboard('{Escape}');
 	expect(router.state.location.pathname).toBe(`/projects/${projectSlug}/tasks`);
 });
 
@@ -77,10 +83,7 @@ test('the create-room dialog makes a room and lands the dock in it', async () =>
 	await user.click(await findByTestId('chat-create-group-submit'));
 
 	// Response-driven: the dock switches to the room the server created.
-	await waitFor(async () => {
-		const select = (await findByTestId('chat-room-select')) as HTMLSelectElement;
-		expect(select.value).toMatch(/^group:/);
-	});
+	await waitFor(() => expect(currentRoomValue()).toMatch(/^group:/));
 	expect((await findByTestId('chat-room-title')).textContent).toBe('Launch crew');
 });
 

@@ -12,10 +12,12 @@ bar**, and every project agent has a **direct message** of its own, opened from 
 chat cards at the bottom of the project menu. Ask what's blocked, think out loud,
 have a project spun up, or talk a piece of work through with the teammate who owns it.
 
-Chat opens in the **dock** - a compact panel anchored to the bottom-right corner (near
-full-screen on a phone). The dropdown at the top of the dock switches rooms: the CEO
-is pinned on top, the current project's agents follow, then the project's **group
-rooms**, conversations from connected chat apps and, under **History**, closed
+Chat opens in the **dock** - a panel down the right-hand side of the window, running
+from under the top bar to the bottom (near full-screen on a phone). It sits over the
+page rather than squeezing it, and you can drag its left edge to make it wider; the
+width is remembered. Selecting the room name at the top switches rooms: type to filter,
+and the CEO is pinned on top, the current project's agents follow, then the project's
+**group rooms**, conversations from connected chat apps and, under **History**, closed
 conversations that remain readable.
 
 ## Chat thinks, tasks work
