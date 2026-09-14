@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.65.0 - 2026-09-14
+
+### Features
+
+- **prompts:** bind one writing register to every agent ([#1113](https://github.com/hezo-ai/hezo/pull/1113))
+
+### Bug Fixes
+
+- **chat:** message truncation, searchable switcher, right rail, CEO monogram ([#1112](https://github.com/hezo-ai/hezo/pull/1112))
+- **web:** drop the unread dot from inbox rows ([#1111](https://github.com/hezo-ai/hezo/pull/1111))
+
+### Other
+
+- Document the paid Hezo Cloud tier ([#1114](https://github.com/hezo-ai/hezo/pull/1114))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.64.0...0.65.0
+
 ## 0.64.0 - 2026-09-12
 
 ### Features
