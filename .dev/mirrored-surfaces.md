@@ -45,4 +45,7 @@ one to read: where it says *nothing*, no test will catch you.
 | A provider gaining a second CLI (`alternateRuntimes`) | a `ProviderRuntimeBinding` for the new pairing, declared once as a constant if two providers share it | compile error for a missing binding, **nothing for a duplicated one** |
 | User-visible behaviour, a feature, the setup/onboarding flow | the relevant `docs/` page(s) | **nothing - on you** |
 | **Removing** a feature | every stale reference repo-wide (`docs/**`, `.dev/`, READMEs, comments) - grep for it | **nothing - on you** |
+| A config mechanism, or a `policy` / `sso` / `seed` field | the hosted control plane's `.dev/track-h-spec.md` and its golden snapshot, in `hezo-ai/cloud` | **nothing - on you**, and nothing in this repo can see it |
+| Behaviour, a limit or a setup step that differs on the hosted tier | `docs/cloud/whats-different.md`, plus whichever `docs/cloud/` page owns it | **nothing - on you** |
+| A user-facing claim about what Hezo Cloud can see or keep | `docs/cloud/data-and-security.md` - and it must stay inside what the control plane's own §15 supports | **nothing - on you** |
 

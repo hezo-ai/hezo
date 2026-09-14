@@ -59,6 +59,33 @@ plan stops claiming a restart-free tier change — today it does not have one.
 
 ---
 
+## The words the hosted product uses
+
+**Settled in the control plane's own catalogs; this repo follows rather than
+invents.** These bind user-facing prose - `docs/`, the web app, anything an
+agent writes for a reader - not code identifiers, columns or internal comments.
+
+| Say | Never |
+|---|---|
+| instance | server, box, VM, droplet, workspace |
+| address | subdomain, hostname |
+| container-hours | compute units, credits |
+| held (a hold) | suspended, paused, frozen |
+| Shut down | dormant, deactivated, archived |
+| recovery phrase | mnemonic, master key, seed phrase |
+| plan | subscription (that already means a *model provider's* plan), tier in prose |
+
+"tenant" and "cluster" are ours, not the reader's: they appear in neither
+`docs/` nor the product. **"Hezo Cloud"** is a proper noun, two words,
+capitalised; the other path is **"self-hosting"**, which covers a local machine
+and a VPS alike, and never acquires a second name.
+
+**One claim to keep exact.** "The control plane holds no tenant unlock keys" is
+narrower than "cannot read tenant data" - the plane holds each shard's admin
+credential, so it can read application rows. The defensible sentence is that we
+never hold the recovery phrase and cannot decrypt what it protects, and that
+nobody here can recover it. Anything wider is false.
+
 ## The SSO chain (H1–H5)
 
 ### The invariant the whole chain exists to preserve
