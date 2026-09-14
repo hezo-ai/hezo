@@ -28,7 +28,7 @@ backups, more headroom, or your own operational tooling - point Hezo at it with
 `--database-url` / `database.url` (see
 [Using an external Postgres](/docs/deployment/configuration#using-an-external-postgres);
 for a cloud deployment there's a step-by-step in
-[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)).
+[Managed database & asset storage](/docs/deployment/vps#managed-database--asset-storage)).
 The data directory is still used for workspaces, uploaded assets, and keys; only the
 database rows move.
 

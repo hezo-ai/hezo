@@ -295,4 +295,4 @@ installer again.
 
 For the fully manual path - your own systemd unit, reverse proxy, and firewall rules,
 step by step - see [Self-hosting](/docs/deployment/self-hosting) and
-[Deploying to the cloud](/docs/deployment/cloud).
+[Self-hosting on a VPS](/docs/deployment/vps).

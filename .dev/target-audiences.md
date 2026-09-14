@@ -8,6 +8,11 @@ this document originally prescribed no longer exists.
 
 What remains unbuilt is the website half, below — it lives in the `hezo-ai/website` repo.
 
+**The audience set has since grown.** Hezo now sells a hosted tier, so a reader arrives
+already split by who runs the box before any persona applies. The pages below still
+describe what a team ships; they do not yet say which way the reader runs it, and a
+persona page that assumes self-hosting is now wrong for half its readers.
+
 ## Implementation — website (hezo-ai/website repo)
 
 The site is Gatsby 5; docs already come from this repo via the `vendor/hezo`

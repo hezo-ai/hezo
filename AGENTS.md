@@ -36,8 +36,9 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Working around the Bun runtime | `bun-issues.md` |
 | Looking up where a helper lives | `seam-registry.md` |
 | Checking what else a change must touch | `mirrored-surfaces.md` |
+| What the hosted control plane depends on | `hezo-cloud-requirements.md` |
 
-Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`, `hezo-cloud-requirements.md`.
+Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`.
 
 ## Commands
 
@@ -91,6 +92,8 @@ The rows below are an **excerpt**. The full table is `.dev/mirrored-surfaces.md`
 | A `.dev/` guide added, renamed or removed | the map above, and its section link | **nothing - on you** |
 | **Removing** a feature | every stale reference repo-wide - grep for it | **nothing - on you** |
 | User-visible behaviour, a feature, the setup flow | the relevant `docs/` page | **nothing - on you** |
+| A config mechanism, or a `policy`/`sso`/`seed` field | the hosted plane's spec and snapshot | **nothing - on you** |
+| Behaviour differing when hosted | `docs/cloud/` | **nothing - on you** |
 
 **Verify, don't assume.** Generated surfaces have drift tests; prose has one guard, checking punctuation. Nothing checks whether prose is *true* - re-read the pages describing what you changed.
 
@@ -119,7 +122,7 @@ A **project** is the primary unit and owns exactly one **team**, its agent roste
 
 ## Production upgrades
 
-Real instances upgrade in place: same data directory, same config, same service definition, new binary. **A change to how Hezo is configured, where it keeps its data, or how it starts is a change to those instances, not just to this repo.** No test can see it - every suite builds a fresh instance from the code under test, so a self-consistent change passes green while breaking every instance that upgrades onto it.
+Real instances upgrade in place: same data directory, same config, same service definition, new binary. **Some of them are ours**, a hosted fleet, so a change here is also a change to its golden snapshot. **A change to how Hezo is configured, where it keeps its data, or how it starts is a change to those instances, not just to this repo.** No test can see it - every suite builds a fresh instance from the code under test, so a self-consistent change passes green while breaking every instance that upgrades onto it.
 
 - **A mechanism you remove or rename must fail loudly on its old form, never fall back to a default.** An instance that silently reverts to a built-in default comes up healthy and empty, which reads as a fresh install rather than a fault. Detect the old form and refuse to start, naming what was ignored and what replaces it.
 - **Ship the migration, do not document it.** Where a deployment artifact this repo owns still writes the old form, the change that breaks it also translates it, in the same commit.
@@ -269,6 +272,8 @@ Running a vendor's own command in a sandbox and reading what it printed. **Traps
 These bind user-facing prose, not code identifiers, columns, route paths or internal comments.
 
 - **Say "task", never "ticket". Say "global", never "instance-wide".**
+- **"Hezo Cloud" is the hosted product; "self-hosting" is the only name for the other path**, covering a local machine and a VPS. Its vocabulary is in that guide.
+- **No price in `README.md` or `docs/`** - link `hezo.ai/pricing`. Never claim Hezo cannot read hosted data; what holds is that we never hold the recovery phrase and cannot decrypt what it protects.
 - **Never use an em dash or an en dash. Use a hyphen.** Put a plain hyphen where an em dash would go; recast a paired parenthetical as parentheses or commas. This reaches generated pages through their sources - a tool description or schema note that carries one puts it in the docs. Internal-only text is exempt: code comments, `.dev/`, and this file.
 - **The README carries no competitor-comparison section, ever**, under any heading. Describe what Hezo does on its own terms.
 
@@ -306,7 +311,7 @@ Never expose raw secrets, private keys or signing keys via endpoints or logs. Us
 
 ### Never encourage storing the master key on a system
 
-The master key is kept **in memory only, never written to disk** - the invariant that makes encryption at rest meaningful. **Never encourage a user to store it anywhere on a system**: not an env file, a service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces. A new process starts locked by default; a supervised in-app update hands the key to the new process in memory. A reboot, crash, or direct service restart stays locked unless the operator deliberately supplies the one-shot `--master-key` or `HEZO_MASTER_KEY` input, then the browser gate remains the interactive unlock path. The env var may be documented as the mechanism for a **single, non-interactive startup**, never as a place to persist the key.
+The master key is kept **in memory only, never written to disk** - the invariant that makes encryption at rest meaningful. **Never encourage a user to store it anywhere on a system**: not an env file, a service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces. The env var may be documented as the mechanism for a **single, non-interactive startup**, never as a place to persist the key.
 
 ### Credentials
 

@@ -1,12 +1,12 @@
 ---
-title: Deploying to the cloud
+title: Self-hosting on a VPS
 order: 27
 section: Deployment
 ---
 
-# Deploying to a cloud server
+# Self-hosting on a VPS
 
-Running Hezo on a cloud server keeps the host reachable without your laptop being on.
+Running Hezo on a VPS keeps the host reachable without your laptop being on.
 Agent execution continues while the instance is unlocked. A new Hezo process starts
 **locked** by default. A supervised in-app update hands the key to the new process in
 memory. A reboot, crash, or direct service restart comes up locked unless that invocation
@@ -29,7 +29,7 @@ instance.
 > ([Switching at any time](/docs/containers/overview#switching-at-any-time)) - restarting
 > with a different startup config does not switch an existing instance.
 
-## The shape of a cloud deployment
+## The shape of a VPS deployment
 
 1. **Provision a host with Docker** and install the `hezo` binary
    ([Installation](/docs/getting-started/installation)).

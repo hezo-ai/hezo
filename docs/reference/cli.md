@@ -6,6 +6,12 @@ section: Reference
 
 # CLI reference
 
+> [!NOTE]
+> **The command line is for self-hosted instances.** On
+> [Hezo Cloud](/docs/cloud/overview) you have no shell on the machine, so none of these
+> commands are available to you - everything they do is done for you or from the web
+> app. See [What's different from self-hosting](/docs/cloud/whats-different).
+
 The `hezo` binary **is the server.** Running it with no command starts Hezo; a couple of
 subcommands and flags cover the rest. Run `hezo --help` for the authoritative list on
 your version.

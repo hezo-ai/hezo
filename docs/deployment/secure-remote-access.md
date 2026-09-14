@@ -18,7 +18,7 @@ how you reach it matters as much as where you run it. Two rules cover it:
 Hezo's own process serves plain HTTP and has no built-in VPN, so both properties come
 from what you put around it: a private network or tunnel for reachability, and a
 TLS-terminating reverse proxy for HTTPS (see
-[Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) for the proxy setup).
+[Serve it over HTTPS](/docs/deployment/vps#serve-it-over-https) for the proxy setup).
 
 ## Why HTTPS is essential, even on a VPN
 
@@ -83,7 +83,7 @@ including OAuth-connected MCP servers - works through the tunnel.
 ## Public domain + reverse proxy + auth
 
 If you do want a public URL, terminate HTTPS with a reverse proxy (see
-[Deploying to the cloud](/docs/deployment/cloud)). Never publish the raw Hezo port
+[Self-hosting on a VPS](/docs/deployment/vps)). Never publish the raw Hezo port
 directly.
 
 Hezo authenticates every session with your **admin password**, so a public deployment is

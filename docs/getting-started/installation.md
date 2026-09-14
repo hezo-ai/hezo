@@ -6,6 +6,11 @@ section: Getting started
 
 # Installation
 
+> [!NOTE]
+> **This page is for self-hosting.** On [Hezo Cloud](/docs/cloud/overview) there is
+> nothing to install - start at
+> [Getting started on Hezo Cloud](/docs/cloud/getting-started) instead.
+
 Hezo ships as a **single self-contained binary** - there's no runtime, language
 toolchain, or dependencies to install. Download it, run it, and you're up in seconds.
 The one thing to have in place first is a **Docker-compatible runtime**, which Hezo uses

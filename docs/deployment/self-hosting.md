@@ -6,9 +6,12 @@ section: Deployment
 
 # Self-hosting Hezo
 
-Hezo is **self-hosted by design** - it's a single binary you run on hardware you
-control, with no external services required to operate it. You own the data, the model
+Hezo self-hosts cleanly - it's a single binary you run on hardware you control, with
+no external services required to operate it. You own the machine, the data, the model
 keys, and the spend.
+
+If you would rather not run a machine at all, [Hezo Cloud](/docs/cloud/overview) runs
+one for you. This whole section is about the other path.
 
 ## What you need
 
@@ -48,7 +51,7 @@ handed to managed services: an
 database, and
 [S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage)
 for assets (step-by-step:
-[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)).
+[Managed database & asset storage](/docs/deployment/vps#managed-database--asset-storage)).
 The data directory is still required for workspaces and keys either way. Full recovery
 needs more than this directory: keep a Hezo backup bundle, the complete data directory,
 the config file, files it references, backend credentials, service settings or
@@ -184,7 +187,7 @@ OAuth-connected MCP servers connectable (providers and browsers only accept HTTP
 `localhost` callback URLs), lets Hezo install as an app on your phone, and keeps your
 admin password and task content sealed in transit. The proxy must pass WebSocket
 upgrades and forward the `Host` and `X-Forwarded-Proto` headers - see
-[Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) for a working
+[Serve it over HTTPS](/docs/deployment/vps#serve-it-over-https) for a working
 config, and [Secure remote access](/docs/deployment/secure-remote-access) for
 certificate options on private networks.
 

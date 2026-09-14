@@ -182,16 +182,21 @@ jobs:
           aws s3 cp deploy/aws/hezo.cfn.yaml "s3://${BUCKET}/hezo.cfn.yaml" --content-type text/yaml
           echo "Uploaded deploy/aws/hezo.cfn.yaml to s3://${BUCKET}/hezo.cfn.yaml"
 
-  # Tell the marketing website (hezo-ai/website) a release was published so it
-  # pins its vendor/hezo submodule to the new tag and Cloudflare Pages redeploys
-  # the docs. The website tracks RELEASES, not main — hezo.ai/docs must describe
-  # the version users can actually download, so the sync fires only here. (A
-  # `release: published` trigger on a separate workflow would never fire: the
-  # Release above is created with this workflow's own GITHUB_TOKEN, and GitHub
-  # suppresses events from that token to prevent workflow recursion.) The bump
-  # logic and a manual re-pin fallback live in the website repo's
-  # update-hezo-submodule.yml; this job only announces the tag.
-  notify-website:
+  # Tell the two downstream repos a release was published so each can pin its
+  # vendor/hezo submodule to the new tag. Both track RELEASES, not main: the
+  # website's docs must describe the version users can actually download, and
+  # the control plane must host a version that exists.
+  #
+  # They differ in what they do with the dispatch, and that difference lives in
+  # each repo's own update-hezo-submodule.yml: the website pins and pushes to
+  # main (it has no test suite to gate on), while the control plane opens a PR,
+  # because bumping it re-verifies container constants and runs an end-to-end
+  # tier against a real instance. This job only announces the tag.
+  #
+  # (A `release: published` trigger in those repos would never fire: the Release
+  # above is created with this workflow's own GITHUB_TOKEN, and GitHub suppresses
+  # events from that token to prevent workflow recursion.)
+  notify-downstream:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: publish
@@ -200,27 +205,34 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'release/')
     permissions:
       contents: read
+    strategy:
+      # One repo's outage must not stop the other being told.
+      fail-fast: false
+      matrix:
+        repo: [website, cloud]
     steps:
-      # Mint a short-lived token for the website repo via the existing
-      # hezo-release-bot app (App ID 3938851). Requires repo secrets
-      # RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY, and the app installed on
-      # hezo-ai/website with Contents:write.
-      - name: Mint app token (website)
+      # A token scoped to the one repo this leg dispatches to, via the existing
+      # hezo-release-bot app (App ID 3938851). Scoping per leg rather than
+      # minting one token for both is deliberate: neither repo's dispatch can
+      # reach the other. Requires repo secrets RELEASE_APP_ID and
+      # RELEASE_APP_PRIVATE_KEY, and the app installed on hezo-ai/${{ matrix.repo }}.
+      - name: Mint app token (${{ matrix.repo }})
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: hezo-ai
-          repositories: website
+          repositories: ${{ matrix.repo }}
 
-      - name: Dispatch release-published event to website
+      - name: Dispatch release-published event to ${{ matrix.repo }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ matrix.repo }}
         run: |
           version="${HEAD_REF#release/}"
-          gh api repos/hezo-ai/website/dispatches \
+          gh api "repos/hezo-ai/${REPO}/dispatches" \
             -f event_type=hezo-release-published \
             -F "client_payload[tag]=${version}"
-          echo "Dispatched hezo-release-published (tag ${version}) to hezo-ai/website"
+          echo "Dispatched hezo-release-published (tag ${version}) to hezo-ai/${REPO}"

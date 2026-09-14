@@ -65,7 +65,7 @@ exception), so your instance must be reached over HTTPS for the final **Allow** 
 work - on a private network or VPN too, where a plain-HTTP address makes the consent
 popup fail with a blocked or rejected redirect. Your instance does **not** need to be
 publicly reachable: the redirect happens in your browser, so a private HTTPS address
-works fine. See [Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) and
+works fine. See [Serve it over HTTPS](/docs/deployment/vps#serve-it-over-https) and
 [Secure remote access](/docs/deployment/secure-remote-access) for setting that up.
 (REST API connectors authorized with the [device flow](#connecting-an-oauth-api-with-the-device-flow-no-callback)
 have no callback and no HTTPS requirement.)

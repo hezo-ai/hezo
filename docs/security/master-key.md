@@ -34,11 +34,16 @@ Hezo has a simple gate around your secrets:
 - **Unlocked** - you've provided the correct phrase; Hezo can decrypt secrets and
   agents run normally.
 
-You unlock from the web app's gate screen. On a server you can also unlock a **single
+You unlock from the web app's gate screen. Self-hosting, you can also unlock a **single
 startup** non-interactively by passing the `--master-key` flag / `HEZO_MASTER_KEY`
 environment variable to that one invocation (see
-[Deploying to the cloud](/docs/deployment/cloud)) - but don't persist the phrase to disk
+[Self-hosting on a VPS](/docs/deployment/vps)) - but don't persist the phrase to disk
 to do it (see [Keep it off the server](#keep-it-off-the-server) below).
+
+On [Hezo Cloud](/docs/cloud/overview) the gate screen is the only way in, which is by
+design: you create the phrase in your own browser and it never reaches us, so **we hold
+no copy and cannot recover it for you**. See
+[Data & security on Hezo Cloud](/docs/cloud/data-and-security).
 
 ## Keep it off the server
 
