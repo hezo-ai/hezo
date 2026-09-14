@@ -51,15 +51,19 @@ agents write and execute runs somewhere else**, in a separate per-run sandbox.
 So a container that an agent breaks, floods or gets compromised does not put it
 on the machine holding your instance.
 
-## Your secrets never enter an agent's container
+## Your secrets reach an agent as placeholders
 
 Unchanged from self-hosting, and the reason it matters more here. Agents
 reference every credential by a **placeholder**. The real value is substituted
 by the egress proxy inside **your own instance**, at request time, and only for
 the hosts that secret is scoped to.
 
-A compromised sandbox therefore exposes the prompts and files in that sandbox.
-It does not expose your provider keys, because they were never there. See
+**One credential is the exception, and it is worth knowing about.** The key for
+the model provider an agent is running against is placed in that agent's
+container in readable form, because the agent's own tool authenticates to the
+provider directly rather than through the proxy. A compromised sandbox therefore
+exposes the prompts and files in that sandbox, and the provider key the run was
+using. Every other secret was never there. See
 [Secret protection & egress](/docs/security/secret-protection).
 
 ## Payment details
@@ -76,13 +80,16 @@ account offers you a download of your work.
 its database and every file you have stored, cancels your subscription, and
 cannot be undone. We keep no backup we could restore for you afterwards.
 
-**One thing is kept, and it is worth knowing about.** Your account record,
+**Two things are kept, and they are worth knowing about.** Your account record,
 including the email address it was opened with, is marked deleted rather than
 removed, because our audit trail names it and a record that vanishes takes the
-history of what happened with it. Nothing else about you survives, and Stripe
-keeps its own record of your payments, which is theirs to erase on request to
-them. If you want the retained address erased as well, write to us and we will
-deal with it individually.
+history of what happened with it. The record of the instance itself - its
+address, its plan and its usage totals - is kept alongside it and marked
+destroyed, for the same reason and because the address is never reissued. Your
+billing records are kept for as long as the law requires, and Stripe keeps its
+own record of your payments, which is theirs to erase on request to them. If
+you want the retained address erased as well, write to us and we will deal with
+it individually.
 
 **Not paying is different, and destroys nothing.** A held or shut-down instance
 keeps its database and files, and subscribing again brings it back. See

@@ -8,8 +8,13 @@ section: Security
 
 Agents run real code and make real network calls, often needing real credentials - a
 Stripe key, a GitHub token, a webhook secret. Hezo is built so that **agents never
-hold the real value of any secret.** This is the single most important thing to
-understand about how Hezo keeps you safe.
+hold the real value of a secret you store.** This is the single most important thing
+to understand about how Hezo keeps you safe.
+
+**One credential is the exception.** The key for the model provider an agent is
+running against is placed in its container in readable form, because the agent's own
+tool authenticates to that provider directly rather than through the proxy described
+below. It is the only value that reaches a run unsubstituted.
 
 ## Placeholders, not secrets
 
