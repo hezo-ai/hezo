@@ -226,6 +226,36 @@ by renaming a temporary file into place (`policy.json.tmp`, then `rename`), whic
 is atomic, so Hezo can never read a half-written file. If a read or a parse does
 fail, the previous limits stay in force rather than silently unpinning.
 
+#### A support chat for the instance owner
+
+A deployment that answers its users through a Chatwoot website inbox can put that
+chat inside the instance. Set `policy.support.chatwoot` and the owner gets a
+**Contact support** entry under your `managedBy` name in the Settings menu, which
+opens the chat already signed in as them. Leave it out and there is no entry and
+no chat.
+
+| Setting | Default | Description |
+|---|---|---|
+| `policy.support.chatwoot.baseUrl` | - | Where your Chatwoot runs. Must be `https:`. |
+| `policy.support.chatwoot.websiteToken` | - | The website inbox's token. |
+| `policy.support.chatwoot.sdkIntegrity` | - | The integrity hash the widget script must match, as `sha256-`, `sha384-` or `sha512-` followed by the base64 digest. List several, separated by spaces, while you roll out a new script. |
+| `policy.support.chatwoot.identifier` | - | Who the owner is in that inbox. |
+| `policy.support.chatwoot.identifierHash` | - | The inbox's HMAC-SHA256 of `identifier`, keyed with the inbox's HMAC token: exactly 64 lowercase hex characters. |
+| `policy.support.chatwoot.name` | - | The owner's name, as your support team sees it. |
+| `policy.support.chatwoot.email` | - | The owner's email, as your support team sees it. |
+
+All keys except `name` and `email` are required, and at least one of those two
+must be set. A block that fails any of these is refused like any other invalid
+`policy`.
+
+**It needs an `sso` block.** The identity belongs to the one account your issuer
+signs in, so only that account's session is given it. Every other session, and
+every session on an instance with no issuer, sees no entry.
+
+**Compute `identifierHash` where the HMAC token lives.** The instance never needs
+the token, and should never be given it: anyone holding it can write to your inbox
+as any contact.
+
 ### Single sign-on from a control plane
 
 Where a control plane provisions and manages instances, it can sign its users in

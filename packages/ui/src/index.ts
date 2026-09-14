@@ -53,6 +53,8 @@
  * a Hezo concept — an actor, a budget, an archived asset — stays in the app,
  * and so does one whose copy is a paragraph rather than a word: a sentence with
  * a node in it goes through the catalog whole, which a label prop cannot do.
+ * The same test admits the one non-visual export, the support chat loader:
+ * every Hezo site that signs a person in loads it the same way.
  */
 export { Avatar, type AvatarProps, type AvatarSize, getInitials } from './avatar.js';
 export { BackLink, type BackLinkProps } from './back-link.js';
@@ -146,6 +148,16 @@ export {
 	shortcutBypassesInput,
 } from './shortcuts.js';
 export { StatusDot, type StatusDotProps } from './status-dot.js';
+export {
+	installSupportChat,
+	openSupportChat,
+	resetSupportChat,
+	type SupportChatColorScheme,
+	type SupportChatIdentity,
+	type SupportChatOptions,
+	setSupportChatLocale,
+	setSupportChatTheme,
+} from './support-chat.js';
 export { Textarea, type TextareaProps } from './textarea.js';
 export {
 	type ResolvedTheme,

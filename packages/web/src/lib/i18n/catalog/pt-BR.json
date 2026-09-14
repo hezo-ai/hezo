@@ -732,6 +732,7 @@
 	"settings.instance": "Instância",
 	"settings.logOut": "Sair",
 	"settings.managed.by": "Definido por {managedBy}",
+	"settings.managed.contactSupport": "Falar com o suporte",
 	"settings.managed.manage": "Gerenciar",
 	"settings.managed.planAndLimits": "Plano e limites",
 	"settings.provider.advanced": "Avançado",

@@ -49,6 +49,7 @@ together from H24 on.
 | **H28** | Lock the locale route on the master key | tenants no longer world-writable | **done**, product change |
 | **H29** | Translate the first screens | the seeded language reaching the gate | **done**, product change |
 | **H30** | Refuse to be framed | the launch modal's threat model | **done** |
+| **H34** | `policy.support` block, owner-only route, shared chat loader | one support contact from the site through the tenant | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -845,6 +846,19 @@ serves agent-authored HTML under a sandbox that the app's own viewer frames,
 names itself the one allowed ancestor instead. The plane sends the same policy
 on its documents; between them, no third-party page can draw its chrome around
 the master-key gate or the sign-in screen.
+
+## H34 — `policy.support` block *(done)*
+
+The plane knows who owns a tenant and holds the support inbox's HMAC token; the
+tenant knows neither. `policy.support.chatwoot` carries the inbox (`baseUrl`,
+`websiteToken`, `sdkIntegrity`) and the owner's identity in it (`identifier`,
+the plane-computed `identifierHash`, and a `name` or `email`). It rides the
+policy file, so the heartbeat that rewrites that file delivers it with no
+rebuild. **The plane writes it only for a release that reads it:** an older
+release fails the whole policy parse on the unknown key, which at boot pins
+nothing. `GET /api/support` answers it to the owner only, and `@hezo/ui` exports
+the loader the plane's dashboard uses too. Mechanism and rules: architecture
+§ *Support chat*.
 
 ---
 

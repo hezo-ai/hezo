@@ -732,6 +732,7 @@
 	"settings.instance": "Instanz",
 	"settings.logOut": "Abmelden",
 	"settings.managed.by": "Festgelegt von {managedBy}",
+	"settings.managed.contactSupport": "Support kontaktieren",
 	"settings.managed.manage": "Verwalten",
 	"settings.managed.planAndLimits": "Tarif & Limits",
 	"settings.provider.advanced": "Erweitert",

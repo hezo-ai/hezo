@@ -732,6 +732,7 @@
 	"settings.instance": "Instantie",
 	"settings.logOut": "Uitloggen",
 	"settings.managed.by": "Ingesteld door {managedBy}",
+	"settings.managed.contactSupport": "Contact opnemen met support",
 	"settings.managed.manage": "Beheren",
 	"settings.managed.planAndLimits": "Abonnement en limieten",
 	"settings.provider.advanced": "Geavanceerd",

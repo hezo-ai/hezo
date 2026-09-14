@@ -26,6 +26,16 @@ const positiveInt = z.int().positive();
 /** Allows 0, which several settings use to mean "no limit". */
 const nonNegativeInt = z.int().nonnegative();
 
+/**
+ * An operator-authored link or origin. Refused unless `https:`: a typo should be
+ * loud at startup, not a dead link or a downgraded origin found later.
+ */
+function httpsUrl(field: string) {
+	return z.url().refine((value) => value.startsWith('https://'), {
+		message: `${field} must be an https: URL`,
+	});
+}
+
 const databaseSchema = z
 	.object({
 		url: z.string().min(1).optional(),
@@ -115,6 +125,39 @@ const logCompactionSchema = z
 	})
 	.strict();
 
+const SRI_HASH = 'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}';
+
+/**
+ * A support channel. Every value is what the browser hands the widget, so each
+ * is checked for the shape the widget needs rather than accepted as any string:
+ * an integrity value that matches no hash blocks the script, and a malformed
+ * identity hash is refused by the inbox at the owner's first message.
+ */
+const chatwootSupportSchema = z
+	.object({
+		baseUrl: httpsUrl('baseUrl'),
+		websiteToken: z.string().trim().min(1),
+		sdkIntegrity: z
+			.string()
+			.trim()
+			.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
+				message:
+					'sdkIntegrity must be one or more space-separated sha256-, sha384- or sha512- hashes',
+			}),
+		identifier: z.string().trim().min(1),
+		identifierHash: z.string().regex(/^[0-9a-f]{64}$/, {
+			message: 'identifierHash must be 64 lowercase hex characters',
+		}),
+		name: z.string().trim().min(1).optional(),
+		email: z.string().trim().min(1).optional(),
+	})
+	.strict()
+	// The widget refuses to identify a contact with neither, so a block without
+	// one would load a chat that can never say who is writing.
+	.refine((value) => value.name !== undefined || value.email !== undefined, {
+		message: 'a name or an email is required',
+	});
+
 /**
  * The pinned-settings block. Also the shape of the standalone policy file, which
  * is why it is exported: one schema for both, so a file the deployer writes and
@@ -128,12 +171,7 @@ const logCompactionSchema = z
 export const policySchema = z
 	.object({
 		managedBy: z.string().trim().min(1),
-		manageUrl: z
-			.url()
-			.refine((value) => value.startsWith('https://'), {
-				message: 'manageUrl must be an https: URL',
-			})
-			.optional(),
+		manageUrl: httpsUrl('manageUrl').optional(),
 		pinned: z
 			.object({
 				maxContainerMemoryGb: positiveInt.optional(),
@@ -155,6 +193,7 @@ export const policySchema = z
 				backend: z.enum(SANDBOX_BACKENDS).optional(),
 			})
 			.strict(),
+		support: z.object({ chatwoot: chatwootSupportSchema }).strict().optional(),
 	})
 	.strict();
 
@@ -173,9 +212,7 @@ export const policySchema = z
  */
 export const ssoSchema = z
 	.object({
-		issuerUrl: z.url().refine((value) => value.startsWith('https://'), {
-			message: 'issuerUrl must be an https: URL',
-		}),
+		issuerUrl: httpsUrl('issuerUrl'),
 		// Rejected here, naming the offending entry, so a mistyped rotation fails
 		// at startup while an operator is watching rather than at someone's first
 		// sign-in with nothing but a 401 to go on.
@@ -190,9 +227,7 @@ export const ssoSchema = z
 		// Required like the rest of the block. An issuer that can sign a person in
 		// can sign them out, and leaving it optional would mean a logout that
 		// quietly does half of what it says.
-		logoutUrl: z.url().refine((value) => value.startsWith('https://'), {
-			message: 'logoutUrl must be an https: URL',
-		}),
+		logoutUrl: httpsUrl('logoutUrl'),
 		ownerSubject: z.string().trim().min(1),
 		// Compared to a token's `aud` verbatim, and never read from the request:
 		// the only request-time source for "this instance's host" is a header the

@@ -13,6 +13,7 @@ import {
 	type MasterKeyState,
 	signAuthMessage,
 } from '@hezo/shared';
+import { resetSupportChat } from '@hezo/ui';
 import { ApiError, api } from './api';
 import { clearPendingSsoHandle, goToIssuer } from './sso';
 
@@ -276,6 +277,8 @@ export function logout(issuerLogoutUrl?: string) {
 	// Survives only because the redirect below unloads the page, which is not a
 	// reason to leave it holding a verified identity.
 	clearPendingSsoHandle();
+	// The support chat holds a conversation tied to the person leaving.
+	resetSupportChat();
 	if (issuerLogoutUrl) goToIssuer(issuerLogoutUrl);
 }
 

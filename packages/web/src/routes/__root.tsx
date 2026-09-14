@@ -39,6 +39,7 @@ import { useAllVisibleProjects, useHqProject, useProjectsIndex } from '../hooks/
 import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
 import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
+import { useSupportChat } from '../hooks/use-support';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { type ApiError, api } from '../lib/api';
 import { useI18n, useSyncInstanceLocale } from '../lib/i18n';
@@ -307,6 +308,9 @@ function ShellLayout() {
 		[projects],
 	);
 	useShellWebSockets(teamRooms);
+	// Mounted here because this is the first render with a session, after the
+	// issuer's token has left the address bar.
+	useSupportChat();
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 

@@ -732,6 +732,7 @@
 	"settings.instance": "Instancia",
 	"settings.logOut": "Cerrar sesión",
 	"settings.managed.by": "Definido por {managedBy}",
+	"settings.managed.contactSupport": "Contactar con soporte",
 	"settings.managed.manage": "Gestionar",
 	"settings.managed.planAndLimits": "Plan y límites",
 	"settings.provider.advanced": "Avanzado",
