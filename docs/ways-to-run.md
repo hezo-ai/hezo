@@ -31,10 +31,6 @@ trial. Start at [Hezo Cloud](/docs/cloud/overview).
 | Who holds the recovery phrase | You | You. We never hold it |
 | What it costs | Nothing. You pay your model providers | A monthly or annual plan, plus your model providers. See [hezo.ai/pricing](https://hezo.ai/pricing) |
 
-**Hezo Cloud does not resell inference.** You connect your own Anthropic,
-OpenAI, Google, xAI or other provider account, and that spend is billed to you
-by them. See [AI model support](/docs/ai-models).
-
 ## Which one to pick
 
 **Self-host** if you want the work on hardware you control, if your data cannot
@@ -46,11 +42,6 @@ HTTPS and backups.
 **Hezo Cloud** if you would rather not run a server at all, if you want an
 always-on instance without leaving a laptop open, or if keeping a box patched
 is not how you want to spend your time.
-
-**Moving an existing instance between the two is not a feature today.** Hezo
-Cloud does not offer a data export at launch, so if you expect to move your
-work out later, self-host from the start. See
-[Data & security on Hezo Cloud](/docs/cloud/data-and-security).
 
 ## Next
 

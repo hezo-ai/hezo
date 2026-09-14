@@ -70,8 +70,7 @@ merchant of record - we see that you paid, not what you paid with.
 ## Leaving
 
 **There is no data export at launch.** Neither shutting down nor deleting your
-account offers you a download of your work. If being able to take your data
-elsewhere matters to you, self-host from the start.
+account offers you a download of your work.
 
 **Deleting your account is immediate and permanent.** It removes your instance,
 its database and every file you have stored, cancels your subscription, and

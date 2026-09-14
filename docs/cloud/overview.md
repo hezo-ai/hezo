@@ -44,10 +44,9 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
 
 ## What you bring
 
-- **Your own model accounts.** Hezo Cloud does not resell inference and does
-  not mark it up. Connect Anthropic, OpenAI, Google, xAI, Kimi, DeepSeek, Z.ai
-  or OpenRouter exactly as a self-hosted instance does, and that spend is
-  billed to you by them. See [AI model support](/docs/ai-models).
+- **Your own model accounts.** Connect Anthropic, OpenAI, Google, xAI, Kimi,
+  DeepSeek, Z.ai or OpenRouter, and that spend is billed to you by them. See
+  [AI model support](/docs/ai-models).
 - **Your recovery phrase.** We never hold it, and nobody here can recover it
   for you.
 - **Anything your agents need to reach** - repositories, connectors, API
