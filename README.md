@@ -93,9 +93,9 @@ steps in [Installation](./docs/getting-started/installation.md).</sub>
 
 **Self-host it.** Free and open source under GPL-3.0. One binary, your machine, your
 data, your model keys - start at [Quickstart](#quickstart) above. Want it always-on
-rather than on your laptop? These provision a VM in a couple of minutes, with Docker,
-the binary, automatic HTTPS (a real cert via `<ip>.sslip.io`, no domain needed),
-systemd and a locked-down firewall:
+rather than on your laptop? These provision a server in a couple of minutes, with
+Docker, the binary, automatic HTTPS (a real cert via `<ip>.sslip.io`, no domain
+needed), systemd and a locked-down firewall:
 
 <p>
   <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
@@ -107,13 +107,9 @@ systemd and a locked-down firewall:
 Shell and runs the deploy, and AWS opens a CloudFormation <b>Launch Stack</b>.
 <b>DigitalOcean</b> opens a short guide until its
 <a href="./deploy/marketplace/digitalocean/README.md">Marketplace image</a> is listed.
-Any provider that takes cloud-init works too - see
-<a href="./docs/deployment/one-click.md">One-click deploy</a>. These target VM providers
-because the default setup runs agents on the host's own container-runtime socket, which
-needs a <b>real VM</b> - not a managed-container PaaS. Run the containers on a
-<a href="./docs/containers/remote/overview.md">managed sandbox service</a> instead and a
-much smaller VPS will do; see
-<a href="./docs/deployment/vps.md">Self-hosting on a VPS</a>.</sub>
+Any provider that takes cloud-init works too, and
+<a href="./docs/deployment/one-click.md">One-click deploy</a> covers which kind of
+machine to pick and why.</sub>
 
 **Hezo Cloud.** We run and update your instance at `you.app.hezo.ai`, agents run on
 managed sandboxes, and you still bring your own model keys. Starts with a 7-day free

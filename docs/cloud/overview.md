@@ -8,8 +8,9 @@ section: Hezo Cloud
 
 **Hezo Cloud is Hezo, run for you.** You get your own always-on instance at
 your own address, with unlimited projects and unlimited agents, and you never
-touch a server. It is the same software you would self-host, so every other
-page in these docs still describes what you are using.
+touch a server. The rest of these docs describe your instance;
+[What's different from self-hosting](/docs/cloud/whats-different) is the short
+list of exceptions.
 
 If you would rather run it yourself, that option is free and fully supported -
 see [Ways to run Hezo](/docs/ways-to-run).
@@ -43,10 +44,9 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
 
 ## What you bring
 
-- **Your own model accounts.** Hezo Cloud does not resell inference and does
-  not mark it up. Connect Anthropic, OpenAI, Google, xAI, Kimi, DeepSeek, Z.ai
-  or OpenRouter exactly as a self-hosted instance does, and that spend is
-  billed to you by them. See [AI model support](/docs/ai-models).
+- **Your own model accounts.** Connect Anthropic, OpenAI, Google, xAI, Kimi,
+  DeepSeek, Z.ai or OpenRouter, and that spend is billed to you by them. See
+  [AI model support](/docs/ai-models).
 - **Your recovery phrase.** We never hold it, and nobody here can recover it
   for you.
 - **Anything your agents need to reach** - repositories, connectors, API
@@ -55,8 +55,8 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
 
 ## Where it runs
 
-One region, in the European Union. There is no region choice today, and no
-custom domain: every instance answers on a `app.hezo.ai` address.
+On its own machine, in Europe. Your instance answers on its own
+`you.app.hezo.ai` address, which you choose when you sign up.
 
 ## Next
 

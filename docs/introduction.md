@@ -9,7 +9,7 @@ section: Overview
 **Hezo is an open source platform for running teams of AI agents.** You open a web
 app and stand up a whole organisation of agents - a CEO, a Captain, engineers,
 designers, researchers, whatever the work needs - that plan and execute real projects
-under your oversight. The model keys and the spend are yours either way.
+under your oversight. The model keys and the spend are yours.
 
 There are two ways to run it. **Self-host it** on a machine you control, free, from a
 single binary. Or let us run an always-on instance for you on **Hezo Cloud**. The
@@ -105,5 +105,5 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Own your data.** Self-hosted, Hezo carries an embedded database by default - no
   external service to run (or bring your own Postgres, and keep asset files in your own
   S3-compatible bucket) - so your work lives in storage you control. On Hezo Cloud the
-  database and file storage are managed for you. Either way, upgrades are safe and
-  data-preserving. See [Your data & the database](/docs/concepts/your-data).
+  database and file storage are managed for you. Upgrades are safe and data-preserving.
+  See [Your data & the database](/docs/concepts/your-data).
