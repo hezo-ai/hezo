@@ -76,6 +76,14 @@ account offers you a download of your work.
 its database and every file you have stored, cancels your subscription, and
 cannot be undone. We keep no backup we could restore for you afterwards.
 
+**One thing is kept, and it is worth knowing about.** Your account record,
+including the email address it was opened with, is marked deleted rather than
+removed, because our audit trail names it and a record that vanishes takes the
+history of what happened with it. Nothing else about you survives, and Stripe
+keeps its own record of your payments, which is theirs to erase on request to
+them. If you want the retained address erased as well, write to us and we will
+deal with it individually.
+
 **Not paying is different, and destroys nothing.** A held or shut-down instance
 keeps its database and files, and subscribing again brings it back. See
 [Plans, usage & billing](/docs/cloud/plans-and-billing).
