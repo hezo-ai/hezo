@@ -68,6 +68,10 @@
 	],
 	"changelog": [
 		{
+			"version": 25,
+			"notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain no longer carries its own copy of the rule. The register covers what an agent writes in Hezo - comments, task descriptions, progress summaries, project docs - and leaves the report itself to the format its brief specifies."
+		},
+		{
 			"version": 24,
 			"notes": "Catalyst Monitor and Report Writer now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
 		},

@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 32,
+			"version": 33,
 			"roster_count": 10,
-			"latest_notes": "Engineer, UI Designer, DevOps Engineer and Marketing Lead now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
+			"latest_notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain and the Product Lead no longer carry their own copies of the rule. Comments, task descriptions, progress summaries and project docs read the same whoever wrote them; what a role is commissioned to produce still follows its own brief."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 23,
+			"version": 24,
 			"roster_count": 7,
-			"latest_notes": "Content Writer, Media Producer and Distribution Manager now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
+			"latest_notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain no longer carries its own copy of the rule. The register covers what an agent writes in Hezo - comments, task descriptions, progress summaries, project docs - and deliberately leaves content deliverables to the brand voice they are written for."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 24,
+			"version": 25,
 			"roster_count": 6,
-			"latest_notes": "Catalyst Monitor and Report Writer now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
+			"latest_notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain no longer carries its own copy of the rule. The register covers what an agent writes in Hezo - comments, task descriptions, progress summaries, project docs - and leaves the report itself to the format its brief specifies."
 		}
 	]
 }

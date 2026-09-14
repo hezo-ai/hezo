@@ -2580,8 +2580,8 @@ export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
  * independent of the far larger total ARG_MAX. Exceeding it fails execve with
  * E2BIG ("Argument list too long") before the CLI's main() ever runs.
  *
- * Hezo's prompts clear it routinely: SHARED_INSTRUCTIONS alone is ~111 KB before
- * the role doc, the repo/team/state blocks and the task body. So `'arg'` delivery
+ * Hezo's prompts clear it routinely: SHARED_INSTRUCTIONS alone is ~80 KB, and the
+ * role doc, the repo/team/state blocks and the task body all follow it. So `'arg'` delivery
  * only works for a runtime whose system half travels out of band
  * (RUNTIME_SYSTEM_PROMPT_FILE), and `assertPromptDeliverable` in the runner
  * refuses the run rather than letting the exec die with a one-line shell error.

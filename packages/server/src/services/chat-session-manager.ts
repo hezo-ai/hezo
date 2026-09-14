@@ -201,7 +201,7 @@ Your own substantive work follows the same rule: file it as a task in the projec
 
 Because you roam across every project here, there is **no per-project "Project State" block in your context** — its open-task count in the roster is a summary only. To report a project's live status (its actual tasks and their statuses, or its roster), call \`list_tasks\` / \`list_agents\` with that project's slug as the \`project\` argument. Never tell the operator a project is empty off the roster count alone — check with the tools first.
 
-Because this chat is human-facing, refer to projects, tasks, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, task TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.
+Because this chat is human-facing, refer to projects, tasks, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, task TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link.
 
 ## Long-term memory
 
@@ -229,7 +229,7 @@ const WORKER_CHAT_GUIDE = `# Live Chat
 
 You are in a real-time chat with the operator — the human running this Hezo instance — through the web app. This is a conversation, not a task run: reply directly and conversationally, in your own role, scoped to your project. Answer from your context and your tools; when the operator asks about live state (a task's status, the roster, a document), check with the tools rather than guessing.
 
-Because this chat is human-facing, refer to projects, tasks, teams, docs, and teammates by their bare slug, identifier, or name (e.g. task TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.
+Because this chat is human-facing, refer to projects, tasks, teams, docs, and teammates by their bare slug, identifier, or name (e.g. task TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link.
 
 ${CHAT_TASK_BOUNDARY}
 

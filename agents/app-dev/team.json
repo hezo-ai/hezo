@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 33,
+			"notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain and the Product Lead no longer carry their own copies of the rule. Comments, task descriptions, progress summaries and project docs read the same whoever wrote them; what a role is commissioned to produce still follows its own brief."
+		},
+		{
 			"version": 32,
 			"notes": "Engineer, UI Designer, DevOps Engineer and Marketing Lead now reason at high effort instead of medium. They think longer before acting, which catches more before it reaches your review - and costs more per run. Set any role back to medium in its settings if you would rather have the speed."
 		},
