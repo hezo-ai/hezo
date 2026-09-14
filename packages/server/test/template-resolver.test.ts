@@ -424,6 +424,9 @@ describe('template resolver', () => {
 			'### Hezo Entities Live in the Database, Not on the Container Filesystem',
 		);
 		expect(result).toContain('read_project_doc');
+		// One writing register for every agent, stated before the sections whose
+		// output it governs — progress_summary, task descriptions, docs, comments.
+		expect(result).toContain('### How You Write');
 		expect(result).toContain('### Task Maintenance');
 		expect(result).toContain('### Creating Tasks');
 		expect(result).toContain('### Task Dependencies');
@@ -453,6 +456,35 @@ describe('template resolver', () => {
 		// must inspect for an existing resource before creating a duplicate.
 		expect(result).toContain('### Changes to External Services Require Admin Approval');
 		expect(result).toContain('Inspect before you write');
+	});
+
+	// One register for every agent, so a comment, a task description and a project
+	// doc read the same whoever produced them. It is named AND operationalised: an
+	// agent must be able to act on it without looking ASD-STE100 up.
+	it('binds every agent to one writing register, scoped to what it writes in Hezo', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('Write in Simplified Technical English (ASD-STE100)');
+		expect(result).toContain('One idea per sentence, under 25 words');
+		expect(result).toContain('one word per meaning');
+		// Zinsser's humanity principle is what stops STE alone producing prose that
+		// reads like machine translation.
+		expect(result).toContain("Zinsser's four principles: simplicity, brevity, clarity, humanity");
+		expect(result).toContain('Write to a person');
+		expect(result).toContain('Be succinct. Lead with the outcome, then the detail');
+		expect(result).toContain('length is not effort');
+		// The register reaches Hezo communication, not a deliverable. A blanket rule
+		// would flatten the brand copy and reports other roles are commissioned for.
+		expect(result).toContain('**This governs what you write in Hezo:**');
+		expect(result).toContain('project docs, and skills');
+	});
+
+	// The register states the lead-with-the-outcome rule once, for every surface.
+	// The Comments section carries only what is specific to a comment body.
+	it('does not restate the register inside the Comments section', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('### Comments');
+		expect(result).toContain('**Format as proper markdown.**');
+		expect(result).not.toContain('Lead with a one-line summary of the outcome');
 	});
 
 	// A marketing-lead delegated the content rewrites to content-writer as a sub-task,

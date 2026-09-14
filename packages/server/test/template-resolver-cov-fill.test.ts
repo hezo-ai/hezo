@@ -276,6 +276,22 @@ describe('mode gating', () => {
 		expect(result).not.toContain('## Working Guidelines');
 	});
 
+	// A chat turn receives none of SHARED_INSTRUCTIONS, so the writing register is
+	// restated on the chat diet rather than shared. Without this, a DM reply is the
+	// one agent surface the register never reaches.
+	it('gives a chat turn the writing register on the chat diet, not the task-run guidelines', async () => {
+		const result = await resolveSystemPrompt(ctx.db, 'Chat prompt', {
+			teamId,
+			projectId,
+			chatSlim: true,
+		});
+		expect(result).not.toContain('## Working Guidelines');
+		expect(result).toContain('## Shared Guidance (chat)');
+		expect(result).toContain('### How You Write');
+		expect(result).toContain('Write in Simplified Technical English');
+		expect(result).toContain('Answer the question and stop');
+	});
+
 	it('preview mode omits Run Context and Repository but keeps Teammates + guidelines', async () => {
 		const result = await resolveSystemPrompt(ctx.db, 'Preview {{team_name}}', {
 			teamId,

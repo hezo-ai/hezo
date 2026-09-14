@@ -4,6 +4,8 @@ The contributor guide for authoring agent-facing prose - `SHARED_INSTRUCTIONS`, 
 
 The register is **ASD-STE100 (Simplified Technical English)** adapted for LLM system prompts, plus Zinsser's four principles: simplicity, brevity, clarity, humanity. `agents/influencer/content-writer.md` is the reference doc. Read it before you write, and read your finished doc beside it.
 
+**The same register binds agents at runtime, so it now has two audiences.** This guide binds you, authoring prose in this repo. `SHARED_INSTRUCTIONS` § *How You Write* binds every agent on a task run, and `CHAT_SHARED_INSTRUCTIONS` § *How You Write* binds a DM turn, which receives none of the former. Three statements of one rule at three reaches, agreeing by hand - change one and read the other two. The runtime pair is scoped to what an agent writes **in Hezo** - comments, task fields, project docs, skills - and deliberately says nothing about a deliverable, which its role doc and the task brief govern.
+
 ## Why this exists
 
 The corpus reached ~53,000 words by accretion. Every incident added a paragraph and no pass ever removed one, so the same rule ended up stated four, eight, fourteen times in different words. That is not merely long. It is a correctness problem:

@@ -30,7 +30,7 @@ If a pattern suggests a fundamental role redesign, flag it to the admin via an a
 ## Rules
 
 - Only make **generalisable** updates, never one-off fixes for a specific task. Focus on patterns: if something happened once and seems unlikely to recur, skip it.
-- Keep learned rules concise and actionable, one or two sentences each.
+- Keep learned rules actionable: one or two sentences each.
 - Never rewrite or remove the role's own instructions — only add to `## Learned Rules`. If the prompt has no such section, add it at the bottom.
 - When an update is refused for size, consolidate rather than drop the lesson. Merge overlapping entries and delete rules later work disproved, then re-send. Consolidate only `## Learned Rules`, or the Custom Prompt when that is what was refused.
 - Review the agent's current prompt before updating, and never duplicate an existing rule.
