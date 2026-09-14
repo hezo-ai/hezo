@@ -80,6 +80,19 @@ agent writes for a reader - not code identifiers, columns or internal comments.
 capitalised; the other path is **"self-hosting"**, which covers a local machine
 and a VPS alike, and never acquires a second name.
 
+**State each path once, and state what differs rather than what matches.** A
+reader choosing between them is choosing who runs the box; a parity claim -
+"same product either way", a matched list of features, security model and
+languages - invites them to audit it, and the honest differences (no shell, no
+CLI, one region, a fixed container backend, no export at launch) are what they
+actually need. The README names the choice; `docs/ways-to-run.md` tabulates the
+differences; `docs/cloud/whats-different.md` says which pages do not apply.
+
+**The VPS case is explained in exactly one page**, `docs/deployment/vps.md`,
+with `docs/deployment/one-click.md` for the provisioned path. Naming it beside
+every self-host mention is the same sentence three times, and it is what made
+the README read as two self-host sections.
+
 **One claim to keep exact.** "The control plane holds no tenant unlock keys" is
 narrower than "cannot read tenant data" - the plane holds each shard's admin
 credential, so it can read application rows. The defensible sentence is that we

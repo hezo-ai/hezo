@@ -17,10 +17,6 @@ yourself. Free, under the GNU General Public License v3.0. Start at
 it patched and backed up, and you never touch a server. Paid, after a free
 trial. Start at [Hezo Cloud](/docs/cloud/overview).
 
-Everything above the box is the same either way: the same agents, projects,
-tasks, skills and chat apps, the same secret protection, and the same twelve
-languages. What follows is what actually differs.
-
 ## What differs
 
 | | Self-hosted | Hezo Cloud |
@@ -35,10 +31,9 @@ languages. What follows is what actually differs.
 | Who holds the recovery phrase | You | You. We never hold it |
 | What it costs | Nothing. You pay your model providers | A monthly or annual plan, plus your model providers. See [hezo.ai/pricing](https://hezo.ai/pricing) |
 
-**You bring your own model accounts either way.** Hezo Cloud does not resell
-inference. You connect your own Anthropic, OpenAI, Google, xAI or other
-provider account, exactly as a self-hosted instance does, and that spend is
-billed to you by them. See [AI model support](/docs/ai-models).
+**Hezo Cloud does not resell inference.** You connect your own Anthropic,
+OpenAI, Google, xAI or other provider account, and that spend is billed to you
+by them. See [AI model support](/docs/ai-models).
 
 ## Which one to pick
 
@@ -52,10 +47,9 @@ HTTPS and backups.
 always-on instance without leaving a laptop open, or if keeping a box patched
 is not how you want to spend your time.
 
-Nothing here is a one-way door in spirit - both run the same software - but
-moving an existing instance between the two is not a feature today. Hezo Cloud
-does not offer a data export at launch, so if you expect to move your work out
-later, self-host from the start. See
+**Moving an existing instance between the two is not a feature today.** Hezo
+Cloud does not offer a data export at launch, so if you expect to move your
+work out later, self-host from the start. See
 [Data & security on Hezo Cloud](/docs/cloud/data-and-security).
 
 ## Next

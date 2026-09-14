@@ -8,8 +8,9 @@ section: Hezo Cloud
 
 **Hezo Cloud is Hezo, run for you.** You get your own always-on instance at
 your own address, with unlimited projects and unlimited agents, and you never
-touch a server. It is the same software you would self-host, so every other
-page in these docs still describes what you are using.
+touch a server. The rest of these docs describe your instance;
+[What's different from self-hosting](/docs/cloud/whats-different) is the short
+list of exceptions.
 
 If you would rather run it yourself, that option is free and fully supported -
 see [Ways to run Hezo](/docs/ways-to-run).

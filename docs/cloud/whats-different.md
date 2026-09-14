@@ -6,9 +6,8 @@ section: Hezo Cloud
 
 # What's different from self-hosting
 
-Hezo Cloud runs the same software you would install yourself, so most of these
-docs describe your instance exactly. This page is the short list of what does
-not apply, and what replaces it.
+Most of these docs describe your instance as it is. This page is the short list
+of what does not apply, and what replaces it.
 
 ## Which pages apply to you
 
