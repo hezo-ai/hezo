@@ -22,11 +22,11 @@ trial. Start at [Hezo Cloud](/docs/cloud/overview).
 | | Self-hosted | Hezo Cloud |
 |---|---|---|
 | Who runs the machine | You | We do |
-| Where it runs | Anywhere you like, including your own laptop | One region, in the EU |
+| Where it runs | Anywhere you like, including your own laptop | On its own machine, in Europe |
 | Its address | Whatever you point at it | `you.app.hezo.ai`, chosen once |
 | Where agent containers run | Your own runtime, or a managed sandbox service - [your choice](/docs/containers/overview), switchable | A managed sandbox service, fixed |
 | Updates | You take them when you want, or leave auto-update off | You take them when you want |
-| Shell access to the box | Yours | None, so no `hezo` command line |
+| Shell access to the box | Yours | We run the machine, so everything the `hezo` command does is done for you or from the web app |
 | Database and file storage | Embedded by default, or bring your own | Managed for you |
 | Who holds the recovery phrase | You | You. We never hold it |
 | What it costs | Nothing. You pay your model providers | A monthly or annual plan, plus your model providers. See [hezo.ai/pricing](https://hezo.ai/pricing) |

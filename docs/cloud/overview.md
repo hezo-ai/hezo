@@ -55,8 +55,8 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
 
 ## Where it runs
 
-One region, in the European Union. There is no region choice today, and no
-custom domain: every instance answers on a `app.hezo.ai` address.
+On its own machine, in Europe. Your instance answers on its own
+`you.app.hezo.ai` address, which you choose when you sign up.
 
 ## Next
 

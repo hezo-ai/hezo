@@ -27,16 +27,17 @@ of what does not apply, and what replaces it.
 
 ## No shell, so no command line
 
-Everything the `hezo` command does is done for you or from the web app. In
-particular there is no `hezo backup` and no `hezo restore`.
+Everything the `hezo` command does is done for you or from the web app,
+backups included.
 
-**Your data is looked after.** The database is backed up daily with
+**Your data is looked after for you.** The database is backed up daily with
 point-in-time recovery, your files are versioned, and a lost machine is rebuilt
 from a snapshot with no data loss.
 
-**What is not available yet is a self-serve backup or restore** - a button that
-hands you an archive, or rolls your instance back to Tuesday. If you need that
-today, self-host. See [Ways to run Hezo](/docs/ways-to-run).
+**Taking a backup into your own hands is a self-hosted thing**, since it is the
+`hezo` command that does it. If you want an archive you hold yourself, or to
+roll your own instance back to Tuesday, run Hezo yourself. See
+[Ways to run Hezo](/docs/ways-to-run).
 
 ## Where agent containers run
 
@@ -70,10 +71,10 @@ unlock it.
 Your instance comes back unlocked after an ordinary update. It comes back
 **locked** after a restart it did not plan, and asks you for the phrase.
 
-## Not available
+## Your address and where it runs
 
-- **A custom domain.** Every instance answers on `you.app.hezo.ai`.
-- **A choice of region.** One region, in the European Union.
-- **A data export.** See [Data & security on Hezo
-  Cloud](/docs/cloud/data-and-security).
-- **Changing your address.** It is chosen once, at signup.
+- **Your address is `you.app.hezo.ai`**, chosen once when you sign up and kept
+  for the life of the account.
+- **Your instance runs on its own machine, in Europe.**
+- **What happens to your data when you leave** is covered in [Data & security
+  on Hezo Cloud](/docs/cloud/data-and-security).
