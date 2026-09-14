@@ -270,7 +270,7 @@ describe('configuration documentation after the environment-variable migration',
 		const configuration = readFileSync(join(REPO_ROOT, 'docs/deployment/configuration.md'), 'utf8');
 		const cli = readFileSync(join(REPO_ROOT, 'docs/reference/cli.md'), 'utf8');
 		const oneClick = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
-		const cloud = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
+		const cloud = readFileSync(join(REPO_ROOT, 'docs/deployment/vps.md'), 'utf8');
 		const publicDocs = `${backup}\n${configuration}\n${cli}\n${oneClick}\n${cloud}`;
 
 		expect(design).toMatch(/the\s+droplet still carries required local state/);

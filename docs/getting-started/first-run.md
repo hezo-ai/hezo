@@ -36,7 +36,7 @@ key in memory: the supervisor hands it to a new process during an in-app update,
 pass it to one invocation with `--master-key` / `HEZO_MASTER_KEY`. A reboot, crash, or
 direct service restart comes up locked unless that invocation deliberately receives this
 one-shot input. Don't store the phrase on
-the server (see [Deploying to the cloud](/docs/deployment/cloud) and
+the server (see [Self-hosting on a VPS](/docs/deployment/vps) and
 [Master key & encryption](/docs/security/master-key)).
 
 ## 2. Set an admin password

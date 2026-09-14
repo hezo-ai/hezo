@@ -48,7 +48,7 @@ handed to managed services: an
 database, and
 [S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage)
 for assets (step-by-step:
-[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)).
+[Managed database & asset storage](/docs/deployment/vps#managed-database--asset-storage)).
 The data directory is still required for workspaces and keys either way. Full recovery
 needs more than this directory: keep a Hezo backup bundle, the complete data directory,
 the config file, files it references, backend credentials, service settings or
@@ -184,7 +184,7 @@ OAuth-connected MCP servers connectable (providers and browsers only accept HTTP
 `localhost` callback URLs), lets Hezo install as an app on your phone, and keeps your
 admin password and task content sealed in transit. The proxy must pass WebSocket
 upgrades and forward the `Host` and `X-Forwarded-Proto` headers - see
-[Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) for a working
+[Serve it over HTTPS](/docs/deployment/vps#serve-it-over-https) for a working
 config, and [Secure remote access](/docs/deployment/secure-remote-access) for
 certificate options on private networks.
 

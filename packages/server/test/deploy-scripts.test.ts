@@ -34,7 +34,7 @@ const SECURE_REMOTE_ACCESS = readFileSync(
 	'utf8',
 );
 const BACKUP = readFileSync(join(REPO_ROOT, 'docs/deployment/backup-and-recovery.md'), 'utf8');
-const CLOUD = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
+const CLOUD = readFileSync(join(REPO_ROOT, 'docs/deployment/vps.md'), 'utf8');
 const CONFIGURATION = readFileSync(join(REPO_ROOT, 'docs/deployment/configuration.md'), 'utf8');
 const CLI = readFileSync(join(REPO_ROOT, 'docs/reference/cli.md'), 'utf8');
 const FIRST_RUN = readFileSync(join(REPO_ROOT, 'docs/getting-started/first-run.md'), 'utf8');

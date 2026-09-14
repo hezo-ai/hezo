@@ -113,7 +113,7 @@ provider that takes cloud-init works too - see
 > managed-container PaaS (Render, Railway, Cloud Run). Run the containers on a
 > [managed sandbox service](./docs/containers/remote/overview.md) instead and the server
 > needs no runtime at all, so a much smaller VPS will do. See
-> [Deploying to the cloud](./docs/deployment/cloud.md).
+> [Self-hosting on a VPS](./docs/deployment/vps.md).
 
 ## How it works
 

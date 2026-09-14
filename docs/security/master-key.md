@@ -37,7 +37,7 @@ Hezo has a simple gate around your secrets:
 You unlock from the web app's gate screen. On a server you can also unlock a **single
 startup** non-interactively by passing the `--master-key` flag / `HEZO_MASTER_KEY`
 environment variable to that one invocation (see
-[Deploying to the cloud](/docs/deployment/cloud)) - but don't persist the phrase to disk
+[Self-hosting on a VPS](/docs/deployment/vps)) - but don't persist the phrase to disk
 to do it (see [Keep it off the server](#keep-it-off-the-server) below).
 
 ## Keep it off the server

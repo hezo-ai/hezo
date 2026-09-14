@@ -91,7 +91,7 @@ it at the `/mcp` endpoint and pass your key in the `Authorization` header:
 
 If your Hezo runs on a remote server, replace `http://localhost:3100` with its **HTTPS**
 base URL - a remote instance sits behind a TLS reverse proxy on its own domain (see
-[Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https)). The API key travels
+[Serve it over HTTPS](/docs/deployment/vps#serve-it-over-https)). The API key travels
 in the header, so never call a remote instance over plain HTTP. See
 [Secure remote access](/docs/deployment/secure-remote-access).
 
