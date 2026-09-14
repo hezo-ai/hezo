@@ -6,6 +6,13 @@ section: Deployment
 
 # Backup & recovery
 
+> [!NOTE]
+> **This page is for self-hosted instances.** On
+> [Hezo Cloud](/docs/cloud/overview) you have no shell, so `hezo backup` is not
+> available to you - your database is backed up daily with point-in-time recovery and
+> your files are versioned, but a self-serve backup or restore is not offered yet. See
+> [What's different from self-hosting](/docs/cloud/whats-different).
+
 `hezo backup` writes a portable **database-and-assets migration bundle** containing the
 database and every uploaded asset file. It works for both database backends (embedded and
 [external Postgres](/docs/deployment/configuration)) and both asset backends (local files

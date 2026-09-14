@@ -6,11 +6,15 @@ section: Overview
 
 # Introduction
 
-**Hezo is a self-hosted platform for running teams of AI agents.** You install one
-binary, open a web app, and stand up a whole organisation of agents - a CEO, a
-Captain, engineers, designers, researchers, whatever the work needs - that plan and
-execute real projects under your oversight. You own the machine, the model keys, the
-spend, and the data.
+**Hezo is an open source platform for running teams of AI agents.** You open a web
+app and stand up a whole organisation of agents - a CEO, a Captain, engineers,
+designers, researchers, whatever the work needs - that plan and execute real projects
+under your oversight. The model keys and the spend are yours either way.
+
+There are two ways to run it. **Self-host it** on a machine you control, free, from a
+single binary. Or let us run an always-on instance for you on **Hezo Cloud**. The
+difference is who runs the box, and [Ways to run Hezo](/docs/ways-to-run) lays out the
+choice.
 
 Think of it as the company around the agents: org charts, projects, budgets,
 approvals, and coordination, instead of twenty terminal tabs you babysit by hand.
@@ -98,7 +102,8 @@ agent can't hurt you. A few guarantees sit underneath everything:
   Hezo's [built-in MCP server](/docs/mcp/hezo-mcp-server), and give your agents the tools
   you already use by [connecting external services](/docs/mcp/connecting-mcp-servers) -
   hosted MCP servers or plain REST APIs.
-- **Own your data.** Hezo carries an embedded database by default - no external service
-  to run (or bring your own Postgres, and keep asset files in your own S3-compatible
-  bucket) - so your work lives in storage you control, with safe, data-preserving
-  upgrades. See [Your data & the database](/docs/concepts/your-data).
+- **Own your data.** Self-hosted, Hezo carries an embedded database by default - no
+  external service to run (or bring your own Postgres, and keep asset files in your own
+  S3-compatible bucket) - so your work lives in storage you control. On Hezo Cloud the
+  database and file storage are managed for you. Either way, upgrades are safe and
+  data-preserving. See [Your data & the database](/docs/concepts/your-data).

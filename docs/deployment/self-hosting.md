@@ -6,9 +6,12 @@ section: Deployment
 
 # Self-hosting Hezo
 
-Hezo is **self-hosted by design** - it's a single binary you run on hardware you
-control, with no external services required to operate it. You own the data, the model
+Hezo self-hosts cleanly - it's a single binary you run on hardware you control, with
+no external services required to operate it. You own the machine, the data, the model
 keys, and the spend.
+
+If you would rather not run a machine at all, [Hezo Cloud](/docs/cloud/overview) runs
+one for you. This whole section is about the other path.
 
 ## What you need
 
