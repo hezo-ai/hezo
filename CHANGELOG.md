@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.65.1 - 2026-09-14
+
+### Other
+
+- Say each path once, say Europe, and say what Hezo Cloud is ([#1116](https://github.com/hezo-ai/hezo/pull/1116))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.65.0...0.65.1
+
 ## 0.65.0 - 2026-09-14
 
 ### Features
