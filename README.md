@@ -16,8 +16,8 @@
 </div>
 
 <p align="center">
-  <strong>Run teams of AI agents like an organisation - self-hosted, sandboxed,
-  with budget caps and your own model keys.</strong>
+  <strong>Run teams of AI agents like an organisation - sandboxed, with budget caps
+  and your own model keys. Open source, and hosted if you'd rather not run it.</strong>
 </p>
 
 <p align="center">
@@ -27,6 +27,7 @@
 <p align="center">
   <a href="#quickstart">Quickstart</a>
   · <a href="#features">Features</a>
+  · <a href="https://hezo.ai/pricing">Pricing</a>
   · <a href="#agents-never-hold-your-secrets">Security</a>
   · <a href="./docs/introduction.md">Docs</a>
   · <a href="https://hezo.ai">Website</a>
@@ -44,7 +45,7 @@
 
 ## What is Hezo?
 
-Hezo is a self-hosted server and web app for running **teams of AI agents like an
+Hezo is an open source server and web app for running **teams of AI agents like an
 organisation**. You stand up a CEO, a Captain, engineers, designers, researchers -
 whatever the work needs - with org charts, projects, budgets, and approvals built in. You
 manage goals and projects, not twenty terminal tabs.
@@ -88,12 +89,13 @@ local and managed containers at any time from <b>Settings &gt; Containers</b>; s
 [GitHub Releases](https://github.com/hezo-ai/hezo/releases/latest), with full per-platform
 steps in [Installation](./docs/getting-started/installation.md).</sub>
 
-### Deploy to a cloud server
+## Two ways to run it
 
-Want an always-on instance instead of running it on your laptop? Deploy to a cloud
-VM in a couple of minutes. Each provisions Docker, the binary, automatic HTTPS
-(a real cert via `<ip>.sslip.io` - no domain needed), systemd, and a locked-down
-firewall, and drops you at the in-browser setup.
+**Self-host it.** Free and open source under GPL-3.0. One binary, your machine, your
+data, your model keys - start at [Quickstart](#quickstart) above. Want it always-on
+rather than on your laptop? These provision a VM in a couple of minutes, with Docker,
+the binary, automatic HTTPS (a real cert via `<ip>.sslip.io`, no domain needed),
+systemd and a locked-down firewall:
 
 <p>
   <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
@@ -101,19 +103,23 @@ firewall, and drops you at the in-browser setup.
   <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="34" /></a>
 </p>
 
-**Google Cloud** and **AWS** are one-click today - Google Cloud opens Cloud Shell
-and runs the deploy, and AWS opens a CloudFormation **Launch Stack** (pick a size,
-then **Create stack**). **DigitalOcean** opens a short guide until its
-[Marketplace image](./deploy/marketplace/digitalocean/README.md) is listed. Any
-provider that takes cloud-init works too - see
-[One-click deploy](./docs/deployment/one-click.md).
+<sub><b>Google Cloud</b> and <b>AWS</b> are one-click today - Google Cloud opens Cloud
+Shell and runs the deploy, and AWS opens a CloudFormation <b>Launch Stack</b>.
+<b>DigitalOcean</b> opens a short guide until its
+<a href="./deploy/marketplace/digitalocean/README.md">Marketplace image</a> is listed.
+Any provider that takes cloud-init works too - see
+<a href="./docs/deployment/one-click.md">One-click deploy</a>. These target VM providers
+because the default setup runs agents on the host's own container-runtime socket, which
+needs a <b>real VM</b> - not a managed-container PaaS. Run the containers on a
+<a href="./docs/containers/remote/overview.md">managed sandbox service</a> instead and a
+much smaller VPS will do; see
+<a href="./docs/deployment/vps.md">Self-hosting on a VPS</a>.</sub>
 
-> These buttons target VM providers because the default setup runs each project's agents
-> on the host's own container-runtime socket, which needs a **real VM** - not a
-> managed-container PaaS (Render, Railway, Cloud Run). Run the containers on a
-> [managed sandbox service](./docs/containers/remote/overview.md) instead and the server
-> needs no runtime at all, so a much smaller VPS will do. See
-> [Self-hosting on a VPS](./docs/deployment/vps.md).
+**Hezo Cloud.** We run and update your instance at `you.app.hezo.ai`, agents run on
+managed sandboxes, and you still bring your own model keys. Starts with a 7-day free
+trial, and we don't ask for a card - see
+[hezo.ai/pricing](https://hezo.ai/pricing), or
+[the docs](./docs/cloud/overview.md).
 
 ## How it works
 
@@ -226,8 +232,10 @@ for the full picture.
   <img src="assets/readme/secret-flow.gif" alt="A placeholder leaves the agent container, the proxy checks the allowlist and substitutes the real key, and anything else is blocked" width="470" />
 </p>
 
-It's all **[yours](./docs/deployment/self-hosting.md)**: self-hosted, your model accounts,
-your spend, your data.
+Your model accounts and your spend are yours on either path.
+[Self-host it](./docs/deployment/self-hosting.md) and the machine and the data are
+yours too; on [Hezo Cloud](./docs/cloud/overview.md) we run the box and still never
+hold your recovery phrase.
 
 ## Works with your models
 
@@ -282,8 +290,8 @@ bun run test       # the full test suite
 
 ## Community & license
 
-⭐ **If Hezo is useful to you, a star helps other people find it.** It is the main way a
-self-hosted project gets discovered, and it costs you one click.
+⭐ **If Hezo is useful to you, a star helps other people find it.** It is the main way an
+open source project gets discovered, and it costs you one click.
 
 Questions and bug reports are welcome via
 [GitHub Issues](https://github.com/hezo-ai/hezo/issues).
