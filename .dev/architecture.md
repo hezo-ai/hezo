@@ -6791,14 +6791,21 @@ provisioning pull (`agent-base:<version>`) would 404. A final `publish-cfn-templ
 re-uploads the AWS CloudFormation deploy template (`deploy/aws/hezo.cfn.yaml`) to the public S3
 bucket the README's "Deploy on AWS" Launch Stack button serves, so the hosted copy never drifts
 from the repo (it asserts the template is ASCII-only first, and skips when AWS credentials aren't
-configured). A last `notify-website` job announces the release to the marketing site:
+configured). A last `notify-downstream` job announces the release to **both** repos that vendor this
+one — a matrix over `[website, cloud]`, each leg minting its own token scoped to that one
+repo via the hezo-release-bot app, so neither dispatch can reach the other, and
+`fail-fast: false` so one repo's outage does not stop the other being told. Each leg sends
+a `repository_dispatch` (`hezo-release-published`, `client_payload.tag`).
+
 hezo.ai/docs is rendered by the separate `hezo-ai/website` repo (Gatsby on Cloudflare Pages)
 from this repo's `docs/` tree via a `vendor/hezo` git submodule **pinned to the latest release
-tag** — the job mints a token via the hezo-release-bot app and sends a `repository_dispatch`
-(`hezo-release-published`, `client_payload.tag`) that the website's `update-hezo-submodule.yml`
-handles by checking the submodule out at that tag and pushing (Cloudflare redeploys on push).
-The website deliberately tracks **releases, not main**, so the public docs always describe the
-version users can download; the dispatch must be sent from `release-publish.yml` itself because
+tag**; its `update-hezo-submodule.yml` handles the dispatch by checking the submodule out at
+that tag and pushing (Cloudflare redeploys on push). **`hezo-ai/cloud` handles the same
+dispatch differently** — it opens a PR rather than pushing, because bumping its pin
+re-verifies container constants and runs an end-to-end tier against a real instance, so the
+bump has to be gated by CI and a human. Both track **releases, not main**: the docs must
+describe the version users can download, and the hosted plane must run a version that exists.
+The dispatch must be sent from `release-publish.yml` itself because
 the Release is created with the workflow's own `GITHUB_TOKEN`, whose events GitHub suppresses
 (a `release: published` trigger elsewhere would never fire). The website workflow also keeps a
 manual `workflow_dispatch` (optional `tag` input, defaulting to the latest release) as the
