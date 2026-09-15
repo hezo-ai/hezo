@@ -55,6 +55,11 @@ each project's manifest short while know-how worth sharing still reaches every p
   Either way, once added they're ordinary global skills, yours to edit, delete, or re-scope
   to a single project, and Hezo never re-adds one you've removed. Several are adapted from
   well-known open-source skill collections and link their source.
+- **Keeping the starter library current.** When a Hezo release improves one of these skills,
+  the same page shows an **Update default skills** button for the copies you already have.
+  Updating replaces a skill's contents and keeps your current version in its revision history,
+  so you can put it back. If you edited one of these skills yourself, Hezo lists it separately
+  and asks you to confirm before replacing your version.
 
   One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
   recipes agents consult before

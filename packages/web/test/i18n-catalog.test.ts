@@ -160,6 +160,7 @@ describe('message catalogs', () => {
 		'containers.column.project': ['nl'],
 		// Same word in Dutch, as `containers.column.project` above already records.
 		'marketplace.projectLabel': ['nl'],
+		'settings.skills.row.project': ['nl'],
 		// "Error" is the Spanish word, spelled identically. Every other language
 		// differs (Fehler, Erreur, Errore, Fout, Blad, Erro, Fel, ...).
 		'comment.runError': ['es'],
