@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.65.2 - 2026-09-15
+
+### Documentation
+
+- humanizer pass over the user-facing documentation ([#1120](https://github.com/hezo-ai/hezo/pull/1120))
+- **cloud:** say which credential does reach an agent's container ([#1119](https://github.com/hezo-ai/hezo/pull/1119))
+- **cloud:** say what account deletion keeps ([#1118](https://github.com/hezo-ai/hezo/pull/1118))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.65.1...0.65.2
+
 ## 0.65.1 - 2026-09-14
 
 ### Other
