@@ -57,10 +57,9 @@ each project's manifest short while know-how worth sharing still reaches every p
   well-known open-source skill collections and link their source.
 - **Keeping the starter library current.** When a Hezo release improves one of these skills,
   the same page shows an **Update default skills** button for the copies you already have.
-  Updating replaces a skill's contents, and the version you had is kept in that skill's
-  revision history, so you can restore it. A skill you edited yourself is offered separately,
-  behind a confirmation that says your version is being replaced. A default you deleted stays
-  deleted.
+  Updating replaces a skill's contents and keeps your current version in its revision history,
+  so you can put it back. If you edited one of these skills yourself, Hezo lists it separately
+  and asks you to confirm before replacing your version.
 
   One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
   recipes agents consult before
