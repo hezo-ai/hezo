@@ -55,7 +55,7 @@ so it works even when your instance has no public URL.
 - **Replies anchor to your message.** The CEO's answer replies to the message that
   mentioned it, so it reads naturally in a busy channel.
 - **Full CEO powers.** It can list projects and tasks, create tasks, write documents,
-  and everything else the CEO can do from the web chat - just addressed from Discord.
+  and everything else the CEO can do from the web chat, addressed from Discord.
 - **Server-scoped privacy.** The bot only sees channels its role can read on servers it
   was invited to; kicking it removes its access. Anyone who can @-mention it may use
   it - the invite is the authorization.

@@ -8,8 +8,8 @@ section: Deployment
 
 The fastest way to get a public Hezo host running is to let your VPS provider
 provision it for you. The host stays reachable, but agent execution pauses whenever
-Hezo is locked. You paste one snippet when
-you create the server, wait a couple of minutes, and open a working HTTPS URL - then finish the short
+Hezo is locked. You paste one snippet when you create the server, wait a couple of
+minutes, and open a working HTTPS URL, then finish the short
 [first-run setup](/docs/getting-started/first-run) in your browser.
 
 This works on any provider that runs Ubuntu and accepts **cloud-init user data**,
@@ -59,9 +59,8 @@ On first boot the snippet:
   [Keeping the host patched](/docs/deployment/self-hosting#keeping-the-host-patched)), and
 - locks the **firewall** down so only the web ports (80/443) are public.
 
-It deliberately does **not** set your master key - that's generated in your browser
-on first run and shown once, so it can't be pre-filled. The deploy gets you to the
-setup screen; you take it from there.
+It deliberately does **not** set your master key: that's generated in your browser
+on first run and shown once, so it can't be pre-filled.
 
 ## Deploy it
 
@@ -117,9 +116,9 @@ read them before you paste if you'd like to see exactly what runs.
 ## Using managed data hosting
 
 By default the deploy keeps everything on the server's own disk: the embedded database
-and asset files both live under `/var/lib/hezo`. That's a fine place to start - but you
-can just as well point Hezo at a **managed Postgres** for the database and an
-**S3-compatible bucket** for assets. Your provider then handles database backups and
+and asset files both live under `/var/lib/hezo`. That's a fine place to start. You can
+instead point Hezo at a **managed Postgres** for the database and an
+**S3-compatible bucket** for assets, and your provider then handles database backups and
 asset-storage durability. Managed backends do not make the server disposable:
 `/var/lib/hezo` still holds workspaces and keys, so back up or snapshot that directory
 too. Each backend is a single URL setting, and you can adopt either independently -
@@ -237,19 +236,19 @@ The concrete version for a DigitalOcean Droplet deployed with the snippet above:
 
 ### Serverless Postgres (Neon, Supabase, …)
 
-Serverless Postgres providers work too. The rule that matters is to keep the database in
-the **same region** as your server; their direct, session-pooled and transaction-pooled
-endpoints all work.
+Serverless Postgres providers work too, on their direct, session-pooled and
+transaction-pooled endpoints alike. Keep the database in the **same region** as your
+server.
 
 ## How the HTTPS URL works
 
-HTTPS is essential for a working instance - OAuth-connected MCP servers only complete
-their connect flow on an HTTPS address, installing Hezo on your phone needs a secure
-context, and the web app streams agent activity over a secure WebSocket. But a fresh
-server has a public IP and usually no domain. To bridge that, the deploy uses
+A working instance needs HTTPS: OAuth-connected MCP servers only complete their connect
+flow on an HTTPS address, installing Hezo on your phone needs a secure context, and the
+web app streams agent activity over a secure WebSocket. But a fresh server has a public
+IP and usually no domain. To bridge that, the deploy uses
 **[sslip.io](https://nip.io/)** - a DNS service where `<ip>.sslip.io` always resolves
 to `<ip>`. So `https://203.0.113.10.sslip.io` points straight at your server, and Caddy
-automatically obtains a real Let's Encrypt certificate for it. No domain to buy, no DNS
+automatically obtains a real Let's Encrypt certificate for it: no domain to buy, no DNS
 to configure, and no browser warnings.
 
 **Prefer your own domain?** Point an A record at the server's IP, then set
@@ -263,10 +262,10 @@ certificate for that name instead.
   **Install & restart** returns unlocked. A reboot, crash, or direct service restart
   comes up locked unless that invocation deliberately receives the one-shot
   `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock from the browser
-  gate. **Don't save your master key to a file on the server** (an env file, the
-  systemd unit, anywhere on disk): it's the
-  one secret Hezo keeps in memory only, and a copy sitting next to the encrypted data
-  lets anyone who can read the disk decrypt everything. See
+  gate. **Don't save your master key to a file on the server** (an env file, the systemd
+  unit, anywhere on disk): it's the one secret Hezo keeps in memory only, and a copy
+  sitting next to the encrypted data lets anyone who can read the disk decrypt
+  everything. See
   [First-run setup](/docs/getting-started/first-run) and
   [Master key & encryption](/docs/security/master-key).
 - **Backups.** Back up `/var/lib/hezo`, `/etc/hezo/hezo.config.cjs`, referenced files

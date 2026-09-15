@@ -35,8 +35,8 @@ read until you provide the phrase on the unlock screen. Two startup paths can su
 key in memory: the supervisor hands it to a new process during an in-app update, or you
 pass it to one invocation with `--master-key` / `HEZO_MASTER_KEY`. A reboot, crash, or
 direct service restart comes up locked unless that invocation deliberately receives this
-one-shot input. Don't store the phrase on
-the server (see [Self-hosting on a VPS](/docs/deployment/vps) and
+one-shot input. Don't store the phrase on the server (see
+[Self-hosting on a VPS](/docs/deployment/vps) and
 [Master key & encryption](/docs/security/master-key)).
 
 ## 2. Set an admin password

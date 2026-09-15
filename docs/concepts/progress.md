@@ -20,10 +20,10 @@ A short markdown blurb of where the project stands: what has taken place, and wh
 planned. It leads with the key points in **bold** and opens collapsed to just that lead line; use
 **Show more** for the full narrative.
 
-The summary deliberately **names no individual tasks**. It is the altitude view - the paragraph you
-would give someone who asked how the project is going - and the lists on the same page are where
-the specific work lives, each row already a link. A summary that listed task numbers would be a
-backlog, not a summary.
+The summary deliberately **names no individual tasks**. It is the altitude view, the paragraph you
+would give someone who asked how the project is going, and the lists on the same page are where
+the specific work lives, each row already a link. A summary that listed task numbers would just be
+a second backlog.
 
 There is nothing to edit by hand. Each time the Captain runs a progress update it reviews the
 project and rewrites the summary; the **Updated** time shows when that last happened.

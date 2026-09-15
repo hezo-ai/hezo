@@ -6,9 +6,8 @@ section: Deployment
 
 # Self-hosting Hezo
 
-Hezo self-hosts cleanly - it's a single binary you run on hardware you control, with
-no external services required to operate it. You own the machine, the data, the model
-keys, and the spend.
+Hezo is a single binary you run on hardware you control, with no external services
+required to operate it. You own the machine, the data, the model keys, and the spend.
 
 If you would rather not run a machine at all, [Hezo Cloud](/docs/cloud/overview) runs
 one for you. This whole section is about the other path.
@@ -18,10 +17,10 @@ one for you. This whole section is about the other path.
 - A host that can run a **Docker-compatible container runtime** (your laptop,
   a home server, or a cloud VPS). Colima, Rancher Desktop, OrbStack, Lima and rootless
   Docker all work - see [Container runtimes](/docs/deployment/container-runtimes).
-  Running agent containers on a
-  [managed sandbox service](/docs/containers/remote/overview) instead? Then the host
-  needs no container runtime at all - and **Settings -> Containers** switches an
-  instance between the two at any time.
+  If agent containers run on a
+  [managed sandbox service](/docs/containers/remote/overview) instead, the host needs no
+  container runtime at all, and **Settings -> Containers** switches an instance between
+  the two at any time.
 - The **`hezo` binary** (see [Installation](/docs/getting-started/installation)).
 - Your **master key** (created on first run; see
   [First-run setup](/docs/getting-started/first-run)).
@@ -71,9 +70,9 @@ For an always-on instance, run it under your platform's service manager (for exa
 default. A supervised in-app update hands the key to the new process in memory. A reboot,
 crash, or direct service restart comes up locked unless that invocation deliberately
 receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock
-from the web app's gate.
-Don't store the master key on the server to skip the unlock step; it's the one secret
-Hezo keeps in memory only (see [Master key & encryption](/docs/security/master-key)).
+from the web app's gate. Don't store the master key on the server to skip the unlock step;
+it's the one secret Hezo keeps in memory only (see
+[Master key & encryption](/docs/security/master-key)).
 
 ### Run as a systemd service (Linux)
 
@@ -174,8 +173,8 @@ privilege either way.
 git operations) as a non-root **run-user** (the stock agent image's `node`), so the
 files the agent writes stay non-root-owned, and it automatically gives that user
 ownership of the bind-mounted workspace and per-run config. A custom
-`docker_base_image` with no `node` user simply runs the agent as the image's default
-user (root for most images), which also works; include a non-root user named `node`
+`docker_base_image` with no `node` user runs the agent as the image's default user
+(root for most images), which also works; include a non-root user named `node`
 if you want agent-created files owned by a non-root uid on the host.
 
 ## Serve it over HTTPS
@@ -185,7 +184,7 @@ private network or VPN just as much as on a public domain - put a TLS-terminatin
 reverse proxy in front and browse the instance through it. HTTPS is what makes
 OAuth-connected MCP servers connectable (providers and browsers only accept HTTPS or
 `localhost` callback URLs), lets Hezo install as an app on your phone, and keeps your
-admin password and task content sealed in transit. The proxy must pass WebSocket
+admin password and task content encrypted in transit. The proxy must pass WebSocket
 upgrades and forward the `Host` and `X-Forwarded-Proto` headers - see
 [Serve it over HTTPS](/docs/deployment/vps#serve-it-over-https) for a working
 config, and [Secure remote access](/docs/deployment/secure-remote-access) for
@@ -198,20 +197,15 @@ certificate options on private networks.
 That is the only port the **reverse proxy** (and, through it, people) needs to reach -
 Hezo serves the web app and brokers account sign-ins (such as GitHub) itself, so there
 is no separate gateway service or port. With the proxy on the same host, 3100 doesn't
-need to be reachable from outside the host at all - browsers connect to the proxy's
-HTTPS port instead - agent containers never connect to it (see below).
+need to be reachable from outside the host at all: browsers connect to the proxy's HTTPS
+port instead, and agent containers never connect to it (see below).
 
 ### Agent containers do not connect back to the host
 
-There used to be a whole class of native-Linux Docker problem here: agents run inside
-containers, called **back to the host** for their tools and their traffic, and a
-default-deny firewall silently dropped that path - so every agent run hung with no tools
-and the CEO chat reported its tools "aren't available".
-
-That path is gone. Hezo now reaches **into** each container instead: it opens one extra
-exec and runs a small tunnel program there, which gives the container loopback ports
-leading back to Hezo's MCP endpoint, egress proxy and SSH agent. Nothing in a container
-resolves or dials a host address, so:
+Hezo reaches **into** each container: it opens one extra exec and runs a small tunnel
+program there, which gives the container loopback ports leading back to Hezo's MCP
+endpoint, egress proxy and SSH agent. Nothing in a container resolves or dials a host
+address to reach Hezo, so:
 
 - **No inbound rule is needed for the Docker bridge.** There is nothing for a firewall to
   drop, on any Docker flavour.
@@ -222,16 +216,19 @@ resolves or dials a host address, so:
   sandbox service.
 
 This is the same on every supported runtime - Docker Engine and Docker Desktop, Colima,
-Rancher Desktop, OrbStack, Lima and rootless Docker alike. Earlier versions needed a
-firewall rule and a bind-host setting on native-Linux Docker, because a container reached
-the host across the bridge gateway; containers now reach Hezo over their own loopback
-through the run tunnel, so there is no interface to pick and nothing to open.
+Rancher Desktop, OrbStack, Lima and rootless Docker alike.
+
+Earlier versions worked the other way round. A container reached the host across the
+bridge gateway for its tools and its traffic, so native-Linux Docker needed a firewall
+rule and a bind-host setting; a default-deny firewall silently dropped that path, and
+every agent run hung with no tools while the CEO chat reported its tools "aren't
+available". Containers now reach Hezo over their own loopback through the run tunnel, so
+there is no interface to pick and nothing to open.
 
 Only requests that need a security check - a host that could carry a substituted secret,
 or one whose connector has a method allowlist - travel the tunnel to the egress proxy.
 Everything else (`apt`, `npm`, `playwright install`) goes straight out from the container,
 so package installs never transit the Hezo process.
-
 
 #### VPN kill-switches (NordVPN, Tailscale, Mullvad, …)
 
@@ -265,9 +262,8 @@ Because the download already happened, the restart is instant - Hezo shuts down
 gracefully, swaps in the new binary, and restarts onto it, with no manual file
 replacement. If a background download fails, the bar offers a **Retry download**
 button (with the GitHub release as a manual fallback), and it automatically
-re-attempts on a later check. (If the background download is disabled or can't
-run (for example inside a container), the bar instead links to the GitHub
-release page.)
+re-attempts on a later check. If the background download is disabled or can't run,
+for example inside a container, the bar instead links to the GitHub release page.
 
 An update restart comes back **unlocked**: the part of Hezo that supervises the
 restart holds the unlock key **in memory** across the swap and hands it to the new
@@ -275,10 +271,10 @@ process, so nothing is ever written to disk and you don't re-enter your master k
 after an update. Restarts that supervisor doesn't survive - a direct service restart, a
 crash, a reboot - still come up locked by design unless that invocation receives the
 one-shot `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock from the
-browser gate. In-flight agent runs are
-aborted and recovered automatically, and connected browsers reconnect on their own.
+browser gate. In-flight agent runs are aborted and recovered automatically, and connected
+browsers reconnect on their own.
 
-Auto-update applies to the self-managed single binary. It is disabled when Hezo
+Auto-update applies to the standalone single binary. It is disabled when Hezo
 runs inside a container (update the image instead) and can be turned off with
 `updates.disabled` in your config file. The daily check schedule is configurable via
 `jobs.updateCheckCron`. See [Configuration](/docs/deployment/configuration).
@@ -289,8 +285,8 @@ For a hands-off server, start Hezo with `--auto-install-updates` (or
 `updates.autoInstall: true`) and it installs staged updates by itself: once a
 newer release has been downloaded and verified, Hezo waits until no agent runs
 are in flight and then performs the same graceful restart as the **Install &
-restart** button - no click needed. If agents are busy, the install is retried
-every few minutes and lands as soon as the instance goes idle.
+restart** button. If agents are busy, the install is retried every few minutes
+and lands as soon as the instance goes idle.
 
 Two things to know before enabling it:
 
@@ -299,9 +295,9 @@ Two things to know before enabling it:
   without anyone re-entering the master key. Restarts outside the update flow
   (direct service restart, reboot, crash) still come up locked by design unless that
   invocation receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. You can
-  otherwise use the browser gate - never persist the key to disk on the server
-  to avoid that (see [Master key & encryption](/docs/security/master-key)).
-- It only takes effect where in-app auto-update works at all: the self-managed
+  otherwise use the browser gate; never persist the key to disk on the server to
+  skip that step (see [Master key & encryption](/docs/security/master-key)).
+- It only takes effect where in-app auto-update works at all: the standalone
   single binary, not inside a container (update the image instead), and not
   with `updates.disabled` set.
 

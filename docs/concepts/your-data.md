@@ -6,10 +6,9 @@ section: Concepts
 
 # Your data & the database
 
-Hezo is built so that **everything stays yours** - your work, your credentials, your spend,
-all on hardware you control. Part of what makes that practical is that Hezo carries its own
-database: by default there's nothing external to provision, and your data never leaves your
-machine.
+Hezo keeps everything on hardware you control: your work, your credentials, and your spend.
+Part of what makes that practical is that Hezo carries its own database, so by default there
+is nothing external to provision and your data stays in a directory on your machine.
 
 ## An embedded database by default - nothing external to run
 
@@ -41,10 +40,10 @@ objects (enable the provider's server-side encryption if you want them encrypted
 rest) and always served through Hezo's signed URLs, so the bucket stays private. The
 active backend is shown under **Settings → Storage → Asset storage**.
 
-Be clear-eyed about what changes: **your business content - tasks, comments, documents -
-is stored as ordinary database rows**, so with an external database that content lives
-with your database provider and travels the network. Hezo checks the server version at
-startup and shows the connection target (credentials occluded, never the full URL) under
+Know what that changes. Your business content - tasks, comments, documents - is stored as
+ordinary database rows, so with an external database that content lives with your database
+provider and travels the network. Hezo checks the server version at startup and shows the
+connection target (credentials occluded, never the full URL) under
 **Settings → Storage → Database**. Use TLS: `sslmode=verify-full` encrypts *and* proves
 you are talking to the right server, where `sslmode=require` only encrypts - see
 [TLS and sslmode](/docs/deployment/configuration#tls-and-sslmode). Prefer private networking,
@@ -69,8 +68,8 @@ process is deliberately cautious:
 - **Embedded: your live data is never migrated in place.** Hezo migrates a *copy* of the
   database and only swaps the upgraded copy in once every step has succeeded - keeping the
   previous copy aside in the data directory as a known-good point to roll back to. If
-  anything fails, the copy is discarded and your original data is left exactly as it was -
-  so you can simply go back to the previous binary.
+  anything fails, the copy is discarded and your original data is left exactly as it was, so
+  you can go back to the previous binary.
 - **External: migrations apply one transaction at a time,** serialized by a database-side
   lock so two starting instances can't collide. A failed migration rolls back cleanly and
   everything applied before it remains intact; pair this with your provider's backups or
@@ -78,9 +77,6 @@ process is deliberately cautious:
 - **Downgrades are caught, not corrupted.** If you point an older binary at a database
   written by a newer one, Hezo notices and exits with a clear message rather than risking
   your data.
-
-The net effect: upgrades are safe by default, and your data is preserved across them
-without any manual migration work on your part.
 
 ## Reclaiming disk from old database versions
 

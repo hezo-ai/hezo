@@ -6,9 +6,9 @@ section: Getting started
 
 # Your first project
 
-The main way to start a project in Hezo is to **talk to the CEO** rather than fill in a
-long form - the CEO is the agent that handles intake for every new piece of work. (A
-superuser can also create one directly from the web app's "Create" dialog.)
+The main way to start a project in Hezo is to **talk to the CEO**, the agent that handles
+intake for every new piece of work. (A superuser can also create one directly from the
+web app's "Create" dialog.)
 
 ## 1. Tell the CEO what you want
 
@@ -43,10 +43,10 @@ action items waiting on you, current spend, work in progress, a progress snippet
 goals at a glance.
 
 Once setup is done the Captain starts on the **planning task**, turning your brief into
-the work the team will do. If the brief leaves something load-bearing open, it will post a question that
-`@`-mentions you and wait for your answer rather than guessing - so an early question on
-that task is the Captain working, not stalling. It also suggests goals from the outcomes
-you described, for you to approve or deny.
+the work the team will do. If the brief leaves something load-bearing open, it posts a
+question that `@`-mentions you and waits for your answer instead of guessing, so an early
+question on that task is the Captain working, not stalling. It also suggests goals from
+the outcomes you described, for you to approve or deny.
 
 From there the agents start picking work up. You'll see tasks move across the board,
 agents comment as they go, and runs stream their logs live. Agents wake on a heartbeat to

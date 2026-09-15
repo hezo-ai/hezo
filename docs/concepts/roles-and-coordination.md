@@ -44,16 +44,15 @@ whole thread, notices where an agent struggled, got pushback, or needed several 
 and captures what went well and what to improve. It then writes those lessons back as
 durable **learned rules** on the agents that need them (and sometimes updates a project
 document or skill), so the same mistake doesn't happen twice. The teams get better the
-more they ship, without you having to tune prompts by hand. For the full picture of how
-this loop works, see
+more they ship, without you tuning prompts by hand. For how the loop works, see
 [The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
 
 The Coach's behaviour comes from its
 [system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).
 
-Both the CEO and the Coach are global singletons that live in
-[HQ](/docs/concepts/projects-and-teams#hq---the-home-team), the one special team, and
-act across every project's team. They are never part of a project template.
+[HQ](/docs/concepts/projects-and-teams#hq---the-home-team) is the one special team, and both
+the CEO and the Coach are global singletons living there. They act across every project's
+team and are never part of a project template.
 
 ## The Captain
 
@@ -71,10 +70,10 @@ template, and a link to every role's system prompt, see
 
 ## Chatting with the CEO
 
-The CEO is always one click away. A chat opens from any page in the app, and there's a
-single ongoing conversation - pick up where you left off rather than starting a new
-thread each time. As the CEO works, its reply **streams back in real time**, so you can
-follow its thinking instead of waiting for a finished block of text.
+A chat with the CEO opens from any page in the app, and there's a single ongoing
+conversation, so you pick up where you left off rather than starting a new thread each
+time. As the CEO works, its reply streams back in real time, so you can follow its
+thinking instead of waiting for a finished block of text.
 
 **Attach files to a message.** Click the paperclip in the composer - or, on desktop, drag
 files straight onto the chat - to send images, PDFs, and other supported files (up to
@@ -102,6 +101,6 @@ scoping work, reorganising a team, or changing how an agent behaves. State what 
 in plain language; the CEO proposes the change and asks you to approve anything that
 matters. Standing preferences and guidelines persist in the CEO's
 [long-term chat memory](/docs/concepts/documents-and-memory#long-term-chat-memory), which it
-maintains **automatically** as your conversations are compacted - so you don't repeat
-yourself and never have to tell it to remember. You can review and edit that memory yourself
-on the CEO's **Chat history** tab.
+maintains automatically as your conversations are compacted, so you don't have to repeat
+yourself or tell it to remember. You can review and edit that memory yourself on the CEO's
+**Chat history** tab.

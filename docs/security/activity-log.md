@@ -38,7 +38,8 @@ and run it came from.
 Entries are listed newest-first with three columns:
 
 - **Time** - when it happened.
-- **Actor** - who did it. A badge flags human admins and external MCP clients (API keys); the actor's name is always shown.
+- **Actor** - who did it. A badge flags human admins and external MCP clients (API
+  keys); the actor's name is always shown.
 - **Activity** - a plain-language description ("Created task TO-4", "Changed status of TO-4
   from Backlog to In Progress"). Most rows link straight to the task, agent, or page they
   concern.
@@ -62,11 +63,11 @@ The Activity view is Admin-only and global: it combines the activity of **all
 projects** plus instance-level admin actions that aren't tied to any one project
 (managing credentials, connectors, and skills), with a **Project** column so you can see
 where each action belongs. It's the single place to reconstruct what happened across the
-whole instance. The per-project data is still recorded per project - and agents can read
-their own project's log through the API - the Admin view is simply where people read it.
+whole instance. The per-project data is still recorded per project, and agents can read
+their own project's log through the API; the Admin view is where people read it.
 
 ## Why it matters
 
 The activity log makes Hezo's autonomy accountable. Agents act on their own, but supported
 changes are recorded with their actor and cannot be rewritten. When something looks off, you
-can trace the recorded activity and roll back from a position of knowledge.
+can trace the recorded activity and roll back knowing what happened.

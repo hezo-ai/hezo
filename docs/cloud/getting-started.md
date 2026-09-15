@@ -23,8 +23,8 @@ instance's.
 ## 2. Open the link we email you
 
 We send a link rather than asking you to choose a password. It works once,
-expires after fifteen minutes, and works from any browser - so you can start on
-a phone and finish on a laptop.
+expires after fifteen minutes, and opens in any browser - so you can start on a
+phone and finish on a laptop.
 
 There is no password anywhere on Hezo Cloud. Signing in later means asking for
 another link.
@@ -37,13 +37,13 @@ to thirty characters, lowercase letters, numbers and hyphens.
 **The address cannot be changed later, and a name is never reused** - including
 after an account is deleted. Choose one you will still want in a year.
 
-Your instance is built the moment you take the address, which takes a few
-minutes. We email you when it is ready.
+Your instance is built the moment you take the address, and takes a few minutes
+to come up. We email you when it is ready.
 
-## 4. Choose your recovery phrase
+## 4. Save your recovery phrase
 
-The first time you open your instance it asks you to create a **twelve-word
-recovery phrase**. Everything sensitive your instance holds is encrypted behind
+The first time you open your instance it gives you a **twelve-word recovery
+phrase**. Everything sensitive your instance holds is encrypted behind
 it.
 
 That phrase is generated in your browser and never reaches us. **We do not hold

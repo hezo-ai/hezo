@@ -35,8 +35,8 @@ trial. Start at [Hezo Cloud](/docs/cloud/overview).
 
 **Self-host** if you want the work on hardware you control, if your data cannot
 leave your own infrastructure, if you want to run agents on a local model
-through Ollama or LM Studio at no per-token cost, or if you simply enjoy
-running things. You need a machine that stays on, and a few minutes to set up
+through Ollama or LM Studio at no per-token cost, or if you enjoy running
+things yourself. You need a machine that stays on, and a few minutes to set up
 HTTPS and backups.
 
 **Hezo Cloud** if you would rather not run a server at all, if you want an

@@ -9,8 +9,8 @@ section: Concepts
 Every major model now ships its own agentic command-line tool - Anthropic has Claude
 Code, OpenAI has Codex, Google has Antigravity, and there are more. Each *harness*
 wraps a model in a loop that reads and writes files, runs commands, and uses tools. They
-are genuinely good and genuinely different: each has its own strengths, guardrails, and
-rough edges. Picking one means inheriting all of its tradeoffs; juggling several by hand
+are good, and they are different: each has its own strengths, guardrails, and rough
+edges. Picking one means inheriting all of its tradeoffs; juggling several by hand
 means re-learning each tool and getting inconsistent results depending on which one you
 happened to use.
 
@@ -18,17 +18,17 @@ happened to use.
 > These are usually called *coding* harnesses because they grew up around software, but the
 > loop they provide (read, write, run a command, use a tool, repeat) is general-purpose.
 > **Hezo is for any task, not just code** (software, research, marketing, operations), and
-> runs each agent on one of these harnesses precisely because they are the most capable
+> runs each agent on one of these harnesses because they are the most capable
 > general-purpose agents available.
 
 Hezo's answer is to sit one level up: it is a **meta-harness**, a harness around the
 harnesses. It runs each model inside its **own first-party harness** - Claude drives Claude
 Code, GPT drives Codex, Gemini drives Antigravity - so you keep each model's native
-tooling instead of a lowest-common-denominator wrapper. Then it wraps a **single, uniform
+tooling. Then it wraps a **single, uniform
 platform layer** around all of them, so the harness an agent happens to run on becomes an
 implementation detail rather than something you manage.
 
-That platform layer is what lets Hezo **even out the tradeoffs between harnesses**, so you
+That platform layer is what lets Hezo even out the tradeoffs between harnesses, so you
 get quality results across very different models. Three things do the levelling:
 
 - **A uniform completeness check on every run.** When an agent decides it's finished, Hezo
@@ -42,20 +42,19 @@ get quality results across very different models. Three things do the levelling:
   [skills](/docs/concepts/skills), memory, sandbox, and secret protection described below are
   identical no matter which harness an agent runs on - switching a model, or running several
   at once, never changes what an agent can do or how safely it runs.
-- **Rough edges smoothed over.** The per-tool differences - how a prompt is delivered, how a
-  run is configured, how results come back - are normalised by Hezo, so behaviour stays
-  consistent no matter which harness backs an agent.
+- **Rough edges smoothed over.** Hezo normalises the per-tool differences (how a prompt is
+  delivered, how a run is configured, how results come back), so behaviour stays consistent
+  whichever harness backs an agent.
 
-The practical payoff: put a cheaper model on routine work and a frontier model on the hard
-problems, and trust that the *floor* - the tooling, the guardrails, and the security -
-stays the same underneath all of them. You never have to choose between a model's native
-agentic tooling and a consistent, safe platform around it; you get both.
+In practice you can put a cheaper model on routine work and a frontier model on the hard
+problems, and the *floor* under both - the tooling, the guardrails, and the security -
+stays the same. Each agent keeps its model's native agentic tooling, and the same platform
+sits around all of them.
 
 ## The moving parts
 
-The meta-harness is the idea; the rest of this page is the machinery that delivers it.
-None of it is something you operate by hand - it's what the single `hezo` binary sets up
-for you.
+The rest of this page is the machinery behind that idea. None of it is something you
+operate by hand: the single `hezo` binary sets it up for you.
 
 ### The server
 

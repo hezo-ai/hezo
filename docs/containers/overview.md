@@ -9,10 +9,9 @@ section: Containers
 Agents write and run real code. Hezo never runs that code on your host: **agents only ever
 work inside a container, and a container is only ever used by one project.**
 
-That single decision is what makes the rest of the product safe to use. A container is
-the boundary between an agent's work and everything else you own, and it is also the unit
-Hezo schedules, sizes and bills against. This section covers what a container is, where
-you can run them, and how to choose.
+A container is the boundary between an agent's work and everything else you own, and it
+is also the unit Hezo schedules, sizes and bills against. There are two places to run
+them:
 
 - [Local Docker](/docs/containers/local-docker) - the default: containers on the Docker
   daemon on the same machine as Hezo.
@@ -38,8 +37,8 @@ that stops fork bombs and drops Linux capabilities to the few the workload needs
 runaway agent cannot exhaust the machine it is on. On a managed service the equivalent
 guardrails between sandboxes are the provider's own.
 
-For the full security picture, including the honest note on where a container's boundary
-ends, see [Container isolation](/docs/security/container-isolation) and
+For the full security picture, including where a container's boundary ends, see
+[Container isolation](/docs/security/container-isolation) and
 [Secret protection](/docs/security/secret-protection).
 
 ## Containers run only when there is work
@@ -134,7 +133,7 @@ The key field is offered every time you switch to a managed service, including w
 is already saved. Leave it blank to keep the saved one, or enter a new one to replace it -
 which is how you correct a key that has expired or been revoked.
 
-Three things happen, in this order, and the order is the point:
+Three things happen, in this order, and the order matters:
 
 1. **Hezo checks the destination first.** If the key is wrong or the provider is
    unreachable, the switch is refused and you stay exactly where you were. Nothing is
@@ -176,7 +175,7 @@ backend already chosen - it never chooses a backend by itself. See
 
 Selecting a managed service Hezo cannot reach is **fatal at startup**. Hezo reports the
 problem and exits rather than silently falling back to local Docker: an instance that
-quietly switched substrates would look healthy while doing something you did not ask for.
+switched substrates would look healthy while doing something you did not ask for.
 
 ### Restarting an instance on a managed service
 
@@ -202,7 +201,7 @@ flags.
 
 ## How much can run at once
 
-Two global limits in **Settings -> Containers** bound what a burst of agent activity can
+Three global limits in **Settings -> Containers** bound what a burst of agent activity can
 consume:
 
 - **Total container memory** - how much memory all containers may use at once, the

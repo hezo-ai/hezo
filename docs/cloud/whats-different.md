@@ -61,8 +61,6 @@ anyone signing up starts current.
 
 ## Signing in, and unlocking
 
-These are two different things and it is worth keeping them apart.
-
 **Signing in** is by emailed link. There is no password to set, change or
 reset. Your dashboard signs you in to your instance without ever being able to
 unlock it.

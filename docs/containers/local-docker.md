@@ -6,8 +6,9 @@ section: Containers
 
 # Local Docker
 
-The default. Agent containers run on the Docker daemon on the same machine as Hezo, and
-nothing about a run leaves that machine except the traffic the agent itself makes.
+The default. Agent containers run on the Docker daemon on the same machine as Hezo. The
+container sends no run content - prompts, code, or output - anywhere except in the traffic
+the agent itself makes.
 
 This is the right choice for most instances. It needs no account anywhere, no API key, and
 no network path beyond what Hezo already has.
