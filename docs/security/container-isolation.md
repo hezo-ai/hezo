@@ -12,14 +12,14 @@ those containers live is your choice, made in **Settings -> Containers**: on you
 machine through any [Docker-compatible runtime](/docs/deployment/container-runtimes) (the
 default), or on a [managed sandbox service](/docs/containers/remote/overview) such as
 [Daytona](/docs/containers/remote/daytona), so agent work does not touch your machine at
-all. The choice is not a commitment: the same settings page
+all. The same settings page
 [switches a running instance](/docs/containers/overview#switching-at-any-time) between
 them at any time, in either direction.
 
-This page is the security case for that boundary, and it is one case, not two: the same
-container image, the same tunnel back to Hezo, the same egress proxy and the same key
-handling apply on either backend. The few properties that belong to one backend are
-called out as such. For where containers run, how they are sized and how to switch, see
+This page is the security case for that boundary, and it is the same case on either
+backend: the same container image, the same tunnel back to Hezo, the same egress proxy
+and the same key handling. The few properties that belong to one backend are called out
+as such. For where containers run, how they are sized and how to switch, see
 [Containers](/docs/containers/overview).
 
 ## One project, one run, one container
@@ -61,8 +61,8 @@ budget you raise deliberately on a managed service - and the sizing arithmetic l
 
 From inside the container, agents **cannot** reach your **host filesystem** (only the
 project's own workspace is available) or your **host processes and devices**. On a
-managed service this holds in the strongest possible sense: the container is not on your
-machine, so there is nothing of yours beside it to reach.
+managed service the container is not on your machine at all, so there is nothing of
+yours beside it to reach.
 
 Outbound network access is handled separately, through the tunnel and egress proxy below.
 
@@ -95,8 +95,7 @@ through your instance.
 
 Routing those directly loses nothing: a secret can only ever materialise at the proxy,
 so a request that reaches a credentialed host without the proxy carries the
-unsubstituted placeholder, which is inert and simply fails upstream. The proxy, not the
-route, is what the guarantee rests on.
+unsubstituted placeholder, which is inert and fails upstream.
 
 Two boundaries sit on the proxy itself:
 
@@ -127,7 +126,7 @@ enforces there is the memory and disk contract above.
 
 ## Where the boundary actually is
 
-One honest note per backend:
+One note per backend:
 
 - **On your own machine**, a container shares your kernel - a strong sandbox, not a
   virtual machine. On macOS and Windows the runtime already runs every container inside
@@ -161,9 +160,7 @@ them:
 
 ## What this gives you
 
-Putting the pillars together - placeholders + egress scoping, encryption at rest, and
-container isolation - a compromised agent is boxed in: it can't read your secrets
-(they only ever materialise at the proxy, behind host allow-lists), can't reach your
-host, and can't escape its run's container or its project. You get the upside of
-autonomous agents running real code without betting your system on every line of it
-being safe.
+Placeholders and egress scoping, encryption at rest, and container isolation together
+box a compromised agent in: it can't read your secrets (they only ever materialise at
+the proxy, behind host allow-lists), it can't reach your host, and it can't escape its
+run's container or its project.

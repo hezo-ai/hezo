@@ -11,11 +11,11 @@ section: Getting started
 > nothing to install - start at
 > [Getting started on Hezo Cloud](/docs/cloud/getting-started) instead.
 
-Hezo ships as a **single self-contained binary** - there's no runtime, language
-toolchain, or dependencies to install. Download it, run it, and you're up in seconds.
-The one thing to have in place first is a **Docker-compatible runtime**, which Hezo uses
-to run each project's agents in isolated containers on your machine - unless you point
-the instance at a managed sandbox service instead (below).
+Hezo ships as a **single self-contained binary**, with no runtime, language toolchain or
+dependencies to install. Download it and run it. The one thing to have in place first is
+a **Docker-compatible runtime**, which Hezo uses to run each project's agents in isolated
+containers on your machine - unless you point the instance at a managed sandbox service
+instead (below).
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ the instance at a managed sandbox service instead (below).
 - A machine you're happy to leave running while agents work (a laptop is fine to
   start; a small always-on server is better for long-running teams).
 
-**Rather not run containers on this machine at all?** A brand-new instance can start its
+**You can skip the container runtime entirely.** A brand-new instance can start its
 agent containers on a [managed sandbox service](/docs/containers/remote/overview) instead
 - `hezo --sandbox-backend daytona --daytona-api-key "<key>"` - and then no container
 runtime is needed here. See [Containers](/docs/containers/overview) for the trade-off.
@@ -61,7 +61,7 @@ irm https://hezo.ai/install.ps1 | iex
 
 ### Manual download
 
-Prefer to grab the binary yourself? Every release is published on
+Every release is also published on
 [GitHub Releases](https://github.com/hezo-ai/hezo/releases/latest). Download the asset for
 your platform, make it executable (`chmod +x`), and put it on your `PATH`.
 

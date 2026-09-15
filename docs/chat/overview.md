@@ -6,11 +6,11 @@ section: Chat & messaging apps
 
 # Chatting with your team
 
-Chat is a first-class way to work in Hezo. The **CEO** - the global assistant that
-coordinates every project - is one click away behind the **CEO monogram in the top
-bar**, and every project agent has a **direct message** of its own, opened from the
-chat cards at the bottom of the project menu. Ask what's blocked, think out loud,
-have a project spun up, or talk a piece of work through with the teammate who owns it.
+The **CEO** - the global assistant that coordinates every project - is one click away
+behind the **CEO monogram in the top bar**, and every project agent has a **direct
+message** of its own, opened from the chat cards at the bottom of the project menu. Ask
+what's blocked, think out loud, have a project spun up, or talk a piece of work through
+with the teammate who owns it.
 
 Chat opens in the **dock** - a panel down the right-hand side of the window, running
 from under the top bar to the bottom (near full-screen on a phone). It sits over the
@@ -35,9 +35,6 @@ accounting. You'll see the receipts in the conversation itself:
 - **"WEB-53 completed"** when it finishes, and **"WEB-53 blocked - needs you"** when
   it stalls on something only you can resolve.
 
-So a request made in chat never disappears into silence: the conversation carries the
-paper trail of the work it started.
-
 ## Talking to the CEO
 
 The CEO chat is **one continuous conversation**, like any messaging app - no separate
@@ -47,7 +44,7 @@ Conversations that existed before this model (including ones converted into task
 stay readable under **History** in the room switcher.
 
 The CEO works across every project: it can answer for the whole org, file tasks into
-any project, and set up new projects with you. On a fresh instance, the home page IS
+any project, and set up new projects with you. On a fresh instance, the home page *is*
 the CEO conversation - tell it what you want to build and it takes it from there.
 Once projects exist the home page becomes the dashboard; if you'd rather keep landing
 in the chat (or pin the dashboard outright), set **Landing view** under
@@ -129,8 +126,8 @@ agent is working, the send button changes to **Queue**:
 
 ### Cutting in
 
-Sometimes you want to stop a reply mid-answer - you spotted a mistake, or you meant
-something else. That is deliberate, so it takes a deliberate action:
+Sometimes you want to stop a reply mid-answer, because you spotted a mistake or meant
+something else. Interrupting takes a deliberate action:
 
 - **Hold the send button.** Hold it down and it fills up, then changes to
   **Send now**. Let go and the current reply stops where it is (it stays in the
@@ -153,8 +150,8 @@ handed back after. Two things keep that from showing:
 - **Focusing the message box starts the container.** If the project has nothing
   running, the wait for one happens while you type instead of after you hit send.
   Nothing is reserved standing idle - a project already holding a container skips
-  this entirely - and if the budget or the hours allowance is full, it simply does
-  not happen.
+  this entirely - and if the budget or the hours allowance is full, it does not
+  happen.
 
 ## What a chat turn costs
 
@@ -173,9 +170,9 @@ See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 
 ## How conversations work across chat apps
 
-The CEO is also reachable from external chat apps -
+The CEO is also reachable from external chat apps:
 [Telegram](/docs/chat/telegram), [Slack](/docs/chat/slack), and
-[Discord](/docs/chat/discord). The model is simple:
+[Discord](/docs/chat/discord).
 
 - **Every surface owns its own conversations.** A Telegram DM is one conversation. A
   Slack DM is a different one. A topic in your Telegram Topics group, a Slack channel,
@@ -213,8 +210,7 @@ Each app connects in one or both of two modes:
 
 What coworker mode deliberately keeps separate: the CEO's private long-term chat
 memory (your preferences, past decisions) is **never** fed into group channels, and
-group chatter is never folded into it. Your personal assistant and your team's
-coworker share the same brain for work, not for your private conversation history.
+group chatter is never folded into it.
 
 ## Per-app guides
 

@@ -6,34 +6,32 @@ section: Overview
 
 # Introduction
 
-**Hezo is an open source platform for running teams of AI agents.** You open a web
-app and stand up a whole organisation of agents - a CEO, a Captain, engineers,
-designers, researchers, whatever the work needs - that plan and execute real projects
-under your oversight. The model keys and the spend are yours.
+Hezo is an open source platform for running teams of AI agents. You open a web app and
+stand up a whole organisation of agents - a CEO, a Captain, engineers, designers,
+researchers, whatever the work needs - that plan and execute real projects under your
+oversight. The model keys and the spend are yours.
 
 There are two ways to run it. **Self-host it** on a machine you control, free, from a
 single binary. Or let us run an always-on instance for you on **Hezo Cloud**. The
 difference is who runs the box, and [Ways to run Hezo](/docs/ways-to-run) lays out the
 choice.
 
-Think of it as the company around the agents: org charts, projects, budgets,
-approvals, and coordination, instead of twenty terminal tabs you babysit by hand.
+Hezo supplies the rest of a company around those agents: org charts, projects, budgets,
+approvals, and coordination.
 
 > [!TIP]
-> **Did you know?** The name *Hezo* (say it *huh-zwo*) is a play on *hézuò* (合作),
-> the Mandarin word for "to collaborate" or "cooperate" - which is what the whole
-> platform is about: agents working together, and working with you, to get real
-> projects done.
+> The name *Hezo* (say it *huh-zwo*) is a play on *hézuò* (合作), the Mandarin word for
+> "to collaborate" or "cooperate".
 
 ## Secure by design
 
-Agents run arbitrary code, so Hezo is built so that a misbehaving or compromised
-agent can't hurt you. A few guarantees sit underneath everything:
+Agents run arbitrary code, so Hezo is built to keep a misbehaving or compromised agent
+from hurting you. A few guarantees sit underneath everything:
 
-- **Your secrets stay yours.** Agents never see real API keys or tokens - they use
-  named placeholders, and Hezo's egress proxy swaps in the real value at request
-  time, only for the hosts you've allowed. See
-  [Secret protection & egress](/docs/security/secret-protection).
+- **Your secrets stay yours.** Agents never hold the real value of a secret you store -
+  they use named placeholders, and Hezo's egress proxy swaps in the real value at request
+  time, only for the hosts you've allowed. One credential is the exception, and
+  [Secret protection & egress](/docs/security/secret-protection) says which and why.
 - **Everything sensitive is encrypted at rest** behind a master key that only you
   hold. See [Master key & encryption](/docs/security/master-key).
 - **Each project's agents run in their own container.** A compromised agent is confined to its
@@ -42,8 +40,8 @@ agent can't hurt you. A few guarantees sit underneath everything:
   [Containers](/docs/containers/overview) for where those containers run (your own Docker
   daemon or a managed service).
 - **Agents work in real repos without holding the keys.** Commit signing and git
-  credentials stay on your instance, so commits land **verified** while nothing secret
-  enters the sandbox. See
+  credentials stay on your instance, so commits land **verified** without the signing key
+  or the git credential ever entering the sandbox. See
   [Git & verified commits](/docs/security/git-and-verified-commits).
 
 ## What you can do with it
@@ -54,7 +52,7 @@ agent can't hurt you. A few guarantees sit underneath everything:
   that grows a creator's social reach, one that researches stocks - each arrives with
   its roster, reporting lines, and working rules already in place, and every role stays
   yours to reshape. See [The team marketplace](/docs/concepts/marketplace).
-- **Structure the team to the work - and restructure it as the work changes.** Compose a
+- **Structure the team to the work, and restructure it as the work changes.** Compose a
   team's roster, reporting lines, and roles, evolve them while a project runs, and carry a
   structure you've tuned forward to the next project. See
   [Team structure](/docs/concepts/team-structure).
@@ -67,23 +65,22 @@ agent can't hurt you. A few guarantees sit underneath everything:
   app. See [Chat platforms](/docs/chat/overview).
 - **Get teams that improve themselves.** Whenever a task is finished, the Coach reviews
   how it went and writes durable lessons back onto the agents, so they get better the more
-  they ship - without you hand-tuning prompts. See
+  they ship, with no prompt tuning from you. See
   [The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
 - **Bring your own models, each via a real agentic runtime.** Claude, ChatGPT, Gemini,
   Grok, DeepSeek, Z.ai, Kimi, and OpenRouter are all supported - Claude, ChatGPT, Gemini, and
   Grok through their own first-party command-line tooling, DeepSeek, Z.ai, and Kimi through
   Claude Code against their Anthropic-compatible endpoints (Kimi can alternatively run on
-  Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode - not a
-  lowest-common-denominator wrapper. You can also run **entirely on your own hardware**
-  with Ollama or LM Studio, at no per-token cost. You can give any individual agent its own
-  model. See [AI model support](/docs/ai-models).
+  Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode. You can also run
+  **entirely on your own hardware** with Ollama or LM Studio, at no per-token cost. You can
+  give any individual agent its own model. See [AI model support](/docs/ai-models).
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost
-  tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over -
-  control without babysitting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
-- **See where a project stands at a glance.** Every project's **Dashboard** opens on a high-level
-  summary the Captain keeps current, over the work in flight, what needs you, the goals and the
-  spend. See [Progress & project status](/docs/concepts/progress).
-- **Steer by outcome, not just tasks.** Optionally set high-level **goals** and let the Captain
+  tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over.
+  See [Budgets & cost control](/docs/concepts/budgets-and-costs).
+- **See where a project stands at a glance.** Every project's **Dashboard** opens on a
+  high-level summary the Captain keeps current, covering the work in flight, what needs
+  you, the goals, and the spend. See [Progress & project status](/docs/concepts/progress).
+- **Steer by outcome.** Optionally set high-level **goals** and let the Captain
   re-check each one on a schedule (it writes a fresh progress estimate, health, and status). See
   [Goals](/docs/concepts/goals).
 - **Set the rules per task** and let agents keep a running progress summary so work
@@ -102,8 +99,8 @@ agent can't hurt you. A few guarantees sit underneath everything:
   Hezo's [built-in MCP server](/docs/mcp/hezo-mcp-server), and give your agents the tools
   you already use by [connecting external services](/docs/mcp/connecting-mcp-servers) -
   hosted MCP servers or plain REST APIs.
-- **Own your data.** Self-hosted, Hezo carries an embedded database by default - no
-  external service to run (or bring your own Postgres, and keep asset files in your own
-  S3-compatible bucket) - so your work lives in storage you control. On Hezo Cloud the
+- **Own your data.** Self-hosted, Hezo carries an embedded database by default, so there
+  is no external service to run and your work lives in storage you control (or bring your
+  own Postgres, and keep asset files in your own S3-compatible bucket). On Hezo Cloud the
   database and file storage are managed for you. Upgrades are safe and data-preserving.
   See [Your data & the database](/docs/concepts/your-data).
