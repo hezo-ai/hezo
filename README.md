@@ -219,7 +219,9 @@ proxy blocks the request; the substitution never happens.
 
 So a buggy, jailbroken, or outright malicious agent **cannot leak what it never sees**. It
 can only use a secret against the hosts you scoped it to, and the value is never written to
-a log line or to disk - diagnostics record the placeholder instead. The same posture runs end
+a log line or to disk - diagnostics record the placeholder instead. One credential is the
+exception: the model-provider key the agent's own CLI authenticates with, which reaches the
+container in readable form because that traffic does not go through the proxy. The same posture runs end
 to end: encrypted at rest behind your master key, every project sandboxed in its own
 container, and an append-only audit trail of what people and agents did. See the [security documentation](./docs/security/secret-protection.md)
 for the full picture.
@@ -237,7 +239,7 @@ hold your recovery phrase.
 
 Bring your own provider accounts - connect as many as you like, and give any individual
 agent [its own model](./docs/ai-models.md#give-an-agent-its-own-model). Each provider is
-driven through its own **first-party agentic command-line runtime** inside the container.
+driven through a **first-party agentic command-line runtime** inside the container.
 Anthropic, OpenAI, Google and xAI each run on their own CLI; the
 Anthropic-compatible providers run through Claude Code, and OpenRouter through
 OpenCode. Hezo's [meta-harness](./docs/concepts/meta-harness.md) levels the differences, so

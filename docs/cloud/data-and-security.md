@@ -45,9 +45,9 @@ Only our gateway may reach your instance, and only on one port.
 ## Agent code does not run on your instance
 
 Your instance runs Hezo. **The code your agents write and execute runs
-somewhere else**, in a separate per-run sandbox. So an agent that breaks,
-floods or compromises its container never reaches the machine holding your
-instance.
+somewhere else**, in a separate per-run sandbox. So a container an agent
+breaks, floods or compromises does not take the machine holding your instance
+with it.
 
 ## Your secrets reach an agent as placeholders
 

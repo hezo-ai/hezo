@@ -132,5 +132,6 @@ You're always the one who provides a secret:
 
 ## Why this matters
 
-A buggy, jailbroken, or malicious agent **cannot exfiltrate your secrets.** It never
-sees them, and it can only use them against the hosts you allowed.
+A buggy, jailbroken, or malicious agent **cannot exfiltrate the secrets you store.** It
+never sees them, and it can only use them against the hosts you allowed. The one
+exception is the model-provider key above.

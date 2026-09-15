@@ -103,6 +103,6 @@ improvements live in the agents' own prompts, a structure you save and reuse car
 forward too.
 
 > [!TIP]
-> A roster, its reporting lines, prompts, skills, and learned rules all travel with a team
-> you save and start the next project from, so the tuning you do on one project does not
-> have to be done again on the next.
+> A roster, its reporting lines and its prompts travel with a team you save and start the
+> next project from, so the tuning you do on one project does not have to be done again on
+> the next. Skills do not: they are configured per project, not carried by a team.

@@ -161,6 +161,6 @@ them:
 ## What this gives you
 
 Placeholders and egress scoping, encryption at rest, and container isolation together
-box a compromised agent in: it can't read your secrets (they only ever materialise at
-the proxy, behind host allow-lists), it can't reach your host, and it can't escape its
-run's container or its project.
+box a compromised agent in: it can't read the secrets you store (they only ever
+materialise at the proxy, behind host allow-lists), it can't reach your host, and it
+can't escape its run's container or its project.

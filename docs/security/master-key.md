@@ -21,8 +21,8 @@ authenticated encryption (AES-256-GCM).
   again. This is deliberate: nobody who gets a copy of your data directory can
   read your secrets without the phrase.
 
-Treat it like the seed phrase of a crypto wallet: write it down and store it somewhere
-you will not lose it.
+Treat it like the seed phrase of a crypto wallet: write it down and keep it somewhere
+both safe and hard to lose.
 
 ## Locked and unlocked
 
@@ -40,8 +40,8 @@ environment variable to that one invocation (see
 [Self-hosting on a VPS](/docs/deployment/vps)) - but don't persist the phrase to disk
 to do it (see [Keep it off the server](#keep-it-off-the-server) below).
 
-On [Hezo Cloud](/docs/cloud/overview) the gate screen is the only way in: you create the
-phrase in your own browser and it never reaches us, so **we hold no copy and cannot
+On [Hezo Cloud](/docs/cloud/overview) the gate screen is the only way in: your own browser
+generates the phrase and it never reaches us, so **we hold no copy and cannot
 recover it for you**. See
 [Data & security on Hezo Cloud](/docs/cloud/data-and-security).
 
