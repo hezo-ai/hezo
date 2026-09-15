@@ -35,10 +35,10 @@ writes at a small premium, OpenAI bills cache reads at a tenth with no write
 premium, and agent runs are cache-heavy, so this is most of what a run costs.
 
 For a provider whose cache rates are not yet known, cache traffic still bills at
-the full input rate, which makes those particular figures a **conservative
-upper-bound estimate** - your real bill is lower than the figure shown, never
-higher. For exact billing on a model (or to correct a rate), add a manual pricing
-override in Settings - overrides win and can include cache rates.
+the full input rate, so those particular figures are an upper bound: your real bill
+is lower than the figure shown, never higher. For exact billing on a model (or to
+correct a rate), add a manual pricing override in Settings. Overrides win and can
+include cache rates.
 
 ## Subscription runs are costed but not billed
 
@@ -46,14 +46,14 @@ A provider you signed into with a subscription does not charge per token, so the
 is no bill for Hezo to track. It still records what each run would have cost at the
 provider's published API rates, and shows that figure marked as not billed.
 
-This exists because the alternative is worse: with nothing recorded, a team running
-entirely on subscriptions saw an empty spend page while getting through billions of
-tokens a week, and the first sign of trouble was the provider cutting them off.
+With nothing recorded, a team running entirely on subscriptions saw an empty spend
+page while getting through billions of tokens a week, and the first sign of trouble
+was the provider cutting them off.
 
 The figure is there to show you what the fleet is doing, not to budget against:
 
-- It **never** counts towards a daily, weekly or monthly limit.
-- It **never** pauses an agent.
+- It never counts towards a daily, weekly or monthly limit.
+- It never pauses an agent.
 - It is kept separate from real spend everywhere both are shown, so "what did this
   cost me" stays answerable.
 
@@ -77,10 +77,10 @@ hired before this release keep whatever cap they were given.
 
 ## Enforcement
 
-When an agent (or the project it belongs to) reaches a budget limit in **any** window,
-its runs are **paused**. The agent automatically resumes when that window rolls over
-(the next day, week, or month). This gives you a hard ceiling on spend without having
-to babysit it: set a daily cap and a runaway agent simply stops until tomorrow.
+When an agent (or the project it belongs to) reaches a budget limit in any window, its
+runs are paused. The agent resumes automatically when that window rolls over (the next
+day, week, or month). That gives you a hard ceiling on spend you don't have to watch:
+set a daily cap and a runaway agent stops until tomorrow.
 
 You can also pause and resume agents yourself at any time, independently of budgets.
 
@@ -97,7 +97,7 @@ stops when the container stops. A container that stops and resumes three times
 therefore reads as four separate stretches, with the gaps between them costing
 nothing but reserved disk.
 
-Three things are worth knowing about the figure:
+Three things affect how that figure reads:
 
 - **Concurrent containers add up.** Two containers up for one hour is two container
   hours, which is what a provider charges for.
@@ -110,8 +110,8 @@ Three things are worth knowing about the figure:
   Each agent's run time for the month is shown on the **Budget** tab, beside its spend.
   That one really is a calendar month, and is a different figure from the hours below.
 
-On a local Docker daemon an hour of uptime costs nothing, so the Hours tab is there to
-show you what the fleet is doing rather than to budget against.
+On a local Docker daemon an hour of uptime costs nothing, so there the Hours tab is a
+record of what the fleet is doing rather than something to budget against.
 
 ### The hours allowance
 
@@ -126,7 +126,7 @@ Hours tab (under **Team & Budget**). Once it is spent:
 
 It is unset by default, which means no limit.
 
-**The period is usually the calendar month, and not always.** A deployment that
+**The period is usually the calendar month, but not always.** A deployment that
 bills you on the day you subscribed anchors the allowance to that day instead, so
 the hours you are capped against cover the period you are charged for. The Hours
 tab names the period it is measuring and the date the allowance comes back, so

@@ -30,9 +30,9 @@ Every skill is either **global** or **scoped to one project**:
 - **Project** skills are private to a single project - its particular deployment steps, its
   own conventions, a runbook only that project needs.
 
-A run sees its own project's skills **plus** all global ones; if a project skill and a global
-skill share the same slug, the project's copy takes precedence for that project. This keeps
-each project's manifest focused while still letting broadly-useful know-how reach everyone.
+A run sees its own project's skills plus all global ones; if a project skill and a global
+skill share the same slug, the project's copy takes precedence for that project. That keeps
+each project's manifest short while know-how worth sharing still reaches every project.
 
 ## Where skills come from
 
@@ -46,16 +46,15 @@ each project's manifest focused while still letting broadly-useful know-how reac
   (`propose_skill`) - the proposal lands in your inbox like any other approval. The agent
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
-- **The starter library.** Hezo ships a **starter library of global skills** - proven
-  methods for planning, brainstorming, debugging, test-driven development, code review,
-  verification, design, web app testing, research, data analysis, writing, and authoring
-  new skills. A **brand-new instance gets them automatically** on first start, so they're
-  there from day one. On an **existing instance** they're not added silently on upgrade -
-  instead **Settings → Skills** shows an **Add default skills** button that lists the ones
-  you don't have and asks you to confirm before adding them. Either way, once added they're
-  ordinary global skills - **fully yours** to edit, delete, or re-scope to a single project -
-  and Hezo never re-adds one you've removed. Several are adapted from well-known open-source
-  skill collections and link their source.
+- **The starter library.** Hezo ships a starter library of global skills: methods for
+  planning, brainstorming, debugging, test-driven development, code review, verification,
+  design, web app testing, research, data analysis, writing, and authoring new skills. A
+  brand-new instance gets them automatically on first start. An existing instance does not
+  get them silently on upgrade; instead **Settings → Skills** shows an **Add default skills**
+  button that lists the ones you don't have and asks you to confirm before adding them.
+  Either way, once added they're ordinary global skills, yours to edit, delete, or re-scope
+  to a single project, and Hezo never re-adds one you've removed. Several are adapted from
+  well-known open-source skill collections and link their source.
 
   One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
   recipes agents consult before
@@ -87,7 +86,7 @@ on either page - has a **view** button that opens the skill and renders its full
 you can read exactly what your agents see, including read-only built-ins.
 
 Skills are part of what the [Coach](/docs/concepts/coach-and-self-improving-teams) can
-write to: when a retrospective surfaces a reusable procedure, it may capture it as a skill
+write to: when a task review surfaces a reusable procedure, it may capture it as a skill
 so the whole instance benefits.
 
 ## Version history & restore
@@ -97,8 +96,8 @@ in **Settings → Skills** for a global skill, or the project's **Skills** page 
 project-scoped one - the **History** button lists every past version with who changed it, when,
 and the changelog for that edit. Select one to read the skill exactly as it stood then, with a
 banner and **View latest** to return; **restore** brings it back as the current version.
-Restoring is itself recorded as a new revision, so you can always move forward or back without
-losing the thread. This is the same "versioned & reversible" guarantee that covers
+Restoring is itself recorded as a new revision, so you can move forward or back without
+losing the history. This is the same "versioned & reversible" guarantee that covers
 [project documents and agent system prompts](/docs/concepts/documents-and-memory#version-history).
 
 ## Finding skills

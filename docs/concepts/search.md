@@ -29,8 +29,7 @@ with a count - so you can see at a glance where the matches are and switch betwe
 
 Pick a result to go straight to it: a task or comment opens that task (a comment match
 scrolls to the exact comment), a document opens the document, an asset opens it in the
-asset viewer, and a skill opens its settings. The palette closes and you land where you
-needed to be.
+asset viewer, and a skill opens its settings. The palette closes behind you.
 
 ## Finding a file in the assets library
 

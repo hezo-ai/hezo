@@ -7,9 +7,9 @@ section: Concepts
 # Team marketplace
 
 The **team marketplace** is a catalog of ready-made teams. Instead of building a roster from
-scratch, you can pick a proven team - like a full software-development team with a Captain,
-Architect, Engineer, QA, and more - and either launch a brand-new project with it or add it to
-a project you already have.
+scratch, you can pick one out of the catalog, such as a full software-development team with a
+Captain, Architect, Engineer, QA, and more, and either launch a brand-new project with it or
+add it to a project you already have.
 
 Open it from the **Marketplace** button in the top navigation (just left of Settings).
 
@@ -37,8 +37,8 @@ leaving the flow.
 
 ## Adding a team to an existing project
 
-**Add to a project** brings a marketplace team's roles into a project you already have. Rather
-than adding them silently, Hezo opens a task for the **CEO**, which:
+**Add to a project** brings a marketplace team's roles into a project you already have. Hezo
+doesn't add them silently: it opens a task for the **CEO**, which:
 
 1. hires the team's roles onto the project's team (no separate approval - you already chose to
    add them), and
@@ -56,11 +56,11 @@ add: **the whole team**, or **just the roles you choose** from a checklist. So y
 the Security Engineer, or the Content Editor and the Trend Researcher, into a project that already
 has its own team. The Captain isn't on the list - every project already has one.
 
-You can also reach this from the other direction. **Hire agent** on a project's Team tab
-(under **Team & Budget**) offers **Browse the marketplace** as one of its three ways to hire; taking it opens the catalog
-with that project already chosen, and the add dialog starts on **just the roles you choose**
-rather than on the whole team - you asked for a teammate, not a second roster. The project stays
-changeable in the dialog if you picked the wrong one.
+You can also get here from the hiring side. **Hire agent** on a project's Team tab (under
+**Team & Budget**) offers **Browse the marketplace** as one of its three ways to hire; taking it
+opens the catalog with that project already chosen, and the add dialog starts on **just the roles
+you choose** rather than on the whole team, since you asked for a teammate and not a second
+roster. The project stays changeable in the dialog if you picked the wrong one.
 
 Picking a subset changes what the CEO does. Those roles are being lifted out of a roster they were
 written for, and the rest of that team isn't coming with them, so their prompts assume teammates
@@ -75,8 +75,8 @@ your project may not have. The CEO:
 4. rewrites each one's prompt around the teammates it actually has, gives it a manager, and updates
    the agents whose work now flows through it.
 
-So what you get is fitted to your project, not a copy of what's in the catalog. A role your project
-already has is skipped rather than duplicated.
+What you get is therefore fitted to your project rather than a copy of the catalog entry, and a
+role your project already has is skipped rather than duplicated.
 
 The CEO also draws on the marketplace when you talk to it about hiring: asked to staff a team, it
 checks the catalog for a proven role that matches before writing a new one from scratch, and tells

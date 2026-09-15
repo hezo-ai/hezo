@@ -6,46 +6,45 @@ section: Concepts
 
 # Goals
 
-**Goals are optional - and recommended.** Every project already has a
-[**progress summary**](/docs/concepts/progress) the Captain keeps current whether or not you set
-any. Goals add a layer on top of it: the high-level **outcomes** the project is working toward,
+Goals are optional, and recommended. Every project already has a
+[progress summary](/docs/concepts/progress) the Captain keeps current whether or not you set
+any. Goals add a layer on top of it: the high-level outcomes the project is working toward,
 tracked over time with a percentage, a health, and a chart.
 
-Where tasks are the individual pieces of work on the board, goals are the outcomes those tasks add
-up to - and they give you, the admin, a way to see how far along a project is and where things
-stand **without micromanaging the board.** Adding one or two is the single best way to make a
-project's progress legible; not adding any costs you nothing else.
+Tasks are the individual pieces of work on the board; goals are the outcomes those tasks add
+up to. As the admin, they let you see how far along a project is and where things stand without
+working through the board task by task. Adding one or two makes a project's progress much
+easier to read, and adding none costs you nothing else.
 
-A goal is an **outcome or milestone you want the project to achieve** - a state of the world
-you care about: a level to reach ("reach 100 active customers"), or a level to reach and hold
-("keep the error rate under 1%"). Its **measurement** judges results, never activity -
-"monitor the watchlist daily" or "deliver a weekly report" is not a goal but recurring
-operational work, which the team runs as a task that stays open (see the callout below). A
-one-off deliverable with a fixed done state - a document to produce, a feature to ship, a
-one-time analysis - belongs on the board as a **task** too (the Captain can link it to a
-goal). Goals are re-checked on their cadence until you archive them, so a reached milestone
-stays tracked (and held) rather than quietly slipping.
+A goal is an outcome or milestone you want the project to achieve, a state of the world you
+care about: a level to reach ("reach 100 active customers"), or a level to reach and hold
+("keep the error rate under 1%"). Its measurement judges results, never activity. "Monitor the
+watchlist daily" or "deliver a weekly report" is not a goal; it is recurring operational work,
+which the team runs as a task that stays open (see the callout below). A one-off deliverable
+with a fixed done state, such as a document to produce, a feature to ship or a one-time
+analysis, belongs on the board as a task too, and the Captain can link it to a goal. Goals are
+re-checked on their cadence until you archive them, so a reached milestone stays tracked, and
+held, instead of slipping unnoticed.
 
-You set the goals; the **Captain** keeps them up to date. You don't have to remember to
-update a status or move a slider - the Captain re-checks each goal on its schedule and writes
-a fresh estimate.
+You set the goals; the Captain keeps them up to date. You don't have to remember to update a
+status or move a slider. The Captain re-checks each goal on its schedule and writes a fresh
+estimate.
 
-The Captain (or the CEO) can also **suggest goals** - but goals start with you. During a
-project's initial onboarding the Captain asks what you want the project to achieve and
-formulates suggestions from your answers; it shouldn't invent goals you didn't ask for. A
-suggestion isn't a goal yet: it appears as an **Approve / Deny** card on the task thread and
-on the **Goals** page, and only becomes a real goal once you approve it. Deny it and it's
-dismissed. You stay in control of which goals the team actually tracks.
+The Captain (or the CEO) can also suggest goals, but goals start with you. During a project's
+initial onboarding the Captain asks what you want the project to achieve and forms suggestions
+from your answers; it shouldn't invent goals you didn't ask for. A suggestion isn't a goal yet:
+it appears as an **Approve / Deny** card on the task thread and on the **Goals** page, and only
+becomes a real goal once you approve it. Deny it and it's dismissed.
 
-> **There is no cron in Hezo - and goals aren't one either.** Hezo has no cron or
+> **There is no cron in Hezo, and goals aren't one either.** Hezo has no cron or
 > timed-trigger system to configure; repeating work runs on the **heartbeat**: agents wake on
-> their own cadence and revisit the open tasks assigned to them. Recurring operational work -
-> a daily monitoring sweep, a weekly report - is a **standing task**: an ordinary task that
-> stays open and is never marked done, with each round filed as a sub-task under it (see
+> their own cadence and revisit the open tasks assigned to them. Recurring operational work,
+> such as a daily monitoring sweep or a weekly report, is a **standing task**: an ordinary task
+> that stays open and is never marked done, with each round filed as a sub-task under it (see
 > [Recurring work and standing tasks](/docs/concepts/tasks#recurring-work-and-standing-tasks)).
-> Goals are different: they track the **outcomes you want** - on each due check the Captain
-> assesses progress and turns the assessment into steering (a comment on an in-flight task) or
-> new tasks. A goal's check frequency schedules the Captain's re-assessment, not the work itself.
+> Goals track the outcomes you want instead. On each due check the Captain assesses progress
+> and turns the assessment into steering (a comment on an in-flight task) or new tasks. A
+> goal's check frequency schedules the Captain's re-assessment, not the work itself.
 
 ## The Goals page
 
@@ -54,7 +53,7 @@ with its progress, health, and latest status; click a panel to open the goal's o
 full progress chart and history live. An **Active** / **Archived** filter switches between live
 goals and retired ones.
 
-The project [**Dashboard**](/docs/concepts/progress) carries a goals card beside the work: the four
+The project [**Dashboard**](/docs/concepts/progress) has a goals card beside the work: the four
 goals most worth a decision, worst health first, each with its progress bar, health and deadline,
 and a link to the rest. Its metric strip also shows overall goal progress and how many goals are
 off track.
@@ -83,9 +82,8 @@ goal has:
 
 The create and edit forms keep the **SMART** framework (Specific, Measurable, Achievable,
 Relevant, Time-bound) in front of you as a reminder. A project can have any number of goals;
-until you've set one, a gentle dot pulses next to **Goals** in the menu as a nudge to create
-your first. Editing a goal (from the goal's own page or the panel's edit control) reopens the
-same form.
+until you've set one, a dot pulses next to **Goals** in the menu. Editing a goal (from the
+goal's own page or the panel's edit control) reopens the same form.
 
 ## How the Captain tracks goals
 
@@ -97,7 +95,7 @@ them all at once.
 A goal is due when its **check frequency** has come round (last checked longer ago than its cadence,
 or never checked) **or** once its **deadline** has passed - a goal past its deadline is always
 checked and never skipped while it stays active. Goals that aren't due on either count are skipped;
-the progress update still runs, it simply has no goal work to do. A due goal also makes a progress
+the progress update still runs, with no goal work to do. A due goal also makes a progress
 update due, so setting goals means the progress summary refreshes at least as often as your
 shortest check frequency.
 
@@ -112,8 +110,8 @@ things:
 - a **status blurb** - a short paragraph on where the goal stands and what's needed next. Any
   tasks or pull requests it references become links you can click straight through to.
 
-Because each check is recorded, every goal shows a **progress chart** of how its percentage
-has moved over time, so you can see momentum (or a stall) at a glance.
+Because each check is recorded, every goal shows a progress chart of how its percentage has
+moved over time, so you can see momentum or a stall.
 
 These progress updates are **not** done inside a task - they're standalone Captain runs. The recent
 progress update runs for the whole project appear at the bottom of the project
@@ -135,8 +133,8 @@ that happens the Captain lowers the percentage (explaining why in the blurb) and
 chart shows the dip.
 
 That also means goals can be deliberately **never-ending** - a standing objective like "keep the
-error rate under 1%" or "respond to every support ticket within a day" is measured continuously,
-forever, and simply hovers around 100% while it's being met. The only way to stop the Captain
+error rate under 1%" or "respond to every support request within a day" is measured continuously,
+forever, and sits around 100% while it's being met. The only way to stop the Captain
 checking a goal is to **archive** it (below) - do that when a goal has served its purpose and
 is no longer worth tracking.
 
@@ -147,23 +145,22 @@ Archiving a goal (from the archive button on its card, or the same button on the
 sets it aside without deleting it: an archived goal is **no longer checked** - the Captain skips it
 entirely and never updates its status or files work for it.
 
-Because that quietly retires something the team is working toward, archiving **asks you to confirm
-first**, naming the goal in the prompt so you can tell it apart from the card next to it. Nothing
-is sent until you confirm. Unarchiving needs no confirmation - it is the undo of that action - and
+Because that retires something the team is working toward, archiving asks you to confirm first,
+naming the goal in the prompt so you can tell it apart from the card next to it. Nothing is sent
+until you confirm. Unarchiving needs no confirmation - it is the undo of that action - and
 brings the goal straight back into rotation.
 
 ## Goals and the board
 
-When the Captain decides a goal needs a push, it either **comments on an existing in-flight
-task** to steer or unblock it, or **files new tasks** through the normal delegation flow and
-links them to the goal. But it doesn't create work for its own sake: if tasks already in the
-backlog or in flight will advance the goal, the Captain leaves the board alone. The point of a
-progress update is to judge whether the project is on course - not to manufacture busywork every
-time a goal comes due. The Captain never re-opens a closed task; if something needs redoing it files
-a fresh task that points back at the original.
+When the Captain decides a goal needs a push, it either comments on an existing in-flight task
+to steer or unblock it, or files new tasks through the normal delegation flow and links them to
+the goal. It doesn't create work for its own sake: if tasks already in the backlog or in flight
+will advance the goal, the Captain leaves the board alone, because the job of a progress update
+is to judge whether the project is on course. The Captain never re-opens a closed task; if
+something needs redoing it files a fresh task that points back at the original.
 
-The estimate is exactly that - an estimate, made by the Captain. Treat the **blurb** as the
-primary signal and the **percentage** as a quick gauge of direction. Together they let you
-glance at a project and know where it's headed without reading every task.
+The percentage is the Captain's estimate, so treat the blurb as the primary signal and the
+percentage as a quick gauge of direction. The two together tell you where a project is headed
+without reading every task.
 
 > Goals are a per-project concept. The global **HQ** project does not have goals.

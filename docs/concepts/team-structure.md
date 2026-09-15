@@ -6,11 +6,10 @@ section: Concepts
 
 # Team structure
 
-As models converge and features get copied, the part of an AI system that's hard to
-reproduce isn't the code - it's how the work is organised: which roles exist, how they
-report to each other, what each one is good at, and the tools, knowledge, and judgement
-they share. That arrangement is a team's **structure**, and in Hezo it's a first-class
-thing you compose, change, and reuse - not something fixed that you're stuck with.
+A team's **structure** is how its work is organised: which roles exist, how they report to
+each other, what each one is good at, and the tools, knowledge, and judgement they share.
+That arrangement is the part of an AI system that is hard to copy, and in Hezo it is
+something you compose, change, and reuse rather than something fixed at setup.
 
 A team's structure is the same idea as a *dynamic agent workflow*: instead of one fixed
 pipeline of model calls, the arrangement of the agents is chosen to fit the work in front
@@ -24,9 +23,8 @@ A team's structure is more than a list of agents. It's:
 
 - **The roster** - which roles exist on the team (a Captain plus whatever specialists the
   work needs). See [Roles & the CEO](/docs/concepts/roles-and-coordination).
-- **The reporting lines** - who reports to whom. This org chart is what lets work be
-  delegated up and down the team, so it determines how the team actually operates, not
-  just how it looks.
+- **The reporting lines** - who reports to whom. Work is delegated up and down these lines,
+  so the org chart decides how the team operates rather than only describing it.
 - **What each role is** - every agent's [system prompt](/docs/concepts/hiring-and-agents#editing-system-prompts),
   which defines its responsibilities, conventions, and how it works, plus the model it
   runs on.
@@ -45,12 +43,12 @@ software-development **App Team**, a **Social Media Marketing** team, or an **In
 Portfolio** team. You can also save and add your own. For the built-in rosters and a link to every
 role's prompt, see [Team templates](/docs/concepts/projects-and-teams#team-templates).
 
-A starting team is just a convenient starting point - it's not a cage. The Blank team is
-designed to be grown into whatever the work needs; the App Team is a fully-staffed
-structure for building software, and the Social Media Marketing and Investment Portfolio
-teams are staffed for content and stock research respectively. Pick whichever is closest and adjust
-from there. When none of them is obviously right for the work, start from Blank: an
-ill-fitting roster costs more to unpick than an empty one does to fill.
+None of them is a commitment. The Blank team is designed to be grown into whatever the work
+needs; the App Team is a fully-staffed structure for building software, and the Social Media
+Marketing and Investment Portfolio teams are staffed for content and stock research
+respectively. Pick whichever is closest and adjust from there. When none of them is obviously
+right for the work, start from Blank: an ill-fitting roster costs more to unpick than an empty
+one does to fill.
 
 ## Changing a team's structure while it runs
 
@@ -91,21 +89,20 @@ other. See
 
 ## Improving the team within its structure
 
-Changing the structure isn't the only way a team gets better. Within whatever structure a
-team has, the [Coach](/docs/concepts/coach-and-self-improving-teams) makes the team's
-*existing* agents work better - without changing the roster or the reporting lines. Every
+A team also gets better without any change to its structure. The
+[Coach](/docs/concepts/coach-and-self-improving-teams) makes the team's *existing* agents
+work better, leaving the roster and the reporting lines as they are. Every
 time a task is completed, the Coach reviews how it went and writes durable **learned
 rules** back onto the agents that need them, and sometimes updates a project document or
 skill - so the same mistake doesn't happen twice and the existing agents coordinate more
 smoothly over time.
 
 Restructuring a team and coaching it are separate things: one changes *who's on the team
-and how they report*; the other sharpens *how the existing agents work*. Because the
-coaching improvements live in the agents' own prompts, a structure you save and reuse
-carries them forward too.
+and how they report*, the other *how the existing agents work*. Because the coaching
+improvements live in the agents' own prompts, a structure you save and reuse carries them
+forward too.
 
 > [!TIP]
-> The durable thing in Hezo isn't any single task or even any single project - it's the
-> structure you build: a roster, reporting lines, prompts, skills, and learned rules that
-> you tune once and carry forward. That accumulated structure is what makes the next
-> project faster than the last.
+> A roster, its reporting lines, prompts, skills, and learned rules all travel with a team
+> you save and start the next project from, so the tuning you do on one project does not
+> have to be done again on the next.
