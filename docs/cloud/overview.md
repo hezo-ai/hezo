@@ -25,8 +25,8 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
   per-agent charge. What a plan sets is how many containers can run at once and
   how many container-hours a month they may use. See
   [Plans, usage & billing](/docs/cloud/plans-and-billing).
-- **A twelve-word recovery phrase that only you hold.** You choose it in your
-  own browser the first time you open your instance.
+- **A twelve-word recovery phrase that only you hold.** Your own browser
+  generates it the first time you open your instance.
 - **Twelve languages**, for the dashboard, our mail and your instance alike.
 
 ## What we run for you
@@ -50,13 +50,14 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
 - **Your recovery phrase.** We never hold it, and nobody here can recover it
   for you.
 - **Anything your agents need to reach** - repositories, connectors, API
-  credentials - which are stored encrypted and are never handed to an agent in
-  the clear. See [Secret protection & egress](/docs/security/secret-protection).
+  credentials - stored encrypted, and referenced by agents as placeholders
+  rather than real values. See
+  [Secret protection & egress](/docs/security/secret-protection).
 
 ## Where it runs
 
 On its own machine, in Europe. Your instance answers on its own
-`you.app.hezo.ai` address, which you choose when you sign up.
+`you.app.hezo.ai` address.
 
 ## Next
 

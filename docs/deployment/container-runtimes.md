@@ -7,8 +7,8 @@ section: Deployment
 # Container runtimes
 
 Hezo runs every project's agents inside a container. That container is a **security
-boundary**, not a packaging convenience - it keeps agents off the rest of your system, so a
-buggy or compromised agent can't reach your files, credentials, or wider network (see
+boundary**: it keeps agents off the rest of your system, so a buggy or compromised agent
+can't reach your files, credentials, or wider network (see
 [Container isolation](/docs/security/container-isolation)).
 
 This page is about the default setup, where containers run on **your own machine**. If
@@ -111,7 +111,7 @@ For the other runtimes:
 Hezo checks this at boot by mounting a scratch directory into a throwaway container and
 writing to it. If the mount is missing or read-only it logs the fix above and keeps
 running, so you can correct the host configuration and restart without losing the web UI.
-To skip the check entirely, set `containers.skipMountCheck: true` - note that this only hides the
+To skip the check entirely, set `containers.skipMountCheck: true`; that hides the
 diagnosis, it does not make the mount work.
 
 If you keep the data directory somewhere else (`--data-dir`), share that path instead.

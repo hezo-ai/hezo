@@ -51,8 +51,8 @@ whatever the work needs - with org charts, projects, budgets, and approvals buil
 manage goals and projects, not twenty terminal tabs.
 
 Because those agents run real, often AI-written code, Hezo is **secure by design**: agents
-never see your real secrets, everything sensitive is encrypted behind a key only you hold,
-and every project runs sandboxed in its own container.
+never hold the real value of a secret you store, everything sensitive is encrypted behind a
+key only you hold, and every project runs sandboxed in its own container.
 
 ## Quickstart
 
@@ -111,7 +111,7 @@ Any provider that takes cloud-init works too, and
 <a href="./docs/deployment/one-click.md">One-click deploy</a> covers which kind of
 machine to pick and why.</sub>
 
-**Hezo Cloud.** We run and update your instance at `you.app.hezo.ai`, agents run on
+**Hezo Cloud.** We run your instance at `you.app.hezo.ai`, agents run on
 managed sandboxes, and you still bring your own model keys. Starts with a 7-day free
 trial, and we don't ask for a card - see
 [hezo.ai/pricing](https://hezo.ai/pricing), or
@@ -205,8 +205,8 @@ trial, and we don't ask for a card - see
 
 ## Agents never hold your secrets
 
-This is the part most agent setups get wrong, and a big reason Hezo exists. Agents
-reference every credential by a **placeholder** - never the real value:
+This is a big reason Hezo exists. Agents reference every credential by a **placeholder** -
+never the real value:
 
 ```http
 Authorization: Bearer __HEZO_SECRET_STRIPE__
@@ -215,7 +215,7 @@ Authorization: Bearer __HEZO_SECRET_STRIPE__
 The real key lives encrypted in Hezo's vault. When the request leaves the container, the
 **egress proxy** checks the destination against that secret's allowed hosts and swaps in
 the real value only if it matches - say, `api.stripe.com`. Send it anywhere else and the
-proxy blocks the request; the substitution simply never happens.
+proxy blocks the request; the substitution never happens.
 
 So a buggy, jailbroken, or outright malicious agent **cannot leak what it never sees**. It
 can only use a secret against the hosts you scoped it to, and the value is never written to
@@ -237,9 +237,9 @@ hold your recovery phrase.
 
 Bring your own provider accounts - connect as many as you like, and give any individual
 agent [its own model](./docs/ai-models.md#give-an-agent-its-own-model). Each provider is
-driven through a **first-party agentic command-line runtime** inside the container, not a
-lowest-common-denominator wrapper. Anthropic, OpenAI, Google and xAI each run on their own
-CLI; the Anthropic-compatible providers run through Claude Code, and OpenRouter through
+driven through its own **first-party agentic command-line runtime** inside the container.
+Anthropic, OpenAI, Google and xAI each run on their own CLI; the
+Anthropic-compatible providers run through Claude Code, and OpenRouter through
 OpenCode. Hezo's [meta-harness](./docs/concepts/meta-harness.md) levels the differences, so
 the tooling, memory and sandbox stay the same underneath whichever model you pick.
 
@@ -257,7 +257,7 @@ the tooling, memory and sandbox stay the same underneath whichever model you pic
 | **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 
 Where the Runtime column lists more than one, that credential chooses which CLI it runs on;
-the first is the default, so adding a key without touching the setting just works. You can
+the first is the default, so adding a key without touching the setting works. You can
 change it later, or rotate the stored key in place, without re-adding the connection.
 
 Ollama and LM Studio run agents **entirely on your own hardware** at no per-token cost -

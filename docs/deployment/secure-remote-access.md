@@ -6,8 +6,8 @@ section: Deployment
 
 # Secure remote access
 
-A cloud-hosted Hezo can run agents, spend money, and reach your connected accounts - so
-how you reach it matters as much as where you run it. Two rules cover it:
+A cloud-hosted Hezo can run agents, spend money, and reach your connected accounts, so
+how you reach it matters. Two rules cover it:
 
 1. **Don't expose the Hezo port to the public internet.** Keep it on a private network
    or behind an authenticated tunnel.
@@ -33,18 +33,17 @@ TLS-terminating reverse proxy for HTTPS (see
 - **Your phone needs a secure context.** Installing Hezo as an app (below) and other
   browser capabilities only work over HTTPS or `localhost`.
 - **Defense in depth.** Your admin password, agent output, and everything you paste
-  into a task ride on every request; TLS keeps them sealed even if another device on
+  into a task ride on every request; TLS keeps them encrypted even if another device on
   the network is compromised.
 
-Here are the common ways to set up access, roughly easiest first.
+The setups below are ordered roughly easiest first.
 
 ## Private mesh VPN - Tailscale / WireGuard (recommended)
 
 Put the server and your devices on a private network and reach Hezo as if it were
 local. With **Tailscale** (or plain **WireGuard**), the Hezo port is never published to
 the internet - only devices on your mesh can connect. This is the simplest secure setup
-and the one we recommend for most people, and your phone joins the same way for
-on-the-go oversight.
+and the one we recommend for most people; your phone joins the same mesh.
 
 Mesh hostnames aren't public, so add HTTPS one of these ways:
 
@@ -61,9 +60,9 @@ Mesh hostnames aren't public, so add HTTPS one of these ways:
 ## Cloudflare Tunnel
 
 A **Cloudflare Tunnel** connects your server out to Cloudflare, so you get an HTTPS
-hostname **without opening any inbound ports** - the certificate comes with the tunnel,
-nothing extra to set up. Pair it with an access policy (Cloudflare Access) to require
-sign-in before anyone reaches Hezo.
+hostname **without opening any inbound ports**, and the certificate comes with the
+tunnel. Pair it with an access policy (Cloudflare Access) to require sign-in before
+anyone reaches Hezo.
 
 ## SSH tunnel
 
@@ -87,7 +86,7 @@ If you do want a public URL, terminate HTTPS with a reverse proxy (see
 directly.
 
 Hezo authenticates every session with your **admin password**, so a public deployment is
-no longer open by default. Access is gated by that password on every request; the master
+not open by default. Access is gated by that password on every request; the master
 key's job is separate. A new Hezo process starts **locked** by default. A supervised
 in-app update hands the key to the new process in memory. A reboot, crash, or direct
 service restart comes up locked unless that invocation deliberately receives the one-shot
@@ -107,13 +106,12 @@ is what protects the vault if the host is compromised.
 Hezo is a Progressive Web App, so you can add it to your home screen and run it
 full-screen like a native app. Open Hezo in your mobile browser and it offers an
 **Install** prompt; on iPhone/iPad, use Safari's **Share → Add to Home Screen**. This
-needs a secure context - your instance's **HTTPS** URL, or `localhost` via an SSH
-tunnel - one more reason the HTTPS setup above isn't optional. If you used a private
-CA, trust its root certificate on the phone too.
+needs a secure context: your instance's **HTTPS** URL, or `localhost` via an SSH
+tunnel. If you used a private CA, trust its root certificate on the phone too.
 
 ## Rule of thumb
 
 Prefer a private network (Tailscale/WireGuard) or an authenticated tunnel, and serve
 Hezo **over HTTPS either way** - OAuth-connected MCP servers and the phone app depend
-on it. Treat a public, internet-facing Hezo as something that always needs both TLS
-and an auth layer in front of it.
+on it. A public, internet-facing Hezo always needs both TLS and an auth layer in front
+of it.

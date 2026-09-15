@@ -44,12 +44,12 @@ instance.
    hand either to a managed service - a hosted Postgres for the database, an
    S3-compatible bucket for assets - so your provider handles backups and durability;
    see [Managed database & asset storage](#managed-database--asset-storage) below.
-3. **Serve it over HTTPS** with a reverse proxy - required, not a nice-to-have; see
+3. **Serve it over HTTPS** with a reverse proxy. This is required; see
    [below](#serve-it-over-https).
 4. **Unlock it.** After boot Hezo starts **locked** - open its browser gate and enter
-   your twelve-word master key to unlock the instance. This is by design:
-   the master key is kept in memory only and is never stored on the server, so a stolen
-   disk image can't decrypt your vault. If you need to unlock a single startup without
+   your twelve-word master key to unlock the instance. The master key is kept in memory
+   only and is never stored on the server, so a stolen disk image can't decrypt your
+   vault. If you need to unlock a single startup without
    the browser, you can pass the key to that one invocation - but don't bake it into a
    file or service definition:
 
@@ -67,14 +67,13 @@ See the [Configuration reference](/docs/deployment/configuration) for every opti
 
 ## Managed database & asset storage
 
-Local disk is the default, not a requirement: point Hezo at a **managed Postgres**
-and/or an **S3-compatible bucket** to move database rows and asset files off the
-server. Managed backends do not replace a host backup: a replacement host also needs
-`dataDir`, `/etc/hezo/hezo.config.cjs`, any referenced files such as a database CA
-certificate, and the service definition or startup flags that select the config. Back up
-those inputs, including backend credentials, or record how to recreate them before replacing
-the server. Each backend is one setting,
-adoptable independently:
+Local disk is the default. Point Hezo at a **managed Postgres**, an **S3-compatible
+bucket**, or both, to move database rows and asset files off the server. Managed backends
+do not replace a host backup: a replacement host also needs `dataDir`,
+`/etc/hezo/hezo.config.cjs`, any referenced files such as a database CA certificate, and
+the service definition or startup flags that select the config. Back up those inputs,
+including backend credentials, or record how to recreate them before replacing the
+server. Each backend is one setting, adoptable independently:
 
 1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's
    scheduling polls every 1-5 seconds, so latency counts), with TLS. Direct,
@@ -121,7 +120,7 @@ data into managed backends, use `hezo backup` / `hezo restore` - see
 
 Hezo's own process serves plain HTTP, so every deployment puts a TLS-terminating
 reverse proxy (Caddy, nginx, or Traefik) in front, forwarding to the Hezo port (3100 by
-default). Treat HTTPS as **essential**, whether the address is public or on a private
+default). Treat HTTPS as a **requirement**, whether the address is public or on a private
 network:
 
 - **OAuth-connected MCP servers require it.** Connecting a SaaS MCP server runs an
@@ -133,7 +132,7 @@ network:
 - **The phone experience requires it.** Installing Hezo as a home-screen app needs a
   secure context.
 - **Everything sensitive rides on every request** - your admin password, agent output,
-  task content. TLS is the baseline.
+  task content.
 
 Configure the proxy to do all three of:
 
