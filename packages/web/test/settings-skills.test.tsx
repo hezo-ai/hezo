@@ -108,3 +108,72 @@ test('the "Add default skills" button installs the missing defaults behind a con
 	await r.findByText('Systematic Debugging');
 	await waitFor(() => expect(r.queryByTestId('add-default-skills')).toBeNull());
 });
+
+/**
+ * Drift seeding: a default installed at an older shipped version. The row and
+ * its shipped-hash marker agree with each other and both differ from what the
+ * catalog ships now, which is exactly what an upgrade leaves behind.
+ */
+async function seedOutdatedCodeReview(
+	db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+	options: { edited?: boolean } = {},
+) {
+	await db.query(
+		`INSERT INTO skills (name, slug, description, content, content_hash, tags, project_id)
+		 VALUES ('Code Review', 'code-review', 'An older description', $1, $2, '[]'::jsonb, NULL)`,
+		[
+			options.edited ? 'my own body' : 'the previously shipped body',
+			options.edited ? 'mine' : 'shipped-v1',
+		],
+	);
+	await db.query(
+		`INSERT INTO system_meta (key, value)
+		 VALUES ('default_skill_shipped_hash:code-review', 'shipped-v1')
+		 ON CONFLICT (key) DO UPDATE SET value = 'shipped-v1'`,
+	);
+}
+
+test('an outdated default skill is offered for update behind a confirmation', async () => {
+	const r = await renderApp({
+		initialPath: '/settings/skills',
+		seed: async ({ db }) => seedOutdatedCodeReview(db),
+	});
+
+	const button = await r.findByTestId('refresh-default-skills');
+	expect(button.textContent).toContain('(1)');
+	// An unedited skill is never offered through the edited-skills path.
+	expect(r.queryByTestId('refresh-edited-default-skills')).toBeNull();
+
+	await r.user.click(button);
+	const dialog = await within(document.body).findByTestId('confirm-dialog');
+	expect(within(dialog).getByTestId('refresh-skill-names').textContent).toContain('Code Review');
+
+	// Confirming rewrites the body, so the shipped description replaces the old
+	// one and the offer disappears once the defaults query refetches.
+	await r.user.click(within(dialog).getByTestId('confirm-dialog-confirm'));
+	await waitFor(() => expect(r.queryByTestId('refresh-default-skills')).toBeNull());
+	expect(r.queryByText('An older description')).toBeNull();
+});
+
+test('a default skill edited here is offered separately, warning that edits are replaced', async () => {
+	const r = await renderApp({
+		initialPath: '/settings/skills',
+		seed: async ({ db }) => seedOutdatedCodeReview(db, { edited: true }),
+	});
+
+	// The edited copy never rides the ordinary update button.
+	const button = await r.findByTestId('refresh-edited-default-skills');
+	expect(button.textContent).toContain('(1)');
+	expect(r.queryByTestId('refresh-default-skills')).toBeNull();
+
+	await r.user.click(button);
+	const dialog = await within(document.body).findByTestId('confirm-dialog');
+	expect(within(dialog).getByTestId('refresh-edited-skill-names').textContent).toContain(
+		'Code Review',
+	);
+	// The confirmation says the operator's own version is being replaced.
+	expect(dialog.textContent).toContain('revision history');
+
+	await r.user.click(within(dialog).getByTestId('confirm-dialog-confirm'));
+	await waitFor(() => expect(r.queryByTestId('refresh-edited-default-skills')).toBeNull());
+});

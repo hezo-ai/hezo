@@ -3,9 +3,10 @@
 The default skills in this directory are seeded into every Hezo instance as editable
 global skills. Several are adapted from third-party skill collections under permissive
 licenses; each adapted file also carries a `source_url` frontmatter field pointing at
-the exact upstream revision it was adapted from. The remaining skills
-(`web-design-guidelines`, `writing-guidelines`, `deep-research`, `data-analysis`) were
-written for Hezo and carry no upstream attribution.
+the exact upstream revision it was adapted from. That field holds a single URL, so where
+a file draws on more than one upstream the table below is the complete record. The
+remaining skills (`web-design-guidelines`, `writing-guidelines`, `deep-research`,
+`data-analysis`) were written for Hezo and carry no upstream attribution.
 
 All adapted files have been modified from their originals: condensed, made
 domain-neutral, and rewritten to reference Hezo's task/skill model. They are
@@ -24,9 +25,19 @@ compatible with both upstream licenses below.
 | `frontend-design.md` | [anthropics/skills — skills/frontend-design](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/frontend-design/SKILL.md) | Apache-2.0 |
 | `canvas-design.md` | [anthropics/skills — skills/canvas-design](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/canvas-design/SKILL.md) | Apache-2.0 |
 | `webapp-testing.md` | [anthropics/skills — skills/webapp-testing](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/webapp-testing/SKILL.md) | Apache-2.0 |
-| `skill-creator.md` | [anthropics/skills — skills/skill-creator](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/skill-creator/SKILL.md) | Apache-2.0 |
+| `skill-creator.md` | [anthropics/skills — skills/skill-creator](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/skill-creator/SKILL.md) and [hiddentao/claude-code-plugins — skills/writing-skill-files](https://github.com/hiddentao/claude-code-plugins/blob/9e3173a7bdb6d89143f29255351f7c07243e4d60/plugins/skill-files/skills/writing-skill-files/SKILL.md) (merged) | Apache-2.0 and MIT |
 
-## MIT License (obra/superpowers)
+## MIT License (obra/superpowers, hiddentao/claude-code-plugins)
+
+Two upstreams ship under identical MIT terms.
+
+`obra/superpowers` carries the copyright line reproduced below.
+`hiddentao/claude-code-plugins` declares `"license": "MIT"` in its plugin manifest and
+names Ramesh Nair (<https://hiddentao.com>) as author; that repository ships no LICENSE
+file and no copyright line, so none is reproduced for it here. Its `writing-skill-files`
+skill restates the 28 rules from Ramesh Nair's "The definitive guide to writing great
+skill files for AI agents":
+<https://hiddentao.com/archives/2026/04/26/the-definitive-guide-to-writing-great-skill-files-for-ai-agents>
 
 ```
 MIT License

@@ -974,16 +974,31 @@ installs the whole catalog automatically: `installDefaultSkillsIfFreshInstance` 
 just before `seedDefaultTeam` and installs when HQ (`DEFAULT_TEAM_ID`) doesn't exist yet (i.e.
 first boot), a no-op on every later boot. An **existing instance upgrading is NOT auto-seeded** —
 15 global skills must not materialize unasked — so the admin installs them from `/settings/skills`:
-`GET /api/skills/defaults` returns the **missing** defaults and, when non-empty, the page shows an
-**Add default skills** button that opens a confirmation listing them;
+`GET /api/skills/defaults` returns the **missing** and the **outdated** defaults, and the page
+shows a button per non-empty set, each opening a confirmation listing the names;
 `POST /api/skills/defaults/install` (optional `slugs[]` for the confirmed subset) inserts them.
 (The startup path is the only auto-install trigger; test harnesses call `seedDefaultTeam` directly
-and never install defaults, keeping fixtures clean.) "Missing" (`listMissingDefaultSkills`, `db/default-skills.ts`) =
+and never install defaults, keeping fixtures clean.) Both sets come from one pass
+(`listDefaultSkillStatus`, `db/default-skills.ts`; `listMissingDefaultSkills` is the thin wrapper
+callers kept). "Missing" =
 a bundled default whose slug is not currently a global skill **and** carries no per-slug
 `system_meta` marker (`default_skill_shipped_hash:<slug>`, set to the content sha256 on install).
 The marker means "handled here", so a default the operator installed and later deleted is never
 re-offered, and a user-authored skill already occupying the slug is never clobbered
-(`INSERT … ON CONFLICT (slug) WHERE project_id IS NULL DO NOTHING`). Installed rows are ordinary
+(`INSERT … ON CONFLICT (slug) WHERE project_id IS NULL DO NOTHING`).
+
+**"Outdated"** is the same marker read the other way: a default with a row *and* a marker whose
+value differs from the hash the catalog now ships, meaning the body moved on in a Hezo release
+after this instance installed it. Editing `skills/<slug>.md` otherwise reaches new instances only.
+The row's own `content_hash` says whose copy it is: equal to the marker, the operator never
+touched it; different, they edited it, and the entry is flagged `locally_edited` so the page offers
+it through a **separate** confirmation that says their version is being replaced. A row whose hash
+already equals the shipped hash is excluded either way, so nothing writes a row that has not
+changed. `POST /api/skills/defaults/refresh` (optional `slugs[]`) rewrites each row inside its own
+transaction, re-reading it first and skipping it if it changed since the status pass, snapshots the
+prior content through `recordSkillRevisionIfChanged` so the operator can roll back from the skill's
+revision history, and moves the marker to the new hash. A deleted default has no row, so it is
+neither missing nor outdated - removal still wins over every later release. Installed rows are ordinary
 editable skills (`readonly: false`, `created_by_member_id` null) — unlike the virtual
 `connector-recipes`. The admin manages the
 whole catalog and re-scopes rows at `/settings/skills` (id-addressed `/api/skills` routes); a

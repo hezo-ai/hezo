@@ -129,12 +129,21 @@ export interface MissingDefaultSkill {
 	description: string;
 }
 
-const MISSING_DEFAULTS_KEY = [...INSTANCE_SKILLS_KEY, 'defaults', 'missing'] as const;
+/** An installed default whose shipped body has moved on since it was installed. */
+export interface OutdatedDefaultSkill extends MissingDefaultSkill {
+	/** Edited on this instance, so refreshing discards those edits. */
+	locally_edited: boolean;
+}
 
-export function useMissingDefaultSkills(enabled = true) {
+const DEFAULT_SKILLS_KEY = [...INSTANCE_SKILLS_KEY, 'defaults'] as const;
+
+export function useDefaultSkillStatus(enabled = true) {
 	return useQuery({
-		queryKey: MISSING_DEFAULTS_KEY,
-		queryFn: () => api.get<{ missing: MissingDefaultSkill[] }>('/api/skills/defaults'),
+		queryKey: DEFAULT_SKILLS_KEY,
+		queryFn: () =>
+			api.get<{ missing: MissingDefaultSkill[]; outdated: OutdatedDefaultSkill[] }>(
+				'/api/skills/defaults',
+			),
 		enabled,
 	});
 }
@@ -144,6 +153,25 @@ export function useInstallDefaultSkills() {
 		mutationFn: (slugs?: string[]) =>
 			api.post<{ installed: Array<{ id: string; slug: string; name: string }> }>(
 				'/api/skills/defaults/install',
+				slugs ? { slugs } : {},
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+		},
+	});
+}
+
+/**
+ * Rewrite installed defaults with the bodies Hezo now ships. Invalidate-and-
+ * refetch rather than optimistic: the server decides which rows actually drifted
+ * and skips any that changed underneath, so nothing may read as refreshed until
+ * it answers.
+ */
+export function useRefreshDefaultSkills() {
+	return useMutation({
+		mutationFn: (slugs?: string[]) =>
+			api.post<{ refreshed: Array<{ id: string; slug: string; name: string }> }>(
+				'/api/skills/defaults/refresh',
 				slugs ? { slugs } : {},
 			),
 		onSuccess: () => {

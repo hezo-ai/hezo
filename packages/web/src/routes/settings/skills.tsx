@@ -7,6 +7,7 @@ import {
 	Loader2,
 	Pencil,
 	Plus,
+	RefreshCw,
 	Search,
 	Sparkles,
 	Trash2,
@@ -31,13 +32,14 @@ import {
 import {
 	type SkillListItem,
 	useCreateInstanceSkill,
+	useDefaultSkillStatus,
 	useDeleteInstanceSkill,
 	useInstallDefaultSkills,
 	useInstallRegistrySkill,
 	useInstanceSkill,
 	useInstanceSkillRevisions,
 	useInstanceSkills,
-	useMissingDefaultSkills,
+	useRefreshDefaultSkills,
 	useRegistryTokenStatus,
 	useRestoreInstanceSkill,
 	useSearchRegistrySkills,
@@ -48,12 +50,14 @@ import {
 import { useMe } from '../../hooks/use-me';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { buildDocVersionHistory, type DocVersionEntry } from '../../lib/doc-version-history';
+import { Trans, useI18n } from '../../lib/i18n';
 
 // Scope sentinel: create against / re-scope to "all projects" (a global skill,
 // project_id null). Any other option value is a concrete project id.
 const ALL_PROJECTS = 'all';
 
 function InstanceSkillsPage() {
+	const { t, plural } = useI18n();
 	const { data: me } = useMe();
 	const { data: skillPages, hasNextPage, isFetchingNextPage, fetchNextPage } = useInstanceSkills();
 	const skills = useMemo(() => skillPages?.pages.flatMap((p) => p.data) ?? [], [skillPages]);
@@ -61,13 +65,22 @@ function InstanceSkillsPage() {
 	const createSkill = useCreateInstanceSkill();
 	const updateSkill = useUpdateInstanceSkill();
 	const deleteSkill = useDeleteInstanceSkill();
-	const { data: missingData } = useMissingDefaultSkills(!!me?.is_superuser);
+	const { data: defaultsData } = useDefaultSkillStatus(!!me?.is_superuser);
 	const installDefaults = useInstallDefaultSkills();
-	const missingDefaults = missingData?.missing ?? [];
+	const refreshDefaults = useRefreshDefaultSkills();
+	const missingDefaults = defaultsData?.missing ?? [];
+	const outdatedDefaults = defaultsData?.outdated ?? [];
+	// Split by whether the operator edited the installed copy: refreshing a clean
+	// skill restores what Hezo ships, refreshing an edited one discards their
+	// work, so the two never share a confirmation.
+	const cleanOutdated = outdatedDefaults.filter((o) => !o.locally_edited);
+	const editedOutdated = outdatedDefaults.filter((o) => o.locally_edited);
 
 	const [showForm, setShowForm] = useState(false);
 	const [showSearch, setShowSearch] = useState(false);
 	const [confirmDefaults, setConfirmDefaults] = useState(false);
+	const [confirmRefresh, setConfirmRefresh] = useState(false);
+	const [confirmRefreshEdited, setConfirmRefreshEdited] = useState(false);
 	// `editingId` null = the form (when open) creates; otherwise it edits.
 	const [editingId, setEditingId] = useState<string | null>(null);
 	// Independently of editing, `viewingId` drives the read-only view modal.
@@ -83,15 +96,15 @@ function InstanceSkillsPage() {
 	// picker and each row's inline re-scope dropdown.
 	const scopeOptions = useMemo<SearchableSelectOption[]>(
 		() => [
-			{ value: ALL_PROJECTS, label: 'All projects' },
+			{ value: ALL_PROJECTS, label: t('settings.skills.allProjects') },
 			...projects.map((p) => ({ value: p.id, label: p.name, description: p.teamName })),
 		],
-		[projects],
+		[projects, t],
 	);
 	const createScopeName =
 		createScope === ALL_PROJECTS
 			? null
-			: (projects.find((p) => p.id === createScope)?.name ?? 'this project');
+			: (projects.find((p) => p.id === createScope)?.name ?? t('settings.skills.thisProject'));
 
 	// Editing needs the full row (content is omitted from the list endpoint), so
 	// fetch it by id and populate the form once it arrives.
@@ -143,7 +156,7 @@ function InstanceSkillsPage() {
 		e.preventDefault();
 		setError(null);
 		if (!name.trim() || !content.trim()) {
-			setError('Name and content are required.');
+			setError(t('settings.skills.error.required'));
 			return;
 		}
 		const tagList = tags
@@ -170,41 +183,60 @@ function InstanceSkillsPage() {
 			}
 			resetForm();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to save skill');
+			setError(err instanceof Error ? err.message : t('settings.skills.error.save'));
 		}
 	}
 
 	const content_ =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-2">
-				Instance skills are managed by the Admin. You don't have access to this page.
-			</p>
+			<p className="text-[13px] text-text-2">{t('settings.skills.noAccess')}</p>
 		) : (
 			<>
 				<div className="flex items-start justify-between gap-3 mb-4">
 					<div>
 						<div className="flex items-center gap-1.5">
-							<h1 className="text-[22px] font-medium">Skills</h1>
+							<h1 className="text-[22px] font-medium">{t('settings.skills')}</h1>
 							<InfoTooltip
-								label="About skills"
-								content="Reusable skill docs for your agents. A skill is either global (shared with every project) or scoped to one project. Change a skill's scope with the drop-down on its row."
+								label={t('settings.skills.about.label')}
+								content={t('settings.skills.about.content')}
 								data-testid="skills-info"
 							/>
 						</div>
 						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-							Every skill across every project. Each project's runs see its own skills plus any
-							scoped to "All projects" - author them here, search skills.sh, or let an agent create
-							one while it works.
+							{t('settings.skills.intro')}
 						</p>
 					</div>
-					<div className="flex items-center gap-2 shrink-0">
+					<div className="flex flex-wrap items-center justify-end gap-2 sm:shrink-0">
 						{missingDefaults.length > 0 && (
 							<Button
 								size="sm"
 								onClick={() => setConfirmDefaults(true)}
 								data-testid="add-default-skills"
 							>
-								<Sparkles className="w-3 h-3" /> Add default skills ({missingDefaults.length})
+								<Sparkles className="w-3 h-3" />{' '}
+								{t('settings.skills.defaults.add', { count: missingDefaults.length })}
+							</Button>
+						)}
+						{cleanOutdated.length > 0 && (
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={() => setConfirmRefresh(true)}
+								data-testid="refresh-default-skills"
+							>
+								<RefreshCw className="w-3 h-3" />{' '}
+								{t('settings.skills.defaults.update', { count: cleanOutdated.length })}
+							</Button>
+						)}
+						{editedOutdated.length > 0 && (
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={() => setConfirmRefreshEdited(true)}
+								data-testid="refresh-edited-default-skills"
+							>
+								<RefreshCw className="w-3 h-3" />{' '}
+								{t('settings.skills.defaults.updateEdited', { count: editedOutdated.length })}
 							</Button>
 						)}
 						<Button
@@ -213,14 +245,14 @@ function InstanceSkillsPage() {
 							onClick={() => setShowSearch((s) => !s)}
 							data-testid="toggle-search"
 						>
-							<Search className="w-3 h-3" /> Search skills.sh
+							<Search className="w-3 h-3" /> {t('settings.skills.registry.title')}
 						</Button>
 						<Button
 							variant="secondary"
 							size="sm"
 							onClick={() => (showForm ? resetForm() : openCreate())}
 						>
-							<Plus className="w-3 h-3" /> Add
+							<Plus className="w-3 h-3" /> {t('settings.skills.add')}
 						</Button>
 					</div>
 				</div>
@@ -231,10 +263,10 @@ function InstanceSkillsPage() {
 					<InPlaceForm
 						title={
 							editingId
-								? 'Edit skill'
+								? t('settings.skills.form.edit')
 								: createScope === ALL_PROJECTS
-									? 'Add skill (All projects)'
-									: `Add skill - ${createScopeName}`
+									? t('settings.skills.form.addGlobal')
+									: t('settings.skills.form.addScoped', { project: createScopeName ?? '' })
 						}
 						onClose={resetForm}
 						onSubmit={handleSubmit}
@@ -248,10 +280,10 @@ function InstanceSkillsPage() {
 										size="sm"
 										onClick={() => setHistoryOpen(true)}
 										data-testid="skill-history"
-										aria-label="Revision history"
+										aria-label={t('settings.skills.revisionHistory')}
 									>
 										<History className="w-3.5 h-3.5" />
-										<span className="hidden sm:inline">History</span>
+										<span className="hidden sm:inline">{t('settings.skills.history')}</span>
 									</Button>
 								</div>
 							) : undefined
@@ -270,7 +302,7 @@ function InstanceSkillsPage() {
 									data-testid="skill-revision-body"
 								>
 									<MarkdownProse>
-										{viewingRevision.content || '_(this version was empty)_'}
+										{viewingRevision.content || t('settings.skills.emptyRevision')}
 									</MarkdownProse>
 								</div>
 							</>
@@ -278,21 +310,21 @@ function InstanceSkillsPage() {
 							<>
 								<div className="flex flex-col sm:flex-row gap-2">
 									<Input
-										placeholder="Name (e.g. Commit conventions)"
+										placeholder={t('settings.skills.field.name')}
 										value={name}
 										onChange={(e) => setName(e.target.value)}
 										required
 										wrapperClassName="flex-1"
 									/>
 									<Input
-										placeholder="Tags (comma-separated, optional)"
+										placeholder={t('settings.skills.field.tags')}
 										value={tags}
 										onChange={(e) => setTags(e.target.value)}
 										wrapperClassName="flex-1"
 									/>
 								</div>
 								<Input
-									placeholder="Description (optional - auto-derived from content if empty)"
+									placeholder={t('settings.skills.field.description')}
 									value={description}
 									onChange={(e) => setDescription(e.target.value)}
 								/>
@@ -300,22 +332,22 @@ function InstanceSkillsPage() {
 						    per-row drop-down (a skill's slug is namespaced per scope). */}
 								{!editingId && (
 									<div className="flex flex-wrap items-center gap-2">
-										<span className="text-[13px] text-text-2">Scope</span>
+										<span className="text-[13px] text-text-2">{t('settings.skills.scope')}</span>
 										<SearchableSelect
 											options={scopeOptions}
 											value={createScope}
 											onChange={setCreateScope}
-											searchPlaceholder="Search projects…"
-											emptyLabel="No projects"
+											searchPlaceholder={t('settings.skills.searchProjects')}
+											emptyLabel={t('settings.skills.noProjects')}
 											testId="create-scope-select"
 										/>
 									</div>
 								)}
 								<MarkdownEditor
-									label="Content (markdown)"
+									label={t('settings.skills.field.content')}
 									labelClassName="text-[13px] text-text-2"
-									ariaLabel="Skill content"
-									placeholder="Skill content (markdown)"
+									ariaLabel={t('settings.skills.field.contentAria')}
+									placeholder={t('settings.skills.field.contentPlaceholder')}
 									value={content}
 									onChange={setContent}
 									required
@@ -323,7 +355,7 @@ function InstanceSkillsPage() {
 									className="font-mono"
 									previewClassName="min-h-[200px]"
 									previewTestId="skill-content-preview"
-									emptyPreviewText="_(nothing to preview)_"
+									emptyPreviewText={t('settings.skills.emptyPreview')}
 								/>
 								{error && <p className="text-[13px] text-danger">{error}</p>}
 								<div className="flex gap-2">
@@ -332,10 +364,10 @@ function InstanceSkillsPage() {
 										size="sm"
 										disabled={createSkill.isPending || updateSkill.isPending}
 									>
-										{editingId ? 'Save changes' : 'Add skill'}
+										{editingId ? t('settings.skills.saveChanges') : t('settings.skills.addSkill')}
 									</Button>
 									<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
-										Cancel
+										{t('common.cancel')}
 									</Button>
 								</div>
 							</>
@@ -346,7 +378,7 @@ function InstanceSkillsPage() {
 				<RevisionHistoryDialog
 					open={historyOpen}
 					onOpenChange={setHistoryOpen}
-					label={editingSkill?.name ?? 'Skill'}
+					label={editingSkill?.name ?? t('settings.skills.fallbackLabel')}
 					entries={versionEntries}
 					viewingRevision={viewingRevision?.revisionNumber ?? null}
 					onView={(entry) => {
@@ -361,9 +393,7 @@ function InstanceSkillsPage() {
 				/>
 
 				{!skills.length ? (
-					<p className="text-[13px] text-text-2">
-						No skills yet. Add one above - global, or scoped to a project.
-					</p>
+					<p className="text-[13px] text-text-2">{t('settings.skills.empty')}</p>
 				) : (
 					<div className="flex flex-col gap-1">
 						{skills.map((s) => (
@@ -374,7 +404,8 @@ function InstanceSkillsPage() {
 								onView={() => setViewingId(s.id)}
 								onEdit={() => openEdit(s.id)}
 								onDelete={() => {
-									if (confirm(`Delete skill "${s.name}"?`)) deleteSkill.mutate(s.id);
+									if (confirm(t('settings.skills.confirmDelete', { name: s.name })))
+										deleteSkill.mutate(s.id);
 								}}
 							/>
 						))}
@@ -401,12 +432,11 @@ function InstanceSkillsPage() {
 			<ConfirmDialog
 				open={confirmDefaults}
 				onOpenChange={setConfirmDefaults}
-				title={`Add ${missingDefaults.length} default skill${missingDefaults.length === 1 ? '' : 's'}?`}
-				confirmLabel="Add skills"
+				title={plural('settings.skills.defaults.confirmTitle', missingDefaults.length)}
+				confirmLabel={t('settings.skills.defaults.confirmLabel')}
 				description={
 					<>
-						These recommended global skills will be added to this instance. They'll appear like any
-						skill you authored - edit, delete, or re-scope them freely.
+						{t('settings.skills.defaults.confirmBody')}
 						<span className="mt-2 block font-medium text-text-1" data-testid="default-skill-names">
 							{missingDefaults.map((m) => m.name).join(', ')}
 						</span>
@@ -414,6 +444,44 @@ function InstanceSkillsPage() {
 				}
 				onConfirm={async () => {
 					await installDefaults.mutateAsync(undefined);
+				}}
+			/>
+			<ConfirmDialog
+				open={confirmRefresh}
+				onOpenChange={setConfirmRefresh}
+				title={plural('settings.skills.refresh.confirmTitle', cleanOutdated.length)}
+				confirmLabel={t('settings.skills.refresh.confirmLabel')}
+				description={
+					<>
+						{t('settings.skills.refresh.confirmBody')}
+						<span className="mt-2 block font-medium text-text-1" data-testid="refresh-skill-names">
+							{cleanOutdated.map((o) => o.name).join(', ')}
+						</span>
+					</>
+				}
+				onConfirm={async () => {
+					await refreshDefaults.mutateAsync(cleanOutdated.map((o) => o.slug));
+				}}
+			/>
+			<ConfirmDialog
+				open={confirmRefreshEdited}
+				onOpenChange={setConfirmRefreshEdited}
+				title={plural('settings.skills.refresh.editedTitle', editedOutdated.length)}
+				confirmLabel={t('settings.skills.refresh.editedConfirmLabel')}
+				variant="danger"
+				description={
+					<>
+						{t('settings.skills.refresh.editedBody')}
+						<span
+							className="mt-2 block font-medium text-text-1"
+							data-testid="refresh-edited-skill-names"
+						>
+							{editedOutdated.map((o) => o.name).join(', ')}
+						</span>
+					</>
+				}
+				onConfirm={async () => {
+					await refreshDefaults.mutateAsync(editedOutdated.map((o) => o.slug));
 				}}
 			/>
 		</div>
@@ -435,10 +503,13 @@ function InstanceSkillRow({
 	onEdit,
 	onDelete,
 }: InstanceSkillRowProps) {
+	const { t } = useI18n();
 	const updateScope = useUpdateInstanceSkillScope();
 	const [rowError, setRowError] = useState<string | null>(null);
 
-	const scopeLabel = skill.project_id ? (skill.project_name ?? 'Project') : 'All projects';
+	const scopeLabel = skill.project_id
+		? (skill.project_name ?? t('settings.skills.row.project'))
+		: t('settings.skills.allProjects');
 	const scopeValue = skill.project_id ?? ALL_PROJECTS;
 	const scopeTone = skill.project_id
 		? 'bg-info-soft text-info-soft-fg'
@@ -452,7 +523,7 @@ function InstanceSkillRow({
 			{ id: skill.id, project_id: nextProjectId },
 			{
 				onError: (e: unknown) =>
-					setRowError(e instanceof Error ? e.message : 'Failed to change scope'),
+					setRowError(e instanceof Error ? e.message : t('settings.skills.error.scope')),
 			},
 		);
 	};
@@ -461,11 +532,11 @@ function InstanceSkillRow({
 		<button
 			type="button"
 			data-testid="instance-skill-scope"
-			aria-label={`Scope: ${scopeLabel}. Change scope`}
+			aria-label={t('settings.skills.row.scopeAria', { scope: scopeLabel })}
 			disabled={updateScope.isPending}
 			className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full h-5 pl-2 pr-1.5 text-[11.5px] font-medium outline-none cursor-pointer transition-opacity hover:opacity-80 focus:ring-1 focus:ring-border-strong disabled:opacity-50 ${scopeTone}`}
 		>
-			{updateScope.isPending ? 'Saving…' : scopeLabel}
+			{updateScope.isPending ? t('settings.skills.saving') : scopeLabel}
 			<ChevronDown className="w-3 h-3 opacity-70" />
 		</button>
 	);
@@ -479,15 +550,15 @@ function InstanceSkillRow({
 				<div className="flex flex-wrap items-center gap-2">
 					<span className="font-medium">{skill.name}</span>
 					{skill.readonly ? (
-						<Badge color="neutral">Built-in</Badge>
+						<Badge color="neutral">{t('settings.skills.builtIn')}</Badge>
 					) : (
 						<SearchableSelect
 							options={scopeOptions}
 							value={scopeValue}
 							onChange={changeScope}
 							trigger={scopeTrigger}
-							searchPlaceholder="Search projects…"
-							emptyLabel="No projects"
+							searchPlaceholder={t('settings.skills.searchProjects')}
+							emptyLabel={t('settings.skills.noProjects')}
 							testId="instance-skill-scope-select"
 						/>
 					)}
@@ -506,7 +577,7 @@ function InstanceSkillRow({
 				<button
 					type="button"
 					onClick={onView}
-					aria-label={`View ${skill.name}`}
+					aria-label={t('settings.skills.row.view', { name: skill.name })}
 					className="text-text-3 hover:text-text-1"
 				>
 					<Eye className="w-3.5 h-3.5" />
@@ -516,7 +587,7 @@ function InstanceSkillRow({
 						<button
 							type="button"
 							onClick={onEdit}
-							aria-label={`Edit ${skill.name}`}
+							aria-label={t('settings.skills.row.edit', { name: skill.name })}
 							className="text-text-3 hover:text-text-1"
 						>
 							<Pencil className="w-3.5 h-3.5" />
@@ -524,7 +595,7 @@ function InstanceSkillRow({
 						<button
 							type="button"
 							onClick={onDelete}
-							aria-label={`Delete ${skill.name}`}
+							aria-label={t('settings.skills.row.delete', { name: skill.name })}
 							className="text-text-3 hover:text-danger"
 						>
 							<Trash2 className="w-3.5 h-3.5" />
@@ -542,6 +613,7 @@ function InstanceSkillRow({
  * token (agents don't need it — they use the `npx skills` CLI in the container).
  */
 function RegistrySearch({ onClose }: { onClose: () => void }) {
+	const { t, plural } = useI18n();
 	const { data: tokenStatus } = useRegistryTokenStatus();
 	const setToken = useSetRegistryToken();
 	const installSkill = useInstallRegistrySkill();
@@ -564,21 +636,27 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 	}
 
 	return (
-		<InPlaceForm title="Search skills.sh" onClose={onClose} data-testid="registry-search-panel">
+		<InPlaceForm
+			title={t('settings.skills.registry.title')}
+			onClose={onClose}
+			data-testid="registry-search-panel"
+		>
 			{!configured ? (
 				<div className="flex flex-col gap-2">
 					<p className="text-[13px] text-text-2">
-						Searching skills.sh needs a skills.sh API token. Paste one to enable search and add.
-						Agents discover skills without it (via the <code>npx skills</code> CLI).
+						<Trans
+							k="settings.skills.registry.tokenPrompt"
+							vars={{ cli: <code>npx skills</code> }}
+						/>
 					</p>
 					<div className="flex flex-col sm:flex-row gap-2">
 						<Input
 							type="password"
-							placeholder="skills.sh API token"
+							placeholder={t('settings.skills.registry.tokenPlaceholder')}
 							value={tokenInput}
 							onChange={(e) => setTokenInput(e.target.value)}
 							wrapperClassName="flex-1"
-							aria-label="skills.sh API token"
+							aria-label={t('settings.skills.registry.tokenPlaceholder')}
 						/>
 						<Button
 							size="sm"
@@ -587,7 +665,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 								setToken.mutate(tokenInput.trim(), { onSuccess: () => setTokenInput('') })
 							}
 						>
-							Save token
+							{t('settings.skills.registry.saveToken')}
 						</Button>
 					</div>
 				</div>
@@ -601,38 +679,42 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 						}}
 					>
 						<Input
-							placeholder="Search skills.sh (e.g. react, stripe, playwright)"
+							placeholder={t('settings.skills.registry.searchPlaceholder')}
 							value={queryInput}
 							onChange={(e) => setQueryInput(e.target.value)}
 							wrapperClassName="flex-1"
-							aria-label="Search skills.sh"
+							aria-label={t('settings.skills.registry.title')}
 						/>
 						<Button type="submit" size="sm" disabled={queryInput.trim().length < 2}>
-							<Search className="w-3 h-3" /> Search
+							<Search className="w-3 h-3" /> {t('settings.skills.registry.search')}
 						</Button>
 						<Button
 							type="button"
 							variant="ghost"
 							size="sm"
 							onClick={() => setToken.mutate('')}
-							title="Clear the stored token"
+							title={t('settings.skills.registry.clearTokenTitle')}
 						>
-							Clear token
+							{t('settings.skills.registry.clearToken')}
 						</Button>
 					</form>
 
 					{search.isFetching && (
 						<div className="flex items-center gap-1.5 text-[13px] text-text-2">
-							<Loader2 className="w-3.5 h-3.5 animate-spin" /> Searching…
+							<Loader2 className="w-3.5 h-3.5 animate-spin" />{' '}
+							{t('settings.skills.registry.searching')}
 						</div>
 					)}
 					{search.error && (
 						<p className="text-[13px] text-danger">
-							{(search.error as { message?: string }).message ?? 'Search failed'}
+							{(search.error as { message?: string }).message ??
+								t('settings.skills.registry.searchFailed')}
 						</p>
 					)}
 					{search.data?.length === 0 && !search.isFetching && submitted && (
-						<p className="text-[13px] text-text-2">No results for “{submitted}”.</p>
+						<p className="text-[13px] text-text-2">
+							{t('settings.skills.registry.noResults', { query: submitted })}
+						</p>
 					)}
 					{search.data && search.data.length > 0 && (
 						<div className="flex flex-col gap-1">
@@ -650,7 +732,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 													target="_blank"
 													rel="noopener noreferrer"
 													className="text-text-3 hover:text-text-1"
-													aria-label={`Open ${r.name} on skills.sh`}
+													aria-label={t('settings.skills.registry.openOn', { name: r.name })}
 												>
 													<ExternalLink className="w-3 h-3" />
 												</a>
@@ -658,7 +740,10 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 										</div>
 										<div className="text-xs text-text-3 truncate">
 											{r.source}
-											{r.installs > 0 && ` · ${r.installs.toLocaleString()} installs`}
+											{r.installs > 0 &&
+												` · ${plural('settings.skills.registry.installs', r.installs, {
+													count: r.installs.toLocaleString(),
+												})}`}
 										</div>
 									</div>
 									<Button
@@ -672,7 +757,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 										) : (
 											<Plus className="w-3 h-3" />
 										)}
-										Add
+										{t('settings.skills.add')}
 									</Button>
 								</div>
 							))}

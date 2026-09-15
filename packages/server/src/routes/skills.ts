@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { SkillRecord } from '@hezo/shared';
 import { Hono } from 'hono';
-import { installDefaultSkills, listMissingDefaultSkills } from '../db/default-skills';
+import {
+	installDefaultSkills,
+	listDefaultSkillStatus,
+	refreshDefaultSkills,
+} from '../db/default-skills';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import { deriveSkillSummary } from '../lib/skill-summary';
@@ -329,8 +333,8 @@ skillsRoutes.post('/skills/registry/install', async (c) => {
 skillsRoutes.get('/skills/defaults', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
-	const missing = await listMissingDefaultSkills(c.get('db'));
-	return ok(c, { missing });
+	const { missing, outdated } = await listDefaultSkillStatus(c.get('db'));
+	return ok(c, { missing, outdated });
 });
 
 skillsRoutes.post('/skills/defaults/install', async (c) => {
@@ -354,6 +358,32 @@ skillsRoutes.post('/skills/defaults/install', async (c) => {
 		});
 	}
 	return ok(c, { installed });
+});
+
+// Rewrite installed defaults whose shipped body has changed. Separate from
+// install because it overwrites rather than creates: the prior content becomes a
+// skill revision, and the page confirms the locally-edited ones on their own.
+skillsRoutes.post('/skills/defaults/refresh', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const body = await c.req.json<{ slugs?: string[] }>().catch(() => ({}) as { slugs?: string[] });
+	const slugs = Array.isArray(body.slugs)
+		? body.slugs.filter((s): s is string => typeof s === 'string')
+		: undefined;
+	const refreshed = await refreshDefaultSkills(c.get('db'), { slugs });
+	const events = c.get('events');
+	for (const skill of refreshed) {
+		events.emit({
+			type: 'skill.updated',
+			teamId: null,
+			actorType: 'admin',
+			actorMemberId: null,
+			skillId: skill.id,
+			slug: skill.slug,
+			name: skill.name,
+		});
+	}
+	return ok(c, { refreshed });
 });
 
 skillsRoutes.get('/skills/:id', async (c) => {

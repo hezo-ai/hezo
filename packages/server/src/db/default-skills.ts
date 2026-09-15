@@ -3,8 +3,9 @@ import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { withTransaction } from '../lib/sql';
-import { getSystemMeta, setSystemMeta } from '../lib/system-meta';
+import { setSystemMeta } from '../lib/system-meta';
 import { logger } from '../logger';
+import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import type { Db } from './database';
 
 const log = logger.child('default-skills');
@@ -137,6 +138,76 @@ export interface MissingDefaultSkill {
 }
 
 /**
+ * A default this instance installed, and whose shipped body has changed since —
+ * the set offered for refresh on the global Skills page. `locally_edited` means
+ * the installed row no longer matches what was installed, so a refresh discards
+ * the operator's own edits; the UI confirms that case separately, and the prior
+ * content stays recoverable from the skill's revision history.
+ */
+export interface OutdatedDefaultSkill extends MissingDefaultSkill {
+	locally_edited: boolean;
+}
+
+/** What the global Skills page can offer for this instance's default skills. */
+export interface DefaultSkillStatus {
+	missing: MissingDefaultSkill[];
+	outdated: OutdatedDefaultSkill[];
+}
+
+/**
+ * Both offers the global Skills page makes about the shipped catalog, resolved
+ * in one pass: two queries rather than one per slug, since the page asks for
+ * them together. `defs` defaults to the bundled catalog; tests pass a synthetic
+ * set.
+ *
+ * Marker semantics decide everything here, and the two silences are deliberate:
+ * a default installed here and later **deleted** keeps its marker and no row, so
+ * it is neither missing nor outdated (Hezo never re-adds what the operator
+ * removed); a row with **no** marker is user-authored, or predates the marker,
+ * so it is never ours to overwrite.
+ */
+export async function listDefaultSkillStatus(
+	db: Db,
+	defs?: DefaultSkillDef[],
+): Promise<DefaultSkillStatus> {
+	const catalog = defs ?? (await loadDefaultSkills());
+	if (catalog.length === 0) return { missing: [], outdated: [] };
+
+	const slugs = catalog.map((d) => d.slug);
+	const present = await db.query<{ slug: string; content_hash: string }>(
+		'SELECT slug, content_hash FROM skills WHERE project_id IS NULL AND slug = ANY($1)',
+		[slugs],
+	);
+	const installedHashes = new Map(present.rows.map((r) => [r.slug, r.content_hash]));
+
+	const markerRows = await db.query<{ key: string; value: string }>(
+		'SELECT key, value FROM system_meta WHERE key = ANY($1)',
+		[slugs.map((slug) => DEFAULT_SKILL_MARKER_PREFIX + slug)],
+	);
+	const markers = new Map(
+		markerRows.rows.map((r) => [r.key.slice(DEFAULT_SKILL_MARKER_PREFIX.length), r.value]),
+	);
+
+	const missing: MissingDefaultSkill[] = [];
+	const outdated: OutdatedDefaultSkill[] = [];
+	for (const def of catalog) {
+		const offer = { slug: def.slug, name: def.name, description: def.description };
+		const installedHash = installedHashes.get(def.slug);
+		const marker = markers.get(def.slug) ?? null;
+
+		if (installedHash === undefined) {
+			if (marker === null) missing.push(offer); // never handled here
+			continue;
+		}
+		if (marker === null) continue; // not a row this instance installed
+		if (marker === def.contentHash) continue; // shipped body unchanged since install
+		if (installedHash === def.contentHash) continue; // row already matches what ships
+		outdated.push({ ...offer, locally_edited: installedHash !== marker });
+	}
+	return { missing, outdated };
+}
+
+/**
  * The default skills this instance has never installed and that no existing
  * global skill already occupies — the set offered on the global Skills page.
  * `defs` defaults to the bundled catalog; tests pass a synthetic set.
@@ -145,24 +216,7 @@ export async function listMissingDefaultSkills(
 	db: Db,
 	defs?: DefaultSkillDef[],
 ): Promise<MissingDefaultSkill[]> {
-	const catalog = defs ?? (await loadDefaultSkills());
-	if (catalog.length === 0) return [];
-
-	const slugs = catalog.map((d) => d.slug);
-	const present = await db.query<{ slug: string }>(
-		'SELECT slug FROM skills WHERE project_id IS NULL AND slug = ANY($1)',
-		[slugs],
-	);
-	const presentSlugs = new Set(present.rows.map((r) => r.slug));
-
-	const missing: MissingDefaultSkill[] = [];
-	for (const def of catalog) {
-		if (presentSlugs.has(def.slug)) continue; // already a global skill
-		const marker = await getSystemMeta(db, DEFAULT_SKILL_MARKER_PREFIX + def.slug);
-		if (marker !== null) continue; // installed here before (maybe since deleted)
-		missing.push({ slug: def.slug, name: def.name, description: def.description });
-	}
-	return missing;
+	return (await listDefaultSkillStatus(db, defs)).missing;
 }
 
 /**
@@ -208,6 +262,66 @@ export async function installDefaultSkills(
 		}
 	}
 	return installed;
+}
+
+/**
+ * Rewrite the requested installed defaults (defaulting to every outdated one)
+ * with the body Hezo now ships, snapshotting what was there as a skill revision
+ * so the operator can roll back. Each row is re-read inside its own transaction
+ * and skipped if it already matches, so a row that changed since the status pass
+ * is never written twice and never written unchanged. Returns the skills
+ * actually rewritten. `defs` defaults to the bundled catalog.
+ */
+export async function refreshDefaultSkills(
+	db: Db,
+	options: { slugs?: string[]; defs?: DefaultSkillDef[] } = {},
+): Promise<Array<{ id: string; slug: string; name: string }>> {
+	const catalog = options.defs ?? (await loadDefaultSkills());
+	const { outdated } = await listDefaultSkillStatus(db, catalog);
+	let toRefresh = outdated;
+	if (options.slugs) {
+		const requested = new Set(options.slugs);
+		toRefresh = outdated.filter((o) => requested.has(o.slug));
+	}
+	const byslug = new Map(catalog.map((d) => [d.slug, d]));
+
+	const refreshed: Array<{ id: string; slug: string; name: string }> = [];
+	for (const item of toRefresh) {
+		const def = byslug.get(item.slug);
+		if (!def) continue;
+		try {
+			const updated = await withTransaction(db, async () => {
+				const before = await db.query<{ id: string; content: string; content_hash: string }>(
+					'SELECT id, content, content_hash FROM skills WHERE project_id IS NULL AND slug = $1',
+					[def.slug],
+				);
+				const row = before.rows[0];
+				if (!row) return null; // deleted between the status pass and here
+				if (row.content_hash === def.contentHash) return null; // already current
+				await db.query(
+					`UPDATE skills
+					 SET name = $1, description = $2, content = $3, source_url = $4,
+					     content_hash = $5, updated_at = now()
+					 WHERE id = $6`,
+					[def.name, def.description, def.content, def.sourceUrl, def.contentHash, row.id],
+				);
+				await recordSkillRevisionIfChanged(
+					db,
+					row.id,
+					row.content,
+					def.content,
+					'Refreshed from the shipped default skill',
+					null,
+				);
+				await setSystemMeta(db, DEFAULT_SKILL_MARKER_PREFIX + def.slug, def.contentHash);
+				return row.id;
+			});
+			if (updated) refreshed.push({ id: updated, slug: def.slug, name: def.name });
+		} catch (err) {
+			log.error(`Failed to refresh default skill '${def.slug}':`, err);
+		}
+	}
+	return refreshed;
 }
 
 /**
