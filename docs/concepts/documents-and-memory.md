@@ -6,10 +6,9 @@ section: Concepts
 
 # Documents & long-term memory
 
-Agents are at their best when they don't start cold. Hezo gives every project a
-**long-term memory**: the durable context a team accumulates - decisions, plans,
-conventions, and where each task stands - is written down once and read back into every
-run, instead of being re-derived (or lost) each time an agent wakes.
+Hezo gives every project a **long-term memory**: the durable context a team accumulates -
+decisions, plans, conventions, and where each task stands - is written down once and read
+back into every run, instead of being re-derived (or lost) each time an agent wakes.
 
 That memory lives at a few different scopes, and each one is kept current by you *and* by
 the agents as they work:
@@ -34,14 +33,12 @@ cached to go stale. Context reaches the agent in one of two ways:
 
 - **In full** - short, always-relevant text is injected verbatim: the current task's
   **rules**, **description**, and **progress summary**; the project's **Custom Prompt**; and, for
-  the CEO, its **long-term chat memory**. These are small and central, so the agent always has
-  them in view.
+  the CEO, its **long-term chat memory**.
 - **As a manifest** - larger libraries are surfaced as a *table of contents* rather than
   pasted in whole. The agent sees an index of what exists and pulls the full item only when
   it's relevant: **project documents** are listed by filename, a short description, and
   last-updated date (the agent opens one with `read_project_doc`), and **skills** are listed by name and
-  description (the agent loads one with `get_skill`). This keeps prompts lean while still
-  putting the entire library within reach.
+  description (the agent loads one with `get_skill`).
 
 | Memory | Scope | How it reaches the agent | Kept current by |
 |---|---|---|---|
@@ -74,30 +71,32 @@ over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)). An agent changing part of 
 uses `edit_project_doc`, which replaces one span and leaves the rest alone; `write_project_doc`
 replaces the whole body and is what creates a document. Because documents are records rather
 than files, an agent that tries to save one to its container's filesystem is stopped and told
-to use the document tools instead, and any stray copy it leaves behind is reported on the run. A document is referenced by its plain filename -
-for example `spec.md` - so links stay stable as the work evolves. Each document also carries
-a short **description** - an overall one-or-two-sentence summary of what the document is and
-when to read it, shown under its filename in the list and at the top of the document, so you
-(and the next agent) can tell what a document is without opening it. It describes the
-document's stable purpose, not a running list of its current contents, so it stays steady as
-the document changes. Agents write the description when they create or update a document; you
-can edit it inline from the document's **Edit** view. The document list sits
-beside the reader, with a **search box** at the top that filters the list as you type and a
-**+** button next to it for creating a new document - both stay in view while you scroll
-the list. A **dropdown** next to the open document's title opens a name search from
-inside the reader, so you can jump straight to another document without going back to the
-list; it's hidden while you're editing. The reader's toolbar also has a **Download** button
-that saves the open document to your device - as **Markdown** (`.md`, the original source)
-or as **plain text** (`.txt`, with the Markdown formatting stripped). Download is available
-on every surface you can read a document from, so a document you opened from a task thread
-saves from right there.
+to use the document tools instead, and any stray copy it leaves behind is reported on the run.
+A document is referenced by its plain filename - for example `spec.md` - so links stay stable
+as the work evolves.
 
-Agents don't carry every document's full text on every run. Instead each run includes a
-**manifest** - a table of contents listing each document's filename, its short
-description, and when it last changed - and the agent opens the ones it needs with
-`read_project_doc`. So adding or
-updating a document immediately makes it discoverable to the whole team, without bloating
-anyone's prompt. (Archived documents are left out of the manifest - see
+Each document also carries a short **description**: a one-or-two-sentence summary of what the
+document is and when to read it, shown under its filename in the list and at the top of the
+document, so you (and the next agent) can tell what a document is without opening it. It
+describes the document's stable purpose, not a running list of its current contents, so it
+stays steady as the document changes. Agents write the description when they create or update
+a document; you can edit it inline from the document's **Edit** view.
+
+The document list sits beside the reader, with a **search box** at the top that filters the
+list as you type and a **+** button next to it for creating a new document. Both stay in view
+while you scroll the list. A **dropdown** next to the open document's title opens a name search
+from inside the reader, so you can jump straight to another document without going back to the
+list; it's hidden while you're editing. The reader's toolbar also has a **Download** button
+that saves the open document to your device, as **Markdown** (`.md`, the original source) or
+as **plain text** (`.txt`, with the Markdown formatting stripped). Download is available on
+every surface you can read a document from, so a document you opened from a task thread saves
+from right there.
+
+Rather than every document's full text, each run includes a **manifest**: a table of
+contents listing each document's filename, its short description, and when it last changed.
+The agent opens the ones it needs with `read_project_doc`. Adding or updating a document
+therefore makes it discoverable to the whole team immediately, without bloating anyone's
+prompt. (Archived documents are left out of the manifest - see
 [Archiving & deleting documents](#archiving--deleting-documents).)
 
 ## Archiving & deleting documents
@@ -166,11 +165,11 @@ button brings the list back, and Hezo remembers your choice. (On a phone the lis
 document already take turns filling the screen.)
 
 Agents read pending review comments directly: `read_project_doc` returns them alongside the
-document content, each one anchored to the exact text you highlighted. So the flow is -
-leave your comments, hand the review to an agent (pick the task from the **Add to task** list -
-the task you're viewing comes first when you review from a task's document preview - or paste
-the copied handoff into any task and assign it), and
-the agent actions each comment against the document.
+document content, each one anchored to the exact text you highlighted. You leave your
+comments, hand the review to an agent (pick the task from the **Add to task** list - the task
+you're viewing comes first when you review from a task's document preview - or paste the
+copied handoff into any task and assign it), and the agent actions each comment against the
+document.
 
 **A review applies to the current version of the document only.** Any update to the
 document, whether you edit it or an agent does, automatically deletes all of its review
@@ -206,18 +205,16 @@ Restoring is yours to do: agents can read and write documents, but only you can 
 Because you and the agents write to the same documents, that history doubles as an audit trail -
 you can see how a spec evolved and roll back a bad edit without losing the thread.
 
-This **versioned-and-reversible** guarantee isn't limited to project documents, and neither is
-the history view above. The same **History** button, the same list of versions, and the same
-read-a-past-version-then-**Restore** flow appear on **agent system prompts** - every edit,
-including the
+Versioning, and the history view above, cover more than project documents. The same
+**History** button, the same list of versions, and the same read-a-past-version-then-**Restore**
+flow appear on **agent system prompts** - every edit, including the
 [learned rules the Coach adds](/docs/concepts/coach-and-self-improving-teams#every-change-is-reversible),
 is snapshotted and restorable from the agent's settings - on a project's
 [Custom Prompt](#custom-prompt), and on
 [**skills**](/docs/concepts/skills#version-history--restore), your reusable how-to
 (global or scoped to one project). On every one of them you can open a past version and read it
-in place, with a banner and **View latest** to return, before deciding whether to restore it - so
-you never roll something back sight unseen. Whatever your agents change, you can see what changed
-and put it back.
+in place, with a banner and **View latest** to return, before deciding whether to restore it, so
+you never roll something back sight unseen.
 
 ## Long-term chat memory
 
@@ -290,9 +287,9 @@ a long description, a long set of rules and the most recent comments, and says h
 and which tool serves the rest - the same way a list view shortens them. Nothing is lost, and an
 agent that needs the whole thing reads it with `get_task`, a page at a time if it is very long.
 
-That bound is the difference between a task an agent can pick up and one whose runs fail. Every
-coding CLI refuses a prompt past some size, and a thread that has grown for weeks will reach it -
-so the prompt carries a working window rather than everything, and the agent pages for the rest.
+The bound is what keeps a long-running task workable. Every coding CLI refuses a prompt past
+some size, and a thread that has grown for weeks will reach it, so the prompt carries a working
+window rather than everything and the agent pages for the rest.
 
 ## Custom Prompt
 
@@ -310,12 +307,12 @@ An agent changing part of the Custom Prompt uses `edit_project_custom_prompt`, w
 and leaves the rest alone; `update_project_custom_prompt` replaces the whole thing and is what writes
 the first version. That split matters here for the same reason it does for documents: an agent that
 rewrites the whole prompt to add one convention can drop another one on the way past, and nothing
-would flag it. A span edit can't.
+would flag it; a span edit cannot.
 
 ## Where each kind of knowledge goes
 
-All of the above is memory, but each piece has a natural home - putting knowledge in the
-right place is what keeps it findable and applied at the right moment:
+All of the above is memory, and each piece has a home. Putting knowledge in the right one is
+what makes it findable when it is next needed:
 
 - **Where one task stands right now** → that task's **progress summary**.
 - **How a single task must be worked** (guardrails, required steps) → that task's

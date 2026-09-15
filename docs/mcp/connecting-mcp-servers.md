@@ -28,7 +28,7 @@ an agent's environment in any form.
 
 ## Hosted MCP servers
 
-Hosted, HTTP-based MCP servers connect by **URL plus any headers** they need.
+Hosted, HTTP-based MCP servers connect by URL plus any headers they need.
 
 When you add one, Hezo contacts the server straight away and records what came back. A
 server that answers with no credential is public, and your agents get it on their next
@@ -39,7 +39,7 @@ starts demanding auth drops out on its own. The connector's card says which of t
 applies. A server authenticated by a placeholder header is exempt: Hezo can't reproduce
 that substitution from its own side, so it takes the header at its word.
 
-Header values can reference your stored secrets with a **placeholder** rather than a
+Header values can reference your stored secrets with a placeholder rather than a
 literal key - so an API-key header is filled in by the [egress
 proxy](/docs/security/secret-protection) at request time and the real value never sits
 in the connection config. For servers that authenticate with OAuth, connect the account
@@ -51,7 +51,7 @@ Some hosted MCP servers don't offer OAuth at all - they authenticate with a plai
 key. When an agent registers one (or you add it yourself), its **Connect required** card
 in the task and the project's **Connectors** page show a **Use API key** option next to
 **Connect**. Paste the key there: Hezo stores it encrypted in your vault, scoped so it's
-only ever sent to that server's host, and each agent run receives a **placeholder** - the
+only ever sent to that server's host, and each agent run receives a placeholder - the
 real key is never visible to the agent. By default the key is sent as an `Authorization:
 Bearer <key>` header; open **Advanced** to change the header name or drop the scheme for
 servers that expect something else (for example `X-API-Key: <key>`).
@@ -102,8 +102,8 @@ the real key at request time.
 Agents can also register a REST API connector themselves when they need one - it
 appears on the Connectors page, ready for you to attach the credential.
 
-Many REST APIs need only a static key for the common case, and **YouTube is a good
-example**: reading public data - searching, video and channel metadata, public comments and
+Many REST APIs need only a static key for the common case, and YouTube is a good
+example: reading public data - searching, video and channel metadata, public comments and
 statistics - needs just a **YouTube Data API key**, not OAuth. Create or pick a Google Cloud
 project, enable the **YouTube Data API v3**, and create an API key (no OAuth consent screen);
 register a REST API connector with the key in the `key` **query parameter** and attach it with
@@ -137,7 +137,7 @@ comment** where the agent requested it, or on the project's **Connectors** page 
 each pending request also names and links the task it came from). Completing on the
 Connectors page expands the panel in place - no separate dialog.
 
-Hezo keeps the durable pieces **host-side, never inside a run**: the refresh token and the
+Hezo keeps the durable pieces host-side, never inside a run: the refresh token and the
 client secret are stored encrypted in your vault and are never handed to an agent or sent
 anywhere except the provider's own token endpoint. Only the short-lived **access token** is
 exposed to a run, as a [placeholder](/docs/security/secret-protection) the agent puts in an
@@ -153,14 +153,14 @@ connector is marked **Needs reconnect**; see
 
 ## Local (stdio) servers
 
-Hezo also supports **local, process-based** MCP servers that run inside the project
+Hezo also supports local, process-based MCP servers that run inside the project
 container. The connection model is in place; automatic installation of local servers is
 still being rolled out, so prefer a hosted (HTTP) server or a REST API connector for now
 where you have the choice.
 
-A local server that reaches an outside API usually reads its key from an **environment
-variable** (say a YouTube tool that reads `YOUTUBE_API_KEY`). You never put the real key in
-the connection - the connection holds a **placeholder**, and the value is stored as a
+A local server that reaches an outside API usually reads its key from an environment
+variable (say a YouTube tool that reads `YOUTUBE_API_KEY`). You never put the real key in
+the connection - the connection holds a placeholder, and the value is stored as a
 [credential](/docs/security/secret-protection) the agent requests from you and you paste in.
 The [egress proxy](/docs/security/secret-protection) swaps in the real value only when the
 server calls out, scoped to that API's host. Because connections are scoped per project
@@ -211,7 +211,7 @@ does.
 
 ## Where a connection applies
 
-Connections are **scoped by project**. A connection you add to a project is private to
+Connections are scoped by project. A connection you add to a project is private to
 that project's agent runs, so two projects can each connect a *different* account for the
 same provider (for example, a separate GitHub account per project) without one bleeding
 into the other. Each project's runs see its own connections plus any connection scoped to
@@ -273,7 +273,7 @@ as a write method, so a method Hezo can't place is withheld rather than quietly 
 A disabled method is blocked on the way out of the container, so the restriction holds no
 matter which AI model or coding tool the agent is running. Disabled methods are also hidden
 from `hezo-mcp search`, so an agent never sees a tool it can't use and won't waste a turn
-trying. Either way it cannot be called.
+trying.
 
 Methods are listed when you connect the server, and again every time you press **Test
 connection**. If a connector shows that its methods haven't been listed yet - it was
@@ -330,7 +330,7 @@ its credential is already gone, and the check is refused until you connect it ag
 A connector that was working can stop working on its own - typically because the provider
 expired the authorization behind it, or an administrator there revoked it. Nothing on your
 side changed, so the only way you would otherwise find out is by noticing that an agent's
-output had quietly got worse.
+output had got worse.
 
 Hezo surfaces it four ways instead:
 
@@ -403,9 +403,9 @@ names them. Removing the shared **connector** row is a Settings -> Connectors ac
 
 ## Connectors and their credentials
 
-[Credentials](/docs/security/secret-protection) stay **global** - one shared vault, not
+[Credentials](/docs/security/secret-protection) stay global - one shared vault, not
 scoped per project. But because a connector *is* scoped, the credential a connector creates
-is **named after that connector's project** (a project-scoped connector's API key gets a
+is named after that connector's project (a project-scoped connector's API key gets a
 short project tag in its name; a global connector's does not), so when two projects connect
 the same kind of server you can still tell their credentials apart at a glance.
 
@@ -416,8 +416,8 @@ Both pages show the link between the two:
 - Under each credential (**Settings → Credentials**), the **connectors** that use it - click
   one to jump to it on the Connectors page.
 
-Because a connector depends on its credential, a credential that's still in use **can't be
-deleted**: its revoke button is disabled with a note explaining why. Remove the connector
+Because a connector depends on its credential, a credential that's still in use can't be
+deleted: its revoke button is disabled with a note explaining why. Remove the connector
 first, then the credential can be revoked.
 
 ## Adding a connection

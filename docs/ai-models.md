@@ -6,7 +6,7 @@ section: AI models & connections
 
 # AI model support
 
-Hezo is **bring-your-own-model.** You connect your own provider accounts, Hezo stores
+Hezo is **bring-your-own-model**. You connect your own provider accounts, Hezo stores
 the credentials encrypted (see [Master key & encryption](/docs/security/master-key)),
 and your agents run on the models you choose.
 
@@ -25,17 +25,17 @@ and your agents run on the models you choose.
 | **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
 | **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 
-Each provider is driven through a **first-party agentic command-line runtime** inside the
-agent's container - not a lowest-common-denominator wrapper. Anthropic, OpenAI, Google, and
-xAI each use their own CLI (xAI runs on its **Grok Build** CLI, on the `grok-4.5` model);
-Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compatible
-endpoints; OpenRouter runs through the **OpenCode** CLI; and Ollama and LM Studio run
-through Claude Code against your own machine.
+Each provider is driven through a first-party agentic command-line runtime inside the
+agent's container. Anthropic, OpenAI, Google, and xAI each use their own CLI (xAI runs on
+its **Grok Build** CLI, on the `grok-4.5` model); Kimi, DeepSeek, and Z.ai run through
+Claude Code against their Anthropic-compatible endpoints; OpenRouter runs through the
+**OpenCode** CLI; and Ollama and LM Studio run through Claude Code against your own
+machine.
 
 Every runtime is asked to reason, at the effort level the agent is configured for. On
 OpenRouter through OpenCode that reasoning is always on: the run asks the model to think at
 its own effort level rather than answering straight away, and the thinking shows in the run
-log alongside the tool calls. A model that cannot reason simply ignores the request.
+log alongside the tool calls. A model that cannot reason ignores the request.
 
 Where the Runtime column lists more than one, you choose which one that credential runs on.
 The first is the default, and you never have to pick: adding a key without touching the
@@ -69,8 +69,8 @@ no longer need a second credential to try the other harness.
 
 ## Local models
 
-You can run agents **entirely on your own hardware**, with no per-token cost and no
-prompt or code leaving your machine. Hezo supports two local model servers:
+You can run agents entirely on your own hardware, with no per-token cost and no prompt
+or code leaving your machine. Hezo supports two local model servers:
 
 | Server | Default address | Notes |
 |---|---|---|
@@ -87,9 +87,9 @@ only field: Ollama ignores an API key, and LM Studio only checks one if you turn
 
 ### Use an address the agents can reach
 
-This is the one thing that catches people out. Agents run inside a container, so
+A `localhost` address is the common mistake. Agents run inside a container, so
 `localhost` there means *the container itself*, not the machine running your model
-server. A URL that works in your browser will fail at run time.
+server, and a URL that works in your browser will fail at run time.
 
 Use one of these instead:
 
@@ -222,7 +222,7 @@ them a [server URL](#local-models) instead.
 
 You can connect **several providers at once** and keep them all available. That's
 useful for spreading work across accounts, keeping a cheaper model on hand for routine
-tasks and a frontier model for the hard ones, or simply having a fallback.
+tasks and a frontier model for the hard ones, or having a fallback.
 
 When a key is stored it's checked against the provider and shown as **verified** (the
 Verify action re-checks it any time), and Hezo then asks which model the connection should
@@ -233,14 +233,13 @@ that's the single global default every agent uses unless it has its own model ov
 
 Adding a connection does **not** make it the default - use the star for that. Once you do,
 every agent on the default runs on the new provider from its next run, including a live
-CEO chat, whose next reply simply runs on it.
+CEO chat, whose next reply runs on it.
 
-The default is a choice, not a preference. If the credential you designated stops being
-usable - the key gets revoked and shows as **invalid**, say - runs on the default fail and
-say so, naming the connection. Hezo will not quietly move them onto one of your other
-connections: a run billing a provider you didn't pick, while the star still sits on the one
-you did, is the kind of thing that goes unnoticed for weeks. Re-verify the connection, or
-move the star, and runs resume.
+Hezo treats the default as fixed. If the credential you designated stops being usable - the
+key gets revoked and shows as **invalid**, say - runs on the default fail and say so, naming
+the connection. Hezo will not move them onto one of your other connections: a run billing a
+provider you didn't pick, while the star still sits on the one you did, is the kind of thing
+that goes unnoticed for weeks. Re-verify the connection, or move the star, and runs resume.
 
 Deleting the default is different, because you removed the designation yourself. The star
 moves to another connection rather than leaving your instance with none, preferring a
@@ -265,10 +264,10 @@ a connection or switch its CLI without re-pasting anything.
 
 ## Give an agent its own model
 
-By default the agents on a team share the team's model, but you can **override the model
-for any individual agent.** One agent can run on Claude while another on the same team
-runs on Antigravity or DeepSeek - whatever fits its job. Set it when you hire
-the agent or any time afterward from its settings. See
+By default the agents on a team share the team's model, but you can override the model for
+any individual agent. One agent can run on Claude while another on the same team runs on
+Antigravity or DeepSeek - whatever fits its job. Set it when you hire the agent or any time
+afterward from its settings. See
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
 
 Wherever you pick a specific model - a provider's default model, or an agent's override -

@@ -82,12 +82,11 @@ they reload the page.
 
 ## Catching up at the start of a run
 
-The thread isn't just a chat log - it's part of the task's memory. When an agent starts a
-run on a task, it doesn't only rely on the injected description, rules, and progress
-summary: it **reads the comment thread to catch up on what's currently happening** - what
-other agents have already done, the decisions and feedback so far, open questions, and
-anything you've added since it last looked. That's how an agent stays current on a task
-it shares with teammates and with you, rather than acting on a stale picture.
+The thread is part of the task's memory. Alongside the injected description, rules, and
+progress summary, an agent starting a run **reads the comment thread to catch up on what's
+currently happening**: what other agents have already done, the decisions and feedback so
+far, open questions, and anything you've added since it last looked. That is how it stays
+current on a task it shares with teammates and with you.
 
 When a run is triggered by an **@-mention**, or by a **reply** to one of the agent's own
 earlier comments, the triggering comment is put in front of the agent directly, so it acts
@@ -101,9 +100,8 @@ conversation and the task's own changes - status moves, reassignments, links. Th
 one-line-per-run markers are left out, because a run's outcome and its log are richer on
 the agent's own Executions tab than a marker in a thread.
 
-The practical upshot: keep discussion, decisions, and hand-offs on the task. Whatever
-lands in the thread is inherited by the next agent that picks the task up - so the
-conversation compounds instead of evaporating between runs.
+So keep discussion, decisions, and hand-offs on the task. Whatever lands in the thread is
+inherited by the next agent that picks the task up.
 
 ## Assignee and run state
 
@@ -177,8 +175,7 @@ assignee, thread, and status, but stays attached to the parent so the shape of t
 is visible on the board.
 
 Nesting goes three levels deep. A task can have sub-tasks, those can have sub-tasks of
-their own, and those can have one further level, but no deeper. That keeps the board
-readable and stops a plan turning into a tree nobody can hold in their head.
+their own, and those can have one further level, but no deeper. That keeps the board readable.
 
 A parent cannot be marked done while any of its sub-tasks is still open. Every sub-task
 has to reach done or cancelled first. This is deliberate: closing a parent over unfinished
@@ -193,7 +190,7 @@ on the board and breaks the thread of what actually happened.
 Four moves are rejected, because each would produce a board that lies about the work:
 
 - A task cannot become its own parent, or be nested under one of its own sub-tasks.
-- The move must keep the whole branch within the two-level limit. Promoting is always
+- The move must keep the whole branch within the three-level limit. Promoting is always
   allowed, however deep the branch being moved.
 - The new parent must be in the same project.
 - Open work cannot be nested under a task that is already done or cancelled. Re-open the
@@ -215,9 +212,9 @@ and closing it would be the bug: done is terminal, so a closed standing task qui
 coming back, and nobody finds out until the report they were expecting fails to arrive.
 
 Each round of the work appears as a **sub-task** underneath it, and those do get closed. The
-parent is the standing commitment and its children are the receipts - open the standing task
-and you can see every weekly report that actually shipped, in order, each with its own thread
-and deliverable.
+parent holds the standing commitment; its children are the record of each round. Open the
+standing task and you can see every weekly report that actually shipped, in order, each with
+its own thread and deliverable.
 
 If an agent cannot tell whether you wanted something once or every week, it delivers the first
 one and then asks you. You get the report either way, and your answer settles the cadence, so
@@ -236,8 +233,7 @@ doesn't yank it away mid-flight. The manager hands it back to the agent doing th
 which winds down cleanly first - tidying up whatever it produced (for engineering work, that
 means closing an open pull request and removing its branch) so nothing is left orphaned - or
 makes the case that the work is effectively finished and should be kept on the task. Only
-then is the task cancelled. This keeps a cancelled task from stranding half-finished
-artifacts that no one owns.
+then is the task cancelled, so nothing it produced is left stranded with no owner.
 
 You and the CEO are the exception: an admin or the CEO can cancel any task outright, at any
 time, without that hand-back.

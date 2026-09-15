@@ -12,8 +12,8 @@ A **project** is the primary unit of work in Hezo, and every project owns exactl
 **team** - its roster of agents. The relationship is one-to-one: a team backs a single
 project. You don't manage teams separately; you reach a team through its project.
 
-This keeps things clean: a project's agents, tasks, budget, containers, and connections
-all belong to that project and nothing leaks between them.
+A project's agents, tasks, budget, containers, and connections all belong to that project,
+and nothing leaks between projects.
 
 A project's containers run only while there is work: one starts automatically when an
 agent run or the assistant needs it - each run going at once gets a container of its own
@@ -96,8 +96,8 @@ A name belongs to that project's copy of the agent, and it sticks: updating the 
 never renames a teammate you have been working with. Pulling a single role out of a team
 into another project starts it unnamed there.
 
-The Captain, the CEO and the Coach are always shown by their role rather than a name -
-there is one of each, and their role is who they are.
+The Captain, the CEO and the Coach are always shown by their role rather than a name,
+because there is one of each.
 
 ### Mentioning an agent
 
@@ -281,8 +281,8 @@ description alone.
 
 ## Reusing a team setup
 
-Spent time tuning a team (its roles, prompts, and connections) and want the same
-starting point again? You don't have to rebuild it:
+A team you have tuned - its roles, prompts, and connections - can be reused without
+rebuilding it:
 
 - **Save a team as a template** so it shows up as a reusable option for future
   projects, or
