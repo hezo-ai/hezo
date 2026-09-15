@@ -8,8 +8,7 @@ section: Security
 
 Agents run real code and make real network calls, often needing real credentials - a
 Stripe key, a GitHub token, a webhook secret. Hezo is built so that **agents never
-hold the real value of a secret you store.** This is the single most important thing
-to understand about how Hezo keeps you safe.
+hold the real value of a secret you store.**
 
 **One credential is the exception.** The key for the model provider an agent is
 running against is placed in its container in readable form, because the agent's own
@@ -41,15 +40,14 @@ proxy:
 
 If a placeholder is used against a host it isn't allowed for, the proxy **blocks the
 request**. So even if an agent is tricked or compromised into trying to send your
-Stripe key somewhere it shouldn't, the substitution simply never happens and the
-secret never leaves.
+Stripe key somewhere it shouldn't, the substitution never happens and the secret
+never leaves.
 
 Traffic with no security stake - an `npm install`, a documentation fetch, a request to a
 host no credential is scoped to - connects straight out from the container rather than
 round-tripping through your instance. Nothing is lost by that: a secret can only ever
 materialise at the proxy, so a request that goes out directly can carry at most a
-placeholder, which is inert and simply fails upstream. The proxy, not the route, is what
-the guarantee rests on.
+placeholder, which is inert and fails upstream.
 
 ### Credentials that go in the request body
 
@@ -71,9 +69,8 @@ header, so the credential itself only ever travels in that one login request.
 ## Scoped to the hosts that need it
 
 Every secret carries an **allowed-hosts** list - the upstreams it may be used with
-(for example `api.stripe.com`). This is what makes the boundary structural rather than
-just discouraged: a secret can only ever be sent to the destinations you scoped it to,
-whatever the agent asks for.
+(for example `api.stripe.com`). The boundary is structural: a secret can only ever be
+sent to the destinations you scoped it to, whatever the agent asks for.
 
 Write each entry as a bare hostname. Hezo normalizes what you type - a scheme, a port
 or a path is stripped, so `https://api.stripe.com:443/v1` is stored as `api.stripe.com`
@@ -83,11 +80,10 @@ and matches the same way. A leading `*.` is a wildcard for subdomains
 ### What the scope does and does not promise
 
 Scoping means an agent can **use** a credential against the hosts you named without
-ever **knowing** its value. Two limits are worth understanding, because they are
-properties of the design rather than gaps in it:
+ever **knowing** its value. Two limits follow from the design:
 
-- **The upstream sees the real value.** That is the whole point - it is a real request
-  with a real credential. So if a host you allowed happens to echo the credential back
+- **The upstream sees the real value**, because it is a real request with a real
+  credential. So if a host you allowed happens to echo the credential back
   (a debug or echo endpoint, or an error message that quotes the `Authorization`
   header), the agent reads it in the response. Scope secrets to hosts you trust not to
   reflect them, and prefer the narrowest, shortest-lived credential the provider
@@ -136,6 +132,6 @@ You're always the one who provides a secret:
 
 ## Why this matters
 
-The net effect: a buggy, jailbroken, or outright malicious agent **cannot exfiltrate
-your secrets.** It never sees them, and it can only use them against the hosts you
-allowed.
+A buggy, jailbroken, or malicious agent **cannot exfiltrate the secrets you store.** It
+never sees them, and it can only use them against the hosts you allowed. The one
+exception is the model-provider key above.

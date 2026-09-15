@@ -96,9 +96,10 @@ between releases. Your agents do not pick those improvements up on their own, an
 deliberate: an agent's prompt is yours once it is hired. It carries whatever the Coach has
 taught it and whatever you have edited, and a release has no business overwriting either.
 
-So Hezo offers instead. After an upgrade, any built-in agent whose role has moved on gets a
-card in your inbox: **Updated role available**. Accepting rewrites the role's own
-instructions and keeps everything added since, learned rules and your own additions alike.
+So Hezo offers the improvement instead of applying it. After an upgrade, any built-in agent
+whose role has moved on gets a card in your inbox: **Updated role available**. Accepting
+rewrites the role's own instructions and keeps everything added since, learned rules and
+your own additions alike.
 
 Two things make this safe to accept:
 
@@ -162,7 +163,7 @@ error marker; the note in the task and the Inbox item are how you find it.
 By default the agents on a team share the team's model. You can override the model for
 any individual agent, so (for example) one agent runs on a frontier model for hard
 reasoning while the rest run on something cheaper and faster. Mixing providers within a
-single team is fully supported. See [AI model support](/docs/ai-models).
+single team is supported. See [AI model support](/docs/ai-models).
 
 ## Retiring & reinstating agents
 

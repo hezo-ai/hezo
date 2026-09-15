@@ -7,8 +7,8 @@ section: Security
 # The master key & encryption at rest
 
 Everything sensitive Hezo holds - model API keys, OAuth tokens, signing keys, and other
-secrets - is **encrypted at rest**. The key that protects it all is yours, and yours
-alone: the **master key**.
+secrets - is **encrypted at rest**. The key that protects it all is the **master key**,
+and only you hold it.
 
 ## A twelve-word key only you hold
 
@@ -21,8 +21,8 @@ authenticated encryption (AES-256-GCM).
   again. This is deliberate: nobody who gets a copy of your data directory can
   read your secrets without the phrase.
 
-Treat it like the seed phrase of a crypto wallet: **write it down, store it safely, and
-don't lose it.**
+Treat it like the seed phrase of a crypto wallet: write it down and keep it somewhere
+both safe and hard to lose.
 
 ## Locked and unlocked
 
@@ -40,30 +40,30 @@ environment variable to that one invocation (see
 [Self-hosting on a VPS](/docs/deployment/vps)) - but don't persist the phrase to disk
 to do it (see [Keep it off the server](#keep-it-off-the-server) below).
 
-On [Hezo Cloud](/docs/cloud/overview) the gate screen is the only way in, which is by
-design: you create the phrase in your own browser and it never reaches us, so **we hold
-no copy and cannot recover it for you**. See
+On [Hezo Cloud](/docs/cloud/overview) the gate screen is the only way in: your own browser
+generates the phrase and it never reaches us, so **we hold no copy and cannot
+recover it for you**. See
 [Data & security on Hezo Cloud](/docs/cloud/data-and-security).
 
 ## Keep it off the server
 
-The master key's protection comes entirely from where it *isn't*: it lives in memory only
-and is **never written to disk**, so the encrypted data directory is useless to anyone who
-copies it without the phrase. **Don't undo that by storing the key on the server yourself** -
-not in the config file (`/etc/hezo/hezo.config.cjs`), an env file, the systemd unit, a
-shell profile, a same-host secrets file, or a note in the repo. Hezo refuses a `masterKey`
-key in the config file for exactly this reason. Note that Bun also auto-loads a `.env` from
-the working directory, so a `HEZO_MASTER_KEY` line there is picked up like any other - the
-same rule applies. A copy of the phrase sitting next to the encrypted
-vault means a stolen disk image, a leaked backup, or anyone who can read the box can decrypt
-everything - exactly what encryption at rest is meant to prevent.
+The master key lives in memory only and is **never written to disk**, which is what makes
+the encrypted data directory useless to anyone who copies it without the phrase. **Don't
+undo that by storing the key on the server yourself** - not in the config file
+(`/etc/hezo/hezo.config.cjs`), an env file, the systemd unit, a shell profile, a same-host
+secrets file, or a note in the repo. Hezo refuses a `masterKey` key in the config file for
+exactly this reason. Note that Bun also auto-loads a `.env` from the working directory, so
+a `HEZO_MASTER_KEY` line there is picked up like any other, and the same rule applies. A
+copy of the phrase sitting next to the encrypted vault means a stolen disk image, a leaked
+backup, or anyone who can read the box can decrypt everything - exactly what encryption at
+rest is meant to prevent.
 
-Starting **locked** by default is the feature, not an inconvenience. Two startup paths can
-supply the key in memory: an in-app update hands it from the surviving supervisor to the
-new process, and `--master-key` / `HEZO_MASTER_KEY` supplies it to one invocation. Neither
-path writes it to disk. A reboot, crash, or direct service restart has no surviving handoff and
-comes up locked unless you deliberately provide the one-shot input. Keep the only durable
-copy somewhere safe **off** the server. See
+Starting **locked** by default is deliberate. Two startup paths can supply the key in
+memory: an in-app update hands it from the surviving supervisor to the new process, and
+`--master-key` / `HEZO_MASTER_KEY` supplies it to one invocation. Neither path writes it
+to disk. A reboot, crash, or direct service restart has no surviving handoff and comes up
+locked unless you deliberately provide the one-shot input. Keep the only durable copy
+somewhere safe **off** the server. See
 [Updating](/docs/deployment/self-hosting#updating).
 
 ## Your password vs. the master key
@@ -90,7 +90,7 @@ your current password and the new one twice, and save. Your session stays signed
 
 **Forgot your password?** Reset it with your master key: on the sign-in screen choose
 **Forgot password? Use your master key**, enter the twelve words, and set a new one. The
-master key is the ultimate authority, so it's also your password-recovery path.
+master key outranks the password, so it is also your password-recovery path.
 
 > **Upgrading an existing instance?** Your admin account is given the default password
 > `password` so you can sign in right away - **change it immediately** in

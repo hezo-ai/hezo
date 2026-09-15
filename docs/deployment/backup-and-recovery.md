@@ -50,12 +50,12 @@ database-only single `.backup.gz` file, or `--no-database` for an assets-only bu
 **Stop the server first for the embedded database and local assets.** The embedded database
 is single-process: `hezo backup` opens a *second* database over the same files, which is not
 a safe read-only operation - it races the running server's writes and can corrupt the data.
-So the command **refuses to run while the server is up** (the running instance holds an
+So the command **refuses to run while the server is up**. The running instance holds an
 advisory lock at `<data-dir>/hezo.lock`; backup and restore check it and stop with guidance
-rather than risk the files). A **hosted** database and bucket are different - there `hezo
-backup` is an ordinary consistent read against your one Postgres server, so you can back them
-up **any time, server running**, and they pair well with your provider's own snapshots or
-versioning.
+rather than risk the files. A **hosted** database and bucket are different: there
+`hezo backup` is an ordinary consistent read against your one Postgres server, so you can
+back them up **any time, server running**, and they pair well with your provider's own
+snapshots or versioning.
 
 > If a crash ever leaves a stale `hezo.lock` behind, the next server start overwrites it, and
 > backup/restore ignore it automatically (they verify the recorded process is actually
@@ -65,12 +65,11 @@ versioning.
 ### Point the command at your data directory
 
 `hezo backup` resolves its data directory the **same way the server does** - an explicit
-`--data-dir` flag first, then the `--config` file, then the default `~/.hezo`. This matters
-the moment your instance does **not** live at the default location.
+`--data-dir` flag first, then the `--config` file, then the default `~/.hezo`.
 
 **If your server runs with a custom data directory, the backup command has to know about it
-too.** Run `hezo backup` with the same `--config` the server uses,
-or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` - a
+too.** Run `hezo backup` with the same `--config` the server uses, or pass
+`--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` - a
 directory your instance never used - and backs up the wrong database instead of yours.
 
 - **systemd / Docker:** pass the same `--config` to the backup command - for example,
@@ -165,7 +164,7 @@ each backend has a safety net:
 
 - **Embedded:** migrations run against a *copy* of the database, which is swapped in
   only on success; the previous copy is kept aside in the data directory. A failed
-  migration leaves your original data untouched - just run the previous binary.
+  migration leaves your original data untouched - run the previous binary.
 - **External:** a pre-migration `hezo backup` file is written into
   `<data-dir>/backups/` automatically before anything changes (the last 5 are kept),
   and each migration commits its own transaction. To roll back a bad upgrade, restore
@@ -186,6 +185,5 @@ hezo --reset
 
 This **starts fresh with an empty embedded database**. Your previous data isn't deleted -
 the existing `pgdata` is renamed aside on disk - but it stays encrypted with the old
-master key, so there's no recovery path for a lost key. Treat `--reset` as the last
-resort it is. (For an external database, drop and recreate it with your provider's tools
-instead.)
+master key, so there's no recovery path for a lost key. Treat `--reset` as a last resort.
+(For an external database, drop and recreate it with your provider's tools instead.)

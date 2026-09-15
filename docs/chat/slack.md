@@ -89,7 +89,7 @@ settings:
   follow-up mention in that thread continues the same conversation, and the CEO
   remembers its own exchanges there.
 - **Full CEO powers.** It can list projects and tasks, create tasks, write documents,
-  and everything else the CEO can do from the web chat - just addressed from Slack.
+  and everything else the CEO can do from the web chat, addressed from Slack.
 - **Channel-scoped privacy.** The bot can only read channels it was explicitly invited
   to; Slack enforces this. Removing it from a channel removes its access. Anyone in an
   invited channel may mention it - the invite is the authorization.

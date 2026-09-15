@@ -6,9 +6,9 @@ section: Deployment
 
 # Configuration reference
 
-Hezo is configured with a **config file** you point at with `--config`, and with
-**command-line flags**. A flag always wins over the file, and anything neither sets falls
-back to the built-in default.
+Hezo is configured with a config file you point at with `--config`, and with command-line
+flags. A flag always wins over the file, and anything neither sets falls back to the
+built-in default.
 
 ```sh
 hezo --config /etc/hezo/hezo.config.cjs
@@ -48,8 +48,8 @@ module.exports = {
 };
 ```
 
-A misspelled or unknown key is an **error naming the key**, not something quietly ignored,
-so a typo cannot leave you running a setting you thought you had changed.
+A misspelled or unknown key is an error naming the key, rather than something quietly
+ignored, so a typo cannot leave you running a setting you thought you had changed.
 
 **Give the file mode 600 if it carries credentials.** `database.url`,
 `assetStorage.url` and `containers.daytona.apiKey` are secrets:
@@ -100,7 +100,7 @@ Nested keys are written in dot form below: `database.url` means
 | `containers.dockerSocket` | `--docker-socket <path>` | auto | Path to the container runtime's Unix socket. By default Hezo finds it: `DOCKER_HOST`, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the daemon listens somewhere none of those cover. Unix sockets only - `tcp://` and `npipe://` are not supported. See [Container runtimes](/docs/deployment/container-runtimes). |
 | `containers.dockerRequestTimeoutMs` | - | `10000` | Ceiling on a single call to the Docker daemon, so a wedged one cannot stall the container-sync loop. Raise it for a slow host. |
 | `containers.keepOld` | `--keep-old-containers` | off | Keep old project containers instead of removing them - for debugging a crashed container. |
-| `containers.skipMountCheck` | - | off | Skip the boot check that verifies agent containers get a writable view of the data directory. The check is a diagnosis, not a dependency - skipping it hides the warning, it does not make a read-only mount work. |
+| `containers.skipMountCheck` | - | off | Skip the boot check that verifies agent containers get a writable view of the data directory. Skipping it hides the warning; it does not make a read-only mount work. |
 | `containers.agentBaseImage` | - | the release's published image | Container image every project's agents run in, overriding the default for this instance. Must be a reference the backend in use can pull, e.g. `ghcr.io/hezo-ai/agent-base:0.42.0`. Mainly for running a development server against a managed sandbox service, where the default is built into the local Docker daemon and a managed service has nothing to pull. A project that names its own base image keeps it. |
 | `runs.maxToolCalls` | - | `600` | Most tool calls one agent run may make before Hezo stops it. Every tool result stays in the run's conversation and is re-sent on the next call, so a very long run spends most of its allowance re-reading its own context and rarely converges. A run that hits the ceiling is failed with a message saying so, and any work it already committed is pushed. Measured against real usage, an ordinary run makes about a dozen calls and the busiest healthy ones a few hundred, so the default only bites the tail. Set `0` to disable the ceiling. |
 | - | `DOCKER_HOST` (environment) | - | Standard Docker environment variable, honoured when it points at a `unix://` socket. Takes effect only if `containers.dockerSocket` / `--docker-socket` is unset. |
@@ -120,7 +120,7 @@ Nested keys are written in dot form below: `database.url` means
 | `telemetry.enabled` | `--disable-telemetry` | on | The anonymous daily usage report (see [Anonymous usage telemetry](#anonymous-usage-telemetry)). Pass `--disable-telemetry` or set `telemetry.enabled: false`. |
 | `telemetry.endpoint` | `--telemetry-endpoint <url>` | `https://hezo.ai/api/telemetry` | Where the daily report is sent. Point it at your own collector to keep the data in-house. |
 | `updates.disabled` | - | off | Disable the in-app auto-update (release check, the background download, and the "Install & restart" banner). When disabled the banner instead links to the GitHub release page. |
-| `updates.autoInstall` | `--auto-install-updates` | off | Install staged updates automatically: once a newer release is downloaded and verified, Hezo gracefully restarts onto it without waiting for "Install & restart" in the web UI. The restart is deferred while agent runs are in flight, and only happens where in-app auto-update is available at all (the self-managed binary - not inside a container). The instance comes back **unlocked**: the unlock key is handed to the new process in memory, never written to disk. See [Updating](/docs/deployment/self-hosting#updating). |
+| `updates.autoInstall` | `--auto-install-updates` | off | Install staged updates automatically: once a newer release is downloaded and verified, Hezo gracefully restarts onto it without waiting for "Install & restart" in the web UI. The restart is deferred while agent runs are in flight, and only happens where in-app auto-update is available at all (the standalone binary - not inside a container). The instance comes back **unlocked**: the unlock key is handed to the new process in memory, never written to disk. See [Updating](/docs/deployment/self-hosting#updating). |
 
 ### Marketplace and connectors
 
@@ -132,7 +132,7 @@ Nested keys are written in dot form below: `database.url` means
 
 ### Background job schedules
 
-All schedules are **seconds-precision six-field** cron expressions
+All schedules are seconds-precision six-field cron expressions
 (`second minute hour day month weekday`). The defaults suit a normal instance; change one
 only when you have a reason to.
 
@@ -209,9 +209,9 @@ Left unset the allowance resets on the first of the calendar month, which is wha
 a self-hosted instance wants. A deployment that bills on the day each instance
 subscribed pins that day here instead, so the hours an instance is capped against
 cover the period it is charged for rather than a calendar month cutting across
-it. A day later than a short month holds - the 31st in February - resets on that
-month's last day, and returns to the anchor the month after; it never walks
-backwards.
+it. An anchor day a short month does not have, such as the 31st in February,
+resets on that month's last day and returns to the anchor the month after; it
+never walks backwards.
 
 **`pinned.backend` is the exception: it takes effect on restart.** The engine
 containers run on is chosen once at startup, so re-pinning it while the instance
@@ -266,7 +266,7 @@ signed in to, even from its own console.
 carries or obtains your recovery phrase, and an instance that accepts a valid
 token is still locked: it asks for the phrase exactly as it would otherwise, and
 only then completes the sign-in. A control plane can therefore let you into your
-instance without ever being able to read what is in it.
+instance without ever holding the phrase that protects what is in it.
 
 **Signing out ends a session, and does not lock the instance.** It clears the
 session here and then goes to `logoutUrl` to end the one at the issuer; without
@@ -330,17 +330,17 @@ above and keep the brief to what a first conversation needs.
 
 ## The master key is not a config setting
 
-The master key is **never** read from the config file, and Hezo rejects a `masterKey` key
-with an error rather than accepting it. It is kept in memory only, which is what makes
-encryption at rest meaningful: a copy of the key on disk next to the encrypted data would
-let anyone who reads the host decrypt your vault.
+The master key is **never** read from the config file: Hezo rejects a `masterKey` key with
+an error. It is kept in memory only, which is what makes encryption at rest meaningful. A
+copy of the key on disk next to the encrypted data would let anyone who reads the host
+decrypt your vault.
 
 Hezo starts **locked** by default. A supervised in-app update hands the key to the new
 process in memory. A reboot, crash, or direct service restart stays locked unless that
 invocation receives a one-shot `--master-key` or `HEZO_MASTER_KEY` input. To unlock a
 single non-interactive startup, pass the phrase to that one invocation with
-`HEZO_MASTER_KEY` (an
-environment variable rather than a flag, because flags are visible in the process list):
+`HEZO_MASTER_KEY`, an environment variable rather than a flag because flags are visible in
+the process list:
 
 ```sh
 HEZO_MASTER_KEY="your twelve word master key phrase here" hezo --config /etc/hezo/hezo.config.cjs
@@ -388,12 +388,12 @@ disk defeats that. See [Master key & encryption](/docs/security/master-key).
 ## Using an external Postgres
 
 By default Hezo embeds its database inside the single binary and stores it under the data
-directory - no external database to run. If you'd rather use a managed/hosted Postgres
-(for managed backups, more headroom, or your own operational tooling), point Hezo at it
-(this section is the reference; for a walkthrough on a cloud server see
-[Managed database & asset storage](/docs/deployment/vps#managed-database--asset-storage)
-or, for the cloud-init deploy,
-[Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
+directory, so there is no external database to run. To use a managed or hosted Postgres
+instead, for managed backups, more headroom, or your own operational tooling, point Hezo
+at it. This section is the reference; for a walkthrough on a cloud server see
+[Managed database & asset storage](/docs/deployment/vps#managed-database--asset-storage),
+or [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting) for
+the cloud-init deploy.
 
 ```js
 // /etc/hezo/hezo.config.cjs
@@ -446,13 +446,13 @@ That matters most when one cluster serves many Hezo instances. Under a transacti
 pooler, the cluster's backend connections track concurrent *transactions* rather than
 instances, so a fixed connection budget carries far more of them.
 
-**`database.poolSize` can go down to `1`, but think before it does.** One connection
-serves the API, the tool endpoint, the egress proxy, the container control plane and a
-scheduler that polls every 1-5 seconds, so every query in the process waits behind
-every other - and past the connection timeout they stop waiting and fail, which is
-what a busy instance on a pool of one actually looks like. It is the right setting for packing many small instances onto one cluster,
-and the wrong one for a single busy instance. The default of `10` suits a normal
-deployment.
+**`database.poolSize` can go down to `1`, but think before you set it there.** One
+connection serves the API, the tool endpoint, the egress proxy, the container control
+plane and a scheduler that polls every 1-5 seconds, so every query in the process waits
+behind every other, and past the connection timeout they stop waiting and fail. That is
+what a busy instance on a pool of one looks like. It is the right setting for packing many
+small instances onto one cluster, and the wrong one for a single busy instance. The
+default of `10` suits a normal deployment.
 
 ### TLS and sslmode
 
@@ -506,10 +506,10 @@ full verification). Put `sslmode` in the URL rather than relying on it.
 
 By default, uploaded [asset](/docs/concepts/assets) files (task attachments and the
 project assets library) live on the local filesystem under `<data-dir>/assets/`. To keep
-them in a bucket instead - for managed durability, or to keep the host closer to
-stateless - point Hezo at any **S3-compatible** store (deployment walkthroughs:
+them in a bucket instead, for managed durability or to keep the host closer to stateless,
+point Hezo at any S3-compatible store. Deployment walkthroughs:
 [Managed database & asset storage](/docs/deployment/vps#managed-database--asset-storage)
-and [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
+and [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting).
 
 ```js
 // /etc/hezo/hezo.config.cjs
@@ -586,13 +586,14 @@ while the server is stopped - `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/
 Every agent run executes inside a container. By default that container runs on the local
 Docker daemon, which is why a Docker-compatible runtime is a prerequisite for a normal
 install. `--sandbox-backend` (or `containers.backend`) starts a **brand-new** instance on
-a managed sandbox service instead, and Docker stops being required at all.
+a managed sandbox service instead, and Docker is then not required at all.
 
 These only choose what a brand-new instance starts on. The first startup records the
 choice, and from then on the stored setting wins: the launch settings are ignored on later
-startups - Hezo logs that it ignored them if they disagree - so restarting with a different
-config file never switches an existing instance. Switching, in either direction, is done
-from Settings -> Containers at any time, no restart needed (unless a deployer has pinned it). See
+startups, and Hezo logs that it ignored them if they disagree, so restarting with a
+different config file never switches an existing instance. Switching, in either direction,
+is done from Settings -> Containers at any time, with no restart needed unless a deployer
+has pinned it. See
 [Switching at any time](/docs/containers/overview#switching-at-any-time).
 
 [Remote containers](/docs/containers/remote/overview) covers what changes when you do:
@@ -633,14 +634,13 @@ expired or revoked key - see
 
 ### The agent image on a managed backend
 
-A released Hezo pulls its agent image from a public registry, so this needs no thought:
-the managed service pulls the same image your local Docker would.
+A released Hezo pulls its agent image from a public registry, so this needs no
+configuration: the managed service pulls the same image your local Docker would.
 
-A **development server** is the exception, and it is worth knowing before you try it.
-Running from source, Hezo builds the agent image into your local Docker daemon from the
-Dockerfile in your working tree - which is what makes edits to it take effect on the next
-restart. A managed sandbox service cannot see that image; it pulls from a registry. So
-point the instance at a published image instead:
+A development server is the exception. Running from source, Hezo builds the agent image
+into your local Docker daemon from the Dockerfile in your working tree, which is what
+makes edits to it take effect on the next restart. A managed sandbox service cannot see
+that image; it pulls from a registry. Point the instance at a published image instead:
 
 ```js
 module.exports = {
@@ -662,10 +662,9 @@ If you select a managed backend and Hezo cannot reach it - no key, a rejected ke
 unreachable API - the server **refuses to start** and prints what to check. It never
 quietly runs your agents on local Docker instead.
 
-This is deliberate, and matches how an external database and S3 asset storage already
-behave. An instance that silently degraded would look perfectly healthy while doing
-something you did not ask for, and the first sign of trouble would be an agent run failing
-for no visible reason.
+That matches how an external database and S3 asset storage already behave. An instance
+that silently degraded would look perfectly healthy while doing something you did not ask
+for, and the first sign of trouble would be an agent run failing for no visible reason.
 
 Startup retries briefly first (a couple of seconds, twice), so a provider that is
 restarting does not kill a boot.
@@ -682,7 +681,8 @@ on a local Docker install.
 ## Anonymous usage telemetry
 
 To help us understand how Hezo is used across self-hosted installs, each instance sends a
-small **anonymous** usage report once a day. It is **on by default** and easy to turn off.
+small anonymous usage report once a day. It is on by default, and one flag or one config
+line turns it off.
 
 **What's sent** - aggregate counts only:
 

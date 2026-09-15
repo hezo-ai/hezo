@@ -6,7 +6,7 @@ section: Concepts
 
 # Assets & previews
 
-Not every deliverable is markdown. Each project team has an **assets library** - one place
+Not every deliverable is markdown. Each project team has an **assets library**: one place
 for the files a project accumulates, whether you uploaded them or an agent produced them.
 
 ## Folders
@@ -35,7 +35,7 @@ reference - older comments citing the old path show it as plain text.
 
 Drag files onto the **Assets** page to add them to the library: mockups, screenshots,
 diagrams, images, PDFs, scripts, audio, video, or an archive, up to 10 MB each. Uploads are
-always individual files - folders can't be uploaded from your computer; files simply land in
+always individual files - folders can't be uploaded from your computer; files land in
 whichever library folder is open. You can also attach files directly to a task or a comment -
 drag them onto the comment box or use its **Upload** button - so a screenshot or a
 reference document sits right next to the discussion it belongs to -
@@ -49,8 +49,8 @@ An agent that needs what's inside downloads it into its own container and unpack
 
 ## Agent-generated assets
 
-Agents don't just consume assets - they create them. An agent can write an interactive
-**HTML** mockup, an **SVG** diagram, a plain-text export, a **script**, or a **markdown**
+Agents create assets as well as reading them. An agent can write an interactive **HTML**
+mockup, an **SVG** diagram, a plain-text export, a **script**, or a **markdown**
 deliverable such as a blog post or report straight into the library (`write_project_asset`
 over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)) and read any asset back later - folder
 paths included (`scripts/deploy-check.sh`). To change part of a text asset, such as tweaking a
@@ -68,9 +68,9 @@ Markdown belongs in the assets library when it's a standalone deliverable you wa
 read - a blog post, a one-off report. Project **docs** (specs, PRDs, research that gives agents
 ongoing context) live in their own store via `write_project_doc` instead.
 
-You don't have to remember where a file went. The [global search](/docs/concepts/search)
-palette (**⌘K**, **Ctrl+K** on Windows and Linux) has an **Assets** tab: every asset is
-findable by its name and folders, and text assets - markdown, plain text, HTML, SVG,
+The [global search](/docs/concepts/search) palette (**⌘K**, **Ctrl+K** on Windows and
+Linux) has an **Assets** tab, so you don't have to remember where a file went: every asset
+is findable by its name and folders, and text assets - markdown, plain text, HTML, SVG,
 scripts and data files - by what is written inside them too. Your agents search the same
 library, so they can find and reuse a file an earlier run produced.
 
@@ -185,7 +185,7 @@ blurb, or post it straight onto a task and assign the agent - a confirmation wit
 the new task comment appears so you can jump there. The agent reads the comments alongside
 the file (`read_project_asset`) and actions them.
 
-One rule to know: a review applies to the **current version** of an asset. The moment
-anything rewrites the file (an agent's `write_project_asset`, typically), all of its review
-comments are cleared, exactly like documents. Agents are instructed to capture every comment
+A review applies to the **current version** of an asset. The moment anything rewrites the
+file (an agent's `write_project_asset`, typically), all of its review comments are cleared,
+exactly like documents. Agents are instructed to capture every comment
 before their first write.

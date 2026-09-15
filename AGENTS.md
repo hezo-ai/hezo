@@ -271,9 +271,10 @@ Running a vendor's own command in a sandbox and reading what it printed. **Traps
 These bind user-facing prose, not code identifiers, columns, route paths or internal comments.
 
 - **Say "task", never "ticket". Say "global", never "instance-wide".**
+- **Write it through the `humanizer` skill.**
 - **"Hezo Cloud" is the hosted product; "self-hosting" is the only name for the other path**, covering a local machine and a VPS. **State each path once, and differences rather than parity.** The rest: that guide.
 - **No price in `README.md` or `docs/`** - link `hezo.ai/pricing`. Never claim Hezo cannot read hosted data; what holds is that we never hold the recovery phrase and cannot decrypt what it protects.
-- **Never use an em dash or an en dash. Use a hyphen.** Put a plain hyphen where an em dash would go; recast a paired parenthetical as parentheses or commas. This reaches generated pages through their sources - a tool description or schema note that carries one puts it in the docs. Internal-only text is exempt: code comments, `.dev/`, and this file.
+- **Never use an em dash or an en dash. Use a hyphen.** Recast a paired parenthetical as parentheses or commas. This reaches generated pages through their sources - a tool description or schema note that carries one puts it in the docs. Internal-only text is exempt: code comments, `.dev/`, and this file.
 - **The README carries no competitor-comparison section, ever**, under any heading. Describe what Hezo does on its own terms.
 
 ### Web frontend mutations

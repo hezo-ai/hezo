@@ -6,8 +6,8 @@ section: AI models & connections
 
 # Hezo's MCP server
 
-Hezo ships its **own MCP ([Model Context Protocol](https://modelcontextprotocol.io))
-server.** Any MCP-capable agent or client - Claude Code, Cursor, Claude Desktop, your
+Hezo ships its own MCP ([Model Context Protocol](https://modelcontextprotocol.io))
+server. Any MCP-capable agent or client - Claude Code, Cursor, Claude Desktop, your
 own scripts - can connect to it and manage your Hezo workspace: create and update
 projects, file and work tasks, post comments, inspect agents, and more.
 
