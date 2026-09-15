@@ -68,12 +68,12 @@ See the [Configuration reference](/docs/deployment/configuration) for every opti
 ## Managed database & asset storage
 
 Local disk is the default. Point Hezo at a **managed Postgres**, an **S3-compatible
-bucket**, or both, to move database rows and asset files off the server. Managed backends
-do not replace a host backup: a replacement host also needs `dataDir`,
-`/etc/hezo/hezo.config.cjs`, any referenced files such as a database CA certificate, and
-the service definition or startup flags that select the config. Back up those inputs,
-including backend credentials, or record how to recreate them before replacing the
-server. Each backend is one setting, adoptable independently:
+bucket**, or both, to move database rows and asset files off the server.
+Managed backends do not replace a host backup: a replacement host also needs
+`dataDir`, `/etc/hezo/hezo.config.cjs`, any referenced files such as a database CA
+certificate, and the service definition or startup flags that select the config. Back up
+those inputs, including backend credentials, or record how to recreate them before
+replacing the server. Each backend is one setting, adoptable independently:
 
 1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's
    scheduling polls every 1-5 seconds, so latency counts), with TLS. Direct,
