@@ -24,7 +24,7 @@ happened to use.
 Hezo's answer is to sit one level up: it is a **meta-harness**, a harness around the
 harnesses. It runs each model inside its **own first-party harness** - Claude drives Claude
 Code, GPT drives Codex, Gemini drives Antigravity - so you keep each model's native
-tooling instead of a lowest-common-denominator wrapper. Then it wraps a **single, uniform
+tooling. Then it wraps a **single, uniform
 platform layer** around all of them, so the harness an agent happens to run on becomes an
 implementation detail rather than something you manage.
 

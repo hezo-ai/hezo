@@ -47,7 +47,7 @@ When a provider can be run by more than one command-line agent, the choice lives
 **Advanced** in the add-provider form, below the API key. A provider that offers only one CLI
 shows no picker there.
 
-You can also change it later without re-entering the key: on **Settings > AI providers**,
+You can also change it later without re-entering the key: on **Settings → AI providers**,
 click the CLI name next to the provider and pick another. Existing agents pick up the change
 on their next run.
 
