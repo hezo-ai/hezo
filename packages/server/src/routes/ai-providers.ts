@@ -43,6 +43,7 @@ import {
 	subscriptionLoginService,
 } from '../services/subscription-login';
 import { acquireLoginContainer } from '../services/subscription-login-container';
+import { releaseUsageHeldWakeups } from '../services/wakeup';
 
 const log = logger.child('routes');
 
@@ -564,6 +565,9 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		if (!updated) {
 			return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 		}
+		// A replacement credential starts with no usage hold, so the work held on the
+		// old one's spent allowance may dispatch now.
+		if (credential) await releaseUsageHeldWakeups(db);
 	} catch (e) {
 		if (isUniqueViolation(e)) {
 			return err(c, 'DUPLICATE', 'A config with this provider and label already exists', 409);

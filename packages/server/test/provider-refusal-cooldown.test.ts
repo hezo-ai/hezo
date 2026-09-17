@@ -1,4 +1,4 @@
-// What the provider-refusal cooldown fragment selects, against real rows.
+// What the provider-refusal hold on a wakeup selects, against real rows.
 //
 // Kept apart from `job-manager-scheduling.test.ts`, which proves the fragment is
 // wired into the wakeup scan with one case. The semantics need several, and
@@ -8,7 +8,11 @@
 import { WakeupSkipReason } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
-import { providerRefusalCooldownSql } from '../src/services/no-work-backoff';
+import {
+	releaseUsageHeldWakeups,
+	settleWakeupForRun,
+	WAKEUP_HOLD_ELAPSED_SQL,
+} from '../src/services/wakeup';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam } from './helpers/app';
 
@@ -16,29 +20,42 @@ let db: Db;
 let teamId: string;
 let memberId: string;
 
-/** Insert a queued wakeup, optionally already skipped for `reason` `agoMin` ago. */
-async function wakeup(reason?: string, agoMin = 0): Promise<string> {
+/**
+ * Insert a wakeup, optionally skipped for `reason` and held until `holdMin`
+ * minutes from now (negative for a hold already over).
+ */
+async function wakeup(
+	opts: { reason?: string; holdMin?: number; status?: string } = {},
+): Promise<string> {
 	const r = await db.query<{ id: string }>(
 		`INSERT INTO agent_wakeup_requests
-		   (member_id, team_id, source, status, payload, last_skipped_reason, last_skipped_at)
-		 VALUES ($1, $2, 'timer', 'queued', '{}'::jsonb, $3,
-		         CASE WHEN $3::text IS NULL THEN NULL
-		              ELSE now() - ($4 || ' minutes')::interval END)
+		   (member_id, team_id, source, status, payload, last_skipped_reason, last_skipped_at, not_before)
+		 VALUES ($1, $2, 'timer', $3::wakeup_status, '{}'::jsonb, $4,
+		         CASE WHEN $4::text IS NULL THEN NULL ELSE now() END,
+		         CASE WHEN $5::int IS NULL THEN NULL ELSE now() + make_interval(mins => $5::int) END)
 		 RETURNING id`,
-		[memberId, teamId, reason ?? null, String(agoMin)],
+		[memberId, teamId, opts.status ?? 'queued', opts.reason ?? null, opts.holdMin ?? null],
 	);
 	return r.rows[0].id;
 }
 
 /** The ids the scan would still consider, in the order it takes them. */
-async function selectable(): Promise<string[]> {
+async function selectable(limit = 100): Promise<string[]> {
 	const r = await db.query<{ id: string }>(
 		`SELECT id FROM agent_wakeup_requests
-		  WHERE team_id = $1 AND status = 'queued' AND ${providerRefusalCooldownSql()}
-		  ORDER BY created_at ASC`,
+		  WHERE team_id = $1 AND status = 'queued' AND ${WAKEUP_HOLD_ELAPSED_SQL}
+		  ORDER BY created_at ASC LIMIT ${limit}`,
 		[teamId],
 	);
 	return r.rows.map((x) => x.id);
+}
+
+async function notBefore(id: string): Promise<Date | null> {
+	const r = await db.query<{ not_before: Date | null }>(
+		'SELECT not_before FROM agent_wakeup_requests WHERE id = $1',
+		[id],
+	);
+	return r.rows[0].not_before;
 }
 
 beforeAll(async () => {
@@ -60,36 +77,41 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('providerRefusalCooldownSql', () => {
-	it('keeps a wakeup that has never been skipped', async () => {
-		// The three-valued-logic trap this exists to avoid: a NULL
-		// `last_skipped_reason` makes every arm NULL, so a bare `NOT (...)` is NULL,
-		// and a WHERE drops the row - filtering out the entire ordinary queue.
+describe('provider refusal hold on a wakeup', () => {
+	it('keeps a wakeup that was never held', async () => {
 		const id = await wakeup();
+		const skipped = await wakeup({ reason: WakeupSkipReason.InstanceAtCapacity });
+		expect(await selectable()).toEqual([id, skipped]);
+	});
+
+	it('holds a wakeup until its time, then releases it', async () => {
+		const held = await wakeup({ reason: WakeupSkipReason.ProviderUsageLimit, holdMin: 60 });
+		const over = await wakeup({ reason: WakeupSkipReason.ProviderAtCapacity, holdMin: -1 });
+		expect(await selectable()).toEqual([over]);
+		expect(await selectable()).not.toContain(held);
+	});
+
+	it('writes the hold on handback and clears it on a handback without one', async () => {
+		const id = await wakeup({ status: 'claimed' });
+		const until = new Date(Date.now() + 3 * 60 * 60_000);
+		const settled = await settleWakeupForRun(db, id, {
+			kind: 'handback',
+			reason: WakeupSkipReason.ProviderUsageLimit,
+			notBefore: until,
+		});
+		expect(settled.kind).toBe('requeued');
+		expect((await notBefore(id))?.getTime()).toBe(until.getTime());
+		expect(await selectable()).toEqual([]);
+
+		// A later handback for a wait with no clock of its own must not inherit the
+		// earlier hold, or capacity work would sit out a usage reset it has no part in.
+		await db.query(`UPDATE agent_wakeup_requests SET status = 'claimed' WHERE id = $1`, [id]);
+		await settleWakeupForRun(db, id, {
+			kind: 'handback',
+			reason: WakeupSkipReason.InstanceAtCapacity,
+		});
+		expect(await notBefore(id)).toBeNull();
 		expect(await selectable()).toEqual([id]);
-	});
-
-	it('keeps a wakeup skipped for a reason that is not a provider refusal', async () => {
-		const id = await wakeup(WakeupSkipReason.InstanceAtCapacity);
-		expect(await selectable()).toEqual([id]);
-	});
-
-	it('holds a capacity refusal, then releases it once its clock runs out', async () => {
-		const fresh = await wakeup(WakeupSkipReason.ProviderAtCapacity, 1);
-		expect(await selectable()).not.toContain(fresh);
-
-		const expired = await wakeup(WakeupSkipReason.ProviderAtCapacity, 10);
-		expect(await selectable()).toEqual([expired]);
-	});
-
-	it('gives a spent usage allowance a longer clock than a capacity refusal', async () => {
-		// Ten minutes clears capacity but not a subscription window, which resets in
-		// hours - the whole reason the two are separate reasons rather than one.
-		const usage = await wakeup(WakeupSkipReason.ProviderUsageLimit, 10);
-		expect(await selectable()).not.toContain(usage);
-
-		const capacity = await wakeup(WakeupSkipReason.ProviderAtCapacity, 10);
-		expect(await selectable()).toEqual([capacity]);
 	});
 
 	it('does not let held wakeups crowd a fresh one out of the scan window', async () => {
@@ -97,15 +119,22 @@ describe('providerRefusalCooldownSql', () => {
 		// dispatch loop: the scan takes the ten OLDEST queued wakeups, so held rows
 		// are by then old rows and would fill the window on every tick, starving
 		// newer work for as long as the outage lasted.
-		for (let i = 0; i < 10; i++) await wakeup(WakeupSkipReason.ProviderAtCapacity, 1);
+		for (let i = 0; i < 10; i++) {
+			await wakeup({ reason: WakeupSkipReason.ProviderUsageLimit, holdMin: 60 });
+		}
 		const fresh = await wakeup();
+		expect(await selectable(10)).toEqual([fresh]);
+	});
 
-		const r = await db.query<{ id: string }>(
-			`SELECT id FROM agent_wakeup_requests
-			  WHERE team_id = $1 AND status = 'queued' AND ${providerRefusalCooldownSql()}
-			  ORDER BY created_at ASC LIMIT 10`,
-			[teamId],
-		);
-		expect(r.rows.map((x) => x.id)).toEqual([fresh]);
+	it('releases only the wakeups held for a spent usage allowance', async () => {
+		const usage = await wakeup({ reason: WakeupSkipReason.ProviderUsageLimit, holdMin: 60 });
+		const capacity = await wakeup({ reason: WakeupSkipReason.ProviderAtCapacity, holdMin: 5 });
+
+		expect(await releaseUsageHeldWakeups(db)).toBe(1);
+		expect(await selectable()).toEqual([usage]);
+		expect(await notBefore(capacity)).not.toBeNull();
+
+		// Nothing left to release writes nothing.
+		expect(await releaseUsageHeldWakeups(db)).toBe(0);
 	});
 });

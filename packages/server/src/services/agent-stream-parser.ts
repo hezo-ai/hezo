@@ -218,6 +218,11 @@ export interface RuntimeErrorVerdict {
 	 * to match the message text a second time.
 	 */
 	family: RuntimeErrorFamily;
+	/**
+	 * When the provider said a spent allowance resets, for the runtimes that state
+	 * it. Absent when the runtime gave no time or its format is not recognised.
+	 */
+	retryAt?: Date;
 }
 
 /** The failure modes {@link classifyRuntimeError} names. */
@@ -323,6 +328,68 @@ export function classifyRuntimeError(raw: string | undefined | null): RuntimeErr
 		};
 	}
 	return { message: text, failure: RunFailureClass.Permanent, family: 'unknown' };
+}
+
+const CODEX_RETRY_MONTHS = [
+	'jan',
+	'feb',
+	'mar',
+	'apr',
+	'may',
+	'jun',
+	'jul',
+	'aug',
+	'sep',
+	'oct',
+	'nov',
+	'dec',
+] as const;
+
+/**
+ * The reset time in Codex's usage-limit message: "try again at Sep 20th, 2026
+ * 10:49 AM", or "try again at 10:49 AM" when the reset falls on the current day.
+ *
+ * Codex formats the time in the container's local zone. The agent image sets no
+ * zone, so that is UTC, which matches what production recorded: a refusal saying
+ * "Sep 7th, 2026 2:26 AM" was still refused at 02:11 UTC and the next run at
+ * 02:43 UTC got a turn. The format drops seconds, so the result is rounded up to
+ * the next minute to avoid retrying before the stated reset.
+ */
+export function parseCodexRetryAt(text: string, now: Date): Date | null {
+	const m =
+		/try again at (?:([a-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?(\d{1,2}):(\d{2}) ([ap]m)/i.exec(
+			text,
+		);
+	if (!m) return null;
+	const [, monthName, day, year, hour, minute, meridiem] = m;
+	const hour12 = Number(hour);
+	if (hour12 < 1 || hour12 > 12 || Number(minute) > 59) return null;
+	const hour24 = (hour12 % 12) + (meridiem.toLowerCase() === 'pm' ? 12 : 0);
+	let ms: number;
+	if (monthName) {
+		const month = CODEX_RETRY_MONTHS.indexOf(
+			monthName.toLowerCase() as (typeof CODEX_RETRY_MONTHS)[number],
+		);
+		if (month < 0) return null;
+		ms = Date.UTC(Number(year), month, Number(day), hour24, Number(minute));
+	} else {
+		ms = Date.UTC(
+			now.getUTCFullYear(),
+			now.getUTCMonth(),
+			now.getUTCDate(),
+			hour24,
+			Number(minute),
+		);
+	}
+	return new Date(ms + 60_000);
+}
+
+/** {@link classifyRuntimeError}, plus the reset time Codex states for a spent allowance. */
+function classifyCodexError(text: string | undefined): RuntimeErrorVerdict | null {
+	const verdict = classifyRuntimeError(text);
+	if (verdict?.family !== 'usage_limit' || !text) return verdict;
+	const retryAt = parseCodexRetryAt(text, new Date());
+	return retryAt ? { ...verdict, retryAt } : verdict;
 }
 
 /**
@@ -1165,7 +1232,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 			// Reading a field the protocol defines, rather than matching on the line.
 			if (type === 'turn.failed') {
 				terminalError =
-					classifyRuntimeError(extractErrorMessage(event.error, event.message)) ?? terminalError;
+					classifyCodexError(extractErrorMessage(event.error, event.message)) ?? terminalError;
 			}
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
@@ -1183,7 +1250,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
 			if (!msg) return [];
-			terminalError = classifyRuntimeError(msg) ?? terminalError;
+			terminalError = classifyCodexError(msg) ?? terminalError;
 			return [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`];
 		}
 

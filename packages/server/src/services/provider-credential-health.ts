@@ -17,8 +17,15 @@
 import type { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { casMarkAiProviderInvalid } from './ai-provider-keys';
+import {
+	casMarkAiProviderInvalid,
+	clearUsageHold,
+	readActiveUsageHold,
+	readOrClaimUsageHold,
+	recordUsageHold,
+} from './ai-provider-keys';
 import { probeProvesCredentialDead, probeProviderCatalog } from './provider-catalog';
+import { releaseUsageHeldWakeups } from './wakeup';
 
 /**
  * What became of the credential a refused run was using.
@@ -81,4 +88,90 @@ export async function condemnRejectedProviderCredential(
 	// neither is an error - the row already says what it should, or it is about a
 	// credential this run never touched.
 	return 'superseded';
+}
+
+/**
+ * How long a credential is held when the provider refused it for a spent usage
+ * allowance without saying when the allowance resets.
+ */
+export const USAGE_HOLD_UNSTATED_MIN = 30;
+
+/**
+ * The shortest hold. Without a floor, a stated reset that is already past - clock
+ * skew, or a provider still refusing after its own reset time - releases every
+ * held wakeup at once to be refused again at dispatch rate.
+ */
+export const USAGE_HOLD_FLOOR_MIN = 5;
+
+/**
+ * How long the one run testing a lapsed hold has to reach the provider before
+ * another run may test it. Covers the lock wait, the container claim and the repo
+ * sync that come before the provider call.
+ */
+export const USAGE_HOLD_PROBE_MIN = 10;
+
+const MINUTE_MS = 60_000;
+
+/**
+ * A spent usage allowance belongs to the credential, not to one run or one
+ * wakeup. Holding the credential is what stops every agent and task on it from
+ * each claiming a container to learn the same thing: the hold is read with the
+ * credential row before a run is created, so a held run costs a query, not a
+ * container.
+ *
+ * Returns the hold time and whether this refusal started the hold, so a person is
+ * told once per outage rather than once per refused run.
+ */
+export async function holdCredentialForUsageLimit(
+	db: Db,
+	configId: string,
+	statedResetAt: Date | undefined,
+	now = new Date(),
+): Promise<{ until: Date; started: boolean }> {
+	const stated = statedResetAt?.getTime() ?? now.getTime() + USAGE_HOLD_UNSTATED_MIN * MINUTE_MS;
+	const until = new Date(Math.max(stated, now.getTime() + USAGE_HOLD_FLOOR_MIN * MINUTE_MS));
+	const started = await recordUsageHold(db, configId, until);
+	return { until, started };
+}
+
+/**
+ * The time a run on this credential must wait until, or null when it may run now.
+ *
+ * `seen` is the hold read with the credential row, so a credential with no hold
+ * costs no query here. A hold still in force holds the run. A lapsed hold lets
+ * exactly one run through to test whether the allowance has reset: that run moves
+ * the hold forward by the probe window, so the other runs reading the same lapsed
+ * value wait behind it instead of all being refused together.
+ */
+export async function usageHoldWait(
+	db: Db,
+	configId: string,
+	seen: Date | null,
+): Promise<Date | null> {
+	if (!seen) return null;
+	const hold = await readOrClaimUsageHold(db, configId, USAGE_HOLD_PROBE_MIN);
+	if (hold.claimed || hold.until === null) return null;
+	if (hold.active) return hold.until;
+	// Lapsed, but another run claimed the probe between the read and the move.
+	return readActiveUsageHold(db, configId);
+}
+
+/**
+ * Lift a credential's hold because a run on it got a turn, and let the work held
+ * behind it dispatch. Writes nothing when no hold stands.
+ */
+export async function liftUsageHold(db: Db, configId: string): Promise<boolean> {
+	if (!(await clearUsageHold(db, configId))) return false;
+	await releaseUsageHeldWakeups(db);
+	return true;
+}
+
+/** A hold time as an operator reads it: minute precision, in UTC. */
+export function formatUsageHold(until: Date): string {
+	return `${until.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+/** Why a run on a held credential did not start, as its run record states it. */
+export function describeUsageHold(until: Date): string {
+	return `The provider subscription's usage limit is spent until ${formatUsageHold(until)}`;
 }

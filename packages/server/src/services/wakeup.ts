@@ -1,7 +1,7 @@
 import {
 	HeartbeatRunStatus,
 	TERMINAL_WAKEUP_STATUSES,
-	type WakeupSkipReason,
+	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
 } from '@hezo/shared';
@@ -258,8 +258,11 @@ export async function assignmentWakeupAlreadyServed(
  * spell "put it back" without saying why it is going back.
  */
 export type SettlementIntent =
-	/** The work was not done and is owed. Put it back for the dispatcher. */
-	| { kind: 'handback'; reason: WakeupSkipReason }
+	/**
+	 * The work was not done and is owed. Put it back for the dispatcher, which may
+	 * not claim it before `notBefore` when one is given.
+	 */
+	| { kind: 'handback'; reason: WakeupSkipReason; notBefore?: Date }
 	/** The run did the work. */
 	| { kind: 'complete' }
 	/** The run tried and failed. Nothing here retries it. */
@@ -315,10 +318,16 @@ export async function settleWakeupForRun(
 		const res = await db.query<{ id: string }>(
 			`UPDATE agent_wakeup_requests
 			 SET status = $1::wakeup_status, claimed_at = NULL,
-			     last_skipped_at = now(), last_skipped_reason = $2
+			     last_skipped_at = now(), last_skipped_reason = $2, not_before = $5
 			 WHERE id = $3 AND status = $4::wakeup_status
 			 RETURNING id`,
-			[WakeupStatus.Queued, intent.reason, wakeupId, WakeupStatus.Claimed],
+			[
+				WakeupStatus.Queued,
+				intent.reason,
+				wakeupId,
+				WakeupStatus.Claimed,
+				intent.notBefore ?? null,
+			],
 		);
 		return res.rows.length > 0 ? { kind: 'requeued' } : { kind: 'handback_failed' };
 	}
@@ -348,6 +357,36 @@ export async function settleWakeupForRun(
 		return standing ? { kind: 'terminal', status: standing } : { kind: 'nothing_to_settle' };
 	}
 	return { kind: 'terminal', status };
+}
+
+/**
+ * The wakeup scan's filter for a wakeup still waiting out a provider refusal.
+ *
+ * A fragment in the scan's own `WHERE` rather than a check in the dispatch loop,
+ * because the scan takes the oldest queued wakeups: a held row is by then an old
+ * row, and skipping it after the fact would let held rows fill the window every
+ * tick and starve newer work. Nothing is written per tick, so a held wakeup stays
+ * `queued` with its reason set and the task keeps its queued badge throughout.
+ */
+export const WAKEUP_HOLD_ELAPSED_SQL = '(not_before IS NULL OR not_before <= now())';
+
+/**
+ * Let the dispatcher claim every wakeup held for a spent usage allowance.
+ *
+ * Called when a credential's hold is lifted. It releases wakeups held on other
+ * credentials too, because a wakeup does not record which credential held it;
+ * each of those meets its own credential's hold again before a container is
+ * claimed, so the cost is one dispatch pass each.
+ */
+export async function releaseUsageHeldWakeups(db: Db): Promise<number> {
+	const r = await db.query<{ id: string }>(
+		`UPDATE agent_wakeup_requests SET not_before = NULL
+		  WHERE status = $1::wakeup_status AND last_skipped_reason = $2
+		    AND not_before IS NOT NULL
+		 RETURNING id`,
+		[WakeupStatus.Queued, WakeupSkipReason.ProviderUsageLimit],
+	);
+	return r.rows.length;
 }
 
 function mergePayloads(

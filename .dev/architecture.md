@@ -2927,24 +2927,22 @@ logged quietly - parking a task is a standing state - and the shared exempt sour
 mention, a reply or "Run now" always gets through. Marked with
 `last_skipped_reason = retrospective_hold`.
 
-**The provider-refusal cooldown.** The last suppression, and the only one applied *before*
-the claim rather than after task resolution - `processWakeups` NULLs `last_skipped_at` and
-`last_skipped_reason` when it claims a row, so a predicate placed beside the three above could
-not read the very fields this one keys on. `providerRefusalCooldownSql`
-(`services/no-work-backoff.ts`) is therefore a fragment in the scan's own `WHERE`, excluding
-a wakeup handed back for `provider_at_capacity` within 5 minutes or `provider_usage_limit`
-within 30. It is in the SQL rather than as a `continue` in the dispatch loop because that
-scan takes the ten **oldest** queued wakeups: a cooling-down row is by then an old row, so
-filtering after the fact would let a handful of them fill the window every tick and starve
-newer work for as long as the outage lasted. The `NOT` is wrapped in `COALESCE(..., false)`
-- a never-skipped wakeup has a NULL reason, every arm evaluates to NULL, and a bare
-`NOT (NULL)` is NULL, which a `WHERE` treats as false and drops the entire ordinary queue.
-Nothing is written per tick: the row is simply not selected, so its clock runs from the
-handback's own timestamp, no unchanged row is rewritten, and the wakeup stays `queued` with
-its reason set so the task keeps its queued badge throughout. Unlike the three above it has
-**no exempt sources** - a human's mention or reply cannot change how loaded the provider is,
-so dispatching for one would claim a container to be refused again. `dispatchWakeupNow`
-selects by id and does not apply it, which is the operator's override.
+**The provider-refusal hold.** The last suppression, and the only one applied *before*
+the claim rather than after task resolution. A handback after a provider refusal writes
+`not_before` on the wakeup (`settleWakeupForRun`), and the scan excludes the row through
+`WAKEUP_HOLD_ELAPSED_SQL` (`services/wakeup.ts`) until that time passes; the claim clears it.
+Capacity, overload and rate limits hold for `PROVIDER_CAPACITY_COOLDOWN_MIN` (5); a spent
+usage allowance holds until the credential's own hold lapses (see **The usage hold** below).
+It is in the SQL rather than as a `continue` in the dispatch loop because that scan takes
+the ten **oldest** queued wakeups: a held row is by then an old row, so filtering after the
+fact would let a handful of them fill the window every tick and starve newer work for as
+long as the outage lasted. Nothing is written per tick: the row is simply not selected, no
+unchanged row is rewritten, and the wakeup stays `queued` with its reason set so the task
+keeps its queued badge throughout. A handback with no clock of its own writes `not_before =
+NULL`, so capacity work never inherits an earlier usage hold. Unlike the three above it has
+**no exempt sources** - a human's mention or reply cannot change the provider's clock, so
+dispatching for one would be refused again. `dispatchWakeupNow` selects by id and does not
+apply it, which is the operator's override.
 
 **The container-start fan-out.** `provisionContainer` ends by nudging the project's agents
 (`wakeAgentsWithPendingWork`) so work queued while the container was still coming up starts
@@ -3093,8 +3091,8 @@ policy, never on whose.
 **Provider refusal.** The fourth handback cause, and the only one that *did* start the CLI.
 When a runtime's stream reports a `Transient` failure - the model at capacity, a rate limit,
 a spent subscription allowance - the run is handed back through `finalizeRequeue` rather than
-finalized `Failed`, carrying `provider_at_capacity` or `provider_usage_limit` so the dispatch
-cooldown above knows which clock to hold it on. The classification reads phrasing and is the
+finalized `Failed`, carrying `provider_at_capacity` or `provider_usage_limit` and the
+`not_before` the dispatch hold above reads. The classification reads phrasing and is the
 *least* trusted of six conditions; the other five are structural, and together they mean a
 false positive cannot discard work. Chiefly the token gate: the run must have spent nothing
 (`in + out === 0`, read through the same expression the row write uses so the two cannot
@@ -3104,8 +3102,8 @@ to no signal. A run that burned 50k tokens before a mid-stream 503 fails normall
 its usage. The same preconditions are what stop an agent's *own* HTTP tool call returning 503
 from triggering this, since a runtime's error arm renders those too.
 
-The refusal has no lap ceiling - it clears on the provider's clock, not on an attempt count -
-so the bound is on how long the work has been owed instead, measured from the wakeup's
+A capacity or rate-limit refusal has no lap ceiling - it clears on the provider's clock, not
+on an attempt count - so the bound is on how long the work has been owed instead, measured from the wakeup's
 `created_at`, which a handback does not reset. Past `PROVIDER_REFUSAL_GIVEUP_MIN` (120)
 `runAgent` stops absorbing: the run falls through to its ordinary terminal failure, so the
 Errored view and the failure ping both fire, and `fileProviderRefusalApproval` files the same
@@ -3127,6 +3125,41 @@ broadcast, exactly as a human Dismiss does, so a recovered agent does not leave 
 behind. It spends only a SELECT when nothing is pending. A synthetic on-demand wakeup is created at
 dispatch, so the ceiling never bites a manual run: that hands back once and lets the operator
 see it queued.
+
+**The usage hold.** A spent subscription allowance belongs to the credential, so it is held
+there: `ai_provider_configs.usage_limited_until`. Holding only the wakeup let every agent and
+task on a shared subscription discover the same limit on its own, each claiming a container
+and syncing repos to be refused, on a fixed cooldown that ignored the reset time the provider
+states - one Codex outage produced over 1,200 refused runs in three and a half days, and the
+two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
+
+- **The refusal records the hold.** `providerRefusalHandback` calls
+  `holdCredentialForUsageLimit` with the verdict's `retryAt`, which only a runtime's own
+  parser can fill (`parseCodexRetryAt` reads Codex's "try again at" suffix; the agent image
+  sets no zone, so Codex prints UTC, and the minute is rounded up because Codex drops seconds).
+  With no stated time the hold is `USAGE_HOLD_UNSTATED_MIN` (30); every hold is floored at
+  `USAGE_HOLD_FLOOR_MIN` (5) so a stated time already past cannot release the queue at
+  dispatch rate. The refusal that starts a hold files one `fileProviderUsageLimitNotice`, and
+  a usage refusal never reaches the two-hour give-up.
+- **Runs check it before the run row exists.** `runAgent` resolves its credential
+  (`resolveRunCredential`, shared with chat) before `createHeartbeatRun`, and `usageHoldWait`
+  hands a held run back with no row, container or provider call. Judged on the database
+  clock, the same one the wakeup scan reads, so server clock drift cannot release a wakeup
+  the hold then sends back. A lapsed hold lets one run through as a probe: it moves the hold
+  forward by `USAGE_HOLD_PROBE_MIN` (10) in the same statement, so the others wait behind it.
+- **A waiter on a serialized credential rechecks after the lock.** A hold written while it
+  waited - by the holder it queued behind being refused - hands it back before a container
+  is claimed. Compared against the hold read before the wait, so the probe's own window does
+  not hold the probe.
+- **A turn lifts it.** A run that started under a hold (the probe, or one a person asked
+  for) and got a turn calls `liftUsageHold`, which clears the column and releases every
+  wakeup held on `provider_usage_limit` through `releaseUsageHeldWakeups`. A wakeup does not
+  record its credential, so wakeups held on another credential are released too and meet
+  their own hold again at the pre-row check. Replacing the credential through the PATCH route
+  clears the hold in `updateAiProviderConfig` and releases the same way.
+- **A person bypasses it.** A run whose wakeup payload carries `triggered_by` (Run now,
+  Retry) or that has no wakeup (a manual run) skips both checks; its outcome lifts or renews
+  the hold.
 
 **Credential wait — two separate properties.** A credential raises two independent
 questions, and collapsing them was a bug the measurements caught. **Does the CLI rewrite its

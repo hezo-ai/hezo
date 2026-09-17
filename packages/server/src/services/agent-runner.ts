@@ -19,7 +19,6 @@ import {
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	MAX_SINGLE_ARG_BYTES,
-	PROVIDER_RUNTIME_ADAPTERS,
 	type PromptDelivery,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
@@ -82,8 +81,9 @@ import {
 import {
 	type AiProviderCredential,
 	getAiProviderConfig,
-	getProviderCredentialAndModel,
+	readActiveUsageHold,
 	readAiProviderCredentialValue,
+	resolveRunCredential,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
@@ -148,10 +148,12 @@ import {
 	MCP_CLI_WRAPPER_SOURCE,
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
+import { PROVIDER_CAPACITY_COOLDOWN_MIN } from './no-work-backoff';
 import {
 	clearAgentErrorApprovalsOnRecovery,
 	fileProviderCredentialRejectedApproval,
 	fileProviderRefusalApproval,
+	fileProviderUsageLimitNotice,
 	PROVIDER_REFUSAL_GIVEUP_MIN,
 	retryOrEscalateLostRun,
 	STALE_STATE_GRACE_SECONDS,
@@ -166,7 +168,14 @@ import {
 	PromptBudget,
 	type PromptSection,
 } from './prompt-budget';
-import { condemnRejectedProviderCredential } from './provider-credential-health';
+import {
+	condemnRejectedProviderCredential,
+	describeUsageHold,
+	formatUsageHold,
+	holdCredentialForUsageLimit,
+	liftUsageHold,
+	usageHoldWait,
+} from './provider-credential-health';
 import { loadReactionsForComments, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
@@ -197,7 +206,6 @@ import {
 	type SubscriptionMount as SubscriptionMountImpl,
 	subscriptionFiles,
 } from './runtime-home';
-import { resolveRuntimeForTask } from './runtime-resolver';
 import { createBundleVault } from './sandbox/bundle-vault';
 import { PREFLIGHT_TUNNEL_ENDPOINTS, type RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
@@ -315,6 +323,8 @@ export interface RunResult {
 	requeued?: boolean;
 	/** Which cause gave up, so the queued wakeup reports the real reason it is waiting. */
 	requeueReason?: WakeupSkipReason;
+	/** The earliest the dispatcher may claim the handed-back wakeup again, when the cause has a clock. */
+	requeueNotBefore?: Date;
 }
 
 export interface RunnerDeps {
@@ -1531,6 +1541,33 @@ export async function runAgent(
 			: abortedResult(startTime);
 	}
 
+	// Chosen before the run row exists, so a credential whose usage allowance is
+	// spent holds the work with no row, no container and no provider call. A
+	// failure to choose is reported once the row exists, like any other.
+	const selection = await resolveRunCredential(deps.db, {
+		overrideProvider: agent.model_override_provider ?? null,
+		taskRuntimeType: task?.runtime_type ?? null,
+	});
+	// A person pressing Run now or Retry, or starting a run by hand, is asking the
+	// provider again, which is the override for a hold. The run's outcome then
+	// lifts the hold or renews it.
+	const personRequested = !wakeupId || extractTriggeredBy(wakeupPayload) !== null;
+	if (selection.ok && !personRequested) {
+		const heldUntil = await usageHoldWait(
+			deps.db,
+			selection.config.configId,
+			selection.config.usageLimitedUntil,
+		);
+		if (heldUntil) {
+			return {
+				...failedResult(describeUsageHold(heldUntil), startTime),
+				requeued: true,
+				requeueReason: WakeupSkipReason.ProviderUsageLimit,
+				requeueNotBefore: heldUntil,
+			};
+		}
+	}
+
 	// The run executes in the project's team (see buildRunContext); for instance
 	// agents working another team's project this differs from agent.team_id.
 	const runTeamId = project.team_id;
@@ -1678,6 +1715,7 @@ export async function runAgent(
 	const finalizeRequeue = async (
 		reason: string,
 		requeueReason: WakeupSkipReason,
+		requeueNotBefore?: Date,
 	): Promise<RunResult> => {
 		releaseCredentialLock?.();
 		const message = `${reason} - returning this run to the queue.`;
@@ -1710,29 +1748,64 @@ export async function runAgent(
 			heartbeatRunId,
 			requeued: true,
 			requeueReason,
+			requeueNotBefore,
 		};
 	};
 
 	/**
-	 * Which cooldown the handback earns after the model provider refused this run,
-	 * or null once the work has been owed too long to keep absorbing.
+	 * How the work goes back after the model provider refused this run before it got
+	 * a turn, or null once it has been refused too long to keep absorbing.
 	 *
-	 * The refusal itself is unbounded in laps - it clears on the provider's clock,
-	 * and the dispatch cooldown paces the retries - so the bound is on how long the
-	 * work has been owed rather than on how many attempts it has had. Past the
-	 * ceiling this returns null: the caller falls through to the ordinary terminal
-	 * failure, the run lights up the Errored view and fires its failure ping, and
-	 * an approval puts the outage somewhere a person looks.
+	 * A spent usage allowance holds the credential until the reset the provider
+	 * states, and the wakeup with it, so no other run on the credential claims a
+	 * container to be refused the same way. It has no ceiling here: the provider's
+	 * clock ends it, and a person is told once, by the refusal that starts the hold.
 	 *
-	 * The clock is the wakeup's own `created_at`, which a handback does not reset,
-	 * so it costs one query on a path that is about to tear the run down anyway. A
-	 * synthetic on-demand wakeup is created at dispatch, so the ceiling never bites
-	 * a manual run - correct: that should hand back once and let the operator see
-	 * it queued.
+	 * Capacity, overload and rate limits clear on a minutes-long clock, so the wakeup
+	 * waits a short cooldown. Those refusals are unbounded in laps, so the bound is on
+	 * how long the work has been owed. Past the ceiling this returns null: the caller
+	 * falls through to the ordinary terminal failure, the run lights up the Errored
+	 * view and fires its failure ping, and an approval puts the outage somewhere a
+	 * person looks. The clock is the wakeup's own `created_at`, which a handback does
+	 * not reset. A synthetic on-demand wakeup is created at dispatch, so the ceiling
+	 * never bites a manual run - correct: that should hand back once and let the
+	 * operator see it queued.
+	 *
+	 * The family is read off the verdict, never re-matched from its text: which clock
+	 * holds the work is a control signal, and deriving one from prose is the defect
+	 * this whole path was careful to avoid.
 	 */
-	const providerRefusalSkipReason = async (
+	const providerRefusalHandback = async (
 		verdict: RuntimeErrorVerdict,
-	): Promise<WakeupSkipReason | null> => {
+		refused: { configId: string; provider: AiProvider },
+	): Promise<{ message: string; reason: WakeupSkipReason; notBefore: Date } | null> => {
+		if (verdict.family === 'usage_limit') {
+			const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
+			const heldUntil = formatUsageHold(hold.until);
+			if (hold.started) {
+				const config = await getAiProviderConfig(deps.db, refused.configId);
+				await fileProviderUsageLimitNotice(
+					deps.db,
+					{
+						runId: heartbeatRunId,
+						memberId: agent.id,
+						teamId: runTeamId,
+						taskId: task?.id ?? null,
+					},
+					{
+						providerName: AI_PROVIDER_INFO[refused.provider]?.name ?? refused.provider,
+						label: config?.label ?? refused.provider,
+						heldUntil,
+					},
+				).catch((e) => log.error(`Run ${heartbeatRunId}: could not file a usage-limit notice:`, e));
+			}
+			return {
+				message: `${verdict.message} Every run on this credential waits until ${heldUntil}`,
+				reason: WakeupSkipReason.ProviderUsageLimit,
+				notBefore: hold.until,
+			};
+		}
+
 		const owed = await deps.db.query<{ owed_min: number }>(
 			`SELECT EXTRACT(EPOCH FROM (now() - created_at)) / 60 AS owed_min
 			   FROM agent_wakeup_requests WHERE id = $1`,
@@ -1750,12 +1823,11 @@ export async function runAgent(
 			);
 			return null;
 		}
-		// Read off the verdict, never re-matched from its text: which clock the
-		// dispatcher holds this on is a control signal, and deriving one from prose
-		// is the defect this whole path was careful to avoid.
-		return verdict.family === 'usage_limit'
-			? WakeupSkipReason.ProviderUsageLimit
-			: WakeupSkipReason.ProviderAtCapacity;
+		return {
+			message: verdict.message,
+			reason: WakeupSkipReason.ProviderAtCapacity,
+			notBefore: new Date(Date.now() + PROVIDER_CAPACITY_COOLDOWN_MIN * 60_000),
+		};
 	};
 
 	const finalizeAbort = async (): Promise<RunResult> => {
@@ -1854,51 +1926,24 @@ export async function runAgent(
 		}
 	};
 
-	let provider: AiProvider;
-	let runtimeType: AgentRuntime;
-	// Null on the agent-override path: the override names only a provider, and
-	// which CLI that provider runs on is a property of the credential, resolved
-	// below once one is loaded. The task-pinned path already resolved against a
-	// specific credential, so it constrains the lookup to a matching one.
-	let requiredRuntime: AgentRuntime | null = null;
-	if (agent.model_override_provider) {
-		provider = agent.model_override_provider;
-		const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
-		if (!adapter) {
-			return finalizeFailure(
-				`This agent's model override references provider "${provider}", which is no longer supported. Clear the override in the agent's settings.`,
-			);
-		}
-		runtimeType = adapter.runtime;
-	} else {
-		const resolved = await resolveRuntimeForTask(deps.db, task?.runtime_type ?? null);
-		// The reason comes from the resolver, which is the only place that knows
-		// whether nothing is configured, the designated default is unusable, or the
-		// task's runtime pin has no credential behind it.
-		if (!resolved.ok) return finalizeFailure(resolved.reason);
-		runtimeType = resolved.runtime;
-		provider = resolved.provider;
-		requiredRuntime = resolved.runtime;
-	}
-
-	let credential = await getProviderCredentialAndModel(
+	if (!selection.ok) return finalizeFailure(selection.reason);
+	const { provider } = selection;
+	const runtimeType: AgentRuntime = selection.runtime;
+	const storedCredential = await readAiProviderCredentialValue(
 		deps.db,
 		deps.masterKeyManager,
-		provider,
-		requiredRuntime,
+		selection.config.configId,
 	);
-	if (!credential) {
+	if (storedCredential === null) {
 		return finalizeFailure(
 			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
 		);
 	}
-	// The agent-override path chose a provider without knowing which CLI its
-	// credential is set to run on, so settle that now — otherwise an override onto
-	// a provider whose credential was switched would launch the default binary
-	// with the other binary's env.
-	if (!requiredRuntime) {
-		runtimeType = effectiveRuntime(provider, credential.runtime) ?? runtimeType;
-	}
+	let credential = { ...selection.config, value: storedCredential };
+	// The hold this run saw when it chose its credential. Only a run that started
+	// under a hold - the one run testing a lapsed hold, or one a person asked for -
+	// lifts it once it gets a turn.
+	const usageHoldSeen = selection.config.usageLimitedUntil;
 
 	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
 
@@ -2017,6 +2062,14 @@ export async function runAgent(
 		if (holder) {
 			emit('stdout', `[runner] ${credentialWaitNotice(holder)}\n`);
 		}
+		// The hold as it stands before waiting behind another run, so a hold that run
+		// writes when the provider refuses it is told apart from one this run already
+		// passed. Read only when there is a wait: with no holder, no run on this
+		// credential is in flight to write one.
+		const checkHoldAfterWait = holder !== null && !personRequested;
+		const holdBeforeWait = checkHoldAfterWait
+			? await readActiveUsageHold(deps.db, credential.configId)
+			: null;
 		// Records the true wait so the run comment reads honestly while blocked.
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
@@ -2080,6 +2133,16 @@ export async function runAgent(
 		);
 		if (stored !== null && stored !== credential.value)
 			credential = { ...credential, value: stored };
+		if (checkHoldAfterWait) {
+			const holdAfterWait = await readActiveUsageHold(deps.db, credential.configId);
+			if (holdAfterWait && holdAfterWait.getTime() !== holdBeforeWait?.getTime()) {
+				return finalizeRequeue(
+					`${describeUsageHold(holdAfterWait)}, so this run did not start`,
+					WakeupSkipReason.ProviderUsageLimit,
+					holdAfterWait,
+				);
+			}
+		}
 	}
 
 	// Containers run on demand, and this run claims one **for itself**: the pool
@@ -3170,13 +3233,16 @@ export async function runAgent(
 				!signalError &&
 				!backgroundWorkTerminated
 			) {
-				const skipReason = await providerRefusalSkipReason(refusalVerdict);
-				if (skipReason) {
+				const handback = await providerRefusalHandback(refusalVerdict, {
+					configId: credential.configId,
+					provider,
+				});
+				if (handback) {
 					// Cleanup before finalizing, as the shutdown handback does: it scrubs
 					// this run's per-run secrets off a pooled container, and the row
 					// should not read terminal until that has happened.
 					await cleanupRunArtifacts();
-					return finalizeRequeue(refusalVerdict.message, skipReason);
+					return finalizeRequeue(handback.message, handback.reason, handback.notBefore);
 				}
 			}
 
@@ -3284,6 +3350,19 @@ export async function runAgent(
 					.catch((e) =>
 						log.error(`Run ${heartbeatRunId}: could not check the refused provider credential:`, e),
 					);
+			}
+
+			// A turn on a credential this run found held proves its usage allowance is
+			// back. Lifting the hold lets the work waiting behind it dispatch now rather
+			// than at the stated reset. A success counts too, for the runtimes that
+			// report no usage. Caught: the run's outcome does not turn on it.
+			if (
+				usageHoldSeen &&
+				(success || (finalUsage?.inputTokens ?? 0) + (finalUsage?.outputTokens ?? 0) > 0)
+			) {
+				await liftUsageHold(deps.db, credential.configId).catch((e) =>
+					log.error(`Run ${heartbeatRunId}: could not lift the credential's usage hold:`, e),
+				);
 			}
 
 			// A success is the proof that whatever the give-up paths filed a notice

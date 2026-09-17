@@ -78,4 +78,6 @@ rather than here, is how a codebase ends up with two of everything.
 | An AI provider's own quirk (endpoint, credential env, subscription blob, judge model) | that provider's `PROVIDER_RUNTIME_ADAPTERS` entry (`@hezo/shared`), or its row in the per-provider table that owns the behaviour |
 | "Did the provider refuse this credential itself?" | `probeProviderCatalog` + `probeProvesCredentialDead` (`services/provider-catalog.ts`) - only a 401/403 condemns; acceptance proves nothing |
 | Taking a refused credential out of service | `condemnRejectedProviderCredential` (`services/provider-credential-health.ts`) - the join between the row and the probe; writes only via `casMarkAiProviderInvalid` |
+| Holding a credential whose usage allowance is spent | `holdCredentialForUsageLimit` / `usageHoldWait` / `liftUsageHold` (`services/provider-credential-health.ts`) - the hold lives on the credential row and is judged on the database clock; a wakeup waits it out through `not_before` (`WAKEUP_HOLD_ELAPSED_SQL`, `services/wakeup.ts`), never a per-reason cooldown |
+| Which provider, CLI and credential row a run or chat turn uses | `resolveRunCredential` (`services/ai-provider-keys.ts`) - agent override, then task runtime pin, then instance default; no master key |
 

@@ -90,7 +90,6 @@ import {
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
-	providerRefusalCooldownSql,
 	retrospectiveHoldActive,
 	TASK_ATTEMPT_WINDOW_HOURS,
 } from './no-work-backoff';
@@ -130,6 +129,7 @@ import {
 	createWakeup,
 	type SettlementIntent,
 	settleWakeupForRun,
+	WAKEUP_HOLD_ELAPSED_SQL,
 } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -651,7 +651,8 @@ export class JobManager {
 			     claimed_at = now(),
 			     last_skipped_at = NULL,
 			     last_skipped_reason = NULL,
-			     last_skipped_blocker_task_id = NULL
+			     last_skipped_blocker_task_id = NULL,
+			     not_before = NULL
 			 WHERE id = $2 AND status = $3::wakeup_status
 			 RETURNING id`,
 			[WakeupStatus.Claimed, wakeup.id, WakeupStatus.Queued],
@@ -1984,16 +1985,15 @@ export class JobManager {
 			payload: Record<string, unknown>;
 			created_at: string;
 		}>(
-			// The cooldown is a residual filter on an already-bounded scan, so it needs
-			// no index of its own. It belongs here rather than as a `continue` in the
-			// loop below because this scan takes the ten OLDEST queued wakeups: a
-			// cooling-down row is by then an old row, so skipping it after the fact
-			// would let a few of them fill the window every tick and starve newer work.
+			// The provider-refusal hold is a residual filter on an already-bounded scan,
+			// so it needs no index of its own. It has no exempt sources - a mention
+			// cannot change the provider's clock - and `dispatchWakeupNow` selects by id
+			// without it, which is the operator's override.
 			`SELECT id, member_id, team_id, source, payload, created_at
 			 FROM agent_wakeup_requests
 			 WHERE status = $2::wakeup_status
 			   AND created_at < $1
-			   AND ${providerRefusalCooldownSql()}
+			   AND ${WAKEUP_HOLD_ELAPSED_SQL}
 			 ORDER BY created_at ASC
 			 LIMIT 10`,
 			[coalescingCutoff, WakeupStatus.Queued],
@@ -2114,7 +2114,8 @@ export class JobManager {
 				     claimed_at = now(),
 				     last_skipped_at = NULL,
 				     last_skipped_reason = NULL,
-				     last_skipped_blocker_task_id = NULL
+				     last_skipped_blocker_task_id = NULL,
+				     not_before = NULL
 				 WHERE id = $2`,
 				[WakeupStatus.Claimed, wakeup.id],
 			);
@@ -3564,6 +3565,7 @@ export class JobManager {
 			success: boolean;
 			requeued?: boolean;
 			requeueReason?: WakeupSkipReason;
+			requeueNotBefore?: Date;
 			heartbeatRunId?: string;
 		},
 		/** Where to record the outcome. Omitted only where there is no run row to write. */
@@ -3572,7 +3574,11 @@ export class JobManager {
 		const intent: SettlementIntent = result.requeued
 			? // The runner names the wait it gave up on; capacity is only the default
 				// for a caller that predates the distinction.
-				{ kind: 'handback', reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity }
+				{
+					kind: 'handback',
+					reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity,
+					notBefore: result.requeueNotBefore,
+				}
 			: result.success
 				? { kind: 'complete' }
 				: { kind: 'fail' };

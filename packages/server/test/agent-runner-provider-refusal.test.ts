@@ -13,12 +13,13 @@
 
 import { ContainerStatus, WakeupSkipReason } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { USAGE_HOLD_PROBE_MIN, usageHoldWait } from '../src/services/provider-credential-health';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { settleWakeupForRun } from '../src/services/wakeup';
 import { safeClose } from './helpers';
@@ -304,5 +305,209 @@ describe('runAgent provider refusal', () => {
 		// routing this through a handback that writes no usage.
 		expect(row.input_tokens).toBe(1200);
 		expect(row.output_tokens).toBe(300);
+	});
+});
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A reset time in the format Codex prints in its usage-limit message, in UTC. */
+function codexResetText(at: Date): string {
+	const day = at.getUTCDate();
+	const suffix = day >= 11 && day <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][day % 10] ?? 'th');
+	const hour = at.getUTCHours() % 12 || 12;
+	const minute = String(at.getUTCMinutes()).padStart(2, '0');
+	const meridiem = at.getUTCHours() < 12 ? 'AM' : 'PM';
+	return `${MONTHS[at.getUTCMonth()]} ${day}${suffix}, ${at.getUTCFullYear()} ${hour}:${minute} ${meridiem}`;
+}
+
+function usageLimitTurn(resetAt: Date) {
+	return {
+		type: 'turn.failed',
+		error: {
+			message: `You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at ${codexResetText(resetAt)}.`,
+		},
+		usage: {},
+	};
+}
+
+const WORKED_TURN = [
+	{ type: 'thread.started', model: 'gpt-5-codex' },
+	{ type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } },
+	{ type: 'turn.completed', usage: { input_tokens: 900, output_tokens: 120 } },
+];
+
+async function configId(): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`SELECT id FROM ai_provider_configs WHERE label = 'openai-refusal'`,
+	);
+	return r.rows[0].id;
+}
+
+async function storedHold(): Promise<Date | null> {
+	const r = await db.query<{ usage_limited_until: Date | null }>(
+		'SELECT usage_limited_until FROM ai_provider_configs WHERE id = $1',
+		[await configId()],
+	);
+	return r.rows[0].usage_limited_until;
+}
+
+async function setHold(offsetMin: number): Promise<Date> {
+	const r = await db.query<{ usage_limited_until: Date }>(
+		`UPDATE ai_provider_configs
+		    SET usage_limited_until = now() + make_interval(mins => $2::int)
+		  WHERE id = $1 RETURNING usage_limited_until`,
+		[await configId(), offsetMin],
+	);
+	return r.rows[0].usage_limited_until;
+}
+
+async function claimedWakeup(
+	taskId: string,
+	payload: Record<string, unknown> = {},
+): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+		 VALUES ($1, $2, 'heartbeat', 'claimed', $3::jsonb) RETURNING id`,
+		[agentId, teamId, JSON.stringify({ task_id: taskId, ...payload })],
+	);
+	return r.rows[0].id;
+}
+
+async function usageLimitNotices(): Promise<string[]> {
+	const r = await db.query<{ message: string }>(
+		`SELECT payload->>'message' AS message FROM approvals
+		  WHERE team_id = $1 AND payload->>'type' = 'agent_error'
+		    AND payload->>'message' LIKE '%usage allowance%'`,
+		[teamId],
+	);
+	return r.rows.map((row) => row.message);
+}
+
+describe('runAgent usage-limit hold', () => {
+	beforeEach(async () => {
+		await db.query('UPDATE ai_provider_configs SET usage_limited_until = NULL');
+		await db.query(`DELETE FROM approvals WHERE team_id = $1`, [teamId]);
+		await db.query(`DELETE FROM agent_wakeup_requests WHERE team_id = $1 AND status = 'queued'`, [
+			teamId,
+		]);
+	});
+
+	it('holds the credential until the reset the provider stated, and tells a person once', async () => {
+		const resetAt = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+		resetAt.setUTCSeconds(0, 0);
+		const expected = new Date(resetAt.getTime() + 60_000);
+
+		const first = await runAgent(
+			deps(refusalDocker([usageLimitTurn(resetAt)])),
+			agent(),
+			await makeTask('Refused on a stated reset'),
+			project(),
+		);
+		expect(first.requeued).toBe(true);
+		expect(first.requeueReason).toBe(WakeupSkipReason.ProviderUsageLimit);
+		expect(first.requeueNotBefore?.getTime()).toBe(expected.getTime());
+		expect((await storedHold())?.getTime()).toBe(expected.getTime());
+		const row = await runRow(first.heartbeatRunId as string);
+		expect(row.status).toBe('cancelled');
+		expect(row.error).toContain('Every run on this credential waits until');
+		expect(await usageLimitNotices()).toHaveLength(1);
+
+		// A second refusal inside the same outage renews nothing and files nothing.
+		const second = await runAgent(
+			deps(refusalDocker([usageLimitTurn(resetAt)])),
+			agent(),
+			await makeTask('Refused again inside the outage'),
+			project(),
+		);
+		expect(second.requeueNotBefore?.getTime()).toBe(expected.getTime());
+		expect(await usageLimitNotices()).toHaveLength(1);
+	});
+
+	it('holds for a fixed interval when the provider states no reset', async () => {
+		const before = Date.now();
+		const result = await runAgent(
+			deps(refusalDocker([{ type: 'turn.failed', error: { message: 'usage limit reached' } }])),
+			agent(),
+			await makeTask('Refused with no reset stated'),
+			project(),
+		);
+		const heldMin = ((result.requeueNotBefore?.getTime() ?? 0) - before) / 60_000;
+		expect(heldMin).toBeGreaterThanOrEqual(29.9);
+		expect(heldMin).toBeLessThan(31);
+	});
+
+	it('holds queued work on a held credential with no run row and no container', async () => {
+		const hold = await setHold(120);
+		const task = await makeTask('Queued behind a spent allowance');
+		const wakeupId = await claimedWakeup(task.id);
+		const docker = refusalDocker(WORKED_TURN, 0);
+
+		const result = await runAgent(
+			deps(docker),
+			agent(),
+			task,
+			project(),
+			{ task_id: task.id },
+			undefined,
+			undefined,
+			wakeupId,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ProviderUsageLimit);
+		expect(result.requeueNotBefore?.getTime()).toBe(hold.getTime());
+		expect(result.heartbeatRunId).toBeUndefined();
+		expect(docker.execStart).not.toHaveBeenCalled();
+		const runs = await db.query('SELECT 1 FROM heartbeat_runs WHERE wakeup_id = $1', [wakeupId]);
+		expect(runs.rows).toHaveLength(0);
+	});
+
+	it('lets a run a person asked for through the hold, and lifts the hold once it gets a turn', async () => {
+		await setHold(120);
+		const held = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests
+			   (member_id, team_id, source, status, payload, last_skipped_reason, last_skipped_at, not_before)
+			 VALUES ($1, $2, 'timer', 'queued', '{}'::jsonb, $3, now(), now() + interval '2 hours')
+			 RETURNING id`,
+			[agentId, teamId, WakeupSkipReason.ProviderUsageLimit],
+		);
+		const task = await makeTask('Run now after adding credits');
+		const wakeupId = await claimedWakeup(task.id, {
+			triggered_by: { member_id: null, name: 'Admin' },
+		});
+
+		const result = await runAgent(
+			deps(refusalDocker(WORKED_TURN, 0)),
+			agent(),
+			task,
+			project(),
+			{ task_id: task.id, triggered_by: { member_id: null, name: 'Admin' } },
+			undefined,
+			undefined,
+			wakeupId,
+		);
+
+		expect(result.requeued).toBeFalsy();
+		expect(result.heartbeatRunId).toBeDefined();
+		expect(await storedHold()).toBeNull();
+		const released = await db.query<{ not_before: Date | null }>(
+			'SELECT not_before FROM agent_wakeup_requests WHERE id = $1',
+			[held.rows[0].id],
+		);
+		expect(released.rows[0].not_before).toBeNull();
+	});
+
+	it('lets one run test a lapsed hold and holds the others behind it', async () => {
+		const id = await configId();
+		const lapsed = await setHold(-1);
+
+		expect(await usageHoldWait(db, id, lapsed)).toBeNull();
+		const behind = await usageHoldWait(db, id, lapsed);
+		const waitMin = ((behind?.getTime() ?? 0) - Date.now()) / 60_000;
+		expect(waitMin).toBeGreaterThan(USAGE_HOLD_PROBE_MIN - 1);
+		expect(waitMin).toBeLessThanOrEqual(USAGE_HOLD_PROBE_MIN);
+
+		// No hold read with the row costs nothing and holds nothing.
+		expect(await usageHoldWait(db, id, null)).toBeNull();
 	});
 });
