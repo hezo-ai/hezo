@@ -340,9 +340,9 @@ describe('JobManager scheduling & dispatch', () => {
 	});
 
 	describe('provider refusal cooldown', () => {
-		// One case here, on purpose: this proves the fragment is actually wired into
-		// the scan. What the fragment *means* - which reasons, which clocks, and that
-		// a held row cannot crowd out a fresh one - is pinned in
+		// One case here, on purpose: this proves the hold is actually wired into the
+		// scan. What the hold *means* - when it releases, what a handback writes, and
+		// that a held row cannot crowd out a fresh one - is pinned in
 		// `provider-refusal-cooldown.test.ts` against real rows, without dispatching
 		// an agent for it.
 		it('holds a wakeup the provider just refused, claiming nothing', async () => {
@@ -350,7 +350,8 @@ describe('JobManager scheduling & dispatch', () => {
 			const wakeupId = await insertQueuedWakeup(agentId, 'timer');
 			await ctx.db.query(
 				`UPDATE agent_wakeup_requests
-				    SET last_skipped_reason = $2, last_skipped_at = now()
+				    SET last_skipped_reason = $2, last_skipped_at = now(),
+				        not_before = now() + interval '5 minutes'
 				  WHERE id = $1`,
 				[wakeupId, WakeupSkipReason.ProviderAtCapacity],
 			);

@@ -132,19 +132,31 @@ and it is why cancelled runs are their own thing rather than errors. Hover the q
 info icon to see the reason. See
 [how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
 
-The model provider can also turn a run away before the agent gets a turn - the model is at
-capacity, the request was rate limited, or a subscription's usage allowance is spent. The
-run consumed nothing, so Hezo treats it the same way: the run is recorded as cancelled and
-the work goes back on the queue. It waits a few minutes before trying again, rather than
-retrying straight into a provider that is still busy, and longer when the reason is a spent
-allowance, which resets on a much slower clock. Nothing on your side clears this one - no
-container frees it - so the wait is for the provider to recover. Press **Run now** on the
+The model provider can also turn a run away before the agent gets a turn, because the model
+is at capacity, the request was rate limited, or a subscription's usage allowance is spent.
+The run consumed nothing, so Hezo treats it the same way: the run is recorded as cancelled
+and the work goes back on the queue.
+
+For capacity and rate limits, Hezo waits a few minutes before trying again, so it does not
+retry straight into a provider that is still busy. Nothing on your side clears this wait,
+since no container frees it; only the provider recovering does. Press **Run now** on the
 task to try again immediately. If the work is still being turned away after two hours, Hezo
-stops retrying and raises an item in your Inbox, so a long outage does not sit unnoticed;
-switching the agent or task to another model is usually the fastest way through. That
-Inbox item is a notice rather than a decision: click it and it opens the run that failed,
-inside the task, and clears itself on the way. You often need do nothing at all: the agent's
-next successful run clears it for you, on whichever task or project that run happens.
+stops retrying and raises an item in your Inbox, so a long outage does not sit unnoticed.
+Switching the agent or task to another model is usually the fastest way through.
+
+A spent usage allowance applies to the whole credential, so Hezo pauses every run on that
+credential until the reset time the provider gives. Agents on other tasks wait too, and
+none of them starts a container just to be refused. When the reset time comes, the waiting
+work starts again. Hezo raises one Inbox item when the pause begins, naming the credential
+and the time. To resume sooner, for example after adding credits, press **Run now** on a
+waiting task. If that run gets through, the rest of the work resumes with it. Replacing the
+credential in Settings > AI Providers also ends the pause. When the provider gives no reset
+time, Hezo tries a single run every half hour until one gets through.
+
+Either Inbox item is a notice rather than a decision: click it and it opens the run behind
+it, inside the task, and clears itself on the way. Often you need do nothing at all, because
+the agent's next successful run clears it for you, on whichever task or project that run
+happens.
 
 Cancelled covers one more case, and it is the only one that asks anything of you. If a run
 is queued but never begins - Hezo lost track of it before the agent launched - the work is

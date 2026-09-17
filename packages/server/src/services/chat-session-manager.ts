@@ -17,9 +17,7 @@ import {
 	type CommentAttachment,
 	credentialSerializesRuns,
 	DEFAULT_TEAM_ID,
-	effectiveRuntime,
 	extractActiveAgentMentionSlugs,
-	PROVIDER_RUNTIME_ADAPTERS,
 	parseSuggestedReplies,
 	RUNTIME_SYSTEM_PROMPT_FILE,
 	type WsChatServerMessage,
@@ -62,7 +60,7 @@ import {
 import {
 	type AiProviderCredentialAndModel,
 	getProviderCredentialAndModel,
-	selectProviderConfig,
+	resolveRunCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, type OverBudgetBlock, recordRunCost } from './budget';
 import {
@@ -96,7 +94,6 @@ import {
 	type RuntimeHomeMount,
 	refreshSubscriptionMount,
 } from './runtime-home';
-import { resolveRuntimeForTask } from './runtime-resolver';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
@@ -2145,33 +2142,17 @@ export class ChatSessionManager {
 			 FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
-		let provider = override.rows[0]?.provider ?? null;
-		let runtimeType: AgentRuntime;
-		// An override names only a provider, so its CLI comes from the credential
-		// below; the resolved path already picked a credential and constrains the
-		// lookup to one that matches.
-		let requiredRuntime: AgentRuntime | null = null;
-		if (provider) {
-			runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
-		} else {
-			const resolved = await resolveRuntimeForTask(db, null);
-			if (!resolved.ok) throw new Error(resolved.reason);
-			provider = resolved.provider;
-			runtimeType = resolved.runtime;
-			requiredRuntime = resolved.runtime;
-		}
-
-		const config = await selectProviderConfig(db, provider, requiredRuntime);
-		if (!config) throw new Error(`No ${provider} credential configured`);
-		if (!requiredRuntime) {
-			runtimeType = effectiveRuntime(provider, config.runtime) ?? runtimeType;
-		}
+		const selection = await resolveRunCredential(db, {
+			overrideProvider: override.rows[0]?.provider ?? null,
+			taskRuntimeType: null,
+		});
+		if (!selection.ok) throw new Error(selection.reason);
 		return {
-			provider,
-			runtimeType,
-			configId: config.configId,
-			modelOverride: override.rows[0]?.model ?? config.defaultModel ?? null,
-			requiredRuntime,
+			provider: selection.provider,
+			runtimeType: selection.runtime,
+			configId: selection.config.configId,
+			modelOverride: override.rows[0]?.model ?? selection.config.defaultModel ?? null,
+			requiredRuntime: selection.requiredRuntime,
 		};
 	}
 

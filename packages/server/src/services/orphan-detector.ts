@@ -567,6 +567,28 @@ export async function fileProviderRefusalApproval(
 }
 
 /**
+ * Record that a subscription credential's usage allowance is spent and every run
+ * on it is held until the provider's reset time.
+ *
+ * Filed once per outage, by the refusal that started the hold, rather than after
+ * a give-up period: the wait is the provider's own clock, so there is no failure
+ * for a person to fix, only a pause they should know about. The agent's next
+ * successful run clears it through {@link clearAgentErrorApprovalsOnRecovery}.
+ */
+export async function fileProviderUsageLimitNotice(
+	db: Db,
+	run: { runId: string; memberId: string; teamId: string; taskId?: string | null },
+	credential: { providerName: string; label: string; heldUntil: string },
+): Promise<void> {
+	await fileLostRunApproval(
+		db,
+		run,
+		undefined,
+		`The usage allowance on the ${credential.providerName} credential "${credential.label}" is spent. Hezo is holding every run on this credential until ${credential.heldUntil}, when the provider says it resets, and starts them again then. To try sooner, for example after adding credits, press Run now on a waiting task. This credential is shared across every team on this instance.`,
+	);
+}
+
+/**
  * Record that the provider refused the stored credential itself, and that Hezo
  * has marked it invalid.
  *
@@ -642,13 +664,14 @@ export async function clearAgentErrorApprovalsOnRecovery(
 }
 
 /**
- * How long work may sit owed while the provider keeps refusing it, before Hezo
- * stops handing it back and asks for a human.
+ * How long work may sit owed while the provider keeps refusing it for capacity,
+ * overload or a rate limit, before Hezo stops handing it back and asks for a human.
  *
  * The refusal itself has no lap ceiling - it clears on the provider's clock, not
  * on an attempt count - so the bound is on elapsed owed time instead. Two hours
- * outlasts any capacity blip and most rate-limit windows, while still being
- * short enough that a spent subscription allowance surfaces the same day.
+ * outlasts any capacity blip and most rate-limit windows. A spent usage allowance
+ * is not bounded here: the provider states when it resets, so the credential is
+ * held until then (see `provider-credential-health.ts`).
  */
 export const PROVIDER_REFUSAL_GIVEUP_MIN = 120;
 

@@ -4,6 +4,7 @@ import {
 	classifyRuntimeError,
 	createAgentStreamParser,
 	type PriceModelFn,
+	parseCodexRetryAt,
 } from '../src/services/agent-stream-parser';
 import { RunFailureClass } from '../src/services/run-failure-classification';
 
@@ -111,6 +112,62 @@ describe('classifyRuntimeError', () => {
 		// which reproduce exactly. Excluded on purpose - widening it should be a
 		// conscious act, so it is asserted rather than left to the regex.
 		expect(classifyRuntimeError('server_error')?.failure).toBe(RunFailureClass.Permanent);
+	});
+});
+
+describe('parseCodexRetryAt', () => {
+	const now = new Date('2026-09-17T01:29:10Z');
+
+	it('reads a reset on a later day, rounded up past the minute Codex truncates', () => {
+		// Verbatim from a production refusal.
+		const text =
+			"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 20th, 2026 10:49 AM.";
+		expect(parseCodexRetryAt(text, now)?.toISOString()).toBe('2026-09-20T10:50:00.000Z');
+	});
+
+	it('reads the capitalised form and every ordinal suffix', () => {
+		expect(parseCodexRetryAt('Try again at Oct 1st, 2026 12:05 PM.', now)?.toISOString()).toBe(
+			'2026-10-01T12:06:00.000Z',
+		);
+		expect(parseCodexRetryAt('try again at Nov 22nd, 2026 12:00 AM.', now)?.toISOString()).toBe(
+			'2026-11-22T00:01:00.000Z',
+		);
+		expect(parseCodexRetryAt('try again at Dec 13th, 2026 9:30 PM.', now)?.toISOString()).toBe(
+			'2026-12-13T21:31:00.000Z',
+		);
+	});
+
+	it('places a time-only reset on the current day', () => {
+		expect(parseCodexRetryAt('or try again at 11:15 PM.', now)?.toISOString()).toBe(
+			'2026-09-17T23:16:00.000Z',
+		);
+	});
+
+	it('returns null when no reset time is stated or it cannot be read', () => {
+		expect(parseCodexRetryAt("You've hit your usage limit. Try again later.", now)).toBeNull();
+		expect(parseCodexRetryAt('try again at 13:05 PM.', now)).toBeNull();
+		expect(parseCodexRetryAt('try again at Foo 3rd, 2026 1:05 PM.', now)).toBeNull();
+	});
+
+	it('attaches the reset to a Codex usage-limit verdict and to nothing else', () => {
+		const limited = createAgentStreamParser(AgentRuntime.Codex);
+		feed(limited, [
+			{
+				type: 'turn.failed',
+				error: { message: "You've hit your usage limit. Try again at Sep 20th, 2099 10:49 AM." },
+				usage: {},
+			},
+		]);
+		const verdict = limited.getTerminalVerdict();
+		expect(verdict?.family).toBe('usage_limit');
+		expect(verdict?.retryAt?.toISOString()).toBe('2099-09-20T10:50:00.000Z');
+
+		const capacity = createAgentStreamParser(AgentRuntime.Codex);
+		feed(capacity, [
+			{ type: 'error', message: 'Selected model is at capacity. Try again at 1:00 PM.' },
+		]);
+		expect(capacity.getTerminalVerdict()?.family).toBe('capacity');
+		expect(capacity.getTerminalVerdict()?.retryAt).toBeUndefined();
 	});
 });
 

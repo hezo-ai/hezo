@@ -5,12 +5,13 @@ import {
 	AiProviderStatus,
 	effectiveRuntime,
 	isAgentRuntime,
+	PROVIDER_RUNTIME_ADAPTERS,
 } from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import { buildUpdateSet, withTransaction } from '../lib/sql';
-import { RUNTIME_CANDIDATE_SCAN_LIMIT } from './runtime-resolver';
+import { RUNTIME_CANDIDATE_SCAN_LIMIT, resolveRuntimeForTask } from './runtime-resolver';
 
 export interface AiProviderCredential {
 	value: string;
@@ -142,6 +143,8 @@ export interface SelectedProviderConfig {
 	runtime: AgentRuntime | null;
 	/** {@link runtime} resolved against the provider default - the CLI this row runs on. */
 	resolvedRuntime: AgentRuntime | null;
+	/** When the provider said this credential's spent usage allowance resets, if it is held. */
+	usageLimitedUntil: Date | null;
 }
 
 interface ProviderConfigRow {
@@ -151,6 +154,7 @@ interface ProviderConfigRow {
 	default_model: string | null;
 	metadata: Record<string, unknown> | null;
 	runtime: string | null;
+	usage_limited_until: Date | string | null;
 }
 
 /**
@@ -170,7 +174,8 @@ async function selectProviderConfigRow(
 	// that fails the test and report "no credential". Widen the window instead and
 	// let the ordering pick the winner among the matches.
 	const result = await db.query<ProviderConfigRow>(
-		`SELECT id, auth_method, encrypted_credential, default_model, metadata, runtime
+		`SELECT id, auth_method, encrypted_credential, default_model, metadata, runtime,
+		        usage_limited_until
 		 FROM ai_provider_configs
 		 WHERE provider = $1::ai_provider AND status = $2
 		 ORDER BY is_default DESC, created_at ASC
@@ -202,7 +207,146 @@ export async function selectProviderConfig(
 		baseUrl: readConfigBaseUrl(row.metadata),
 		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
 		resolvedRuntime: row.resolvedRuntime,
+		usageLimitedUntil: toDateOrNull(row.usage_limited_until),
 	};
+}
+
+function toDateOrNull(value: Date | string | null | undefined): Date | null {
+	return value ? new Date(value) : null;
+}
+
+/** The provider, CLI and credential row a run or chat turn will use. */
+export interface RunCredentialSelection {
+	provider: AiProvider;
+	runtime: AgentRuntime;
+	/**
+	 * The CLI the credential had to match, or null on the agent-override path,
+	 * where the override names only a provider and the credential's own runtime
+	 * decides the CLI.
+	 */
+	requiredRuntime: AgentRuntime | null;
+	config: SelectedProviderConfig;
+}
+
+/**
+ * Resolve what an agent runs on: its own model override when it has one, else
+ * the task's runtime pin, else the instance default. The one precedence rule for
+ * task runs and chat turns. Needs no master key; the caller decrypts the chosen
+ * row by id when it needs the value.
+ */
+export async function resolveRunCredential(
+	db: Db,
+	opts: { overrideProvider: AiProvider | null; taskRuntimeType: AgentRuntime | null },
+): Promise<({ ok: true } & RunCredentialSelection) | { ok: false; reason: string }> {
+	let provider: AiProvider;
+	let runtime: AgentRuntime;
+	let requiredRuntime: AgentRuntime | null = null;
+	if (opts.overrideProvider) {
+		provider = opts.overrideProvider;
+		const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+		if (!adapter) {
+			return {
+				ok: false,
+				reason: `This agent's model override references provider "${provider}", which is no longer supported. Clear the override in the agent's settings.`,
+			};
+		}
+		runtime = adapter.runtime;
+	} else {
+		const resolved = await resolveRuntimeForTask(db, opts.taskRuntimeType);
+		if (!resolved.ok) return resolved;
+		provider = resolved.provider;
+		runtime = resolved.runtime;
+		requiredRuntime = resolved.runtime;
+	}
+
+	const config = await selectProviderConfig(db, provider, requiredRuntime);
+	if (!config) {
+		return {
+			ok: false,
+			reason: `No ${provider} credential configured. Add one in Settings > AI Providers.`,
+		};
+	}
+	if (!requiredRuntime) runtime = effectiveRuntime(provider, config.runtime) ?? runtime;
+	return { ok: true, provider, runtime, requiredRuntime, config };
+}
+
+/**
+ * Hold a credential until its spent usage allowance resets. Returns whether no
+ * hold stood before, so the caller tells a person once per outage rather than
+ * once per refused run. Writes nothing when the stored time already matches.
+ */
+export async function recordUsageHold(db: Db, configId: string, until: Date): Promise<boolean> {
+	const r = await db.query<{ started: boolean }>(
+		`UPDATE ai_provider_configs c
+		    SET usage_limited_until = $2
+		   FROM (SELECT usage_limited_until AS prev FROM ai_provider_configs WHERE id = $1) p
+		  WHERE c.id = $1 AND c.usage_limited_until IS DISTINCT FROM $2
+		 RETURNING p.prev IS NULL AS started`,
+		[configId, until],
+	);
+	return r.rows[0]?.started === true;
+}
+
+/**
+ * Read a credential's hold against the database clock, and when it has lapsed,
+ * move it forward by `probeMinutes` for this caller alone.
+ *
+ * `claimed` is true for the one caller that moved it. `active` says the hold read
+ * before any move was still in force. Both are judged on the database clock, the
+ * same clock the wakeup scan reads, so a server clock that drifts from it cannot
+ * release a wakeup that the hold then sends straight back.
+ */
+export async function readOrClaimUsageHold(
+	db: Db,
+	configId: string,
+	probeMinutes: number,
+): Promise<{ until: Date | null; active: boolean; claimed: boolean }> {
+	const r = await db.query<{
+		until: Date | string | null;
+		active: boolean;
+		claimed: boolean;
+	}>(
+		`WITH prior AS (
+		   SELECT usage_limited_until AS until, usage_limited_until > now() AS active
+		     FROM ai_provider_configs WHERE id = $1
+		 ), claimed AS (
+		   UPDATE ai_provider_configs
+		      SET usage_limited_until = now() + make_interval(mins => $2::int)
+		    WHERE id = $1 AND usage_limited_until <= now()
+		   RETURNING id
+		 )
+		 SELECT (SELECT until FROM prior) AS until,
+		        COALESCE((SELECT active FROM prior), false) AS active,
+		        EXISTS (SELECT 1 FROM claimed) AS claimed`,
+		[configId, probeMinutes],
+	);
+	const row = r.rows[0];
+	return {
+		until: toDateOrNull(row?.until),
+		active: row?.active === true,
+		claimed: row?.claimed === true,
+	};
+}
+
+/** A credential's hold while it is still in force on the database clock, else null. */
+export async function readActiveUsageHold(db: Db, configId: string): Promise<Date | null> {
+	const r = await db.query<{ usage_limited_until: Date | string | null }>(
+		`SELECT usage_limited_until FROM ai_provider_configs
+		  WHERE id = $1 AND usage_limited_until > now()`,
+		[configId],
+	);
+	return toDateOrNull(r.rows[0]?.usage_limited_until);
+}
+
+/** Remove a credential's hold. Returns whether there was one to remove. */
+export async function clearUsageHold(db: Db, configId: string): Promise<boolean> {
+	const r = await db.query<{ id: string }>(
+		`UPDATE ai_provider_configs SET usage_limited_until = NULL
+		  WHERE id = $1 AND usage_limited_until IS NOT NULL
+		 RETURNING id`,
+		[configId],
+	);
+	return r.rows.length > 0;
 }
 
 /**
@@ -427,6 +571,8 @@ export async function updateAiProviderConfig(
 		{ column: 'encrypted_credential', value: encryptedCredential },
 		{ column: 'auth_method', value: fields.authMethod, cast: 'ai_auth_method' },
 		{ column: 'status', value: fields.status },
+		// A replacement credential is a different allowance, so it starts unheld.
+		{ column: 'usage_limited_until', value: encryptedCredential === undefined ? undefined : null },
 	]);
 
 	// `buildUpdateSet` can only assign, and the base URL has to merge — overwriting
