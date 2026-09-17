@@ -91,9 +91,9 @@ test('the add form and the registry search panel each close via their own close 
 test('the "Add default skills" button installs the missing defaults behind a confirmation', async () => {
 	const r = await renderApp({ initialPath: '/settings/skills' });
 
-	// A fresh instance seeds no default skills, so the button offers all 15.
+	// A fresh instance seeds no default skills, so the button offers all 16.
 	const button = await r.findByTestId('add-default-skills');
-	expect(button.textContent).toContain('(15)');
+	expect(button.textContent).toContain('(16)');
 	// None of the defaults are in the list yet.
 	expect(r.queryByText('Systematic Debugging')).toBeNull();
 

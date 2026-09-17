@@ -16,7 +16,7 @@ describe('shipped default skills content', () => {
 	it('loads the full catalog with valid, self-contained definitions', async () => {
 		const defs = await loadDefaultSkills();
 
-		expect(defs).toHaveLength(15);
+		expect(defs).toHaveLength(16);
 		const slugs = defs.map((d) => d.slug);
 		expect(new Set(slugs).size).toBe(slugs.length);
 		expect(slugs).not.toContain('ATTRIBUTION');

@@ -973,7 +973,7 @@ wins. Skills authored during a run (`create_skill`/`fetch_skill_file`/`propose_s
 installs the whole catalog automatically: `installDefaultSkillsIfFreshInstance` runs at startup
 just before `seedDefaultTeam` and installs when HQ (`DEFAULT_TEAM_ID`) doesn't exist yet (i.e.
 first boot), a no-op on every later boot. An **existing instance upgrading is NOT auto-seeded** —
-15 global skills must not materialize unasked — so the admin installs them from `/settings/skills`:
+16 global skills must not materialize unasked — so the admin installs them from `/settings/skills`:
 `GET /api/skills/defaults` returns the **missing** and the **outdated** defaults, and the page
 shows a button per non-empty set, each opening a confirmation listing the names;
 `POST /api/skills/defaults/install` (optional `slugs[]` for the confirmed subset) inserts them.

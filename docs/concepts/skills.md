@@ -48,13 +48,14 @@ each project's manifest short while know-how worth sharing still reaches every p
   project when it doesn't say.
 - **The starter library.** Hezo ships a starter library of global skills: methods for
   planning, brainstorming, debugging, test-driven development, code review, verification,
-  design, web app testing, research, data analysis, writing, and authoring new skills. A
-  brand-new instance gets them automatically on first start. An existing instance does not
-  get them silently on upgrade; instead **Settings → Skills** shows an **Add default skills**
-  button that lists the ones you don't have and asks you to confirm before adding them.
-  Either way, once added they're ordinary global skills, yours to edit, delete, or re-scope
-  to a single project, and Hezo never re-adds one you've removed. Several are adapted from
-  well-known open-source skill collections and link their source.
+  design, web app testing, research, data analysis, writing, stripping the AI tells out of a
+  draft, and authoring new skills. A brand-new instance gets them automatically on first
+  start. An existing instance does not get them silently on upgrade; instead
+  **Settings → Skills** shows an **Add default skills** button that lists the ones you don't
+  have and asks you to confirm before adding them. Either way, once added they're ordinary
+  global skills, yours to edit, delete, or re-scope to a single project, and Hezo never
+  re-adds one you've removed. Several are adapted from well-known open-source skill
+  collections and link their source.
 - **Keeping the starter library current.** When a Hezo release improves one of these skills,
   the same page shows an **Update default skills** button for the copies you already have.
   Updating replaces a skill's contents and keeps your current version in its revision history,
