@@ -159,7 +159,7 @@ describe('default-skills routes', () => {
 		const before = await app.request('/api/skills/defaults', { headers: authHeader(token) });
 		expect(before.status).toBe(200);
 		const missing = (await before.json()).data.missing as Array<{ slug: string; name: string }>;
-		expect(missing.length).toBe(15);
+		expect(missing.length).toBe(16);
 		expect(missing.find((m) => m.slug === 'code-review')).toBeDefined();
 
 		const install = await app.request('/api/skills/defaults/install', {
@@ -169,7 +169,7 @@ describe('default-skills routes', () => {
 		});
 		expect(install.status).toBe(200);
 		const installed = (await install.json()).data.installed as Array<{ slug: string }>;
-		expect(installed.length).toBe(15);
+		expect(installed.length).toBe(16);
 
 		const after = await app.request('/api/skills/defaults', { headers: authHeader(token) });
 		expect((await after.json()).data.missing).toEqual([]);
@@ -196,7 +196,7 @@ describe('default-skills routes', () => {
 		const missing = (
 			await (await app.request('/api/skills/defaults', { headers: authHeader(token) })).json()
 		).data.missing as Array<{ slug: string }>;
-		expect(missing.length).toBe(14);
+		expect(missing.length).toBe(15);
 		expect(missing.find((m) => m.slug === 'deep-research')).toBeUndefined();
 	});
 
@@ -209,7 +209,7 @@ describe('default-skills routes', () => {
 describe('installDefaultSkillsIfFreshInstance', () => {
 	it('installs the full catalog on a fresh instance (no HQ team yet)', async () => {
 		const installed = await installDefaultSkillsIfFreshInstance(db);
-		expect(installed.length).toBe(15);
+		expect(installed.length).toBe(16);
 		expect(await getGlobalSkill('code-review')).toBeDefined();
 	});
 
@@ -414,8 +414,8 @@ describe('default-skills refresh route', () => {
 });
 
 describe('bundled default catalog wiring', () => {
-	it('loadDefaultSkills feeds listMissingDefaultSkills with the real 15', async () => {
+	it('loadDefaultSkills feeds listMissingDefaultSkills with the real 16', async () => {
 		const missing = await listMissingDefaultSkills(db, await loadDefaultSkills());
-		expect(missing.length).toBe(15);
+		expect(missing.length).toBe(16);
 	});
 });

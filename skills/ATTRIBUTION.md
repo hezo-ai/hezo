@@ -26,12 +26,13 @@ compatible with both upstream licenses below.
 | `canvas-design.md` | [anthropics/skills — skills/canvas-design](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/canvas-design/SKILL.md) | Apache-2.0 |
 | `webapp-testing.md` | [anthropics/skills — skills/webapp-testing](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/webapp-testing/SKILL.md) | Apache-2.0 |
 | `skill-creator.md` | [anthropics/skills — skills/skill-creator](https://github.com/anthropics/skills/blob/9d2f1ae187231d8199c64b5b762e1bdf2244733d/skills/skill-creator/SKILL.md) and [hiddentao/claude-code-plugins — skills/writing-skill-files](https://github.com/hiddentao/claude-code-plugins/blob/9e3173a7bdb6d89143f29255351f7c07243e4d60/plugins/skill-files/skills/writing-skill-files/SKILL.md) (merged) | Apache-2.0 and MIT |
+| `humanizer.md` | [blader/humanizer](https://github.com/blader/humanizer/blob/9862685f575c65a8247f90369951df1b3416e3d6/SKILL.md) | MIT |
 
-## MIT License (obra/superpowers, hiddentao/claude-code-plugins)
+## MIT License (obra/superpowers, hiddentao/claude-code-plugins, blader/humanizer)
 
-Two upstreams ship under identical MIT terms.
+Three upstreams ship under identical MIT terms.
 
-`obra/superpowers` carries the copyright line reproduced below.
+`obra/superpowers` and `blader/humanizer` carry the copyright lines reproduced below.
 `hiddentao/claude-code-plugins` declares `"license": "MIT"` in its plugin manifest and
 names Ramesh Nair (<https://hiddentao.com>) as author; that repository ships no LICENSE
 file and no copyright line, so none is reproduced for it here. Its `writing-skill-files`
@@ -39,10 +40,15 @@ skill restates the 28 rules from Ramesh Nair's "The definitive guide to writing 
 skill files for AI agents":
 <https://hiddentao.com/archives/2026/04/26/the-definitive-guide-to-writing-great-skill-files-for-ai-agents>
 
+The humanizer skill is adapted from `blader/humanizer`, whose patterns are catalogued in
+Wikipedia's "Signs of AI writing", maintained by WikiProject AI Cleanup:
+<https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing>
+
 ```
 MIT License
 
 Copyright (c) 2025 Jesse Vincent
+Copyright (c) 2025 Siqi Chen
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
