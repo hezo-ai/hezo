@@ -103,7 +103,11 @@ Keep the details that carry the writer's voice unless they hurt the meaning. Tho
 
 ## Where the output goes
 
-The rewrite replaces the text in place. Editing a project doc, use `edit_project_doc` with the span you are changing rather than rewriting the whole document. Say in the `changelog` that this was a humanizer pass. Change prose only: leave code blocks, commands, paths, data and link targets exactly as they are.
+The rewrite replaces the text in place. Change prose only: leave code blocks, commands, paths, data and link targets exactly as they are.
+
+**A task comment gets this pass before you post it, not after.** There is no editing a comment once it is out, so run the pass on the draft. Leave every `@` and `@@` mention, task identifier and asset path exactly as written. A rewrite that drops an `@` wakes nobody, and one that backticks a reference renders it inert.
+
+**Editing a project doc, use `edit_project_doc`** with the span you are changing rather than rewriting the whole document. Say in the `changelog` that this was a humanizer pass.
 
 ## Source
 
