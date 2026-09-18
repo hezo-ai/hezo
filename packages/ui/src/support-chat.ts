@@ -36,7 +36,15 @@ export interface SupportChatOptions {
 	websiteToken: string;
 	/** The Subresource Integrity value the widget script must match. */
 	sdkIntegrity: string;
-	identity: SupportChatIdentity;
+	/**
+	 * Who to tell the inbox the visitor is, where anybody knows.
+	 *
+	 * Absent on a page reached before signing in: there is nobody to name, and a
+	 * name nobody signed is one anybody could claim. The widget loads and the
+	 * conversation is a stranger's until an install carrying an identity adopts
+	 * it, which is what signing in on the same page does.
+	 */
+	identity?: SupportChatIdentity;
 	/** A BCP 47 language tag, such as `en`, `pt-BR` or `zh-Hans`. */
 	locale: string;
 	colorScheme: SupportChatColorScheme;
@@ -53,6 +61,7 @@ interface ChatwootApi {
 	toggle(state: 'open' | 'close'): void;
 	setLocale(locale: string): void;
 	setColorScheme(scheme: SupportChatColorScheme): void;
+	toggleBubbleVisibility(state: 'hide' | 'show'): void;
 	reset(): void;
 }
 
@@ -135,17 +144,22 @@ function onReady(): void {
 }
 
 /**
- * Load the widget and identify the person signed in.
+ * Load the widget, and identify the person where there is one to identify.
  *
- * Loads once per page. A later call adds nothing to the page; after a reset it
- * adopts the identity it is given, so the next person signed in on the same page
- * is identified as themselves.
+ * Loads once per page. A later call adds nothing to the page; it hands over an
+ * identity the page did not have before — after a reset, or after signing in on
+ * a page that opened the chat anonymously — so the next person on that page is
+ * identified as themselves.
  */
 export function installSupportChat(options: SupportChatOptions): void {
 	if (typeof window === 'undefined') return;
 
 	if (state) {
-		if (!state.identity) {
+		// **The anonymous install is the one this adopts.** A page that loaded the
+		// widget with nobody named — a sign-in form, a gate — hands the identity
+		// over the moment it has one, and the conversation already open becomes
+		// that person's rather than being abandoned beside a second one.
+		if (!state.identity && options.identity) {
 			state.identity = options.identity;
 			if (state.ready) identify(options.identity);
 		}
@@ -155,7 +169,7 @@ export function installSupportChat(options: SupportChatOptions): void {
 	const baseUrl = options.baseUrl.replace(/\/+$/, '');
 	const locale = toChatwootLocale(options.locale);
 	state = {
-		identity: options.identity,
+		identity: options.identity ?? null,
 		locale,
 		colorScheme: options.colorScheme,
 		ready: false,
@@ -184,6 +198,19 @@ export function installSupportChat(options: SupportChatOptions): void {
 		}
 	});
 	document.head.appendChild(script);
+}
+
+/**
+ * Show or hide the launcher bubble after the widget is loaded.
+ *
+ * `hideBubble` decides this at install, and installing happens once per page —
+ * but whether the corner is free can change without a reload. Signing in draws
+ * a shell that claims it, and the chat moves to that shell's own menu entry.
+ * Does nothing before install.
+ */
+export function setSupportChatBubble(visible: boolean): void {
+	if (!state) return;
+	withChatwoot((chatwoot) => chatwoot.toggleBubbleVisibility(visible ? 'show' : 'hide'));
 }
 
 /** Open the chat, now or as soon as the widget is ready. Does nothing before install. */

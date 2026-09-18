@@ -6430,8 +6430,15 @@ the mention would have raced the intake and lost.
 ### Support chat
 
 A deployment with `policy.support.chatwoot` (§ *Configuration resolution*) gives the
-instance owner a Chatwoot chat identified as their issuer-side account. Inert when the
-block is absent, and core names no deployment: the menu group's heading is `managedBy`.
+instance owner a Chatwoot chat identified as their issuer-side account, and gives every
+screen before a session one that names nobody. Inert when the block is absent, and core
+names no deployment: the menu group's heading is `managedBy`.
+
+**Two answers, split by what each costs to hold.** Where the chat is — `base_url`,
+`website_token`, `sdk_integrity` — is public: every page carrying the widget publishes it
+in its own markup. Who the owner is — `identifier`, `identifier_hash`, `email` — is not,
+because holding that pair is writing to the support team as them and reading what the team
+wrote back. The first rides the public status; the second stays behind the owner's session.
 
 - **Served to the owner only.** `GET /api/support` (`routes/support.ts`) returns the block in
   snake_case, `name`/`email` as `null` when absent, only to an Admin superuser session on an
@@ -6441,25 +6448,41 @@ block is absent, and core names no deployment: the menu group's heading is `mana
   everyone when the block is unset, gets `404`. The identity lets its holder write to the
   inbox as the owner, so a board user or an agent run must not learn the channel exists.
   No MCP twin. Read per request, so a rewritten policy file changes the answer at once.
+- **Where the chat is, to anyone.** `/api/status` carries `support` — the three public
+  values, never the identity — through `supportStatus` (`lib/support-status.ts`), for the
+  reason the locale is there: the vault gate, the language step and the sign-in form all
+  render before a credential exists, and somebody held up on one of them is who most needs
+  to ask. Keyed on an `sso` block **and** a configured channel, as the sign-in hint beside
+  it is: an instance with no issuer has no deployer on the other side of the chat. Absent
+  entirely otherwise, so an ordinary instance's payload is unchanged.
 - **One loader for every site.** `support-chat.ts` in `@hezo/ui` is the only Chatwoot
   loader; the hosted plane's dashboard imports it too. `installSupportChat` adds the SDK
   script under `integrity` and `crossorigin="anonymous"`, writes `window.chatwootSettings`
   with no `baseDomain` (host-only cookies, so one tenant's conversation cookie never
   reaches a sibling subdomain), runs the SDK on load and calls `setUser` on
-  `chatwoot:ready`. One install per page: a later call adds nothing, except that after
-  `resetSupportChat` it adopts the identity it is given. `openSupportChat` before ready is
+  `chatwoot:ready`. `identity` is optional, and omitting it loads the widget with nobody
+  named. One install per page: a later call adds nothing, except that it hands over an
+  identity the page did not have — after `resetSupportChat`, or when signing in on a page
+  that opened the chat anonymously, so a conversation begun at a gate becomes that
+  person's rather than being stranded beside a second one. `setSupportChatBubble` shows or
+  hides the launcher after load, because whether the corner is free changes without a
+  reload. `openSupportChat` before ready is
   held until ready. Every `window.$chatwoot` call is guarded and absorbs throws. The locale
   arrives as a BCP 47 tag and is converted to the widget's form (`pt-BR` → `pt_BR`,
   `zh-Hans` → `zh_CN`).
 - **Tenant web.** `useSupport` (`hooks/use-support.ts`) asks only when `/api/status`
-  carries `sso`, and does not retry the `404`. Its caller passes that flag from the status
-  it already holds: `useStatus` refetches on every observer mount, so a status query opened
-  inside the hook would cost the shell a second `/api/status` on each load.
-  `useSupportChat`, called from `ShellLayout` (the first render with a certain session,
-  after the `#sso=` fragment is gone), installs with `hideBubble: true` because the CEO chat
-  dock owns the bottom-right corner, and feeds the app's language and resolved theme through
-  the setters. The entry is **Contact support** in the Settings menu's deployer group
-  (`PolicyGroup`, beside the plan link), rendered only when the query holds data.
+  carries `sso` **and a session exists**, and does not retry the `404`: the route answers
+  `404` without an issuer and `401` before anybody signs in. Its caller passes both from
+  the status and session probe it already holds: `useStatus` refetches on every observer
+  mount, so a status query opened inside the hook would cost the shell a second
+  `/api/status` on each load. `useSupportChat` is called from the **root**, above every
+  gate, so the widget is there on the screens that precede a session — installed from the
+  status channel with nobody named and the launcher shown. The owner's identity, when it
+  arrives, is handed to that same install and adopted, and `setSupportChatBubble(false)`
+  takes the launcher away because the shell's CEO chat dock owns that corner. The app's
+  language and resolved theme reach the widget through the setters. The entry once signed
+  in is **Contact support** in the Settings menu's deployer group (`PolicyGroup`, beside
+  the plan link), rendered only when the query holds data.
   `logout()` (`lib/auth.ts`) calls `resetSupportChat` before handing the browser to the
   issuer.
 

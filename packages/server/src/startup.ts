@@ -25,6 +25,7 @@ import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
 import type { SandboxBackendInfo } from './lib/sandbox-backend-info';
 import { ssoStatus } from './lib/sso-status';
+import { supportStatus } from './lib/support-status';
 import {
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -757,6 +758,7 @@ export function buildApp(
 			locale: await getInstanceLocale(db),
 			localeConfigured: await instanceLocaleIsConfigured(db),
 			...ssoStatus(),
+			...supportStatus(),
 		});
 	};
 	app.get('/api/status', statusHandler);

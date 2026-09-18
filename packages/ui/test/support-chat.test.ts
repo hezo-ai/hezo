@@ -11,6 +11,7 @@ interface FakeChatwoot {
 	toggle: ReturnType<typeof vi.fn>;
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
+	toggleBubbleVisibility: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -55,6 +56,7 @@ beforeEach(async () => {
 		toggle: vi.fn(),
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
+		toggleBubbleVisibility: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {
@@ -208,6 +210,57 @@ test('reset forgets the person, and a later install identifies the next one', as
 		identifier_hash: 'e'.repeat(64),
 	});
 	expect(scripts()).toHaveLength(1);
+});
+
+// A page reached before signing in has nobody to name, and the widget has to
+// load there anyway: that is where somebody locked out asks why.
+test('loads with nobody named, and names nobody', async () => {
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	await loaded();
+	ready();
+
+	expect(scripts()).toHaveLength(1);
+	expect(fake.setUser).not.toHaveBeenCalled();
+});
+
+test('adopts an identity handed to the install already running', async () => {
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	await loaded();
+	ready();
+
+	// Signing in on the same page: the conversation already open becomes theirs
+	// rather than being left beside a second one.
+	chat.installSupportChat(OPTIONS);
+	expect(fake.setUser).toHaveBeenCalledWith('contact-1', {
+		name: 'Ada',
+		email: 'ada@example.com',
+		identifier_hash: 'f'.repeat(64),
+	});
+	expect(scripts()).toHaveLength(1);
+});
+
+test('an identity already held is not replaced by a later anonymous install', async () => {
+	chat.installSupportChat(OPTIONS);
+	await loaded();
+	ready();
+	fake.setUser.mockClear();
+
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	expect(fake.setUser).not.toHaveBeenCalled();
+});
+
+test('shows and hides the launcher after the widget has loaded', async () => {
+	chat.installSupportChat(OPTIONS);
+	await loaded();
+	ready();
+
+	chat.setSupportChatBubble(false);
+	expect(fake.toggleBubbleVisibility).toHaveBeenLastCalledWith('hide');
+	chat.setSupportChatBubble(true);
+	expect(fake.toggleBubbleVisibility).toHaveBeenLastCalledWith('show');
 });
 
 test('never throws, whether the widget is absent or failing', async () => {
