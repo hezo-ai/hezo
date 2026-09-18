@@ -104,6 +104,23 @@ test('an issuer with no support channel shows no support row and loads no widget
 	expect(widgetScript()).toBeNull();
 });
 
+test('asking for the support channel costs the shell no second status request', async () => {
+	// The shell's own status request is the only one a load makes. A second
+	// one in flight also swallows the refetch a reconnect would have made.
+	const fetchSpy = vi.spyOn(globalThis, 'fetch');
+	await renderApp({
+		initialPath: '/home',
+		seed: () => configure({ issuer: true }),
+	});
+
+	await expect.poll(() => queryClient.getQueryState(queryKeys.support())?.status).toBe('error');
+	const statusRequests = fetchSpy.mock.calls.filter(([input]) => {
+		const url = input instanceof Request ? input.url : String(input);
+		return new URL(url, 'http://localhost').pathname === '/api/status';
+	});
+	expect(statusRequests).toHaveLength(1);
+});
+
 test('the owner gets the row, an identified widget, and a reset on sign-out', async () => {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
 	const chatwoot: FakeChatwoot = {

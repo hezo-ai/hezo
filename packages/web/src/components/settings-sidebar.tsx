@@ -156,10 +156,10 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
  * which is the instance owner. It opens the chat in place, so it takes
  * `onAction` to close a menu that would otherwise stay open behind it.
  */
-function PolicyGroup({ onAction }: { onAction?: () => void }) {
+function PolicyGroup({ hosted, onAction }: { hosted: boolean; onAction?: () => void }) {
 	const { t } = useI18n();
 	const { data: settings } = useInstanceSettings();
-	const { data: support } = useSupport();
+	const { data: support } = useSupport(hosted);
 	const policy = settings?.policy;
 	const manageUrl = policy?.manage_url?.startsWith('https://') ? policy.manage_url : null;
 	if (!policy || (!manageUrl && !support)) return null;
@@ -215,6 +215,7 @@ export function SettingsSidebar() {
 	useCloseOnRouteChange(open, () => setOpen(false));
 
 	const { data: status } = useStatus();
+	const hosted = !!status?.sso;
 	// With an issuer, signing out has to end its session too: clearing only the
 	// local one leaves the issuer ready to sign the person straight back in, so
 	// the button would read as broken.
@@ -276,7 +277,7 @@ export function SettingsSidebar() {
 									))}
 								</div>
 							))}
-							<PolicyGroup onAction={() => setOpen(false)} />
+							<PolicyGroup hosted={hosted} onAction={() => setOpen(false)} />
 							<LogoutButton onClick={handleLogout} className="mt-3" />
 						</nav>
 					</>
@@ -298,7 +299,7 @@ export function SettingsSidebar() {
 						))}
 					</div>
 				))}
-				<PolicyGroup />
+				<PolicyGroup hosted={hosted} />
 				<LogoutButton onClick={handleLogout} className="mt-4" />
 			</nav>
 		</>

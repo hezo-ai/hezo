@@ -6452,13 +6452,16 @@ block is absent, and core names no deployment: the menu group's heading is `mana
   arrives as a BCP 47 tag and is converted to the widget's form (`pt-BR` → `pt_BR`,
   `zh-Hans` → `zh_CN`).
 - **Tenant web.** `useSupport` (`hooks/use-support.ts`) asks only when `/api/status`
-  carries `sso`, and does not retry the `404`. `useSupportChat`, called from `ShellLayout`
-  (the first render with a certain session, after the `#sso=` fragment is gone), installs
-  with `hideBubble: true` because the CEO chat dock owns the bottom-right corner, and feeds
-  the app's language and resolved theme through the setters. The entry is **Contact
-  support** in the Settings menu's deployer group (`PolicyGroup`, beside the plan link),
-  rendered only when the query holds data. `logout()` (`lib/auth.ts`) calls
-  `resetSupportChat` before handing the browser to the issuer.
+  carries `sso`, and does not retry the `404`. Its caller passes that flag from the status
+  it already holds: `useStatus` refetches on every observer mount, so a status query opened
+  inside the hook would cost the shell a second `/api/status` on each load.
+  `useSupportChat`, called from `ShellLayout` (the first render with a certain session,
+  after the `#sso=` fragment is gone), installs with `hideBubble: true` because the CEO chat
+  dock owns the bottom-right corner, and feeds the app's language and resolved theme through
+  the setters. The entry is **Contact support** in the Settings menu's deployer group
+  (`PolicyGroup`, beside the plan link), rendered only when the query holds data.
+  `logout()` (`lib/auth.ts`) calls `resetSupportChat` before handing the browser to the
+  issuer.
 
 ## 12. Build, release, migrations & upgrades
 
