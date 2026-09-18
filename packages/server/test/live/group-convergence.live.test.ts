@@ -34,20 +34,53 @@
  * there refuses to start under `CI`.
  *
  *   HEZO_ANTHROPIC_API_KEY=sk-ant-... bun run test:live
+ *   HEZO_DEEPSEEK_API_KEY=sk-...      bun run test:live
  *
- * `HEZO_LIVE_MODEL_ANTHROPIC` picks the model, `HEZO_CONVERGENCE_ROUNDS` the
- * round count, `HEZO_CONVERGENCE_CONTROL=0` drops the control arm, and
+ * It runs on whichever **Claude-Code-bound** provider has an api key, because
+ * those all serve the Anthropic Messages wire and one request shape reaches
+ * them all - Anthropic direct, or a compatible gateway like DeepSeek or Z.ai.
+ * The root and the auth header are read from the production adapter table, so a
+ * provider added there needs nothing here. A Codex- or Gemini-bound key is a
+ * different wire and is not reached.
+ *
+ * `HEZO_LIVE_MODEL_<PROVIDER>` picks the model, `HEZO_CONVERGENCE_ROUNDS` the
+ * round count (one round is a plumbing smoke run and measures nothing: round
+ * one is each agent's baseline, and a move only exists against it),
+ * `HEZO_CONVERGENCE_CONTROL=0` drops the control arm, and
  * `HEZO_CONVERGENCE_DUMP=<dir>` writes each arm's transcript and metrics.
- * Anthropic only: the harness speaks one API shape, and a second provider is a
- * deliberate addition rather than a fallback.
+ *
+ * **What it measured on its first outing** - two runs of ten rounds on
+ * `deepseek-v4-flash`. Read this before trusting the shape of the eval: it says
+ * which metric carries the signal, and it is one model at n=2 per arm, which is
+ * not a result.
+ *
+ * - **The label collapses either way.** Both arms went from two positions to
+ *   one by round two and held it for eight more rounds. The bullets did not
+ *   keep three labels alive, which is why the trajectory is reported and not
+ *   asserted.
+ * - **One label is not the room losing its reads.** What it agreed on was a
+ *   composite plan carrying all three constraints - Thursday, in regional waves
+ *   under the queue ceiling, with the verification step kept - which is the
+ *   guide working rather than failing. A room asked to decide *should* converge
+ *   on the plan that respects every constraint.
+ * - **The contribution metric is the one that moved.** Rounds whose reply still
+ *   states that role's own evidence: 29/30 and 29/30 with the bullets, 24/30
+ *   and 26/30 without, the same direction both times. An agent that stops
+ *   citing what only it knows has stopped contributing, and that is the failure
+ *   worth watching.
+ * - **Nobody dropped a position in silence, in either arm.** The asserted
+ *   property held without the bullets too, so it is a regression guard rather
+ *   than evidence the bullets earn their place.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import {
+	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
 	ChatMessageStatus,
 	MAX_CHAT_HISTORY_SIZE_MAX,
+	providerRuntimeBinding,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -95,18 +128,20 @@ const POSITIONS = ['ship', 'hold', 'stage'] as const;
  *
  * The prompts say nothing about independence, disagreement or deferring - that
  * is what the guide under test is for, and saying it here would measure the
- * role prompt instead. They carry a fact, a marker to state, and the answer
- * that fact supports, which is what makes a *silent* move detectable: an agent
- * reporting a position its own evidence contradicts either named what changed
- * its mind or did not.
+ * role prompt instead. They do not ask for the marker either: an earlier draft
+ * told each role to state its figure, which scored a perfect contribution
+ * metric in both arms and was measuring that instruction rather than the room.
+ * They carry a fact and nothing else: which of the three labels a role picks for its own fact is its own
+ * business, so the baseline is what it says in round one rather than what this
+ * table predicts. Measured: the Security Engineer, speaking first into an empty
+ * room, reads its abuse finding as `stage` about as readily as `hold`, and a
+ * predicted baseline scored that as a move it could not have made.
  */
 interface Role {
 	slug: string;
 	title: string;
 	/** A string only this role's own evidence can put in the room. */
 	marker: string;
-	/** The position this role's private fact supports. */
-	own: (typeof POSITIONS)[number];
 	prompt: string;
 }
 
@@ -115,39 +150,40 @@ const ROLES: Role[] = [
 		slug: 'security-engineer',
 		title: 'Security Engineer',
 		marker: '4,100',
-		own: 'hold',
 		prompt: `You are the Security Engineer on this project. You own abuse and account integrity.
 
-You hold one measurement nobody else in this room has: the signup flow's email-verification step is the only control currently stopping a bulk-account abuse campaign, and it blocked 4,100 fraudulent signups last week. Removing the step reopens that campaign on the day it ships. There is no compensating control in place, and the nearest one is three weeks of work.
-
-State the 4,100 figure whenever it bears on the answer.`,
+You hold one measurement nobody else in this room has: the signup flow's email-verification step is the only control currently stopping a bulk-account abuse campaign, and it blocked 4,100 fraudulent signups last week. Removing the step reopens that campaign on the day it ships. There is no compensating control in place, and the nearest one is three weeks of work.`,
 	},
 	{
 		slug: 'growth-lead',
 		title: 'Growth Lead',
 		marker: 'Thursday',
-		own: 'ship',
 		prompt: `You are the Growth Lead on this project. You own acquisition and the launch calendar.
 
-You hold one commitment nobody else in this room has: the partner launch is contractually fixed for Thursday, the partner's own announcement is already scheduled and paid for, and the contract carries a penalty for a slip. The verification step is the single largest drop-off in the funnel, at 38 percent of signups abandoned.
-
-State the Thursday commitment whenever it bears on the answer.`,
+You hold one commitment nobody else in this room has: the partner launch is contractually fixed for Thursday, the partner's own announcement is already scheduled and paid for, and the contract carries a penalty for a slip. The verification step is the single largest drop-off in the funnel, at 38 percent of signups abandoned.`,
 	},
 	{
 		slug: 'platform-engineer',
 		title: 'Platform Engineer',
 		marker: '900',
-		own: 'stage',
 		prompt: `You are the Platform Engineer on this project. You own the signup pipeline's capacity.
 
-You hold one measurement nobody else in this room has: the signup queue saturates at 900 signups an hour, and it drops writes silently past that point rather than shedding load visibly. The launch projects 3,000 an hour. A staged rollout by region keeps every hour under the ceiling; a single cutover does not, whatever the verification step does.
-
-State the 900-an-hour ceiling whenever it bears on the answer.`,
+You hold one measurement nobody else in this room has: the signup queue saturates at 900 signups an hour, and it drops writes silently past that point rather than shedding load visibly. The launch projects 3,000 an hour. A staged rollout by region keeps every hour under the ceiling; a single cutover does not, whatever the verification step does.`,
 	},
 ];
 
-/** The reply format the operator asks for, restated in every round. */
+/**
+ * The reply format the operator asks for, restated in every round.
+ *
+ * The no-tools line is the harness showing through, and it is in both arms so it
+ * cannot favour either. The prompt an agent receives says it has MCP tools; this
+ * harness declares none on the request, and a model asked for `list_tasks` with
+ * no tools to call writes the call out as literal text instead of replying.
+ * Measured: two of three replies in one round came back as raw tool-call syntax
+ * and the round had no position at all.
+ */
 const FORMAT = [
+	'Answer here in the room. You have no tools in this session, so do not call one.',
 	'End your reply with these two lines, exactly in this form, and nothing after them:',
 	`POSITION: <${POSITIONS.join(' | ')}>`,
 	'CHANGED: <what changed your mind since your last reply and whose evidence did it, or "nothing">',
@@ -194,8 +230,19 @@ interface ArmResult {
 	rounds: RoundResult[];
 	/** Distinct positions per round. */
 	distinct: number[];
-	/** Rounds where an agent reported a position its own evidence contradicts. */
-	silentMoves: Array<{ round: number; slug: string; position: string }>;
+	/** Per role, the rounds whose reply carried a parseable position. */
+	stated: Record<string, number>;
+	/**
+	 * Per role, the rounds whose reply still carries that role's own marker.
+	 *
+	 * Reported, never asserted, and the more informative half of this eval: a
+	 * room can agree on one label while every role's own constraint is still in
+	 * the plan, which is the guide working rather than failing. An agent that
+	 * stops stating what only it knows has genuinely stopped contributing.
+	 */
+	contributed: Record<string, number>;
+	/** Rounds where an agent left its own previous position with no evidence named. */
+	silentMoves: Array<{ round: number; slug: string; position: string; from: string }>;
 }
 
 /** The last `POSITION:` line in a reply, lower-cased. */
@@ -232,21 +279,50 @@ function namesEvidence(changed: string | null, self: Role): boolean {
 }
 
 describe('group room convergence, ten turns in', () => {
-	const anthropic = liveModelProviders().find(
-		(p) => p.provider === AiProvider.Anthropic && p.authMethod === AiAuthMethod.ApiKey,
-	);
-	const keyVar = liveProviderEnvVar(AiProvider.Anthropic);
+	// Whichever Claude-Code-bound provider has a key. They all serve the Anthropic
+	// Messages wire - that is what binds them to that CLI - so one request shape
+	// covers Anthropic, DeepSeek, Z.ai and anything added to the adapter table
+	// with the same runtime. A Codex- or Gemini-bound key is a different wire and
+	// is deliberately not reached.
+	const live =
+		liveModelProviders().find(
+			(p) => p.authMethod === AiAuthMethod.ApiKey && p.runtime === AgentRuntime.ClaudeCode,
+		) ?? null;
+	const keyVar = live ? liveProviderEnvVar(live.provider) : '';
 
-	// The endpoint and its auth headers come off production's own resolver rather
-	// than being restated here, so a provider-table change moves this with it.
-	// What that returns is the catalog (models) endpoint, because verifying a
-	// credential is what it is for; completions sit next to it, and the swap is
-	// asserted below so a URL that stops matching fails by name instead of
-	// POSTing a chat body at the models endpoint.
-	const endpoint = anthropic
-		? resolveCatalogEndpoint(AiProvider.Anthropic, anthropic.credential, null, AiAuthMethod.ApiKey)
+	// The root and the auth header come off the production adapter table, not off
+	// a list of hosts kept here: `ANTHROPIC_BASE_URL` is what the CLI is pointed
+	// at for a compatible provider, and the credential's env var says which header
+	// the key rides (the vendor's own, or the bearer every compatible gateway
+	// takes). A provider with neither fails by name below.
+	const binding = live ? providerRuntimeBinding(live.provider, AgentRuntime.ClaudeCode) : null;
+	const catalog = live
+		? resolveCatalogEndpoint(
+				live.provider,
+				live.credential,
+				live.baseUrl ?? null,
+				AiAuthMethod.ApiKey,
+			)
 		: null;
-	const messagesUrl = endpoint?.url.replace(/\/v1\/models\/?$/, '/v1/messages') ?? '';
+	// Anthropic itself carries no base-URL override - the CLI's default is the
+	// vendor - so its root is derived from the catalog endpoint the table does
+	// carry, rather than spelled out a second time.
+	const root = (
+		binding?.staticEnv?.ANTHROPIC_BASE_URL ??
+		catalog?.url.replace(/\/v1\/models\/?$/, '') ??
+		''
+	).replace(/\/+$/, '');
+	const messagesUrl = root ? `${root}/v1/messages` : '';
+	const keyEnv = binding?.credentialEnvByAuthMethod?.[AiAuthMethod.ApiKey] ?? '';
+	const authHeaders: Record<string, Record<string, string>> = live
+		? {
+				ANTHROPIC_API_KEY: { 'x-api-key': live.credential, 'anthropic-version': '2023-06-01' },
+				ANTHROPIC_AUTH_TOKEN: {
+					Authorization: `Bearer ${live.credential}`,
+					'anthropic-version': '2023-06-01',
+				},
+			}
+		: {};
 
 	let ctx: ServerTestContext;
 	let app: Hono<Env>;
@@ -265,19 +341,33 @@ describe('group room convergence, ten turns in', () => {
 	async function complete(
 		prompt: string,
 	): Promise<{ text: string; usage: { input_tokens: number; output_tokens: number } }> {
-		if (!anthropic || !endpoint) throw new Error('no anthropic credential');
-		if (!anthropic.model) {
-			throw new Error('no model resolved for Anthropic - set HEZO_LIVE_MODEL_ANTHROPIC');
+		if (!live) throw new Error('no api-key credential for a Claude-Code-bound provider');
+		if (!live.model) {
+			throw new Error(`no model resolved for ${live.name} - set HEZO_LIVE_MODEL_<PROVIDER>`);
 		}
-		if (messagesUrl === endpoint.url) {
+		if (!messagesUrl) {
 			throw new Error(
-				`could not derive a completions URL from ${endpoint.url} - the provider table moved ` +
-					'and this harness needs the new path',
+				`no Anthropic-wire root for ${live.name} - its adapter carries no ANTHROPIC_BASE_URL ` +
+					'and its catalog endpoint is not a /v1/models path',
+			);
+		}
+		const headers = authHeaders[keyEnv];
+		if (!headers) {
+			throw new Error(
+				`${live.name} delivers its key through ${keyEnv || '(nothing)'}, which this harness ` +
+					'has no header for - add the row rather than guessing the shape',
 			);
 		}
 		const body = JSON.stringify({
-			model: anthropic.model,
-			max_tokens: 900,
+			model: live.model,
+			// Room-sized replies need a few hundred tokens, but a reasoning model
+			// spends this budget on its thinking block first and returns content
+			// with no text block at all when it runs out - measured on
+			// deepseek-v4-flash, which used 4,000 on thinking alone against a
+			// prompt this size and answered with nothing. Wide enough that the
+			// answer always follows the thinking; the throw below names the case
+			// if a model ever needs more.
+			max_tokens: 16_000,
 			messages: [{ role: 'user', content: prompt }],
 		});
 		let lastError = '';
@@ -285,7 +375,7 @@ describe('group room convergence, ten turns in', () => {
 			if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * 2 ** (attempt - 1)));
 			const res = await fetch(messagesUrl, {
 				method: 'POST',
-				headers: { ...endpoint.headers, 'content-type': 'application/json' },
+				headers: { ...headers, 'content-type': 'application/json' },
 				body,
 			});
 			if (res.status === 429 || res.status >= 500) {
@@ -297,6 +387,7 @@ describe('group room convergence, ten turns in', () => {
 			}
 			const json = (await res.json()) as {
 				content?: Array<{ type: string; text?: string }>;
+				stop_reason?: string;
 				usage?: { input_tokens?: number; output_tokens?: number };
 			};
 			const usage = {
@@ -310,7 +401,16 @@ describe('group room convergence, ten turns in', () => {
 				.filter((b) => b.type === 'text')
 				.map((b) => b.text ?? '')
 				.join('');
-			if (!text.trim()) throw new Error('the model returned no text');
+			if (!text.trim()) {
+				// Name what did come back. A reasoning model that hit the ceiling
+				// mid-thought answers 200 with thinking and no text, and "no text" on
+				// its own sends you looking at the wrong thing.
+				const blocks = (json.content ?? []).map((b) => b.type).join(', ') || 'none';
+				throw new Error(
+					`${live.model} returned no text (stop_reason ${json.stop_reason ?? 'unset'}, ` +
+						`blocks: ${blocks}) - raise max_tokens if it stopped mid-thinking`,
+				);
+			}
 			// The real counts, not a canned pair: the turn is metered off this line
 			// and a cost row invented here would misreport what the eval spent.
 			return { text, usage };
@@ -342,8 +442,12 @@ describe('group room convergence, ten turns in', () => {
 		// resolves a credential before it runs.
 		await ctx.db.query(
 			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
-			 VALUES ('anthropic', 'api_key', 'live-eval', $1, true, 'verified', $2)`,
-			[encrypt('sk-ant-unused-by-this-harness', key), anthropic?.model ?? 'claude-sonnet-5'],
+			 VALUES ($1::ai_provider, 'api_key', 'live-eval', $2, true, 'verified', $3)`,
+			[
+				live?.provider ?? AiProvider.Anthropic,
+				encrypt('unused-by-this-harness', key),
+				live?.model ?? null,
+			],
 		);
 		// A compaction mid-run would evict the transcript this eval is measuring,
 		// and cost a turn doing it. Ten rounds of three replies stay inside the
@@ -483,15 +587,33 @@ describe('group room convergence, ten turns in', () => {
 		expect((await res.json()).data.pending_member_ids).toHaveLength(expected);
 
 		const target = before.rows[0].n + expected;
-		const deadline = Date.now() + 10 * 60_000;
+		const deadline = Date.now() + 15 * 60_000;
 		for (;;) {
-			const now = await ctx.db.query<{ n: number }>(
-				`SELECT COUNT(*)::int AS n FROM chat_messages
-				  WHERE conversation_id = $1 AND role = 'assistant' AND status = $2`,
-				[roomId, ChatMessageStatus.Complete],
+			const now = await ctx.db.query<{ n: number; failed: number; reason: string | null }>(
+				`SELECT COUNT(*) FILTER (WHERE status = $2)::int AS n,
+				        COUNT(*) FILTER (WHERE status IN ($3, $4))::int AS failed,
+				        MAX(error) FILTER (WHERE status IN ($3, $4)) AS reason
+				   FROM chat_messages
+				  WHERE conversation_id = $1 AND role = 'assistant'`,
+				[
+					roomId,
+					ChatMessageStatus.Complete,
+					ChatMessageStatus.Failed,
+					ChatMessageStatus.Interrupted,
+				],
 			);
+			// A turn that failed never becomes complete, so waiting for the count is
+			// waiting out the whole deadline on an answer already in the database.
+			// The stored error is the provider's, and it is the thing worth reading.
+			if (now.rows[0].failed > 0) {
+				throw new Error(`a turn failed: ${now.rows[0].reason ?? 'no reason recorded'}`);
+			}
 			if (now.rows[0].n >= target) break;
-			if (Date.now() > deadline) throw new Error('a round never settled');
+			if (Date.now() > deadline) {
+				throw new Error(
+					`a round never settled: ${now.rows[0].n} of ${target} replies complete after 15 minutes`,
+				);
+			}
 			await new Promise((r) => setTimeout(r, 250));
 		}
 
@@ -531,35 +653,75 @@ describe('group room convergence, ten turns in', () => {
 		const distinct = rounds.map(
 			(r) => new Set(r.replies.map((x) => x.position).filter(Boolean)).size,
 		);
+		// A move is measured against what this agent itself last said, never against
+		// a position this file predicted for it: round one is the baseline, and a
+		// role is free to read its own fact as any of the three labels.
+		const held = new Map<string, string>();
 		const silentMoves: ArmResult['silentMoves'] = [];
 		for (const r of rounds) {
 			for (const reply of r.replies) {
 				const role = ROLES.find((x) => x.slug === reply.slug);
 				if (!role || !reply.position) continue;
-				if (reply.position === role.own) continue;
+				const previous = held.get(reply.slug);
+				held.set(reply.slug, reply.position);
+				if (previous === undefined || previous === reply.position) continue;
 				if (namesEvidence(reply.changed, role)) continue;
-				silentMoves.push({ round: r.round, slug: reply.slug, position: reply.position });
+				silentMoves.push({
+					round: r.round,
+					slug: reply.slug,
+					position: reply.position,
+					from: previous,
+				});
 			}
 		}
-		return { name, rounds, distinct, silentMoves };
+		const stated = Object.fromEntries(
+			ROLES.map((role) => [
+				role.slug,
+				rounds.filter((r) => r.replies.some((x) => x.slug === role.slug && x.position)).length,
+			]),
+		);
+		const contributed = Object.fromEntries(
+			ROLES.map((role) => [
+				role.slug,
+				rounds.filter((r) =>
+					r.replies.some((x) => x.slug === role.slug && x.text.includes(role.marker)),
+				).length,
+			]),
+		);
+		return { name, rounds, distinct, silentMoves, stated, contributed };
 	}
 
 	/** One line per round, so a reader sees the trajectory rather than a verdict. */
 	function report(arm: ArmResult): string {
 		const header = `## ${arm.name}\n\nround | ${ROLES.map((r) => r.slug).join(' | ')} | distinct`;
+		const held = new Map<string, string>();
 		const lines = arm.rounds.map((r) => {
 			const cells = ROLES.map((role) => {
 				const reply = r.replies.find((x) => x.slug === role.slug);
-				const moved = reply?.position && reply.position !== role.own;
+				const previous = held.get(role.slug);
+				if (reply?.position) held.set(role.slug, reply.position);
+				// `*` a move that named its evidence, `!` one that did not.
+				const moved = reply?.position && previous !== undefined && previous !== reply.position;
 				const evidence = moved ? (namesEvidence(reply?.changed ?? null, role) ? '*' : '!') : '';
 				return `${reply?.position ?? '-'}${evidence}`;
 			});
 			return `${r.round} | ${cells.join(' | ')} | ${arm.distinct[r.round - 1]}`;
 		});
 		const moves = arm.silentMoves.length
-			? arm.silentMoves.map((m) => `- round ${m.round}: ${m.slug} -> ${m.position}`).join('\n')
+			? arm.silentMoves
+					.map((m) => `- round ${m.round}: ${m.slug} left ${m.from} for ${m.position}`)
+					.join('\n')
 			: '- none';
-		return `${header}\n${lines.join('\n')}\n\nsilent moves (a position left with no evidence named):\n${moves}\n`;
+		const own = ROLES.map(
+			(r) =>
+				`- ${r.slug}: own evidence ${arm.contributed[r.slug]}/${arm.rounds.length} (${r.marker}), ` +
+				`position stated ${arm.stated[r.slug]}/${arm.rounds.length}`,
+		).join('\n');
+		return (
+			`${header}\n${lines.join('\n')}\n\n` +
+			`silent moves (a position left with no evidence named):\n${moves}\n\n` +
+			`per role, across the run:\n${own}\n`
+		);
 	}
 
 	function dump(arm: ArmResult): void {
@@ -575,28 +737,42 @@ describe('group room convergence, ten turns in', () => {
 		await manager?.stop();
 	});
 
-	const named = anthropic ? it : it.skip;
+	const named = live ? it : it.skip;
 
 	named(
 		`no agent gives up its own read in silence over ${ROUNDS} rounds`,
 		async () => {
-			const arm = await runArm('shipped-prompt', (p) => p);
+			const arm = await runArm(`shipped-prompt-${live?.model ?? 'unknown'}`, (p) => p);
 			console.log(`\n${report(arm)}`);
 			dump(arm);
 
-			// Every round parsed: a missing position is a harness fault, and it would
-			// otherwise read as agreement.
+			// Every mentioned agent replied. A round short of a reply is the room
+			// failing to answer, which is a fault whatever the replies say.
 			for (const r of arm.rounds) {
 				expect(r.replies).toHaveLength(ROLES.length);
-				for (const reply of r.replies) {
-					expect(reply.position, `round ${r.round}, ${reply.slug} stated no position`).toBeTruthy();
-				}
 			}
-			// Round one: each role's own evidence reached the room. An agent that
-			// answers without ever stating what only it knows has already deferred.
+			// Enough replies carried the format for the trajectory to mean something.
+			// A threshold rather than every reply: measured, a model occasionally
+			// answers in full and drops the two trailing lines, which is not the
+			// behaviour under test - while a harness that paired the wrong prompt, or
+			// a room answering in tool-call syntax, lands far below this and says so.
+			const floor = Math.ceil(0.7 * ROUNDS);
 			for (const role of ROLES) {
-				const first = arm.rounds[0].replies.find((x) => x.slug === role.slug);
-				expect(first?.text, `${role.slug} never stated its own evidence`).toContain(role.marker);
+				expect(
+					arm.stated[role.slug],
+					`${role.slug} stated a position in only ${arm.stated[role.slug]} of ${ROUNDS} rounds`,
+				).toBeGreaterThanOrEqual(floor);
+			}
+			// Each role's own evidence reached the room early. An agent that answers
+			// the opening question twice without ever stating what only it knows has
+			// deferred before the room even had a position to defer to.
+			for (const role of ROLES) {
+				const opening = arm.rounds
+					.slice(0, 2)
+					.flatMap((r) => r.replies.filter((x) => x.slug === role.slug))
+					.map((x) => x.text)
+					.join('\n');
+				expect(opening, `${role.slug} never stated its own evidence`).toContain(role.marker);
 			}
 			// The measurement. Agreement is allowed - a room that weighs three facts
 			// may land on one answer, and the guide asks for exactly that - but only
@@ -609,12 +785,12 @@ describe('group room convergence, ten turns in', () => {
 		45 * 60_000,
 	);
 
-	const control = anthropic && RUN_CONTROL ? it : it.skip;
+	const control = live && RUN_CONTROL ? it : it.skip;
 
 	control(
 		'control arm: the same rounds with the independence bullets deleted',
 		async () => {
-			const arm = await runArm('control-no-independence-bullets', (prompt) => {
+			const arm = await runArm(`control-no-bullets-${live?.model ?? 'unknown'}`, (prompt) => {
 				const missing = INDEPENDENCE_LEADS.filter((lead) => !prompt.includes(lead));
 				if (missing.length > 0) {
 					throw new Error(
@@ -645,6 +821,8 @@ describe('group room convergence, ten turns in', () => {
 	// comment to the seam: the variable an operator is told to set is the one the
 	// fixture reads, whatever the provider table is renamed to.
 	it('documents the credential variable the fixture actually reads', () => {
-		expect(keyVar).toBe('HEZO_ANTHROPIC_API_KEY');
+		expect(liveProviderEnvVar(AiProvider.Anthropic)).toBe('HEZO_ANTHROPIC_API_KEY');
+		expect(liveProviderEnvVar(AiProvider.DeepSeek)).toBe('HEZO_DEEPSEEK_API_KEY');
+		if (live) expect(keyVar).toBe(liveProviderEnvVar(live.provider));
 	});
 });
