@@ -368,6 +368,11 @@ describe('project chat routes', () => {
 		expect(prompt).toContain('# Team Group Chat');
 		expect(prompt).toContain('## This room');
 		expect(prompt).toContain('You are replying as @dev.');
+		// The room's independence rule: a teammate's reply is evidence for this agent's
+		// own judgement, never a substitute for it, so ten turns in the room still
+		// carries several reads rather than one.
+		expect(prompt).toContain('Answer from your own role, then weigh what your teammates said');
+		expect(prompt).toContain('Say so in the room when your read differs');
 		// The room's shared memory block renders (empty), the member's does not leak.
 		expect(prompt).toContain('## Long-term memory');
 		expect(prompt).not.toContain('dev-dm-memory-marker');

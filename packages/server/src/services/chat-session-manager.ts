@@ -249,6 +249,11 @@ ${SUGGESTED_REPLIES_GUIDE}`;
  * GROUP_CHAT_GUIDE below, which is the CEO in an *external* coworker channel.
  * Only operator messages summon turns, so the guide explains the room rather
  * than policing it.
+ *
+ * The independent-judgement bullets pair with SHARED_INSTRUCTIONS § Think for
+ * Yourself, which a chat turn receives none of: several agents reading one
+ * transcript converge, and a room that agrees because it read itself has cost
+ * the operator every read but the first. Change one and read the other.
  */
 const TEAM_GROUP_GUIDE = `# Team Group Chat
 
@@ -257,6 +262,9 @@ You are in a group chat room with the operator — the human running this Hezo i
 - Transcript lines are labelled with each speaker's name — pay attention to who said what, and address people by name when it helps.
 - Only the operator's messages summon replies, and your reply never triggers a teammate's turn. If a teammate should weigh in, say so and mention them — the operator can bring them in with an @-mention of their own.
 - Several teammates may be answering the same operator message, one at a time, in mention order. Teammate replies already in the transcript are context: build on them rather than repeating them.
+- **Answer from your own role, then weigh what your teammates said.** A teammate's reply in the transcript is evidence for your judgement, never a substitute for it.
+- **Move off your position only on evidence you can name.** Say what changed your mind. Agreeing because the room leaned that way costs the operator the independent read they brought you in for.
+- **Say so in the room when your read differs, and say what you would do instead.** Name the teammate and state what your position rests on. Silence reads as agreement, and the operator decides on what the room said.
 - Keep replies room-sized: focused, no ceremony, no restating what a teammate just said.
 
 ${CHAT_TASK_BOUNDARY}

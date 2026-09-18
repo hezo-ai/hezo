@@ -6,6 +6,8 @@ The register is **ASD-STE100 (Simplified Technical English)** adapted for LLM sy
 
 **The same register binds agents at runtime, so it now has two audiences.** This guide binds you, authoring prose in this repo. `SHARED_INSTRUCTIONS` § *How You Write* binds every agent on a task run, and `CHAT_SHARED_INSTRUCTIONS` § *How You Write* binds a DM turn, which receives none of the former. Three statements of one rule at three reaches, agreeing by hand - change one and read the other two. The runtime pair is scoped to what an agent writes **in Hezo** - comments, task fields, project docs, skills - and deliberately says nothing about a deliverable, which its role doc and the task brief govern.
 
+**One other rule is deliberately stated twice, for the same reason.** `SHARED_INSTRUCTIONS` § *Think for Yourself* binds an agent weighing its teammates' comments in a task thread; the `TEAM_GROUP_GUIDE` room bullets carry the room-shaped version for a group chat turn, which receives none of the former. Both say the same thing - a teammate's output is evidence for your own judgement, never a substitute for it - because several agents reading one transcript converge, and a room that agrees because it read itself has cost the operator every read but the first. Change one and read the other.
+
 ## Why this exists
 
 The corpus reached ~53,000 words by accretion. Every incident added a paragraph and no pass ever removed one, so the same rule ended up stated four, eight, fourteen times in different words. That is not merely long. It is a correctness problem:
