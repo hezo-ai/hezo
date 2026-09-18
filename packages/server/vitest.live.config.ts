@@ -3,22 +3,26 @@ import { configDefaults, defineConfig } from 'vitest/config';
 import base from './vitest.config';
 
 /**
- * The live-backend config: the **only** thing that runs `test/live/**`.
+ * The live config: the **only** thing that runs `test/live/**`.
  *
- * Those specs provision sandboxes on a paid provider, so they are excluded from
- * the default config and reachable solely through `bun run test:daytona`, which
- * points vitest here. Two guards on top of that:
+ * Every spec there spends real money - a sandbox on a paid provider, or tokens
+ * on a live model - so they are excluded from the default config and reachable
+ * solely through `bun run test:live` (`test:daytona` points vitest here for the
+ * one file). Two guards on top of that:
  *
  * - **CI is refused outright.** Not "skipped if no key": a key reaching CI
  *   through a secret or a fork's environment must not start billing, and a check
  *   that depends on the key being absent is one misconfiguration away from
  *   provisioning on every push.
  * - **One file at a time, no parallelism.** A provider account has a total
- *   sandbox quota, and a suite racing itself against that quota fails as a
- *   provider error rather than as the assertion it was making.
+ *   sandbox quota and a model account a rate limit, and a suite racing itself
+ *   against either fails as a provider error rather than as the assertion it
+ *   was making.
  *
  * Timeouts are minutes, not seconds: a first sandbox is built rather than
- * started, and the build is where the time goes.
+ * started, and the build is where the time goes. A spec whose own work outlasts
+ * this default - an eval running many turns - passes its own timeout rather
+ * than raising the one every other file inherits.
  *
  * Spreads the base config rather than `mergeConfig`ing it, deliberately:
  * `mergeConfig` concatenates arrays, so the base's `exclude` - which is what

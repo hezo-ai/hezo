@@ -6,7 +6,7 @@ ships with tests that exercise functionality, prefer integration over heavily-mo
 default to the cheapest tier that can observe the thing, a green run has a quiet log - are
 in `AGENTS.md`; this is the how.
 
-## The six tiers
+## The tiers
 
 | Tier | Where | Cost | What it tests | When to use |
 |---|---|---|---|---|
@@ -16,6 +16,24 @@ in `AGENTS.md`; this is the how.
 | Shared pure-logic | `packages/shared/test/**/*.test.ts` | ~ms | Pure functions in `@hezo/shared` — crypto/auth, mnemonic, mention parsing, budget/pricing math, task-progress, type guards. | The shared package's logic. |
 | Playwright browser | `test/browser/**/*.spec.ts` | ~10-30s | Real Chromium. | The thin slice that genuinely needs a browser (see the decision tree). |
 | Bun-native runtime | `packages/server/test/bun/**/*.bun.test.ts` | ~ms | Code diverging between Node and Bun, on the production Bun runtime. Today: egress proxy TLS MITM + streaming, docker exec/log frame transport + process sweep, node-postgres driver, S3 asset client, updater / shutdown-deadline / unlock-handoff. | Anything relying on runtime-specific `node:` behaviour (TLS, `net`, `crypto`, `child_process`). |
+| Live / paid | `packages/server/test/live/**/*.live.test.ts` | real money | What only the real thing can answer: a container backend against a live account, or a prompt against a live model. Today: the Daytona conformance fixture, and the group-room convergence eval. | A behaviour no fake can observe, and you mean to spend on it. Never for anything a cheaper tier can see. |
+
+### Live / paid tier rules
+
+`vitest.live.config.ts` is the only config that runs `test/live/**`, it refuses to start under
+`CI`, and it runs one file at a time. What binds a spec you add there:
+
+- **Gate on the credential and register a *named* skip without it.** A spec that registers
+  nothing when the key is absent makes "not run" indistinguishable from "passed".
+- **Read the credential's variable and the endpoint off the production tables**, through
+  `liveProviderEnvVar` / `liveModelProviders` and `resolveCatalogEndpoint`, rather than
+  spelling either here.
+- **Say in the doc comment what one run costs**, in calls or sandboxes, and make the
+  expensive dimension an env knob so a smoke run is cheap.
+- **An eval needs a control arm.** A single arm tells you the model did something, never
+  that the prompt caused it.
+- **Dump the evidence.** A paid run you cannot re-read is a paid run you will repeat: write
+  the transcript and the metrics to a dump directory.
 
 ### Server unit/integration rules
 

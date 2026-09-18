@@ -79,6 +79,10 @@ Who replies is always your call:
   grows an **Ask @name** chip - tapping it drafts the mention for you, and nothing is
   sent until you send it.
 
+Every reply comes from that teammate's own role. Agents read what the others said in
+the room and weigh it, and a teammate whose read differs says so rather than falling
+in behind the last answer, so a room of several roles still gives you several reads.
+
 A room keeps its own shared memory of settled decisions, maintained automatically the
 same way the CEO's is. It belongs to the room: nothing from any agent's private DM
 memory appears there, and room chatter is never folded into a DM memory.

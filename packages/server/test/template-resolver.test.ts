@@ -435,6 +435,14 @@ describe('template resolver', () => {
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain("### Reviewing a Teammate's Work");
+		// A teammate's comment is evidence, never a verdict. Several agents reading one
+		// thread converge, and a team that agrees because each read the last one holds
+		// one opinion wearing several titles. TEAM_GROUP_GUIDE carries the same rule for
+		// a group room, which receives none of these shared instructions.
+		expect(result).toContain('### Think for Yourself');
+		expect(result).toContain('never a substitute for it');
+		expect(result).toContain('Move off your position only on evidence you can name');
+		expect(result).toContain('Post your disagreement on the task rather than settling it silently');
 		// Before doing assigned work, an agent must first decide whether parts of it
 		// belong to a direct report and delegate rather than absorbing it all —
 		// acute on "redo / revise / fix" assignments that re-do the team's prior work.

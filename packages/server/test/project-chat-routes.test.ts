@@ -8,17 +8,14 @@ import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
 import { buildApp } from '../src/startup';
-import { authHeader, createStubDocker, seedProjectContainer } from './helpers/app';
+import {
+	authHeader,
+	claudeAssistantLine,
+	claudeResultLine,
+	createStubDocker,
+	seedProjectContainer,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
-
-const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
-const assistantText = (text: string) =>
-	claudeLine({
-		type: 'assistant',
-		message: { role: 'assistant', content: [{ type: 'text', text }] },
-	});
-const resultEvent = () =>
-	claudeLine({ type: 'result', usage: { input_tokens: 10, output_tokens: 5 } });
 
 async function poll(fn: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
 	const start = Date.now();
@@ -101,8 +98,8 @@ describe('project chat routes', () => {
 					opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> } = {},
 				) => {
 					const onChunk = opts.onChunk ?? (() => undefined);
-					await onChunk({ stream: 'stdout', text: assistantText(`${REPLY}\n\n${TRAILER}`) });
-					await onChunk({ stream: 'stdout', text: resultEvent() });
+					await onChunk({ stream: 'stdout', text: claudeAssistantLine(`${REPLY}\n\n${TRAILER}`) });
+					await onChunk({ stream: 'stdout', text: claudeResultLine() });
 					return { stdout: '', stderr: '' };
 				},
 			},
@@ -368,6 +365,11 @@ describe('project chat routes', () => {
 		expect(prompt).toContain('# Team Group Chat');
 		expect(prompt).toContain('## This room');
 		expect(prompt).toContain('You are replying as @dev.');
+		// The room's independence rule: a teammate's reply is evidence for this agent's
+		// own judgement, never a substitute for it, so ten turns in the room still
+		// carries several reads rather than one.
+		expect(prompt).toContain('Answer from your own role, then weigh what your teammates said');
+		expect(prompt).toContain('Say so in the room when your read differs');
 		// The room's shared memory block renders (empty), the member's does not leak.
 		expect(prompt).toContain('## Long-term memory');
 		expect(prompt).not.toContain('dev-dm-memory-marker');
