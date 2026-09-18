@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.66.0 - 2026-09-18
+
+### Features
+
+- **prompts:** tell an agent to hold its own read of what teammates said ([#1126](https://github.com/hezo-ai/hezo/pull/1126))
+- **skills:** ship the humanizer skill and bind it to reader-facing prose ([#1123](https://github.com/hezo-ai/hezo/pull/1123))
+- **skills:** rework skill-creator and let instances pull shipped updates ([#1121](https://github.com/hezo-ai/hezo/pull/1121))
+
+### Bug Fixes
+
+- **runs:** hold a credential whose usage allowance is spent until it resets ([#1124](https://github.com/hezo-ai/hezo/pull/1124))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.65.2...0.66.0
+
 ## 0.65.2 - 2026-09-15
 
 ### Documentation
