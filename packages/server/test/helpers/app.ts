@@ -185,6 +185,26 @@ function firstResolvableFiles(
 // `T extends object` rather than `Record<string, unknown>`: an interface type has
 // no index signature, so the narrower constraint rejected the perfectly ordinary
 // case of passing one stub engine in as the base for another.
+/**
+ * One line of Claude Code's `stream-json` stdout, as the chat and run parsers
+ * read it. Shared because a stubbed exec has to speak this shape to be parsed
+ * at all, and a hand-rolled copy that drifts is a turn that silently produces
+ * no text rather than a failure naming the format.
+ */
+export function claudeAssistantLine(text: string): string {
+	return `${JSON.stringify({
+		type: 'assistant',
+		message: { role: 'assistant', content: [{ type: 'text', text }] },
+	})}\n`;
+}
+
+/** The terminating `result` line, carrying the usage a turn is billed on. */
+export function claudeResultLine(
+	usage: { input_tokens: number; output_tokens: number } = { input_tokens: 10, output_tokens: 5 },
+): string {
+	return `${JSON.stringify({ type: 'result', usage })}\n`;
+}
+
 export function createStubDocker<T extends object>(
 	overrides: T = {} as T,
 	ctx?: { db?: Db; dataDir?: string },
@@ -340,17 +360,11 @@ export async function createTestApp(
 								const onChunk = execOpts.onChunk ?? (() => undefined);
 								await onChunk({
 									stream: 'stdout',
-									text: `${JSON.stringify({
-										type: 'assistant',
-										message: {
-											role: 'assistant',
-											content: [{ type: 'text', text: 'Canned CEO reply (test harness)' }],
-										},
-									})}\n`,
+									text: claudeAssistantLine('Canned CEO reply (test harness)'),
 								});
 								await onChunk({
 									stream: 'stdout',
-									text: `${JSON.stringify({ type: 'result', usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+									text: claudeResultLine({ input_tokens: 1, output_tokens: 1 }),
 								});
 								return { stdout: '', stderr: '' };
 							},

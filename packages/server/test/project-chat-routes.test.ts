@@ -8,17 +8,14 @@ import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
 import { buildApp } from '../src/startup';
-import { authHeader, createStubDocker, seedProjectContainer } from './helpers/app';
+import {
+	authHeader,
+	claudeAssistantLine,
+	claudeResultLine,
+	createStubDocker,
+	seedProjectContainer,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
-
-const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
-const assistantText = (text: string) =>
-	claudeLine({
-		type: 'assistant',
-		message: { role: 'assistant', content: [{ type: 'text', text }] },
-	});
-const resultEvent = () =>
-	claudeLine({ type: 'result', usage: { input_tokens: 10, output_tokens: 5 } });
 
 async function poll(fn: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
 	const start = Date.now();
@@ -101,8 +98,8 @@ describe('project chat routes', () => {
 					opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> } = {},
 				) => {
 					const onChunk = opts.onChunk ?? (() => undefined);
-					await onChunk({ stream: 'stdout', text: assistantText(`${REPLY}\n\n${TRAILER}`) });
-					await onChunk({ stream: 'stdout', text: resultEvent() });
+					await onChunk({ stream: 'stdout', text: claudeAssistantLine(`${REPLY}\n\n${TRAILER}`) });
+					await onChunk({ stream: 'stdout', text: claudeResultLine() });
 					return { stdout: '', stderr: '' };
 				},
 			},
