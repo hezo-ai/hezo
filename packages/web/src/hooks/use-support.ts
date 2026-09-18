@@ -5,7 +5,6 @@ import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { queryKeys } from '../lib/query-keys';
 import { useTheme } from '../lib/theme';
-import { useStatus } from './use-status';
 
 export interface Support {
 	chatwoot: {
@@ -24,15 +23,16 @@ export interface Support {
  *
  * Asked only where an issuer signs people in, since the server answers 404
  * everywhere else and a self-hosted instance would spend a request on every
- * load to hear it. A 404 is the ordinary answer rather than a fault, so it is
- * not retried, neither at once nor when another component mounts the query.
+ * load to hear it. The caller says whether one does, from the status it
+ * already holds: a status query mounted here would fetch the status again. A
+ * 404 is the ordinary answer rather than a fault, so it is not retried, neither
+ * at once nor when another component mounts the query.
  */
-export function useSupport() {
-	const { data: status } = useStatus();
+export function useSupport(hosted: boolean) {
 	return useQuery({
 		queryKey: queryKeys.support(),
 		queryFn: () => api.get<Support>('/api/support'),
-		enabled: !!status?.sso,
+		enabled: hosted,
 		retry: false,
 		retryOnMount: false,
 	});
@@ -43,8 +43,8 @@ export function useSupport() {
  * and theme. The launcher bubble stays hidden: the chat dock owns that corner,
  * and the chat opens from its menu entry instead.
  */
-export function useSupportChat(): void {
-	const chatwoot = useSupport().data?.chatwoot;
+export function useSupportChat(hosted: boolean): void {
+	const chatwoot = useSupport(hosted).data?.chatwoot;
 	const { language } = useI18n();
 	const { resolvedTheme } = useTheme();
 

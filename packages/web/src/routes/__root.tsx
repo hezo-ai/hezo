@@ -271,7 +271,7 @@ function AppShell() {
 		return (
 			<SocketProvider token={api.getToken()}>
 				<SetupGate hosted={!!status.sso}>
-					<ShellLayout />
+					<ShellLayout hosted={!!status.sso} />
 				</SetupGate>
 			</SocketProvider>
 		);
@@ -299,7 +299,7 @@ function AppShell() {
 	return <PasswordLogin />;
 }
 
-function ShellLayout() {
+function ShellLayout({ hosted }: { hosted: boolean }) {
 	// Subscribe to every team room (incl. HQ) by deriving rooms from the project
 	// index — teams are reached through their projects.
 	const { data: projects } = useProjectsIndex();
@@ -310,7 +310,7 @@ function ShellLayout() {
 	useShellWebSockets(teamRooms);
 	// Mounted here because this is the first render with a session, after the
 	// issuer's token has left the address bar.
-	useSupportChat();
+	useSupportChat(hosted);
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 
