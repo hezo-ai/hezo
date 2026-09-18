@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.67.0 - 2026-09-18
+
+### Features
+
+- **support:** owner-only support chat from the policy file ([#1128](https://github.com/hezo-ai/hezo/pull/1128))
+
+### Bug Fixes
+
+- **web:** ask for the status once when the shell loads ([#1130](https://github.com/hezo-ai/hezo/pull/1130))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.66.0...0.67.0
+
 ## 0.66.0 - 2026-09-18
 
 ### Features
