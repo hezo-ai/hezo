@@ -6427,6 +6427,39 @@ and that inbox row is what parks the CEO's heartbeat against an unanswered threa
 (§ *The parked-on-admin suppression*). Created after `setup()` returned, as it used to be,
 the mention would have raced the intake and lost.
 
+### Support chat
+
+A deployment with `policy.support.chatwoot` (§ *Configuration resolution*) gives the
+instance owner a Chatwoot chat identified as their issuer-side account. Inert when the
+block is absent, and core names no deployment: the menu group's heading is `managedBy`.
+
+- **Served to the owner only.** `GET /api/support` (`routes/support.ts`) returns the block in
+  snake_case, `name`/`email` as `null` when absent, only to an Admin superuser session on an
+  instance with an `sso` block. That pair is what "the owner" means: the issuer signs in
+  exactly `ownerSubject` and maps it to the superuser, and `ssoOwnsSignIn` closes the
+  password door, so no other session can be the superuser there. Everyone else, and
+  everyone when the block is unset, gets `404`. The identity lets its holder write to the
+  inbox as the owner, so a board user or an agent run must not learn the channel exists.
+  No MCP twin. Read per request, so a rewritten policy file changes the answer at once.
+- **One loader for every site.** `support-chat.ts` in `@hezo/ui` is the only Chatwoot
+  loader; the hosted plane's dashboard imports it too. `installSupportChat` adds the SDK
+  script under `integrity` and `crossorigin="anonymous"`, writes `window.chatwootSettings`
+  with no `baseDomain` (host-only cookies, so one tenant's conversation cookie never
+  reaches a sibling subdomain), runs the SDK on load and calls `setUser` on
+  `chatwoot:ready`. One install per page: a later call adds nothing, except that after
+  `resetSupportChat` it adopts the identity it is given. `openSupportChat` before ready is
+  held until ready. Every `window.$chatwoot` call is guarded and absorbs throws. The locale
+  arrives as a BCP 47 tag and is converted to the widget's form (`pt-BR` → `pt_BR`,
+  `zh-Hans` → `zh_CN`).
+- **Tenant web.** `useSupport` (`hooks/use-support.ts`) asks only when `/api/status`
+  carries `sso`, and does not retry the `404`. `useSupportChat`, called from `ShellLayout`
+  (the first render with a certain session, after the `#sso=` fragment is gone), installs
+  with `hideBubble: true` because the CEO chat dock owns the bottom-right corner, and feeds
+  the app's language and resolved theme through the setters. The entry is **Contact
+  support** in the Settings menu's deployer group (`PolicyGroup`, beside the plan link),
+  rendered only when the query holds data. `logout()` (`lib/auth.ts`) calls
+  `resetSupportChat` before handing the browser to the issuer.
+
 ## 12. Build, release, migrations & upgrades
 
 ### Configuration resolution
@@ -6470,6 +6503,17 @@ optional. `services/seed.ts` consumes it: the locale at boot when none is config
 brief once at the first unlock (§ *Hosted first run*). An older binary
 handed a file carrying `seed` refuses to start naming the key, which is the strict schema
 doing its job - a plane writes the block only for a release that reads it.
+
+**`policy.support`.** The deployer's support channel, today one key: `chatwoot`, a website
+inbox plus the owner's identity in it (`identifier`, the deployer-computed
+`identifierHash`, and a `name` or `email`). It lives in `policy` rather than beside `sso`
+because the policy file is the slice a deployment rewrites while the instance runs
+(`watchPolicyFile` → `setPolicy`), so a channel added, removed or re-keyed there reaches a
+running instance with no restart. The schema checks each value for the shape the browser
+widget needs - an `https:` origin, an SRI hash list, 64 lowercase hex - and a bad block
+fails the whole policy parse like any other bad key: at boot nothing is pinned, on reload
+the last good policy stays. An older release fails the same way on the unknown key, so a
+plane writes the block only for a release that reads it. What reads it: § *Support chat*.
 
 **Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
 reading were removed with no shim and no warning, so an instance whose supervisor still

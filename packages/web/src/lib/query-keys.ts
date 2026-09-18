@@ -30,6 +30,8 @@ export const queryKeys = {
 	aiProviderModels: (configId: string) => ['ai-providers', configId, 'models'],
 	instanceAuditLog: (filters: KeyParam) => ['instance', 'audit-log', filters],
 	instanceSettings: () => ['instance', 'settings'],
+	/** The deployer's support channel, answered only to the instance owner. */
+	support: () => ['instance', 'support'],
 	/** Storage backend metadata (server-side redacted) for the General settings page. */
 	databaseInfo: () => ['instance', 'database'],
 	/**

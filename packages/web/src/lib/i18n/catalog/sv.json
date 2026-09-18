@@ -732,6 +732,7 @@
 	"settings.instance": "Instans",
 	"settings.logOut": "Logga ut",
 	"settings.managed.by": "Angivet av {managedBy}",
+	"settings.managed.contactSupport": "Kontakta support",
 	"settings.managed.manage": "Hantera",
 	"settings.managed.planAndLimits": "Plan och gränser",
 	"settings.provider.advanced": "Avancerat",

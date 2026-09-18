@@ -732,6 +732,7 @@
 	"settings.instance": "Istanza",
 	"settings.logOut": "Esci",
 	"settings.managed.by": "Impostato da {managedBy}",
+	"settings.managed.contactSupport": "Contatta l'assistenza",
 	"settings.managed.manage": "Gestisci",
 	"settings.managed.planAndLimits": "Piano e limiti",
 	"settings.provider.advanced": "Avanzate",

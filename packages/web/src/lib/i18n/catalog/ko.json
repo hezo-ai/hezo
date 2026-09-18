@@ -732,6 +732,7 @@
 	"settings.instance": "인스턴스",
 	"settings.logOut": "로그아웃",
 	"settings.managed.by": "{managedBy}에서 설정",
+	"settings.managed.contactSupport": "고객 지원 문의",
 	"settings.managed.manage": "관리",
 	"settings.managed.planAndLimits": "요금제 및 한도",
 	"settings.provider.advanced": "고급",

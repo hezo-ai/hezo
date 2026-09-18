@@ -79,6 +79,7 @@ import { buildSandboxBackendInfoRoutes } from './routes/sandbox-backend-info';
 import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
+import { supportRoutes } from './routes/support';
 import { tasksRoutes } from './routes/tasks';
 import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
@@ -859,6 +860,7 @@ export function buildApp(
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);
+	app.route('/api', supportRoutes);
 	// Storage metadata cards (General settings). Tests boot buildApp without
 	// the infos — derive the local defaults so the endpoints stay truthful.
 	app.route(

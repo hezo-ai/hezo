@@ -732,6 +732,7 @@
 	"settings.instance": "インスタンス",
 	"settings.logOut": "ログアウト",
 	"settings.managed.by": "{managedBy} が設定",
+	"settings.managed.contactSupport": "サポートに問い合わせる",
 	"settings.managed.manage": "管理",
 	"settings.managed.planAndLimits": "プランと上限",
 	"settings.provider.advanced": "詳細設定",

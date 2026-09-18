@@ -1,10 +1,12 @@
+import { openSupportChat } from '@hezo/ui';
 import { Link, useLocation } from '@tanstack/react-router';
-import { ChevronDown, ExternalLink, LogOut } from 'lucide-react';
+import { ChevronDown, ExternalLink, LogOut, MessageCircle } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useInstanceSettings } from '../hooks/use-instance-settings';
 import { useMe } from '../hooks/use-me';
 import { useStatus } from '../hooks/use-status';
+import { useSupport } from '../hooks/use-support';
 import { logout } from '../lib/auth';
 import { type MessageKey, useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
@@ -136,38 +138,61 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
  *    beneath it.
  */
 /**
- * The one row that leaves Hezo: where a deployment fixed some settings, this is
- * where an operator goes to change them.
+ * The deployer's rows: where an operator goes to change the settings a
+ * deployment fixed, and how the owner reaches the deployment's support.
  *
- * Rendered only when a policy carries a link - a group labelled after the
- * deployer with nothing under it would be worse than no group. Core ships the
- * row; the label and the destination are config, so nothing here names any
- * particular deployment.
+ * Rendered only when a policy carries a link or a support channel - a group
+ * labelled after the deployer with nothing under it would be worse than no
+ * group. Core ships the rows; the label, the destination and the channel are
+ * config, so nothing here names any particular deployment.
  *
- * Validated as `https:` at parse and again here: React does not reliably block a
- * `javascript:` href, and the string is operator-authored. No query params and
- * no token - the URL lands in access logs and in browser history, and a
- * top-level navigation already carries whatever session the destination uses.
+ * The link is validated as `https:` at parse and again here: React does not
+ * reliably block a `javascript:` href, and the string is operator-authored. No
+ * query params and no token - the URL lands in access logs and in browser
+ * history, and a top-level navigation already carries whatever session the
+ * destination uses.
+ *
+ * The support row renders only for a caller the server hands the channel to,
+ * which is the instance owner. It opens the chat in place, so it takes
+ * `onAction` to close a menu that would otherwise stay open behind it.
  */
-function PolicyGroup() {
+function PolicyGroup({ onAction }: { onAction?: () => void }) {
 	const { t } = useI18n();
 	const { data: settings } = useInstanceSettings();
+	const { data: support } = useSupport();
 	const policy = settings?.policy;
-	if (!policy?.manage_url?.startsWith('https://')) return null;
+	const manageUrl = policy?.manage_url?.startsWith('https://') ? policy.manage_url : null;
+	if (!policy || (!manageUrl && !support)) return null;
 
 	return (
 		<div className={groupClass} data-testid="settings-policy-group">
 			<GroupHeading label={policy.managed_by} />
-			<a
-				href={policy.manage_url}
-				target="_blank"
-				rel="noopener noreferrer"
-				className={`${itemClass(false)} flex items-center gap-2`}
-				data-testid="settings-policy-link"
-			>
-				<span className="flex-1">{t('settings.managed.planAndLimits')}</span>
-				<ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
-			</a>
+			{manageUrl && (
+				<a
+					href={manageUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					className={`${itemClass(false)} flex items-center gap-2`}
+					data-testid="settings-policy-link"
+				>
+					<span className="flex-1">{t('settings.managed.planAndLimits')}</span>
+					<ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+				</a>
+			)}
+			{support && (
+				<button
+					type="button"
+					onClick={() => {
+						onAction?.();
+						openSupportChat();
+					}}
+					className={`${itemClass(false)} flex items-center gap-2`}
+					data-testid="settings-contact-support"
+				>
+					<span className="flex-1">{t('settings.managed.contactSupport')}</span>
+					<MessageCircle className="h-3 w-3 shrink-0" aria-hidden />
+				</button>
+			)}
 		</div>
 	);
 }
@@ -251,7 +276,7 @@ export function SettingsSidebar() {
 									))}
 								</div>
 							))}
-							<PolicyGroup />
+							<PolicyGroup onAction={() => setOpen(false)} />
 							<LogoutButton onClick={handleLogout} className="mt-3" />
 						</nav>
 					</>

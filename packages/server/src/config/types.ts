@@ -299,6 +299,48 @@ export interface PolicyConfig {
 		/** Which container backend runs agent containers. A name, not a number. */
 		backend?: SandboxBackend;
 	};
+	/**
+	 * Where the person signed in asks this deployment for help. Absent means the
+	 * instance offers no support channel, and nothing in the UI mentions one.
+	 */
+	support?: SupportConfig;
+}
+
+/**
+ * A support channel the deployer runs, keyed by the tool that runs it so a
+ * second tool is a sibling key rather than a reshaped block.
+ *
+ * **It identifies one person, not the instance.** The identity belongs to the
+ * issuer-side account that owns this instance, so it is served only to that
+ * account's session (`GET /api/support`) and never to anyone else signed in.
+ */
+export interface SupportConfig {
+	chatwoot: ChatwootSupportConfig;
+}
+
+/** A Chatwoot website inbox, and who the owner is to it. */
+export interface ChatwootSupportConfig {
+	/** The Chatwoot installation's origin. Must be `https:`. */
+	baseUrl: string;
+	/** The website inbox's public token. */
+	websiteToken: string;
+	/**
+	 * The Subresource Integrity value the widget script must match, as one or more
+	 * space-separated `sha256-`, `sha384-` or `sha512-` hashes. Several are allowed
+	 * so a deployer can roll a new script without a moment where either is refused.
+	 */
+	sdkIntegrity: string;
+	/** The owner's contact identifier in that inbox. */
+	identifier: string;
+	/**
+	 * The inbox's HMAC of `identifier`, as 64 lowercase hex characters. Computed by
+	 * the deployer, who holds the inbox secret; the instance never sees the secret.
+	 */
+	identifierHash: string;
+	/** The owner's name, as the support team sees it. */
+	name?: string;
+	/** The owner's email, as the support team sees it. */
+	email?: string;
 }
 
 /**
