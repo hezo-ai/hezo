@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.68.0 - 2026-09-18
+
+### Features
+
+- **support:** put the chat on the screens before a session ([#1132](https://github.com/hezo-ai/hezo/pull/1132))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.67.0...0.68.0
+
 ## 0.67.0 - 2026-09-18
 
 ### Features
