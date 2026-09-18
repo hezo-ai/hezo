@@ -142,6 +142,13 @@ function AppShell() {
 	// A 401 here means "unlocked but no valid session → show the password login".
 	const me = useMe({ enabled: status?.masterKeyState === 'unlocked', retry: false });
 
+	// **Above every gate, so the chat is there on the screens that precede a
+	// session.** Somebody who cannot get past the vault or the sign-in form is
+	// who most needs to ask, and the channel rides on the public status for it.
+	// The owner's identity is fetched only once a session exists and is handed to
+	// the install already running, so a conversation started at a gate carries.
+	useSupportChat(!!status?.sso && !!me.data, status?.support);
+
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
 			navigate({ to: '/', replace: true });
@@ -271,7 +278,7 @@ function AppShell() {
 		return (
 			<SocketProvider token={api.getToken()}>
 				<SetupGate hosted={!!status.sso}>
-					<ShellLayout hosted={!!status.sso} />
+					<ShellLayout />
 				</SetupGate>
 			</SocketProvider>
 		);
@@ -299,7 +306,7 @@ function AppShell() {
 	return <PasswordLogin />;
 }
 
-function ShellLayout({ hosted }: { hosted: boolean }) {
+function ShellLayout() {
 	// Subscribe to every team room (incl. HQ) by deriving rooms from the project
 	// index — teams are reached through their projects.
 	const { data: projects } = useProjectsIndex();
@@ -308,9 +315,6 @@ function ShellLayout({ hosted }: { hosted: boolean }) {
 		[projects],
 	);
 	useShellWebSockets(teamRooms);
-	// Mounted here because this is the first render with a session, after the
-	// issuer's token has left the address bar.
-	useSupportChat(hosted);
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 

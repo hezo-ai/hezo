@@ -155,6 +155,7 @@ export {
 	type SupportChatColorScheme,
 	type SupportChatIdentity,
 	type SupportChatOptions,
+	setSupportChatBubble,
 	setSupportChatLocale,
 	setSupportChatTheme,
 } from './support-chat.js';

@@ -211,3 +211,72 @@ describe('GET /api/support', () => {
 		expect((await getSupport(ownerToken)).status).toBe(404);
 	});
 });
+
+/**
+ * The screens before a session — the vault gate, the language step, the sign-in
+ * form — are where somebody shut out of their own instance waits, so the chat
+ * has to load there. What they may know is where the chat is, never who the
+ * owner is: this instance answers to anyone who has its address.
+ */
+describe('the public status payload', () => {
+	async function status(): Promise<Record<string, unknown>> {
+		const res = await app.request('/api/status');
+		expect(res.status).toBe(200);
+		return (await res.json()) as Record<string, unknown>;
+	}
+
+	it('says where the chat is, to a caller with no session at all', async () => {
+		withSso(SSO);
+		setPolicy(policy(CHATWOOT));
+
+		expect((await status()).support).toEqual({
+			base_url: CHATWOOT.baseUrl,
+			website_token: CHATWOOT.websiteToken,
+			sdk_integrity: CHATWOOT.sdkIntegrity,
+		});
+	});
+
+	it('never says who the owner is, nor signs anything for them', async () => {
+		withSso(SSO);
+		setPolicy(policy(CHATWOOT));
+
+		// Whoever holds these writes to the support team as the owner, and reads
+		// what the team wrote back. They belong to the owner's own session.
+		const body = JSON.stringify(await status());
+		expect(body).not.toContain(CHATWOOT.identifier);
+		expect(body).not.toContain(CHATWOOT.identifierHash);
+		expect(body).not.toContain(CHATWOOT.email);
+	});
+
+	it('leaves the field out where no chat is configured', async () => {
+		withSso(SSO);
+		setPolicy(policy());
+		expect(await status()).not.toHaveProperty('support');
+
+		setPolicy(null);
+		expect(await status()).not.toHaveProperty('support');
+	});
+
+	// The chat is the deployer's, and an instance with no issuer has no deployer
+	// on the other side of it — the same reason the sign-in hint keys on one.
+	it('leaves the field out on an instance with no issuer', async () => {
+		withSso(null);
+		setPolicy(policy(CHATWOOT));
+		expect(await status()).not.toHaveProperty('support');
+	});
+
+	// The block rides a file the deployer rewrites, and the status is what every
+	// pre-auth screen reads, so a chat added there must show without a restart.
+	it('follows a policy file rewritten while the instance runs', async () => {
+		withSso(SSO);
+		const path = join(tmp, 'status-policy.json');
+
+		writeFileSync(path, JSON.stringify(policy()));
+		setPolicy(readPolicyFile(path) ?? null);
+		expect(await status()).not.toHaveProperty('support');
+
+		writeFileSync(path, JSON.stringify(policy(CHATWOOT)));
+		setPolicy(readPolicyFile(path) ?? null);
+		expect(await status()).toHaveProperty('support');
+	});
+});

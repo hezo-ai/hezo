@@ -56,6 +56,15 @@ export interface StatusResponse {
 	 * check rather than a flag it has to trust.
 	 */
 	sso?: { issuer_url: string; logout_url: string };
+	/**
+	 * Where the deployer's support chat is, when there is one. Absent on an
+	 * instance nobody offers support for.
+	 *
+	 * The public three alone. Who the owner is, and the signature that proves
+	 * it, reach the owner's own session through `/api/support`: a screen shown
+	 * before anybody signs in loads the widget with nobody named.
+	 */
+	support?: { base_url: string; website_token: string; sdk_integrity: string };
 }
 
 /** Mirrors `StartupFailureRecord` in `packages/server/src/startup-failure.ts`. */
