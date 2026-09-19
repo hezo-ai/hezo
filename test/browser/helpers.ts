@@ -568,6 +568,44 @@ export async function waitForStableBox(
 	return box;
 }
 
+/**
+ * How much of an element's own box survives every clipping ancestor, as a
+ * fraction of its area: 1 means nothing is cut off, 0 that it is fully hidden.
+ *
+ * Layout boxes alone cannot answer this - `overflow: hidden` changes what is
+ * painted, not what is laid out, so a sheared element still reports its full
+ * `getBoundingClientRect()`. The walk below intersects that rect with each
+ * ancestor that clips, measuring each one's **padding box** (`clientWidth` /
+ * `clientHeight` off the border box), which is the area an overflow container
+ * actually paints. Rounded corners are not modelled, so a circular clip is
+ * under-reported rather than over - the fraction is a floor.
+ *
+ * Browser-only: happy-dom resolves neither computed `overflow` nor layout.
+ */
+export async function visibleFraction(locator: Locator): Promise<number> {
+	return locator.evaluate((el) => {
+		const own = el.getBoundingClientRect();
+		const area = own.width * own.height;
+		if (area === 0) return 0;
+		let left = own.left;
+		let top = own.top;
+		let right = own.right;
+		let bottom = own.bottom;
+		for (let a = el.parentElement; a; a = a.parentElement) {
+			const style = getComputedStyle(a);
+			if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+			const box = a.getBoundingClientRect();
+			const clipLeft = box.left + a.clientLeft;
+			const clipTop = box.top + a.clientTop;
+			left = Math.max(left, clipLeft);
+			top = Math.max(top, clipTop);
+			right = Math.min(right, clipLeft + a.clientWidth);
+			bottom = Math.min(bottom, clipTop + a.clientHeight);
+		}
+		return (Math.max(0, right - left) * Math.max(0, bottom - top)) / area;
+	});
+}
+
 export function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
 }
