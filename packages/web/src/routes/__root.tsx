@@ -379,13 +379,22 @@ function ShellChrome({ drawerOpen, setDrawerOpen, chatOpen, onToggleChat }: Shel
 	useCloseOnRouteChange(searchOpen, () => setSearchOpen(false));
 	const active = useActiveProject();
 	const hq = useHqProject();
+	const matches = useMatches();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
-	// The project whose menu the shell shows. Normally the route's active project;
-	// but before the first project is created there is no project-scoped route, so
-	// fall back to HQ (the one project that always exists) so its menu — the way to
-	// reach HQ's Container/Tasks/etc. — stays viewable and expandable from /home.
+	// The project whose menu the shell shows: the route's active project. A global
+	// route (settings, marketplace, the cross-project inbox) has none and renders
+	// full-width — the rail's pinned HQ entry is how HQ is reached from there.
+	//
+	// The one exception is declared by the route itself (`hqMenuFallback`, today
+	// only /home): before the first project is created there is no project-scoped
+	// route at all, so the landing page falls back to HQ — the one project that
+	// always exists — to keep its Container/Tasks/etc. pages reachable. Keyed on
+	// the route rather than on "no projects yet", or the fallback fires on every
+	// global route and parks a project menu beside a page that has no project.
+	const hqMenuFallback = matches.some((m) => m.staticData?.hqMenuFallback);
 	const menuProjectSlug =
-		active?.slug ?? (!projectsLoading && projects.length === 0 && hq ? hq.slug : null);
+		active?.slug ??
+		(hqMenuFallback && !projectsLoading && projects.length === 0 && hq ? hq.slug : null);
 	const [menuCollapsed, setMenuCollapsed] = useProjectMenuCollapsed();
 	const mainRef = useRef<HTMLElement>(null);
 	// The scroll-to-bottom hook needs the <main> element as state (a ref never

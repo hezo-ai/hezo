@@ -3,7 +3,13 @@
 // gated purely on a route-active project, so it never rendered on /home and the
 // operator could not view or expand the HQ menu at all - including the marker
 // that says HQ's container failed. The shell now falls back to HQ as the menu's
-// project while there are zero visible projects.
+// project on a route that asks for it (`staticData.hqMenuFallback`, today only
+// /home) while there are zero visible projects.
+//
+// The route half of that condition is the second thing here. Keyed on "no
+// projects yet" alone, the fallback fired on every global route: settings, the
+// marketplace and the cross-project inbox each rendered a whole HQ project menu
+// beside a page that has no project. The last three tests pin that.
 //
 // Component tier: the menu's presence is conditional-rendering logic (does the
 // panel mount), not a real-layout/viewport assertion — happy-dom mounts the
@@ -68,4 +74,39 @@ test('/home shows no project menu once a project exists (menu follows the route)
 		expect(queryByTestId('project-menu')).toBeNull();
 		expect(queryByTestId('project-sidebar-dashboard')).toBeNull();
 	});
+});
+
+/**
+ * Asserts that a global route renders no project menu while HQ is the only
+ * project there is - the state the /home fallback fires in.
+ *
+ * The rail's pinned HQ entry is the gate, not a convenience: it renders only once
+ * the project index has resolved and reported HQ. Asserting the menu's absence
+ * without it passes while the index is still in flight, which is to say it passes
+ * against the bug.
+ */
+async function expectNoProjectMenu(initialPath: string) {
+	const { findByTestId, queryByTestId } = await renderApp({ initialPath });
+
+	await findByTestId('project-rail-hq', undefined, { timeout: 15_000 });
+	await waitFor(() => {
+		expect(queryByTestId('project-menu')).toBeNull();
+		expect(queryByTestId('project-sidebar-dashboard')).toBeNull();
+	});
+}
+
+test('settings shows no project menu, even before the first project exists', async () => {
+	// The reported state: only HQ exists, so the /home fallback's condition ("zero
+	// visible projects") holds - but Settings is not project-scoped and must render
+	// full-width. One gate (`menuProjectSlug`) feeds both the desktop panel and the
+	// mobile drawer's copy, so the absent testid covers both.
+	await expectNoProjectMenu('/settings');
+});
+
+test('the marketplace shows no project menu, even before the first project exists', async () => {
+	await expectNoProjectMenu('/marketplace');
+});
+
+test('the global inbox shows no project menu, even before the first project exists', async () => {
+	await expectNoProjectMenu('/home/inbox');
 });
