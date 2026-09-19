@@ -166,14 +166,24 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 								// `Avatar` follows): keeping them would leave a grey ring between the
 								// image and the active ring. Without an icon, HQ keeps its globe glyph
 								// — the same mark the sidebar puts on the global agents HQ hosts.
-								className={`relative w-9 h-9 rounded-full flex items-center justify-center overflow-hidden transition-colors ${
+								//
+								// The circle clip belongs to the icon, never to this link: the count
+								// badge below is a child, and it is positioned to overhang the link's
+								// corner. An `overflow-hidden` here sheared it to a wedge. The avatar
+								// entries above are already built this way — unclipped link, an
+								// `Avatar` that clips itself.
+								className={`relative w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
 									hq.icon_url
 										? ''
 										: 'text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface'
 								} ${hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''}`}
 							>
 								{hq.icon_url ? (
-									<img src={hq.icon_url} alt="" className="w-full h-full object-cover" />
+									<img
+										src={hq.icon_url}
+										alt=""
+										className="w-full h-full rounded-full object-cover"
+									/>
 								) : (
 									<Globe className="w-4 h-4" />
 								)}

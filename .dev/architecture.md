@@ -6033,6 +6033,16 @@ log rooms are keyed on the **container** (`wsRoom.containerLogs(containerId)`), 
 project - a project-keyed room merged several containers' output into one stream and served it
 as whichever container the page happened to be showing.
 
+**The project menu follows the route.** The rail (every project, plus a pinned HQ) is
+always there; the 208px menu beside it belongs to the route's own project, so a global
+route — settings, the marketplace, the cross-project inbox — renders full-width and HQ is
+reached from the rail. One exception, and it is declared by the route rather than inferred:
+`staticData.hqMenuFallback` (today only `/home`) lets the landing page borrow HQ's menu
+while zero projects exist, since until the first one is created there is no project-scoped
+route to reach HQ's own pages from. `staticData` is also how a route opts out of the shell
+entirely (`bare`, the standalone document preview). Keying the fallback on "no projects yet"
+alone is the bug it replaced: it fired on every global route at once.
+
 **Overlay lifetime across navigation.** Overlays rendered under the `<Outlet />` unmount on
 navigation; the ones rendered by the shell chrome in `routes/__root.tsx` — the project rail's
 New project dialog, the mobile nav drawer, the Cmd/Ctrl+K search palette, the CEO chat — sit

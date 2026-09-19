@@ -486,4 +486,8 @@ function HomePage() {
 
 export const Route = createFileRoute('/home/')({
 	component: HomePage,
+	// The landing page is the one route that shows the HQ menu without being
+	// project-scoped: before the first project exists there is nowhere else to
+	// reach HQ's own pages from. See `routes/__root.tsx`.
+	staticData: { hqMenuFallback: true },
 });

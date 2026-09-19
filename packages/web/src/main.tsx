@@ -23,6 +23,10 @@ declare module '@tanstack/react-router' {
 	interface StaticDataRouteOption {
 		// Routes that render full-viewport without the global app shell.
 		bare?: boolean;
+		// Routes that keep the HQ menu when no project has been created yet. The
+		// project menu otherwise follows the route's own project, so a global route
+		// (settings, marketplace) carries none.
+		hqMenuFallback?: boolean;
 	}
 }
 
