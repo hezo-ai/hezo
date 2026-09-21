@@ -9,7 +9,7 @@ section: Hezo Cloud
 Hezo Cloud is priced on how much your agents actually run, not on how many
 people or projects you have. Projects and agents are unlimited on every plan.
 
-**Prices are on [hezo.ai/pricing](https://hezo.ai/pricing).** This page
+**Prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).** This page
 explains what you are buying.
 
 ## The two numbers a plan sets

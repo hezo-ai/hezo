@@ -15,7 +15,7 @@ list of exceptions.
 If you would rather run it yourself, that option is free and fully supported -
 see [Ways to run Hezo](/docs/ways-to-run).
 
-Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing).
+Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
 
 ## What you get
 

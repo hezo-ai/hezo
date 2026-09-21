@@ -29,7 +29,7 @@ trial. Start at [Hezo Cloud](/docs/cloud/overview).
 | Shell access to the box | Yours | We run the machine, so everything the `hezo` command does is done for you or from the web app |
 | Database and file storage | Embedded by default, or bring your own | Managed for you |
 | Who holds the recovery phrase | You | You. We never hold it |
-| What it costs | Nothing. You pay your model providers | A monthly or annual plan, plus your model providers. See [hezo.ai/pricing](https://hezo.ai/pricing) |
+| What it costs | Nothing. You pay your model providers | A monthly or annual plan, plus your model providers. See [hezo.ai/pricing](https://hezo.ai/pricing/) |
 
 ## Which one to pick
 
