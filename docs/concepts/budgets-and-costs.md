@@ -48,8 +48,10 @@ a ceiling. The per-run and per-task limits below still apply to every agent.
 
 When an agent (or the project it belongs to) reaches a budget limit in any window, its
 runs are paused, and a notice in your inbox names the budget, the window and what was
-used. The agent resumes on its own when that window rolls over (the next day, week, or
-month), or as soon as you raise the limit.
+used. The notice is on the task the agent was working, or on the project's planning task
+when the run had no task, and you get one per agent, budget and window. The agent resumes
+on its own when that window rolls over (the next day, week, or month), or as soon as you
+raise the limit.
 
 You can also pause and resume agents yourself at any time, independently of budgets.
 
@@ -64,7 +66,8 @@ agent, whether or not it has a budget:
   stops. A run that has already finished its work is never stopped.
 - **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
-  allows another 100 million. A teammate who is not an admin cannot release it.
+  wakes the task's assignee and allows another 100 million. A teammate who is not an
+  admin cannot release it.
 - **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
   a reply from you, the task waits for you. See
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).

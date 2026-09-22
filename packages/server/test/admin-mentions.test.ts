@@ -390,6 +390,7 @@ describe('postAdminNotice', () => {
 			taskId: taskIdLocal,
 			content: { kind: 'handoff_limit', text: 'No agent will run on this task until you reply.' },
 		});
+		if (!commentId) throw new Error('expected the notice to be posted');
 
 		const rows = await mentionsForComment(commentId);
 		expect(rows.map((r) => r.user_id)).toEqual(

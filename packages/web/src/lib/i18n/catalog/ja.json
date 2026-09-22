@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "変更後",
 	"tasks.descriptionChange.before": "変更前",
 	"tasks.descriptionChange.toggle": "変更内容を表示",
+	"tasks.dispatch.held.overBudget": "実行は開始されませんでした。このエージェントまたはそのプロジェクトは、今のところ予算を使い切っています。",
+	"tasks.dispatch.held.task": "実行は開始されませんでした。管理者が返信するまで、このタスクは保留中です。",
 	"tasks.dispatch.queued.agentBusy": "実行はキューに追加されました。このエージェントが現在の実行を終え次第、開始します。",
 	"tasks.dispatch.queued.fallback": "実行はキューに追加されました。Hezo の準備ができ次第、開始します。",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo は今月のコンテナ時間を使い切りました。割り当てが更新されるか上限が引き上げられると実行を開始します。",

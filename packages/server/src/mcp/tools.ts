@@ -75,7 +75,7 @@ import {
 	checkHumanNameAvailable,
 	isNameOnlyRole,
 } from '../lib/agent-identity';
-import { canCoordinateTeam, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { canCoordinateTeam, isHqInstanceAgent } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
@@ -110,6 +110,7 @@ import {
 } from '../lib/mentions';
 import { assertNoBlockingRun } from '../lib/reassign-guard';
 import {
+	actingPersonFromAuth,
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
 	isUuid,
@@ -238,7 +239,6 @@ import {
 	type ContentWindow,
 	DEFAULT_LIST_LIMIT,
 	decodeCursor,
-	type Excerpt,
 	excerpt,
 	fitSerializedWindow,
 	type KeysetRow,
@@ -4603,6 +4603,7 @@ export function registerTools(
 				resolutionNote: typeof args.resolution_note === 'string' ? args.resolution_note : null,
 				dataDir,
 				actorMemberId,
+				decider: actingPersonFromAuth(auth),
 				wsManager,
 				events,
 			});

@@ -24,6 +24,7 @@ import { normalizeAllowedHosts } from '../lib/credential-placeholder';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import {
+	actingPersonFromAuth,
 	apiKeyIdFromAuth,
 	resolveActor,
 	resolveReactorMemberId,
@@ -678,12 +679,13 @@ commentsRoutes.post(
 
 			const updated = await db.query(
 				`UPDATE task_comments
-				   SET chosen_option = $1::jsonb
+				   SET chosen_option = $1::jsonb, chosen_by_user_id = $3
 				 WHERE id = $2
 				 RETURNING *`,
 				[
 					JSON.stringify({ secret_id: secretId, fulfilled_at: new Date().toISOString() }),
 					commentId,
+					actingPersonFromAuth(c.get('auth')).user_id,
 				],
 			);
 
@@ -732,6 +734,7 @@ commentsRoutes.post(
 						comment_id: commentId,
 						secret_id: secretId,
 						name,
+						decided_by: actingPersonFromAuth(c.get('auth')),
 					});
 				} catch (e) {
 					log.error('Failed to create credential_provided wakeup:', e);
@@ -811,6 +814,7 @@ commentsRoutes.post(
 		const requestedIds = requestedAssets.map((a) => a.id);
 		const requestingAgentId = row.author_member_id;
 		const resolvedAt = new Date().toISOString();
+		const decider = actingPersonFromAuth(c.get('auth'));
 
 		let deletedIds: string[] = [];
 		let deletedPaths: string[] = [];
@@ -843,10 +847,12 @@ commentsRoutes.post(
 				const missing = requestedIds.length - ids.length;
 
 				const updated = await db.query(
-					`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
+					`UPDATE task_comments SET chosen_option = $1::jsonb, chosen_by_user_id = $3
+					  WHERE id = $2 RETURNING *`,
 					[
 						JSON.stringify({ status: 'approved', resolved_at: resolvedAt, deleted_asset_ids: ids }),
 						commentId,
+						decider.user_id,
 					],
 				);
 
@@ -877,8 +883,13 @@ commentsRoutes.post(
 		} else {
 			updatedComment = await withTransaction(db, async () => {
 				const updated = await db.query(
-					`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
-					[JSON.stringify({ status: 'denied', resolved_at: resolvedAt }), commentId],
+					`UPDATE task_comments SET chosen_option = $1::jsonb, chosen_by_user_id = $3
+					  WHERE id = $2 RETURNING *`,
+					[
+						JSON.stringify({ status: 'denied', resolved_at: resolvedAt }),
+						commentId,
+						decider.user_id,
+					],
 				);
 				const refs = requestedAssets.map((a) => `assets/${a.path}`).join(', ');
 				await db.query(
@@ -917,6 +928,7 @@ commentsRoutes.post(
 						comment_id: commentId,
 						status: body.approve ? 'approved' : 'denied',
 						deleted: deletedPaths,
+						decided_by: decider,
 					});
 				} catch (e) {
 					log.error('Failed to create asset_deletion_resolved wakeup:', e);

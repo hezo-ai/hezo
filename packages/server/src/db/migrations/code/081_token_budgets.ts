@@ -38,8 +38,12 @@ import type { CodeMigration } from '../../migrate';
  * 5. **The conversions recorded** in `system_meta` for the first boot to post as
  *    one notice in the admin's inbox, listing each budget old and new.
  * 6. **`held_config_id`** on wakeups, so a provider usage hold releases only the
- *    wakeups held on the credential it lifted, and **`chosen_by_user_id`** on
- *    comments, so an answered card says which person answered it.
+ *    wakeups held on the credential it lifted; **`chosen_by_user_id`** on
+ *    comments and **`resolved_by_*`** on approvals, so an answered card or a
+ *    settled approval says which person, if any, decided it; and
+ *    **`budget_notice_key`** on agents, the budget window an agent's last
+ *    budget-pause notice was about, so a pause that lifts and returns inside one
+ *    window tells the admin once.
  * 7. **Every dollar column and the price list dropped.**
  *
  * A code migration because step 1 resolves model ids the way the price service
@@ -632,7 +636,8 @@ export const migration081TokenBudgets: CodeMigration = {
 
 		// 6. The credential a provider usage hold was placed for. Released by
 		// credential when the hold lifts, so the lookup is indexed; partial, since
-		// only held rows carry one. And the person who answered a card.
+		// only held rows carry one. Then who decided a card or an approval, and the
+		// window an agent's last budget-pause notice covered.
 		await db.exec(`
 			ALTER TABLE agent_wakeup_requests
 				ADD COLUMN held_config_id UUID REFERENCES ai_provider_configs(id) ON DELETE SET NULL;
@@ -640,6 +645,10 @@ export const migration081TokenBudgets: CodeMigration = {
 				WHERE held_config_id IS NOT NULL;
 			ALTER TABLE task_comments
 				ADD COLUMN chosen_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+			ALTER TABLE approvals
+				ADD COLUMN resolved_by_user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+				ADD COLUMN resolved_by_api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL;
+			ALTER TABLE member_agents ADD COLUMN budget_notice_key TEXT;
 		`);
 
 		// 7. Dollars and prices.

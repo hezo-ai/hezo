@@ -9,10 +9,12 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { postAdminNotice } from '../src/services/comment-wakeups';
 import {
 	attemptsExhaustedOnTask,
 	dispatchSuppressionExempt,
 	HANDOFF_ROUND_LIMIT,
+	handoffLimitNotice,
 	handoffRoundsExhausted,
 	loadTaskUsageSoFar,
 	MAX_TASK_ATTEMPT_GIVEUPS,
@@ -146,7 +148,27 @@ async function exemptionFor(
 			byAgent ? cause.rows[0].id : null,
 		],
 	);
-	return dispatchSuppressionExempt(db, agentId, taskId, source, payload, w.rows[0].id);
+	return dispatchSuppressionExempt(db, agentId, teamId, taskId, source, payload, w.rows[0].id);
+}
+
+/** The instance's superuser, who is the admin of every team. */
+async function superuserId(): Promise<string> {
+	const user = await db.query<{ id: string }>(
+		'SELECT id FROM users WHERE is_superuser ORDER BY created_at LIMIT 1',
+	);
+	return user.rows[0].id;
+}
+
+/** An operator control pressed by `userId` (the admin by default), as the routes stamp it. */
+async function pressedBy(userId?: string): Promise<{ triggered_by: Record<string, unknown> }> {
+	return {
+		triggered_by: {
+			member_id: null,
+			name: 'Admin',
+			user_id: userId ?? (await superuserId()),
+			api_key_id: null,
+		},
+	};
 }
 
 /** Whether a wakeup from `source` skips the holds a person's input answers. */
@@ -373,10 +395,17 @@ async function insertAgentComment(opts: {
 	raisesAdminMention?: boolean;
 	contentType?: CommentContentType;
 	chosenOption?: string | null;
+	/** Who answered the card; the admin unless an agent or the system settled it. */
+	chosenByUserId?: string | null;
 }): Promise<string> {
+	const answered = opts.chosenOption !== undefined && opts.chosenOption !== null;
+	const chosenBy =
+		answered && opts.chosenByUserId === undefined ? await superuserId() : opts.chosenByUserId;
 	const c = await db.query<{ id: string }>(
-		`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_at, chosen_option)
-		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb, now() - ($5 || ' minutes')::interval, $6::jsonb)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_at,
+		                            chosen_option, chosen_by_user_id)
+		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb, now() - ($5 || ' minutes')::interval,
+		         $6::jsonb, $7)
 		 RETURNING id`,
 		[
 			taskId,
@@ -384,9 +413,8 @@ async function insertAgentComment(opts: {
 			opts.contentType ?? CommentContentType.Text,
 			JSON.stringify({ text: 'over to you @admin' }),
 			String(opts.minutesAgo),
-			opts.chosenOption === undefined || opts.chosenOption === null
-				? null
-				: JSON.stringify(opts.chosenOption),
+			answered ? JSON.stringify(opts.chosenOption) : null,
+			answered ? chosenBy : null,
 		],
 	);
 	const commentId = c.rows[0].id;
@@ -497,7 +525,11 @@ describe('an approval resolution reaches the agent that filed it', () => {
 		expect(await noWorkCooldownActive(db, agentId, taskId, automation)).toBe(true);
 		expect(await parkedOnAdminAsk(db, agentId, taskId, automation)).toBe(true);
 
-		const resolved = await exemptFor(WakeupSource.ApprovalResolved);
+		const resolved = await exemptFor(
+			WakeupSource.ApprovalResolved,
+			{ decided_by: { user_id: await superuserId(), api_key_id: null } },
+			false,
+		);
 		expect(await noWorkCooldownActive(db, agentId, taskId, resolved)).toBe(false);
 		expect(await parkedOnAdminAsk(db, agentId, taskId, resolved)).toBe(false);
 	});
@@ -583,7 +615,7 @@ describe('attemptsExhaustedOnTask', () => {
 		}
 		const mention = await exemptFor(WakeupSource.Mention);
 		expect(await attemptsExhaustedOnTask(db, agentId, taskId, mention)).toBe(true);
-		const runNow = await exemptFor(WakeupSource.OnDemand, { triggered_by: { name: 'Admin' } });
+		const runNow = await exemptFor(WakeupSource.OnDemand, await pressedBy());
 		expect(await attemptsExhaustedOnTask(db, agentId, taskId, runNow)).toBe(false);
 
 		await insertHumanReply(1);
@@ -645,12 +677,29 @@ describe('retrospectiveHoldActive', () => {
 		// invisible and the task stays parked after the admin has already decided.
 		await db.query(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content,
-			                            chosen_at, created_at)
+			                            chosen_at, chosen_by_user_id, created_at)
 			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb,
-			         now() - interval '5 minutes', now() - interval '20 minutes')`,
-			[taskId, agentId, JSON.stringify({ text: 'Which of these should I drop?' })],
+			         now() - interval '5 minutes', $4, now() - interval '20 minutes')`,
+			[
+				taskId,
+				agentId,
+				JSON.stringify({ text: 'Which of these should I drop?' }),
+				await superuserId(),
+			],
 		);
 		expect(await retrospectiveHoldActive(db, agentId, taskId, false)).toBe(false);
+	});
+
+	it('is not lifted by a card an agent or the system settled', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		await insertAgentComment({
+			minutesAgo: 20,
+			contentType: CommentContentType.Action,
+			chosenOption: 'approved',
+			chosenByUserId: null,
+		});
+		expect(await retrospectiveHoldActive(db, agentId, taskId, false)).toBe(true);
 	});
 
 	it('is not lifted by a card the person has not answered', async () => {
@@ -714,20 +763,102 @@ describe('dispatchSuppressionExempt', () => {
 		}
 	});
 
-	it('always exempts a decision a person made, and an operator override on any source', async () => {
+	it('exempts a decision the admin made, and an operator override on any source', async () => {
 		await clearRuns();
+		const decidedByAdmin = { decided_by: { user_id: await superuserId(), api_key_id: null } };
 		for (const source of [
-			WakeupSource.OnDemand,
 			WakeupSource.CredentialProvided,
 			WakeupSource.AssetDeletionResolved,
 			WakeupSource.ApprovalResolved,
 		]) {
-			expect(await exemptFor(source), source).toBe(true);
+			expect(await exemptionFor(source, decidedByAdmin, false), source).toEqual({
+				byPerson: true,
+				byAdmin: true,
+			});
 		}
 		// "Run now" on a queued mention or heartbeat stamps the actor and keeps the source.
-		const override = { triggered_by: { member_id: null, name: 'Admin' } };
+		const override = await pressedBy();
+		expect(await exemptFor(WakeupSource.OnDemand, override)).toBe(true);
 		expect(await exemptFor(WakeupSource.Heartbeat, override)).toBe(true);
 		expect(await exemptFor(WakeupSource.Mention, override)).toBe(true);
+		// An API key acts for the admin who approved it.
+		const byKey = { triggered_by: { name: 'CI', user_id: null, api_key_id: 'k' } };
+		expect(await exemptionFor(WakeupSource.Heartbeat, byKey)).toEqual({
+			byPerson: true,
+			byAdmin: true,
+		});
+	});
+
+	it('exempts nothing for a decision an agent made or an override no person pressed', async () => {
+		await clearRuns();
+		// An agent resolving an approval, or the system settling a card, decides
+		// nothing a person asked for.
+		const noPerson = { decided_by: { user_id: null, api_key_id: null } };
+		expect(await exemptionFor(WakeupSource.ApprovalResolved, noPerson, false)).toEqual({
+			byPerson: false,
+			byAdmin: false,
+		});
+		expect(await exemptionFor(WakeupSource.ApprovalResolved, {}, false)).toEqual({
+			byPerson: false,
+			byAdmin: false,
+		});
+		// A trigger that is not an object, or names no person, is no override.
+		for (const triggered_by of [null, 'Admin', { name: 'Admin' }]) {
+			expect(await exemptionFor(WakeupSource.Heartbeat, { triggered_by })).toEqual({
+				byPerson: false,
+				byAdmin: false,
+			});
+		}
+		expect(await exemptFor(WakeupSource.OnDemand)).toBe(false);
+	});
+
+	it("judges a decision row an agent's mention was folded into by the thread", async () => {
+		await clearRuns();
+		await insertRun({ reportedNoWork: false, minutesAgo: 30 });
+		const decidedByAdmin = { decided_by: { user_id: await superuserId(), api_key_id: null } };
+		// Attributed to an agent run: the agent's handoff rides the row, so the
+		// decision alone does not exempt it.
+		expect(await exemptionFor(WakeupSource.ApprovalResolved, decidedByAdmin)).toEqual({
+			byPerson: false,
+			byAdmin: false,
+		});
+		await insertHumanReply(5);
+		expect(await exemptionFor(WakeupSource.ApprovalResolved, decidedByAdmin)).toEqual({
+			byPerson: true,
+			byAdmin: true,
+		});
+	});
+
+	it('counts an API key comment as the admin speaking', async () => {
+		await clearRuns();
+		await insertRun({ reportedNoWork: false, minutesAgo: 30 });
+		const key = await db.query<{ id: string }>(
+			`INSERT INTO api_keys (name, prefix, key_hash, status)
+			 VALUES ('CI', 'hezo_' || md5(random()::text), md5(random()::text), 'approved')
+			 RETURNING id`,
+		);
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_api_key_id, content_type, content, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, '{"text":"go on"}'::jsonb,
+			         now() - interval '5 minutes')`,
+			[taskId, key.rows[0].id],
+		);
+		expect(await exemptionFor(WakeupSource.Mention)).toEqual({ byPerson: true, byAdmin: true });
+		await db.query('DELETE FROM task_comments WHERE author_api_key_id = $1', [key.rows[0].id]);
+		await db.query('DELETE FROM api_keys WHERE id = $1', [key.rows[0].id]);
+	});
+
+	it('reads a handed-back run as no run, since it did no work', async () => {
+		await clearRuns();
+		await insertHumanReply(10);
+		await db.query(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, task_id, status, started_at, finished_at, cancel_reason)
+			 VALUES ($1, $2, $3, 'cancelled'::heartbeat_run_status, now() - interval '2 minutes',
+			         now() - interval '1 minute', 'handed_back')`,
+			[teamId, agentId, taskId],
+		);
+		expect(await exemptFor(WakeupSource.Mention)).toBe(true);
 	});
 
 	it('exempts a conversational wake only when a person spoke after the agent last ran', async () => {
@@ -788,14 +919,18 @@ describe('dispatchSuppressionExempt', () => {
 			byPerson: true,
 			byAdmin: false,
 		});
-		const teammateRunNow = { triggered_by: { member_id: teammate.memberId, name: 'Teammate' } };
+		const teammateUser = await db.query<{ user_id: string }>(
+			'SELECT user_id FROM member_users WHERE id = $1',
+			[teammate.memberId],
+		);
+		const teammateRunNow = await pressedBy(teammateUser.rows[0].user_id);
 		expect(await exemptionFor(WakeupSource.Heartbeat, teammateRunNow)).toEqual({
 			byPerson: true,
 			byAdmin: false,
 		});
 
 		// The admin's "Run now" or reply answers both.
-		const adminRunNow = { triggered_by: { member_id: null, name: 'Admin' } };
+		const adminRunNow = await pressedBy();
 		expect(await exemptionFor(WakeupSource.Heartbeat, adminRunNow)).toEqual({
 			byPerson: true,
 			byAdmin: true,
@@ -806,12 +941,8 @@ describe('dispatchSuppressionExempt', () => {
 		await removeTeammate(teammate.memberId);
 	});
 
-	it('exempts a system decision from both kinds of hold, and a system source from neither', async () => {
+	it('exempts a system source from neither kind of hold', async () => {
 		await clearRuns();
-		expect(await exemptionFor(WakeupSource.ApprovalResolved)).toEqual({
-			byPerson: true,
-			byAdmin: true,
-		});
 		expect(await exemptionFor(WakeupSource.Heartbeat)).toEqual({ byPerson: false, byAdmin: false });
 	});
 });
@@ -892,7 +1023,12 @@ describe('handoffRoundsExhausted', () => {
 		expect(held?.rounds).toBe(HANDOFF_ROUND_LIMIT);
 		expect(held?.tokens).toBe(HANDOFF_ROUND_LIMIT * 1_001_000);
 		expect(held?.agentSlugs).toHaveLength(2);
-		expect(held?.notified).toBe(false);
+		// A notice counts for this hold only when posted after the newest round began.
+		const newest = await db.query<{ at: Date }>(
+			'SELECT max(started_at) AS at FROM heartbeat_runs WHERE task_id = $1',
+			[taskId],
+		);
+		expect(held?.noticeSince.getTime()).toBe(new Date(newest.rows[0].at).getTime());
 	});
 
 	it('stays held when a teammate who is not an admin replies', async () => {
@@ -932,7 +1068,7 @@ describe('handoffRoundsExhausted', () => {
 		await insertRound({
 			memberId: agentId,
 			minutesAgo: 60,
-			payload: { triggered_by: { name: 'Admin' } },
+			payload: await pressedBy(),
 		});
 		await alternate(HANDOFF_ROUND_LIMIT - 2, 50);
 		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
@@ -953,15 +1089,27 @@ describe('handoffRoundsExhausted', () => {
 		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
 	});
 
-	it('reports a notice already posted for this hold', async () => {
+	it('tells the admin once per hold, however many dispatches meet it', async () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT);
-		await db.query(
-			`INSERT INTO task_comments (task_id, content_type, content)
-			 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-			[taskId, JSON.stringify({ kind: 'handoff_limit', text: 'held' })],
+		const held = await handoffRoundsExhausted(db, taskId, false);
+		if (!held) throw new Error('expected the task to be held');
+		const post = () =>
+			postAdminNotice({
+				db,
+				teamId,
+				taskId,
+				content: handoffLimitNotice(held),
+				unlessPostedSince: held.noticeSince,
+			});
+		// Concurrent dispatches: the check and the insert are one locked step.
+		const ids = await Promise.all([post(), post(), post()]);
+		expect(ids.filter(Boolean)).toHaveLength(1);
+		const inbox = await db.query<{ n: number }>(
+			'SELECT count(*)::int AS n FROM admin_mentions WHERE comment_id = $1',
+			[ids.find(Boolean)],
 		);
-		expect((await handoffRoundsExhausted(db, taskId, false))?.notified).toBe(true);
+		expect(inbox.rows[0].n).toBeGreaterThan(0);
 	});
 
 	it('never holds an exempt wakeup or a task-less one', async () => {
@@ -1057,7 +1205,7 @@ describe('taskTokenCeilingReached', () => {
 		await insertRunUsing(1, 10);
 		expect(await taskTokenCeilingReached(db, taskId, false)).toEqual({
 			tokens: TASK_TOKEN_CEILING,
-			notified: false,
+			noticeSince: null,
 		});
 	});
 
@@ -1084,7 +1232,7 @@ describe('taskTokenCeilingReached', () => {
 		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
 	});
 
-	it('reports a notice already posted for this hold, and not one from before a person spoke', async () => {
+	it('asks again after the admin replied, and not twice for one hold', async () => {
 		await clearRuns();
 		await db.query(
 			`INSERT INTO task_comments (task_id, content_type, content, created_at)
@@ -1093,14 +1241,19 @@ describe('taskTokenCeilingReached', () => {
 		);
 		await insertHumanReply(35);
 		await insertRunUsing(TASK_TOKEN_CEILING, 30);
-		expect((await taskTokenCeilingReached(db, taskId, false))?.notified).toBe(false);
-
-		await db.query(
-			`INSERT INTO task_comments (task_id, content_type, content)
-			 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-			[taskId, JSON.stringify({ kind: 'task_token_ceiling', text: 'held' })],
-		);
-		expect((await taskTokenCeilingReached(db, taskId, false))?.notified).toBe(true);
+		const held = await taskTokenCeilingReached(db, taskId, false);
+		if (!held) throw new Error('expected the task to be held');
+		const post = () =>
+			postAdminNotice({
+				db,
+				teamId,
+				taskId,
+				content: taskTokenCeilingNotice(held),
+				unlessPostedSince: held.noticeSince,
+			});
+		// The notice from before the reply was about the spend the reply settled.
+		expect(await post()).not.toBeNull();
+		expect(await post()).toBeNull();
 	});
 
 	it('never holds an exempt wakeup or a task-less one', async () => {
@@ -1111,7 +1264,7 @@ describe('taskTokenCeilingReached', () => {
 	});
 
 	it('states the usage and the ceiling in the notice', () => {
-		const notice = taskTokenCeilingNotice({ tokens: 123_456_789, notified: false });
+		const notice = taskTokenCeilingNotice({ tokens: 123_456_789, noticeSince: null });
 		expect(notice.kind).toBe('task_token_ceiling');
 		expect(notice.text).toContain('123,456,789 tokens');
 		expect(notice.text).toContain(TASK_TOKEN_CEILING.toLocaleString('en-US'));

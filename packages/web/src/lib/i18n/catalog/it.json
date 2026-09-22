@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Dopo",
 	"tasks.descriptionChange.before": "Prima",
 	"tasks.descriptionChange.toggle": "Mostra la modifica",
+	"tasks.dispatch.held.overBudget": "L'esecuzione non è partita: questo agente o il suo progetto ha esaurito il budget per ora.",
+	"tasks.dispatch.held.task": "L'esecuzione non è partita: l'attività è in attesa finché l'admin non risponde.",
 	"tasks.dispatch.queued.agentBusy": "L'esecuzione è in coda e partirà quando questo agente finisce quella in corso.",
 	"tasks.dispatch.queued.fallback": "L'esecuzione è in coda e partirà appena Hezo è pronto.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo ha esaurito il monte ore di container di questo mese. L'esecuzione partirà quando il monte ore si azzera o il limite viene alzato.",

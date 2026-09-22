@@ -3,7 +3,12 @@ import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
-import { apiKeyIdFromAuth, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import {
+	actingPersonFromAuth,
+	apiKeyIdFromAuth,
+	resolveActorMemberId,
+	resolveTaskId,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -126,7 +131,7 @@ type NotDispatchedReason = Exclude<
  * Typed against the reason union so a new `DispatchNowResult` reason is a
  * compile error here - which is how `hours_exhausted` came to have no message.
  */
-type DispatchOutcome = { queued: true } | { queued: false; message: string };
+type DispatchOutcome = { queued: true } | { held: true } | { queued: false; message: string };
 
 const DISPATCH_OUTCOMES: Record<NotDispatchedReason, DispatchOutcome> = {
 	instance_at_capacity: { queued: true },
@@ -134,6 +139,8 @@ const DISPATCH_OUTCOMES: Record<NotDispatchedReason, DispatchOutcome> = {
 	task_busy: { queued: true },
 	agent_busy: { queued: true },
 	blocked: { queued: false, message: 'This task is blocked by an open dependency' },
+	held: { held: true },
+	over_budget: { held: true },
 	not_queued: { queued: false, message: 'Wakeup is no longer queued and cannot be run' },
 };
 
@@ -239,7 +246,13 @@ queuedWakeupsRoutes.post(
 			 SET payload = payload || $1::jsonb
 			 WHERE id = $2 AND status = $3::wakeup_status`,
 			[
-				JSON.stringify({ triggered_by: { member_id: actorMemberId, name: actorName } }),
+				JSON.stringify({
+					triggered_by: {
+						member_id: actorMemberId,
+						name: actorName,
+						...actingPersonFromAuth(c.get('auth')),
+					},
+				}),
 				wakeupId,
 				WakeupStatus.Queued,
 			],
@@ -254,6 +267,9 @@ queuedWakeupsRoutes.post(
 				return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
 			}
 			const outcome = DISPATCH_OUTCOMES[result.reason];
+			// A hold the presser cannot lift is an answer, not a failure: the caller
+			// names it in the reader's language from `reason`.
+			if ('held' in outcome) return ok(c, { held: true, reason: result.reason });
 			// The row this handler was given is still queued, so the guard that
 			// declined it is a wait, not a failure - say which wait it is and let
 			// the caller report it as a notice.
@@ -297,7 +313,11 @@ queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry',
 		task_id: taskId,
 		trigger: 'retry_failed_run',
 		source_run_id: runId,
-		triggered_by: { member_id: actorMemberId, name: actorName },
+		triggered_by: {
+			member_id: actorMemberId,
+			name: actorName,
+			...actingPersonFromAuth(c.get('auth')),
+		},
 	});
 
 	const result = await c.get('jobManager').dispatchWakeupNow(wakeupId);
@@ -306,6 +326,7 @@ queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry',
 			return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
 		}
 		const outcome = DISPATCH_OUTCOMES[result.reason];
+		if ('held' in outcome) return ok(c, { held: true, reason: result.reason });
 		if (outcome.queued) {
 			// The wakeup created above survived the guard, so the retry is pending
 			// rather than lost. Announce the row as well as reporting it: nothing

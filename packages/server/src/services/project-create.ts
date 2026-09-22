@@ -28,6 +28,9 @@ import { snapshotTeamAsTemplate } from './team-template-snapshot';
 import { type CreatedTeamRow, createTeam } from './teams';
 import { createWakeup } from './wakeup';
 
+/** The label a project's planning task carries, which is how it is found again. */
+export const PLANNING_TASK_LABEL = 'planning';
+
 const log = logger.child('project-create');
 
 /**
@@ -237,7 +240,7 @@ Container provisioning for this project is in progress. Focus on planning while 
 			taskBody,
 			TaskStatus.Backlog,
 			TaskPriority.High,
-			JSON.stringify(['planning']),
+			JSON.stringify([PLANNING_TASK_LABEL]),
 		],
 	);
 	return { planningTask: taskResult.rows[0] as Record<string, unknown> };

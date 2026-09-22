@@ -18,6 +18,12 @@ export interface ResolveApprovalInput {
 	resolutionNote: string | null;
 	dataDir: string;
 	actorMemberId: string | null;
+	/**
+	 * The person who settled it, recorded on the row: the user, or the API key
+	 * acting for the admin. Both null when an agent or the system settled it,
+	 * which a hold waiting on a person does not count.
+	 */
+	decider: { user_id: string | null; api_key_id: string | null };
 	wsManager?: WebSocketManager;
 	containerDeps?: ContainerDeps;
 	events?: DomainEventBus;
@@ -44,9 +50,17 @@ export async function resolveApproval(
 	}
 
 	const result = await db.query(
-		`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now()
-		 WHERE id = $3 RETURNING *`,
-		[input.status, input.resolutionNote, approvalId],
+		`UPDATE approvals
+		    SET status = $1::approval_status, resolution_note = $2, resolved_at = now(),
+		        resolved_by_user_id = $4, resolved_by_api_key_id = $5
+		  WHERE id = $3 RETURNING *`,
+		[
+			input.status,
+			input.resolutionNote,
+			approvalId,
+			input.decider.user_id,
+			input.decider.api_key_id,
+		],
 	);
 	const row = result.rows[0] as Record<string, unknown>;
 

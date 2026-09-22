@@ -5964,7 +5964,7 @@ export async function recordRunUsageAndEnforce(
 				broadcast.teamId,
 				block,
 				broadcast.wsManager,
-				{ taskId: broadcast.taskId ?? null },
+				{ taskId: broadcast.taskId ?? null, projectId: broadcast.projectId ?? null },
 			);
 		}
 	} catch (e) {

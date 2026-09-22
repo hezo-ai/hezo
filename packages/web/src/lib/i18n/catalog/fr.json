@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Après",
 	"tasks.descriptionChange.before": "Avant",
 	"tasks.descriptionChange.toggle": "Voir la modification",
+	"tasks.dispatch.held.overBudget": "L'exécution n'a pas démarré : cet agent ou son projet a épuisé son budget pour le moment.",
+	"tasks.dispatch.held.task": "L'exécution n'a pas démarré : la tâche est en attente jusqu'à ce que l'admin y réponde.",
 	"tasks.dispatch.queued.agentBusy": "L'exécution est en file d'attente et démarrera dès que cet agent aura terminé la sienne.",
 	"tasks.dispatch.queued.fallback": "L'exécution est en file d'attente et démarrera dès que Hezo sera prêt.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo a épuisé son quota d'heures de conteneur pour ce mois. L'exécution démarrera au renouvellement du quota ou après relèvement de la limite.",

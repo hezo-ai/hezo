@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "After",
 	"tasks.descriptionChange.before": "Before",
 	"tasks.descriptionChange.toggle": "Show what changed",
+	"tasks.dispatch.held.overBudget": "The run did not start: this agent or its project has used up its budget for now.",
+	"tasks.dispatch.held.task": "The run did not start: the task is on hold until the admin replies on it.",
 	"tasks.dispatch.queued.agentBusy": "The run has been queued and will start when this agent finishes its current run.",
 	"tasks.dispatch.queued.fallback": "The run has been queued and will start when Hezo is ready.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo has used its container-hours allowance for this month. The run will start when the allowance resets or the limit is raised.",

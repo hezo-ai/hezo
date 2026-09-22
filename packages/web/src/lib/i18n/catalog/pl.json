@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Po",
 	"tasks.descriptionChange.before": "Przed",
 	"tasks.descriptionChange.toggle": "Pokaż zmianę",
+	"tasks.dispatch.held.overBudget": "Uruchomienie nie ruszyło: ten agent lub jego projekt wyczerpał na razie budżet.",
+	"tasks.dispatch.held.task": "Uruchomienie nie ruszyło: zadanie czeka, aż admin na nie odpowie.",
 	"tasks.dispatch.queued.agentBusy": "Uruchomienie trafiło do kolejki i ruszy, gdy ten agent skończy to, co robi teraz.",
 	"tasks.dispatch.queued.fallback": "Uruchomienie trafiło do kolejki i ruszy, gdy Hezo będzie gotowe.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo zużyło limit godzin kontenerów na ten miesiąc. Uruchomienie ruszy po odnowieniu limitu lub jego podniesieniu.",

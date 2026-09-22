@@ -776,8 +776,12 @@ A run killed mid-flight never
 reaches the completion record, so `reconcileOnStartup` counts its surviving token snapshot on
 reboot (shared `recordRunUsageAndEnforce`). A run drained at shutdown is handed back rather than
 failed, and `finalizeRequeue` records what it used, flagged partial, before the work returns
-to the queue. Every budget pause that has a task posts a
-`budget_paused` notice through `postAdminNotice`, once per transition into the pause.
+to the queue. A budget pause posts a `budget_paused` notice through `postAdminNotice` on the
+run's task, or its project's planning task (`PLANNING_TASK_LABEL`) for a task-less run, on the
+task's own team, once per agent, scope and window: `member_agents.budget_notice_key` records
+the window the last notice covered, claimed by a conditional UPDATE, so the CEO's and the
+Coach's project-scoped pause, which the resume sweep lifts and the next dispatch sets again,
+tells the admin once.
 
 **Migration 081 converts, it never resets.** It prices the instance's last 30 days of runs
 from `model_pricing` with a frozen copy of the service's lookup (exact, normalized, then
@@ -2971,10 +2975,40 @@ conversational, has `created_by_run_id` set and carries no admin `triggered_by`.
 run is skipped; the count restarts at a run anything else started and whenever the admin speaks
 (`adminSpokeAtSql`). At `HANDOFF_ROUND_LIMIT` (8) the task is held for every agent and every
 source the admin has not answered until the admin speaks, since `parkedOnAdminAsk` lifts on the
-other agent's reply and a teammate who is not an admin was not the one asked. The first held dispatch posts a `handoff_limit` system comment through
-`postAdminNotice`, naming the agents, the rounds and their tokens, which raises the admin's
-inbox row; later held dispatches see it and post nothing. Never logged quietly. Marked with
-`last_skipped_reason = handoff_rounds_exhausted`.
+other agent's reply and a teammate who is not an admin was not the one asked. A held dispatch
+posts a `handoff_limit` system comment through `postAdminNotice` with `unlessPostedSince` (the
+newest round's start), naming the agents, the rounds and their tokens: the check and the insert
+run under a transaction lock on the task and kind, and the comment and its inbox rows commit
+together, so concurrent dispatches post one notice and a notice never stands without its inbox
+row. Notices go on the task's team, not the agent's (the CEO and the Coach wake in HQ). Never
+logged quietly. Marked with `last_skipped_reason = handoff_rounds_exhausted`.
+
+**Who the admin is, and who acted.** `isAdminUserSql` (`lib/admin-sql.ts`) is the one
+definition: a superuser, or a member of the team whose role is admin. `fireAdminMention` sends
+to exactly those users, and the holds' speaker predicates (`no-work-backoff.ts`) count a comment
+by one of them or by an API key (admin-equivalent), and a card whose `chosen_by_user_id` is one.
+Every path that settles a card or an approval records who did: the card-answering routes stamp
+`chosen_by_user_id`, `resolveApproval` stamps `approvals.resolved_by_user_id`/`_api_key_id`, and
+the wakeup it raises carries `decided_by`; operator controls stamp `triggered_by.user_id` or
+`api_key_id` (`actingPersonFromAuth`). An agent or the system acting leaves them null, so an
+approval an agent resolved, or a card the system settled, lifts no hold that waits on a person.
+`dispatchSuppressionExempt` judges an override by `triggered_by`, a decision by `decided_by`,
+and a conversational wakeup, or a decision row an agent's mention was folded into, by whether
+a person (the admin, for the hard stops) spoke since the agent's last run that was not handed
+back. The Coach's review of a finished task (`COACH_REVIEW_TRIGGER`) skips every hold.
+
+**The admin's reply resumes a held task.** A reply to a system notice addresses nobody, so
+`fireCommentWakeups` checks a comment by the admin (or an API key) against the task's hold
+notices (`ADMIN_HOLD_NOTICE_KINDS`): when one is newer than the admin's previous reply, the
+assignee is woken with the reply as a conversational wakeup no agent raised, which that reply
+exempts from both hard stops.
+
+**A heartbeat passes over a held task.** Heartbeat selection considers up to
+`HEARTBEAT_TASK_CANDIDATES` (3) of the agent's tasks in priority order and runs the first that
+is not held, posting each held one's notice on the way, so one held task does not stall the
+agent's other work. A wakeup naming a task still sees only that task. `activateAgent` returns
+the hold it met, so `dispatchWakeupNow` reports a Run now that a hold refused as `held` rather
+than as a run.
 
 **The provider-refusal hold.** The last suppression, and the only one applied *before*
 the claim rather than after task resolution. A handback after a provider refusal writes
@@ -2991,7 +3025,10 @@ keeps its queued badge throughout. A handback with no clock of its own writes `n
 NULL`, so capacity work never inherits an earlier usage hold. Unlike the three above it has
 **no exempt sources** - a human's mention or reply cannot change the provider's clock, so
 dispatching for one would be refused again. `dispatchWakeupNow` selects by id and does not
-apply it, which is the operator's override.
+apply it, which is the operator's override; when such a Run now meets a busy task,
+`markWakeupSkipped` keeps the row's `provider_usage_limit` reason so it stays in the paced
+release. The scheduled heartbeat claims the wakeup it created by id, and leaves alone a queued
+row it coalesced onto that is still waiting out its hold.
 
 **The container-start fan-out.** `provisionContainer` ends by nudging the project's agents
 (`wakeAgentsWithPendingWork`) so work queued while the container was still coming up starts
@@ -3552,8 +3589,8 @@ run's task block: the current task's identifier/title/priority/status, plus its 
 tokens and the current agent-to-agent handoff count (`loadTaskUsageSoFar`, the chain query the
 handoff limit reads), so the `SHARED_INSTRUCTIONS` rule to stop a task that has cost more than it
 is worth has a number to read. Once the admin has replied it also states the part **since the
-admin last replied** (`adminSpokeAtSql`: a comment by a team admin or a superuser, or a card
-choice), which is the part the rule weighs, so an admin's "carry on" is not asked again next run. The block also carries the ticket's **lineage** in both
+admin last replied** (`adminSpokeAtSql`: a comment by an admin or an API key, or a card the
+admin answered), which is the part the rule weighs, so an admin's "carry on" is not asked again next run. The block also carries the ticket's **lineage** in both
 directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
 `**Spawned from:**` provenance line when a run on a different ticket created this one), and
 downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child

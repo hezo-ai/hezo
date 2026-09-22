@@ -140,10 +140,21 @@ export async function resolveProposalCommentAndWake(
 		};
 		if (resolutionNote) chosen.resolution_note = resolutionNote;
 
+		// Who decided travels with the answer, so a hold waiting on a person counts
+		// an approval an agent resolved as no answer at all.
+		const decider = {
+			user_id:
+				typeof approval.resolved_by_user_id === 'string' ? approval.resolved_by_user_id : null,
+			api_key_id:
+				typeof approval.resolved_by_api_key_id === 'string'
+					? approval.resolved_by_api_key_id
+					: null,
+		};
 		const updated = await db.query<Record<string, unknown>>(
 			`UPDATE task_comments
 			 SET content = content || $1::jsonb,
-			     chosen_option = $2::jsonb
+			     chosen_option = $2::jsonb,
+			     chosen_by_user_id = $6
 			 WHERE content_type = $3::comment_content_type
 			   AND content->>'kind' = $4
 			   AND content->>'approval_id' = $5
@@ -155,6 +166,7 @@ export async function resolveProposalCommentAndWake(
 				CommentContentType.Action,
 				spec.kind,
 				approvalId,
+				decider.user_id,
 			],
 		);
 		if (projectId) {
@@ -175,7 +187,13 @@ export async function resolveProposalCommentAndWake(
 				targetMemberId,
 				teamId,
 				WakeupSource.ApprovalResolved,
-				{ task_id: taskId, approval_id: approvalId, reason: spec.wakeReason, status },
+				{
+					task_id: taskId,
+					approval_id: approvalId,
+					reason: spec.wakeReason,
+					status,
+					decided_by: decider,
+				},
 				`${spec.wakeKeyPrefix}:${approvalId}`,
 			);
 		}

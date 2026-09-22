@@ -352,8 +352,16 @@ async function handBackNeverStartedWork(
 ): Promise<HandbackOutcome> {
 	const original = run.wakeup_id
 		? (
-				await db.query<{ source: WakeupSource; task_id: string | null }>(
-					`SELECT source, payload->>'task_id' AS task_id
+				await db.query<{
+					source: WakeupSource;
+					task_id: string | null;
+					created_by_run_id: string | null;
+					attribution: Record<string, unknown>;
+				}>(
+					`SELECT source, payload->>'task_id' AS task_id, created_by_run_id,
+					        jsonb_strip_nulls(jsonb_build_object(
+					          'triggered_by', payload->'triggered_by',
+					          'decided_by', payload->'decided_by')) AS attribution
 					 FROM agent_wakeup_requests WHERE id = $1`,
 					[run.wakeup_id],
 				)
@@ -417,13 +425,25 @@ async function handBackNeverStartedWork(
 		'UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1 WHERE id = $1',
 		[run.id],
 	);
-	await createWakeup(db, run.member_id, run.team_id, original?.source ?? WakeupSource.Timer, {
-		reason: 'never_started_retry',
-		task_id: run.task_id,
-		retry_count: run.process_loss_retry_count + 1,
-		max_retries: MAX_RETRIES,
-		previous_failure: { run_id: run.id },
-	});
+	// The retry keeps the original's source and who raised it: an agent's handoff
+	// retried is still an agent's handoff, and a person's Run now or decision is
+	// still theirs.
+	await createWakeup(
+		db,
+		run.member_id,
+		run.team_id,
+		original?.source ?? WakeupSource.Timer,
+		{
+			reason: 'never_started_retry',
+			task_id: run.task_id,
+			retry_count: run.process_loss_retry_count + 1,
+			max_retries: MAX_RETRIES,
+			previous_failure: { run_id: run.id },
+			...(original?.attribution ?? {}),
+		},
+		undefined,
+		original?.created_by_run_id ?? null,
+	);
 	return 'replaced';
 }
 
@@ -651,6 +671,7 @@ export async function clearAgentErrorApprovalsOnRecovery(
 			resolutionNote: `Agent recovered on run ${run.runId}.`,
 			dataDir: deps.dataDir,
 			actorMemberId: null,
+			decider: { user_id: null, api_key_id: null },
 			wsManager: deps.wsManager,
 			events: deps.events,
 		});

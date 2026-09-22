@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
-import { resolveAgentId } from '../lib/resolve';
+import { actingPersonFromAuth, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
@@ -314,6 +314,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		resolutionNote: body.resolution_note ?? null,
 		dataDir: c.get('dataDir'),
 		actorMemberId,
+		decider: actingPersonFromAuth(auth),
 		wsManager: c.get('wsManager'),
 		events: c.get('events'),
 		containerDeps: {

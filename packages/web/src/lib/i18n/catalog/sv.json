@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Efter",
 	"tasks.descriptionChange.before": "Före",
 	"tasks.descriptionChange.toggle": "Visa ändringen",
+	"tasks.dispatch.held.overBudget": "Körningen startade inte: den här agenten eller dess projekt har gjort slut på budgeten för tillfället.",
+	"tasks.dispatch.held.task": "Körningen startade inte: uppgiften väntar tills admin svarar på den.",
 	"tasks.dispatch.queued.agentBusy": "Körningen står i kö och startar när den här agenten är klar med sin pågående.",
 	"tasks.dispatch.queued.fallback": "Körningen står i kö och startar när Hezo är redo.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo har gjort slut på månadens containertimmar. Körningen startar när potten nollställs eller gränsen höjs.",

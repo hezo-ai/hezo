@@ -1,5 +1,6 @@
 import { HeartbeatRunKind, HeartbeatRunStatus, RunCancelReason, WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { isAdminUserSql } from '../lib/admin-sql';
 import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 
@@ -44,54 +45,101 @@ export const CONVERSATIONAL_SOURCES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * SQL for when a person last spoke on a task: a comment they wrote, or a choice
- * they made on a card. The second stamps `chosen_at` on the card's own row,
- * usually an agent's, so reading authorship alone would miss it. NULL when no
- * person has spoken. Read through `idx_comments_task_created`.
+ * SQL predicate: comment `c` was written by a person - a user, or an API key,
+ * which acts for the admin who approved it. An agent's comment has neither.
+ */
+function personCommentSql(c: string): string {
+	return `(${c}.author_user_id IS NOT NULL OR ${c}.author_api_key_id IS NOT NULL)`;
+}
+
+/** SQL predicate: comment `c` was written by the admin of the team at `teamExpr`, or by an API key. */
+export function adminCommentSql(c: string, teamExpr: string): string {
+	return `(${c}.author_api_key_id IS NOT NULL
+	  OR (${c}.author_user_id IS NOT NULL AND ${isAdminUserSql(`${c}.author_user_id`, teamExpr)}))`;
+}
+
+/**
+ * SQL predicate: card `c` was answered by a person. The answer stamps
+ * `chosen_at` on the card's own row, usually an agent's, so authorship alone
+ * would miss it; `chosen_by_user_id` says who answered. A card settled by an
+ * agent or by the system has none.
+ */
+function personChoiceSql(c: string): string {
+	return `${c}.chosen_by_user_id IS NOT NULL`;
+}
+
+/** SQL predicate: card `c` was answered by the admin of the team at `teamExpr`. */
+function adminChoiceSql(c: string, teamExpr: string): string {
+	return `(${c}.chosen_by_user_id IS NOT NULL AND ${isAdminUserSql(`${c}.chosen_by_user_id`, teamExpr)})`;
+}
+
+/**
+ * SQL for when a person last spoke on a task: a comment they wrote, or a card
+ * they answered. NULL when no person has spoken. Read through
+ * `idx_comments_task_created`.
  */
 export function personSpokeAtSql(taskParam: string): string {
 	return `(SELECT max(GREATEST(
-	           CASE WHEN c.author_user_id IS NOT NULL THEN c.created_at END,
-	           c.chosen_at))
-	    FROM task_comments c
-	   WHERE c.task_id = ${taskParam}
-	     AND (c.author_user_id IS NOT NULL OR c.chosen_at IS NOT NULL))`;
+	           CASE WHEN ${personCommentSql('sc')} THEN sc.created_at END,
+	           CASE WHEN ${personChoiceSql('sc')} THEN sc.chosen_at END))
+	    FROM task_comments sc
+	   WHERE sc.task_id = ${taskParam}
+	     AND (${personCommentSql('sc')} OR ${personChoiceSql('sc')}))`;
 }
 
 /**
- * SQL for when the admin last spoke on a task: a comment by one of the task
- * team's admins or a superuser (the people `fireAdminMention` notifies), or
- * a choice made on a card, which only the admin answers. NULL when the admin has
- * not spoken. Read through `idx_comments_task_created`.
+ * SQL for when the admin last spoke on a task, before `beforeExpr` when given:
+ * a comment by the admin of the task's team or by an API key, or a card the
+ * admin answered. NULL when the admin has not spoken. Read through
+ * `idx_comments_task_created`.
  */
-export function adminSpokeAtSql(taskParam: string): string {
+export function adminSpokeAtSql(taskParam: string, beforeExpr?: string): string {
+	const before = (at: string) => (beforeExpr ? ` AND ${at} < ${beforeExpr}` : '');
 	return `(SELECT max(GREATEST(
-	           CASE WHEN u.is_superuser OR EXISTS (
-	                  SELECT 1 FROM member_users mu
-	                    JOIN members m ON m.id = mu.id
-	                   WHERE mu.user_id = c.author_user_id AND mu.role = 'admin'
-	                     AND m.team_id = t.team_id)
-	                THEN c.created_at END,
-	           c.chosen_at))
-	    FROM task_comments c
-	    JOIN tasks t ON t.id = c.task_id
-	    LEFT JOIN users u ON u.id = c.author_user_id
-	   WHERE c.task_id = ${taskParam}
-	     AND (c.author_user_id IS NOT NULL OR c.chosen_at IS NOT NULL))`;
+	           CASE WHEN ${adminCommentSql('sc', 'st.team_id')}${before('sc.created_at')} THEN sc.created_at END,
+	           CASE WHEN ${adminChoiceSql('sc', 'st.team_id')}${before('sc.chosen_at')} THEN sc.chosen_at END))
+	    FROM task_comments sc
+	    JOIN tasks st ON st.id = sc.task_id
+	   WHERE sc.task_id = ${taskParam}
+	     AND (${personCommentSql('sc')} OR ${personChoiceSql('sc')}))`;
 }
 
 /**
- * SQL: whether the wakeup payload at `payloadExpr` carries an admin's "Run now" or
- * Retry. The route stamps the actor's member id, which is null for a superuser or
- * an API key; either of those, or a team admin's membership, counts as the admin.
+ * SQL predicate: whether a person, or the admin when `teamExpr` is given, has
+ * spoken on the task after `sinceExpr`. An `EXISTS`, so it stops at the first
+ * comment or answer it finds rather than reading the whole thread.
  */
-export function adminTriggeredSql(payloadExpr: string): string {
-	return `(${payloadExpr}->'triggered_by' IS NOT NULL AND (
-	           NULLIF(${payloadExpr}->'triggered_by'->>'member_id', '') IS NULL
-	           OR EXISTS (
-	             SELECT 1 FROM member_users mu
-	              WHERE mu.id = (${payloadExpr}->'triggered_by'->>'member_id')::uuid
-	                AND mu.role = 'admin')))`;
+function spokeSinceSql(taskParam: string, sinceExpr: string, teamExpr?: string): string {
+	const comment = teamExpr ? adminCommentSql('sc', teamExpr) : personCommentSql('sc');
+	const choice = teamExpr ? adminChoiceSql('sc', teamExpr) : personChoiceSql('sc');
+	return `EXISTS (
+	   SELECT 1 FROM task_comments sc
+	    WHERE sc.task_id = ${taskParam}
+	      AND ((${comment} AND sc.created_at > ${sinceExpr})
+	        OR (${choice} AND sc.chosen_at > ${sinceExpr})))`;
+}
+
+/**
+ * SQL predicates over the actor object at `actorExpr` - a wakeup's `triggered_by`
+ * (an operator's "Run now" or Retry) or `decided_by` (who settled the approval,
+ * credential or asset deletion it carries). The routes stamp the acting user or
+ * API key; an object with neither was not a person's act.
+ */
+function actorIsPersonSql(actorExpr: string): string {
+	return `(jsonb_typeof(${actorExpr}) = 'object' AND (
+	           NULLIF(${actorExpr}->>'user_id', '') IS NOT NULL
+	           OR NULLIF(${actorExpr}->>'api_key_id', '') IS NOT NULL))`;
+}
+
+function actorIsAdminSql(actorExpr: string, teamExpr: string): string {
+	return `(jsonb_typeof(${actorExpr}) = 'object' AND (
+	           NULLIF(${actorExpr}->>'api_key_id', '') IS NOT NULL
+	           OR ${isAdminUserSql(`NULLIF(${actorExpr}->>'user_id', '')::uuid`, teamExpr)}))`;
+}
+
+/** SQL: whether the wakeup payload at `payloadExpr` carries the admin's "Run now" or Retry. */
+export function adminTriggeredSql(payloadExpr: string, teamExpr: string): string {
+	return actorIsAdminSql(`${payloadExpr}->'triggered_by'`, teamExpr);
 }
 
 /**
@@ -107,68 +155,109 @@ export interface SuppressionExemption {
 	byAdmin: boolean;
 }
 
+/** Every suppression skipped, for work only the system raises and nothing loops on. */
+export const FULL_EXEMPTION: SuppressionExemption = { byPerson: true, byAdmin: true };
+const NO_EXEMPTION: SuppressionExemption = { byPerson: false, byAdmin: false };
+
 /**
- * Does this wakeup skip every dispatch suppression in this module?
+ * The sources that carry a decision on something the agent was parked on: a
+ * credential provided, an asset deletion settled, an approval resolved. The
+ * payload's `decided_by` says who made it.
+ */
+const DECISION_SOURCES: ReadonlySet<string> = new Set([
+	WakeupSource.CredentialProvided,
+	WakeupSource.AssetDeletionResolved,
+	WakeupSource.ApprovalResolved,
+]);
+
+/**
+ * Which dispatch suppressions does this wakeup skip?
  *
- * Yes for an operator override ("Run now", Retry), which stamps `triggered_by`
- * on the payload whatever the wakeup's source, and for a decision a person made
- * (a credential, an asset deletion, an approval).
+ * - **An operator override** ("Run now", Retry) stamps `triggered_by` on the
+ *   payload whatever the wakeup's source: a person's skips the soft holds, and
+ *   the admin's the hard stops too.
+ * - **A decision** (a credential, an asset deletion, an approval) is judged by
+ *   `decided_by` the same way. An agent that resolves an approval decides
+ *   nothing a person asked for, so its decision skips nothing.
+ * - **A conversational wakeup**, or a decision row an agent's mention was folded
+ *   into, is exempt when no agent run raised it, or when a person (the admin, for
+ *   the hard stops) has spoken on the task since this agent last ran on it. A
+ *   queued wakeup absorbs later triggers and keeps the first agent's attribution
+ *   through them, so an attributed row may still carry a person's words; the
+ *   thread says whether it does. An agent's own mention or reply is exempt from
+ *   nothing: before this rule it bypassed every hold, which is how two agents
+ *   handed one task back and forth for a day while a retrospective hold stood on
+ *   it.
  *
- * A conversational wakeup is exempt when no agent run raised it, or when a
- * person has spoken on the task since this agent last ran on it - a comment they
- * wrote or a choice they made on a card. A queued wakeup absorbs later triggers
- * and keeps the first agent's attribution through them, so an attributed row may
- * still carry a person's words; the thread says whether it does. An agent's own
- * mention or reply is exempt from nothing: before this rule it bypassed every
- * hold, which is how two agents handed one task back and forth for a day while a
- * retrospective hold stood on it.
+ * "Last ran" skips a run that was handed back: it did no work, so it says
+ * nothing about whether a person has answered since. A run's team is the task's,
+ * or `teamId` for a task-less one.
  */
 export async function dispatchSuppressionExempt(
 	db: Db,
 	memberId: string,
+	teamId: string,
 	taskId: string | null | undefined,
 	source: string,
 	payload: Record<string, unknown> | undefined,
 	wakeupId: string | null | undefined,
 ): Promise<SuppressionExemption> {
-	const conversational = CONVERSATIONAL_SOURCES.has(source) && !!taskId;
-	if (!payload?.triggered_by) {
-		if (!DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source))
-			return { byPerson: false, byAdmin: false };
-		if (!conversational) return { byPerson: true, byAdmin: true };
-	}
+	const triggered = isPlainObject(payload?.triggered_by);
+	const decision = DECISION_SOURCES.has(source);
+	const conversational = CONVERSATIONAL_SOURCES.has(source);
+	if (!triggered && !decision && !conversational) return NO_EXEMPTION;
+	if (!taskId && !triggered && !decision) return NO_EXEMPTION;
 
 	const r = await db.query<{ by_person: boolean; by_admin: boolean }>(
 		`WITH last_run AS (
 		   SELECT COALESCE(max(started_at), '-infinity') AS at
-		     FROM heartbeat_runs WHERE task_id = $2 AND member_id = $1
+		     FROM heartbeat_runs
+		    WHERE task_id = $2 AND member_id = $1
+		      AND cancel_reason IS DISTINCT FROM $8
 		 ),
-		 wake AS (SELECT $4::jsonb AS payload)
-		 SELECT (
-		   $5::boolean
-		   OR NOT EXISTS (
-		     SELECT 1 FROM agent_wakeup_requests w
-		      WHERE w.id = $3 AND w.created_by_run_id IS NOT NULL
-		   )
-		   OR ${personSpokeAtSql('$2')} > (SELECT at FROM last_run)
-		 ) AS by_person,
-		 (
-		   (SELECT ${adminTriggeredSql('payload')} FROM wake)
-		   OR ($6::boolean AND ${adminSpokeAtSql('$2')} > (SELECT at FROM last_run))
-		 ) AS by_admin`,
+		 wake AS (
+		   SELECT $4::jsonb AS payload,
+		          COALESCE((SELECT team_id FROM tasks WHERE id = $2), $7::uuid) AS team_id,
+		          (SELECT created_by_run_id FROM agent_wakeup_requests WHERE id = $3) AS run_id
+		 ),
+		 mode AS (
+		   SELECT w.*, CASE
+		     WHEN $5::boolean THEN 'triggered'
+		     WHEN $6::boolean AND w.run_id IS NULL THEN 'decision'
+		     ELSE 'conversational' END AS kind
+		   FROM wake w
+		 )
+		 SELECT
+		   CASE m.kind
+		     WHEN 'triggered' THEN ${actorIsPersonSql("m.payload->'triggered_by'")}
+		     WHEN 'decision' THEN ${actorIsPersonSql("m.payload->'decided_by'")}
+		     ELSE (m.run_id IS NULL OR ${spokeSinceSql('$2', '(SELECT at FROM last_run)')})
+		   END AS by_person,
+		   CASE m.kind
+		     WHEN 'triggered' THEN ${actorIsAdminSql("m.payload->'triggered_by'", 'm.team_id')}
+		     WHEN 'decision' THEN ${actorIsAdminSql("m.payload->'decided_by'", 'm.team_id')}
+		     ELSE ${spokeSinceSql('$2', '(SELECT at FROM last_run)', 'm.team_id')}
+		   END AS by_admin
+		 FROM mode m`,
 		[
 			memberId,
 			taskId ?? null,
 			wakeupId ?? null,
 			JSON.stringify(payload ?? {}),
-			!!payload?.triggered_by,
-			conversational,
+			triggered,
+			decision,
+			teamId,
+			RunCancelReason.HandedBack,
 		],
 	);
 	return {
 		byPerson: r.rows[0]?.by_person === true,
 		byAdmin: r.rows[0]?.by_admin === true,
 	};
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -512,8 +601,11 @@ export interface HandoffRounds {
 	tokens: number;
 	/** The agents that ran those rounds. */
 	agentSlugs: string[];
-	/** Whether the task already carries a notice for this hold. */
-	notified: boolean;
+	/**
+	 * A notice for this hold posted after this instant already stands: the newest
+	 * round's start. An earlier notice was about an earlier chain.
+	 */
+	noticeSince: Date;
 }
 
 /**
@@ -529,7 +621,7 @@ const HANDOFF_CHAIN_CTES = `admin AS (SELECT ${adminSpokeAtSql('$1')} AS at),
 		          COALESCE(
 		            w.source::text = ANY($2::text[])
 		            AND w.created_by_run_id IS NOT NULL
-		            AND NOT ${adminTriggeredSql('w.payload')},
+		            AND NOT ${adminTriggeredSql('w.payload', '(SELECT team_id FROM tasks WHERE id = $1)')},
 		            false) AS handoff
 		     FROM heartbeat_runs r
 		     CROSS JOIN admin p
@@ -636,36 +728,26 @@ export async function handoffRoundsExhausted(
 		rounds: string;
 		tokens: string;
 		agent_slugs: string[] | null;
-		notified: boolean;
+		newest: Date | null;
 	}>(
 		`WITH ${HANDOFF_CHAIN_CTES}
 		 SELECT count(DISTINCT ch.wakeup_id) AS rounds,
 		        COALESCE(sum(ch.tokens), 0) AS tokens,
 		        array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL) AS agent_slugs,
-		        ${noticePostedSinceSql('$1', '$5', '(SELECT max(started_at) FROM chain)')} AS notified
+		        max(ch.started_at) AS newest
 		   FROM chain ch
 		   LEFT JOIN member_agents ma ON ma.id = ch.member_id`,
-		[...handoffChainParams(taskId), HANDOFF_LIMIT_COMMENT_KIND],
+		handoffChainParams(taskId),
 	);
 	const row = r.rows[0];
 	const rounds = Number(row?.rounds ?? 0);
-	if (rounds < HANDOFF_ROUND_LIMIT) return null;
+	if (rounds < HANDOFF_ROUND_LIMIT || !row?.newest) return null;
 	return {
 		rounds,
 		tokens: Number(row.tokens),
 		agentSlugs: row.agent_slugs ?? [],
-		notified: row.notified,
+		noticeSince: new Date(row.newest),
 	};
-}
-
-/** SQL: whether a system notice of `kindParam` was posted on the task after `sinceExpr`. */
-function noticePostedSinceSql(taskParam: string, kindParam: string, sinceExpr: string): string {
-	return `EXISTS (
-	   SELECT 1 FROM task_comments n
-	    WHERE n.task_id = ${taskParam}
-	      AND n.content_type = 'system'::comment_content_type
-	      AND n.content->>'kind' = ${kindParam}
-	      AND n.created_at > ${sinceExpr})`;
 }
 
 /** The notice a task held by the handoff limit carries, for `postAdminNotice`. */
@@ -700,8 +782,11 @@ export const TASK_TOKEN_CEILING_COMMENT_KIND = 'task_token_ceiling';
 export interface TaskTokenUsage {
 	/** Tokens its runs used since the admin last spoke on it. */
 	tokens: number;
-	/** Whether the task already carries a notice for this hold. */
-	notified: boolean;
+	/**
+	 * A notice for this hold posted after this instant already stands: the admin's
+	 * last reply, or null when the admin has never replied.
+	 */
+	noticeSince: Date | null;
 }
 
 /**
@@ -724,20 +809,28 @@ export async function taskTokenCeilingReached(
 	exempt: boolean,
 ): Promise<TaskTokenUsage | null> {
 	if (!taskId || exempt) return null;
-	const r = await db.query<{ tokens: number; notified: boolean }>(
+	const r = await db.query<{ tokens: number; admin_at: Date | null }>(
 		`WITH admin AS (SELECT ${adminSpokeAtSql('$1')} AS at)
 		 SELECT COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
-		        ${noticePostedSinceSql('$1', '$2', "COALESCE((SELECT at FROM admin), '-infinity')")} AS notified
-		   FROM heartbeat_runs r CROSS JOIN admin p
-		  WHERE r.task_id = $1
+		        p.at AS admin_at
+		   FROM admin p
+		   LEFT JOIN heartbeat_runs r
+		     ON r.task_id = $1
 		    AND r.started_at IS NOT NULL
-		    AND (p.at IS NULL OR r.started_at > p.at)`,
-		[taskId, TASK_TOKEN_CEILING_COMMENT_KIND],
+		    AND (p.at IS NULL OR r.started_at > p.at)
+		  GROUP BY p.at`,
+		[taskId],
 	);
 	const row = r.rows[0];
 	if (!row || row.tokens < TASK_TOKEN_CEILING) return null;
-	return { tokens: row.tokens, notified: row.notified };
+	return { tokens: row.tokens, noticeSince: row.admin_at ? new Date(row.admin_at) : null };
 }
+
+/** The notices that hold a task until the admin replies, which a reply resumes. */
+export const ADMIN_HOLD_NOTICE_KINDS: readonly string[] = [
+	HANDOFF_LIMIT_COMMENT_KIND,
+	TASK_TOKEN_CEILING_COMMENT_KIND,
+];
 
 /** The notice a task held by its token ceiling carries, for `postAdminNotice`. */
 export function taskTokenCeilingNotice(

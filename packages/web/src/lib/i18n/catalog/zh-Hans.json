@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "变更后",
 	"tasks.descriptionChange.before": "变更前",
 	"tasks.descriptionChange.toggle": "查看更改",
+	"tasks.dispatch.held.overBudget": "运行未开始：该代理或其项目暂时已用完预算。",
+	"tasks.dispatch.held.task": "运行未开始：该任务处于暂停状态，直到管理员回复。",
 	"tasks.dispatch.queued.agentBusy": "运行已排队，将在该代理完成当前运行后开始。",
 	"tasks.dispatch.queued.fallback": "运行已排队，将在 Hezo 就绪后开始。",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo 已用完本月的容器小时数。额度恢复或上调上限后即可开始运行。",

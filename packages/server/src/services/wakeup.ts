@@ -158,13 +158,24 @@ export async function createWakeup(
  * idempotency key both dedups and lets the list/cancel routes target the row
  * precisely.
  */
+/**
+ * Who pressed an operator control, stamped on a wakeup as `triggered_by`: the name
+ * the run card shows, and the user or API key the holds judge the press by.
+ */
+export interface WakeupTriggeredBy {
+	member_id: string | null;
+	name: string;
+	user_id: string | null;
+	api_key_id: string | null;
+}
+
 export async function createProgressUpdateWakeup(
 	db: Db,
 	captainMemberId: string,
 	teamId: string,
 	projectId: string,
 	source: WakeupSource,
-	triggeredBy?: { member_id: string; name: string } | null,
+	triggeredBy?: WakeupTriggeredBy | null,
 ): Promise<string> {
 	const idempotencyKey = `progress_update_now:${captainMemberId}`;
 

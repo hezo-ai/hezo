@@ -299,6 +299,24 @@ function captureWs(): { wsManager: any; rows: Array<Record<string, unknown>> } {
 }
 
 describe('budget pause / resume', () => {
+	/** A task on the project for a pause's notice to land on. */
+	async function createPauseTask(title: string): Promise<string> {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title, description: 'x', assignee_id: agentId }),
+		});
+		return (await res.json()).data.id as string;
+	}
+
+	/** The budget-pause notices on a task. */
+	async function pauseNotices(taskId: string) {
+		return db.query<{ id: string; content: Record<string, unknown> }>(
+			`SELECT id, content FROM task_comments WHERE task_id = $1 AND content->>'kind' = $2`,
+			[taskId, BUDGET_PAUSED_COMMENT_KIND],
+		);
+	}
+
 	beforeEach(async () => {
 		await db.query('DELETE FROM usage_entries WHERE member_id = $1 OR project_id = $2', [
 			agentId,
@@ -306,7 +324,7 @@ describe('budget pause / resume', () => {
 		]);
 		await db.query(
 			`UPDATE member_agents
-			 SET runtime_status = 'idle',
+			 SET runtime_status = 'idle', budget_notice_key = NULL,
 			     daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0
 			 WHERE id = $1`,
 			[agentId],
@@ -339,6 +357,7 @@ describe('budget pause / resume', () => {
 	});
 
 	it('pauses to the scoped budget state and broadcasts', async () => {
+		const taskId = await createPauseTask('Scoped pause');
 		const { wsManager, rows } = captureWs();
 		await pauseAgentForBudget(
 			db,
@@ -346,10 +365,57 @@ describe('budget pause / resume', () => {
 			teamId,
 			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
 			wsManager,
+			{ taskId, projectId },
 		);
 		expect(await getStatus()).toBe(AgentRuntimeStatus.OutOfAgentBudget);
-		expect(rows).toHaveLength(1);
-		expect(rows[0].runtime_status).toBe(AgentRuntimeStatus.OutOfAgentBudget);
+		const statusRows = rows.filter((r) => 'runtime_status' in r);
+		expect(statusRows).toHaveLength(1);
+		expect(statusRows[0].runtime_status).toBe(AgentRuntimeStatus.OutOfAgentBudget);
+	});
+
+	it('tells the admin once per window, though the pause lifts and returns inside it', async () => {
+		const taskId = await createPauseTask('Flapping pause');
+		const block = {
+			scope: 'project' as const,
+			period: BudgetPeriod.Monthly,
+			usedTokens: 600,
+			limitTokens: 500,
+		};
+		// The CEO's pattern: the sweep lifts a project pause it cannot see, and the
+		// next dispatch sets it again.
+		for (let i = 0; i < 3; i++) {
+			await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId, projectId });
+			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
+		}
+		expect((await pauseNotices(taskId)).rows).toHaveLength(1);
+
+		// Another window, or another scope, is news.
+		await pauseAgentForBudget(db, agentId, teamId, { ...block, scope: 'agent' }, undefined, {
+			taskId,
+			projectId,
+		});
+		expect((await pauseNotices(taskId)).rows).toHaveLength(2);
+	});
+
+	it("posts a task-less run's pause on its project's planning task", async () => {
+		const planning = await db.query<{ id: string }>(
+			`SELECT id FROM tasks WHERE project_id = $1 AND labels ? 'planning'
+			  ORDER BY created_at LIMIT 1`,
+			[projectId],
+		);
+		const planningTaskId = planning.rows[0]?.id ?? (await createPauseTask('Draft execution plan'));
+		await db.query(`UPDATE tasks SET labels = '["planning"]'::jsonb WHERE id = $1`, [
+			planningTaskId,
+		]);
+		await pauseAgentForBudget(
+			db,
+			agentId,
+			teamId,
+			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
+			undefined,
+			{ taskId: null, projectId },
+		);
+		expect((await pauseNotices(planningTaskId)).rows).toHaveLength(1);
 	});
 
 	it('posts one @admin notice on the task the run was working, with the budget and usage', async () => {
@@ -369,9 +435,9 @@ describe('budget pause / resume', () => {
 			usedTokens: 1_200_000,
 			limitTokens: 1_000_000,
 		};
-		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId });
+		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId, projectId });
 		// Already paused: the second call changes nothing and posts nothing.
-		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId });
+		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId, projectId });
 
 		const notices = await db.query<{ id: string; content: Record<string, unknown> }>(
 			`SELECT id, content FROM task_comments WHERE task_id = $1 AND content->>'kind' = $2`,
@@ -404,6 +470,7 @@ describe('budget pause / resume', () => {
 			teamId,
 			{ scope: 'agent', period: BudgetPeriod.Monthly, usedTokens: 600, limitTokens: 500 },
 			wsManager,
+			{ taskId: null, projectId },
 		);
 		expect(rows).toHaveLength(0);
 	});
@@ -422,6 +489,7 @@ describe('budget pause / resume', () => {
 			teamId,
 			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
 			undefined,
+			{ taskId: await createPauseTask('Resume'), projectId },
 		);
 		expect(await getStatus()).toBe(AgentRuntimeStatus.OutOfAgentBudget);
 

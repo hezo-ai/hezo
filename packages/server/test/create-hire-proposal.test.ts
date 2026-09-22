@@ -361,5 +361,28 @@ describe('MCP tool create_hire_proposal', () => {
 		// run, and an approved hire then sat with nobody acting on it until the next
 		// scheduled heartbeat. `approval_resolved` is exempt from both suppressions.
 		expect(wakeup.rows[0].source).toBe(WakeupSource.ApprovalResolved);
+
+		// Who decided travels with it: the approval, its card and the wakeup name the
+		// admin, which is what lets the decision lift a hold that waits on a person.
+		const superuser = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser ORDER BY created_at LIMIT 1',
+		);
+		const approval = await db.query<{ resolved_by_user_id: string | null }>(
+			'SELECT resolved_by_user_id FROM approvals WHERE id = $1',
+			[proposal.approval_id as string],
+		);
+		expect(approval.rows[0].resolved_by_user_id).toBe(superuser.rows[0].id);
+		const card = await db.query<{ chosen_by_user_id: string | null }>(
+			`SELECT chosen_by_user_id FROM task_comments
+			  WHERE content->>'approval_id' = $1 AND chosen_option IS NOT NULL`,
+			[proposal.approval_id as string],
+		);
+		expect(card.rows.map((r) => r.chosen_by_user_id)).toEqual([superuser.rows[0].id]);
+		const decided = await db.query<{ decided_by: Record<string, unknown> }>(
+			`SELECT payload->'decided_by' AS decided_by FROM agent_wakeup_requests
+			  WHERE payload->>'approval_id' = $1`,
+			[proposal.approval_id as string],
+		);
+		expect(decided.rows[0].decided_by).toEqual({ user_id: superuser.rows[0].id, api_key_id: null });
 	});
 });

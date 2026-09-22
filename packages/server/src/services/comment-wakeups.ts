@@ -8,6 +8,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { isAdminUserSql } from '../lib/admin-sql';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import {
 	detectUnlinkedTeammateReferences,
@@ -17,6 +18,7 @@ import {
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { insertCommentAttachments } from './asset-ownership';
+import { ADMIN_HOLD_NOTICE_KINDS, adminCommentSql, adminSpokeAtSql } from './no-work-backoff';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -97,6 +99,7 @@ export interface FireCommentWakeupsParams {
 	contentType: string;
 	authorMemberId: string | null;
 	authorUserId?: string | null;
+	authorApiKeyId?: string | null;
 	authorRunId?: string | null;
 	effort?: string | null;
 	parentCommentId?: string | null;
@@ -119,6 +122,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		contentType,
 		authorMemberId,
 		authorUserId,
+		authorApiKeyId,
 		effort,
 		parentCommentId,
 		authorRunId,
@@ -207,7 +211,70 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		if (repliedTo) woke.push(repliedTo);
 	}
 
+	if (!authorRunId && (authorUserId || authorApiKeyId)) {
+		const resumed = await resumeHeldTaskOnAdminReply({
+			db,
+			taskId,
+			teamId,
+			commentId,
+			alreadyWokenAgentIds: mentionedAgentIds,
+			effortPayload,
+		});
+		if (resumed) woke.push(resumed);
+	}
+
 	return Array.from(new Set(woke));
+}
+
+/**
+ * Wake the assignee of a task the admin just answered a hold on.
+ *
+ * The handoff limit and the token ceiling hold a task until the admin replies,
+ * and their notices say so. A reply to a system notice addresses nobody, so the
+ * reply lifted the hold and nothing ran. When the admin comments on a task that
+ * carries a hold notice newer than their previous reply, its assignee is woken
+ * with this comment: a conversational wakeup no agent raised, which the admin's
+ * reply exempts from both holds. An ordinary admin comment wakes nobody new.
+ *
+ * Returns the slug woken, or null.
+ */
+async function resumeHeldTaskOnAdminReply(params: {
+	db: Db;
+	taskId: string;
+	teamId: string;
+	commentId: string;
+	alreadyWokenAgentIds: ReadonlySet<string>;
+	effortPayload: Record<string, unknown>;
+}): Promise<string | null> {
+	const { db, taskId, teamId, commentId, alreadyWokenAgentIds, effortPayload } = params;
+	const held = await db.query<{ assignee_id: string; slug: string }>(
+		`SELECT t.assignee_id, ma.slug
+		   FROM task_comments c
+		   JOIN tasks t ON t.id = c.task_id
+		   JOIN member_agents ma ON ma.id = t.assignee_id
+		  WHERE c.id = $1
+		    AND ${adminCommentSql('c', 't.team_id')}
+		    AND EXISTS (
+		      SELECT 1 FROM task_comments n
+		       WHERE n.task_id = t.id
+		         AND n.content_type = $2::comment_content_type
+		         AND n.content->>'kind' = ANY($3::text[])
+		         AND n.created_at <= c.created_at
+		         AND n.created_at > COALESCE(${adminSpokeAtSql('t.id', 'c.created_at')}, '-infinity'))`,
+		[commentId, CommentContentType.System, [...ADMIN_HOLD_NOTICE_KINDS]],
+	);
+	const target = held.rows[0];
+	if (!target || alreadyWokenAgentIds.has(target.assignee_id)) return null;
+	await createWakeup(
+		db,
+		target.assignee_id,
+		teamId,
+		WakeupSource.Comment,
+		{ source: WakeupSource.Comment, task_id: taskId, comment_id: commentId, ...effortPayload },
+		`resume:${taskId}:${commentId}`,
+		null,
+	);
+	return target.slug;
 }
 
 /**
@@ -590,6 +657,7 @@ export async function postAgentComment(params: PostAgentCommentParams): Promise<
 		contentType: CommentContentType.Text,
 		authorMemberId,
 		authorUserId,
+		authorApiKeyId,
 		authorRunId: createdByRunId,
 		effort,
 		parentCommentId,
@@ -689,51 +757,42 @@ export interface FireAdminMentionParams {
  * literal `@admin` text in a comment body (e.g. asset-deletion requests).
  */
 export async function fireAdminMention(params: FireAdminMentionParams): Promise<void> {
-	const { db, teamId, taskId, commentId, authorUserId, wsManager } = params;
+	const { teamId, wsManager } = params;
+	broadcastAdminMentions(wsManager, teamId, await insertAdminMentions(params));
+}
 
-	// Recipients: the team's admin member_users ∪ all superusers. Teams created
-	// by the CEO's create_project have no human members at all, so without the
-	// superuser leg an @admin ask on them would fan out to nobody and vanish
-	// silently. UNION dedupes a superuser who is also a team admin.
-	const adminUsers = await db.query<{ user_id: string }>(
-		`SELECT mu.user_id FROM member_users mu
-		 JOIN members m ON m.id = mu.id
-		 WHERE m.team_id = $1 AND mu.role = 'admin'
-		 UNION
-		 SELECT id AS user_id FROM users WHERE is_superuser = true`,
-		[teamId],
-	);
-	if (adminUsers.rows.length === 0) return;
+type AdminMentionRow = Record<string, unknown>;
 
-	const recipients = adminUsers.rows.map((r) => r.user_id).filter((uid) => uid !== authorUserId);
-	if (recipients.length === 0) return;
-
-	const inserted = await db.query<{
-		id: string;
-		team_id: string;
-		task_id: string;
-		comment_id: string;
-		user_id: string;
-		created_at: string;
-		read_at: string | null;
-	}>(
+/**
+ * Put a comment in the inbox of every admin of the team - its admins and every
+ * superuser, the one definition `isAdminUserSql` gives. Teams created by the
+ * CEO's create_project have no human members at all, so without the superuser
+ * leg an @admin ask on them would fan out to nobody and vanish silently. The
+ * author is left out: nobody is asked for what they asked for themselves.
+ */
+async function insertAdminMentions(params: FireAdminMentionParams): Promise<AdminMentionRow[]> {
+	const { db, teamId, taskId, commentId, authorUserId } = params;
+	const inserted = await db.query<AdminMentionRow>(
 		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
-		 SELECT $1::uuid, $2::uuid, $3::uuid, uid
-		 FROM UNNEST($4::uuid[]) AS uid
+		 SELECT $1::uuid, $2::uuid, $3::uuid, u.id
+		   FROM users u
+		  WHERE ${isAdminUserSql('u.id', '$1::uuid')}
+		    AND u.id IS DISTINCT FROM $4::uuid
 		 ON CONFLICT (comment_id, user_id) DO NOTHING
 		 RETURNING *`,
-		[teamId, taskId, commentId, recipients],
+		[teamId, taskId, commentId, authorUserId],
 	);
+	return inserted.rows;
+}
 
+function broadcastAdminMentions(
+	wsManager: WebSocketManager | undefined,
+	teamId: string,
+	rows: AdminMentionRow[],
+): void {
 	if (!wsManager) return;
-	for (const row of inserted.rows) {
-		broadcastRowChange(
-			wsManager,
-			wsRoom.team(teamId),
-			'admin_mentions',
-			'INSERT',
-			row as unknown as Record<string, unknown>,
-		);
+	for (const row of rows) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'admin_mentions', 'INSERT', row);
 	}
 }
 
@@ -747,6 +806,11 @@ export interface PostAdminNoticeParams {
 	 */
 	content: { kind: string; text: string } & Record<string, unknown>;
 	wsManager?: WebSocketManager;
+	/**
+	 * Post only when no notice of this kind stands on the task after this instant
+	 * (null: none ever). Omitted, the notice is always posted.
+	 */
+	unlessPostedSince?: Date | null;
 }
 
 /**
@@ -754,20 +818,55 @@ export interface PostAdminNoticeParams {
  *
  * A notice that only says a person should decide reaches nobody. The inbox row
  * is what raises the badge, and it is what `outstandingAdminAskExistsSql` reads
- * as a task waiting on a person. Returns the comment id.
+ * as a task waiting on a person, so the comment and its inbox rows are written
+ * in one transaction: a notice without its row would read as notified and never
+ * reach the inbox.
+ *
+ * With `unlessPostedSince`, the check and the insert run under a transaction
+ * lock on the task and kind. Two dispatches can hold one task at once, and a
+ * check made outside the insert let both post. The lock covers two statements on
+ * one row family, so it holds nothing else back.
+ *
+ * Returns the comment id, or null when an earlier notice already stands.
  */
-export async function postAdminNotice(params: PostAdminNoticeParams): Promise<string> {
-	const { db, teamId, taskId, content, wsManager } = params;
-	const r = await db.query<{ id: string } & Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-		 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
-		 RETURNING ${TASK_COMMENT_ROW_COLUMNS}, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[taskId, CommentContentType.System, JSON.stringify(content)],
-	);
-	const row = r.rows[0];
+export async function postAdminNotice(params: PostAdminNoticeParams): Promise<string | null> {
+	const { db, teamId, taskId, content, wsManager, unlessPostedSince } = params;
+	const posted = await withTransaction(db, async () => {
+		if (unlessPostedSince !== undefined) {
+			await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+				`admin-notice:${taskId}:${content.kind}`,
+			]);
+			const standing = await db.query(
+				`SELECT 1 FROM task_comments
+				  WHERE task_id = $1
+				    AND content_type = $2::comment_content_type
+				    AND content->>'kind' = $3
+				    AND created_at > COALESCE($4::timestamptz, '-infinity')
+				  LIMIT 1`,
+				[taskId, CommentContentType.System, content.kind, unlessPostedSince],
+			);
+			if (standing.rows.length > 0) return null;
+		}
+		const r = await db.query<{ id: string } & Record<string, unknown>>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
+			 RETURNING ${TASK_COMMENT_ROW_COLUMNS}, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+			[taskId, CommentContentType.System, JSON.stringify(content)],
+		);
+		const row = r.rows[0];
+		const mentions = await insertAdminMentions({
+			db,
+			teamId,
+			taskId,
+			commentId: row.id,
+			authorUserId: null,
+		});
+		return { row, mentions };
+	});
+	if (!posted) return null;
 	if (wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', posted.row);
 	}
-	await fireAdminMention({ db, teamId, taskId, commentId: row.id, authorUserId: null, wsManager });
-	return row.id;
+	broadcastAdminMentions(wsManager, teamId, posted.mentions);
+	return posted.row.id;
 }

@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Depois",
 	"tasks.descriptionChange.before": "Antes",
 	"tasks.descriptionChange.toggle": "Ver a alteração",
+	"tasks.dispatch.held.overBudget": "A execução não começou: este agente ou o projeto dele esgotou o orçamento por enquanto.",
+	"tasks.dispatch.held.task": "A execução não começou: a tarefa está em espera até o admin responder nela.",
 	"tasks.dispatch.queued.agentBusy": "A execução entrou na fila e começará quando este agente terminar a que está rodando.",
 	"tasks.dispatch.queued.fallback": "A execução entrou na fila e começará quando o Hezo estiver pronto.",
 	"tasks.dispatch.queued.hoursExhausted": "O Hezo esgotou a cota de horas de contêiner deste mês. A execução começará quando a cota for renovada ou o limite aumentar.",

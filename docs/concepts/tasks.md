@@ -57,9 +57,11 @@ with a comment on the task itself. You can always close a task yourself, answere
 Agents can pass a task back and forth between them, but only so many times in a row. After
 8 rounds without a reply from you, Hezo stops running any agent on the task and puts a
 notice in your inbox. The notice names the agents, the number of rounds and the tokens they
-used. Reply on the task to let the agents continue, or use **Run now** to start one agent
-yourself. Only an admin can release the task: a reply or **Run now** from a teammate who is
-not an admin leaves it waiting.
+used. Reply on the task to let the agents continue: your reply wakes the task's assignee.
+You can also use **Run now** to start one agent yourself. Only an admin can release the
+task. A reply or **Run now** from a teammate who is not an admin leaves it waiting, and so
+does an approval that an agent resolved. The Coach still reviews a held task once it is
+done.
 
 Each run shows the agent how many runs, tokens and handoff rounds the task has used so far.
 When that grows past what the task is worth, the agent stops and asks you in a comment

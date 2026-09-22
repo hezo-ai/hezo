@@ -2,7 +2,7 @@ import { WakeupStatus, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { buildMeta, parsePagination } from '../lib/pagination';
-import { resolveActorMemberId } from '../lib/resolve';
+import { actingPersonFromAuth, resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import {
@@ -132,7 +132,11 @@ goalsRoutes.post('/projects/:projectId/progress/run-now', async (c) => {
 
 	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
 	const triggeredBy = actorMemberId
-		? { member_id: actorMemberId, name: await resolveActorName(db, actorMemberId) }
+		? {
+				member_id: actorMemberId,
+				name: await resolveActorName(db, actorMemberId),
+				...actingPersonFromAuth(c.get('auth')),
+			}
 		: null;
 
 	const result = await c.get('jobManager').dispatchProgressUpdateNow(projectId, triggeredBy);

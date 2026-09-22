@@ -73,7 +73,6 @@ import {
 	provisionContainer,
 	reconcilePoolMembers,
 	type StaleIdleMember,
-	stopContainerGracefully,
 	syncAllContainerStatuses,
 	teardownContainer,
 	verifyContainerWorkspace,
@@ -90,6 +89,7 @@ import { refreshModelPins } from './model-pins';
 import {
 	attemptsExhaustedOnTask,
 	dispatchSuppressionExempt,
+	FULL_EXEMPTION,
 	handoffLimitNotice,
 	handoffRoundsExhausted,
 	MAX_TASK_ATTEMPT_GIVEUPS,
@@ -138,6 +138,7 @@ import {
 	type SettlementIntent,
 	settleWakeupForRun,
 	WAKEUP_HOLD_ELAPSED_SQL,
+	type WakeupTriggeredBy,
 } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -257,11 +258,27 @@ export interface LiveRun {
 	containerId: string | null;
 }
 
+/**
+ * What an activation decided when it did not launch a run: the hold that kept
+ * the agent off the task. Nothing when it launched, or had nothing to do.
+ */
+type ActivationOutcome = { held: WakeupSkipReason } | undefined;
+
+/**
+ * How many of an agent's own tasks a heartbeat considers, in priority order,
+ * before concluding every one is held. Each costs the suppression checks, so
+ * the bound keeps a heartbeat's cost fixed; three lets an agent past a held
+ * task or two onto work it can do.
+ */
+const HEARTBEAT_TASK_CANDIDATES = 3;
+
 export type DispatchNowResult =
 	| { dispatched: true }
 	| {
 			dispatched: false;
 			reason:
+				| 'held'
+				| 'over_budget'
 				| 'task_busy'
 				| 'instance_at_capacity'
 				| 'hours_exhausted'
@@ -604,7 +621,6 @@ export class JobManager {
 					wakeup.id,
 					WakeupSkipReason.TaskBusy,
 					wakeupTaskId,
-					wakeup.team_id,
 					wakeupTaskId,
 				);
 				return { dispatched: false, reason: 'task_busy' };
@@ -618,7 +634,6 @@ export class JobManager {
 						? WakeupSkipReason.HoursExhausted
 						: WakeupSkipReason.InstanceAtCapacity,
 					wakeupTaskId,
-					wakeup.team_id,
 					null,
 				);
 				return {
@@ -627,13 +642,7 @@ export class JobManager {
 				};
 			}
 			if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
-				await this.markWakeupSkipped(
-					wakeup.id,
-					WakeupSkipReason.AgentRunning,
-					wakeupTaskId,
-					wakeup.team_id,
-					null,
-				);
+				await this.markWakeupSkipped(wakeup.id, WakeupSkipReason.AgentRunning, wakeupTaskId, null);
 				return { dispatched: false, reason: 'agent_busy' };
 			}
 			if (await shouldDeferWakeupForBlockers(db, wakeup.source, wakeupTaskId)) {
@@ -680,8 +689,9 @@ export class JobManager {
 			}
 		}
 
+		let outcome: ActivationOutcome;
 		try {
-			await this.activateAgent(
+			outcome = await this.activateAgent(
 				wakeup.member_id,
 				wakeup.team_id,
 				wakeup.id,
@@ -699,6 +709,12 @@ export class JobManager {
 			throw error;
 		}
 
+		// A hold the person pressing Run now cannot lift (a hard stop that only the
+		// admin releases, or a budget) is reported, not presented as a run.
+		if (outcome?.held === WakeupSkipReason.OverBudget) {
+			return { dispatched: false, reason: 'over_budget' };
+		}
+		if (outcome?.held) return { dispatched: false, reason: 'held' };
 		return { dispatched: true };
 	}
 
@@ -1840,30 +1856,38 @@ export class JobManager {
 		else this.activeProjectRuns.delete(projectId);
 	}
 
+	/**
+	 * Record why a wakeup was not dispatched, and refresh its task for the team
+	 * that owns it (not the agent's: the CEO and the Coach wake in HQ).
+	 *
+	 * A wakeup still held for a provider usage limit keeps that reason: the paced
+	 * release finds its rows by it, and a "Run now" that met a busy task must not
+	 * take the row out of the release it is waiting on.
+	 */
 	private async markWakeupSkipped(
 		wakeupId: string,
 		reason: WakeupSkipReason,
 		taskId: string | null,
-		teamId: string,
 		blockerTaskId: string | null,
 	): Promise<void> {
 		const { db, wsManager } = this.deps;
 		await db.query(
 			`UPDATE agent_wakeup_requests
 			 SET last_skipped_at = now(),
-			     last_skipped_reason = $2,
+			     last_skipped_reason = CASE
+			       WHEN last_skipped_reason = $4 AND not_before > now() THEN last_skipped_reason
+			       ELSE $2 END,
 			     last_skipped_blocker_task_id = $3
 			 WHERE id = $1`,
-			[wakeupId, reason, blockerTaskId],
+			[wakeupId, reason, blockerTaskId, WakeupSkipReason.ProviderUsageLimit],
 		);
 		if (taskId) {
-			const refreshed = await db.query<Record<string, unknown>>(
+			const refreshed = await db.query<Record<string, unknown> & { team_id: string }>(
 				'SELECT * FROM tasks WHERE id = $1',
 				[taskId],
 			);
-			if (refreshed.rows[0]) {
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'UPDATE', refreshed.rows[0]);
-			}
+			const row = refreshed.rows[0];
+			if (row) broadcastRowChange(wsManager, wsRoom.team(row.team_id), 'tasks', 'UPDATE', row);
 		}
 	}
 
@@ -1879,8 +1903,11 @@ export class JobManager {
 	): Promise<{
 		reason: WakeupSkipReason;
 		detail: string;
-		/** A notice for the admin, when this hold has not posted one yet. */
-		notice?: { kind: string; text: string } & Record<string, unknown>;
+		/** The notice this hold asks the admin with, unless one already stands. */
+		notice?: {
+			content: { kind: string; text: string } & Record<string, unknown>;
+			unlessPostedSince: Date | null;
+		};
 	} | null> {
 		const { db } = this.deps;
 		const at = ref(task.identifier, task.id);
@@ -1914,7 +1941,7 @@ export class JobManager {
 			return {
 				reason: WakeupSkipReason.HandoffRoundsExhausted,
 				detail: `is held on ${at} after ${handoff.rounds} agent-to-agent handoffs with no admin reply`,
-				notice: handoff.notified ? undefined : handoffLimitNotice(handoff),
+				notice: { content: handoffLimitNotice(handoff), unlessPostedSince: handoff.noticeSince },
 			};
 		}
 		const usage = await taskTokenCeilingReached(db, task.id, exemption.byAdmin);
@@ -1922,7 +1949,7 @@ export class JobManager {
 			return {
 				reason: WakeupSkipReason.TaskTokenCeiling,
 				detail: `is held on ${at} after ${usage.tokens} tokens since the admin last replied (ceiling ${TASK_TOKEN_CEILING})`,
-				notice: usage.notified ? undefined : taskTokenCeilingNotice(usage),
+				notice: { content: taskTokenCeilingNotice(usage), unlessPostedSince: usage.noticeSince },
 			};
 		}
 		return null;
@@ -2069,7 +2096,6 @@ export class JobManager {
 						wakeup.id,
 						WakeupSkipReason.TaskBusy,
 						wakeupTaskId,
-						wakeup.team_id,
 						wakeupTaskId,
 					);
 					continue;
@@ -2081,7 +2107,6 @@ export class JobManager {
 						wakeup.id,
 						WakeupSkipReason.InstanceAtCapacity,
 						wakeupTaskId,
-						wakeup.team_id,
 						null,
 					);
 					continue;
@@ -2094,7 +2119,6 @@ export class JobManager {
 						wakeup.id,
 						WakeupSkipReason.AgentRunning,
 						wakeupTaskId,
-						wakeup.team_id,
 						null,
 					);
 					continue;
@@ -2106,13 +2130,7 @@ export class JobManager {
 				// task is chosen). Fall back to per-agent dedup to avoid stacking
 				// idle pings.
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
-				await this.markWakeupSkipped(
-					wakeup.id,
-					WakeupSkipReason.AgentRunning,
-					null,
-					wakeup.team_id,
-					null,
-				);
+				await this.markWakeupSkipped(wakeup.id, WakeupSkipReason.AgentRunning, null, null);
 				continue;
 			}
 
@@ -2258,10 +2276,19 @@ export class JobManager {
 				WakeupSource.Heartbeat,
 				payload,
 			);
-			await this.deps.db.query(
-				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
-				[WakeupStatus.Claimed, wakeupId],
+			// The heartbeat may have coalesced onto a queued wakeup that is waiting out
+			// a provider usage hold; that one is released on its own schedule, so it
+			// is left alone here rather than claimed ahead of its slot.
+			const claimed = await this.deps.db.query(
+				`UPDATE agent_wakeup_requests
+				    SET status = $1::wakeup_status, claimed_at = now(), not_before = NULL,
+				        held_config_id = NULL
+				  WHERE id = $2 AND status = $3::wakeup_status
+				    AND (not_before IS NULL OR not_before <= now())
+				  RETURNING id`,
+				[WakeupStatus.Claimed, wakeupId, WakeupStatus.Queued],
 			);
+			if (claimed.rows.length === 0) continue;
 			await this.activateAgent(agent.id, agent.team_id, wakeupId, payload, WakeupSource.Heartbeat);
 		}
 	}
@@ -2312,7 +2339,7 @@ export class JobManager {
 		wakeupId: string,
 		wakeupPayload: Record<string, unknown>,
 		wakeupSource: string,
-	): Promise<void> {
+	): Promise<ActivationOutcome> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
 		const agent = await db.query<{
@@ -2360,6 +2387,7 @@ export class JobManager {
 			status: string;
 			priority: string;
 			project_id: string;
+			team_id: string;
 			rules: string | null;
 			progress_summary: string | null;
 			assignee_id: string | null;
@@ -2369,6 +2397,8 @@ export class JobManager {
 		};
 
 		let task: TaskRow | undefined;
+		// The tasks a heartbeat may run, in the order it prefers them.
+		let candidates: TaskRow[] = [];
 		// What the run is told it was woken for. The selected task and the payload
 		// describing it travel together, so a task found by a sweep produces the same
 		// run as the wakeup that should have delivered it.
@@ -2383,7 +2413,7 @@ export class JobManager {
 			// discovered further down: an archived project has no container and may
 			// not be given one, so a wakeup naming a task inside it can only fail.
 			const payloadTask = await db.query<TaskRow>(
-				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.team_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
 				 JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
 				 WHERE i.id = $1${isInstanceAgent ? '' : ' AND i.team_id = $2'}`,
@@ -2509,7 +2539,7 @@ export class JobManager {
 			const tasks = task
 				? { rows: [task] }
 				: await db.query<TaskRow>(
-						`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+						`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.team_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
 				 -- An archived project's tasks are not actionable: it has no container
 				 -- and may not be given one. Filtered in the selection rather than
@@ -2527,7 +2557,7 @@ export class JobManager {
 				 ORDER BY
 				   CASE i.priority WHEN $${prStart} THEN 0 WHEN $${prStart + 1} THEN 1 WHEN $${prStart + 2} THEN 2 WHEN $${prStart + 3} THEN 3 END,
 				   i.created_at ASC
-				 LIMIT 1`,
+				 LIMIT ${HEARTBEAT_TASK_CANDIDATES}`,
 						params,
 					);
 			if (tasks.rows.length === 0) {
@@ -2550,8 +2580,9 @@ export class JobManager {
 				}
 				return;
 			}
-			task = tasks.rows[0];
+			candidates = tasks.rows;
 		}
+		if (task) candidates = [task];
 
 		// Dispatch suppressions. Placed here, after task resolution, because it is the
 		// one point every wakeup source passes through holding a concrete task - both
@@ -2562,17 +2593,54 @@ export class JobManager {
 		// The no-work backoff expires at the agent's own cadence; the others lift when
 		// a person answers or acts. Each is skipped rather than re-queued: there is
 		// nothing to retry, and `dispatchSuppressionExempt` lets a person's new input
-		// and an operator's override dispatch immediately.
-		const exemption = await dispatchSuppressionExempt(
-			db,
-			memberId,
-			task.id,
-			wakeupSource,
-			wakeupPayload,
-			wakeupId,
-		);
-		const suppression = await this.dispatchSuppression(memberId, task, exemption);
-		if (suppression) {
+		// and an operator's override dispatch immediately. A selected task that is
+		// held gives way to the agent's next one, so one held task does not stall the
+		// agent's heartbeat on everything else it owns.
+		//
+		// The Coach's review of a finished task skips them all: it reads the task and
+		// writes lessons, and a held task is exactly the one worth reviewing.
+		const coachReview =
+			agent.rows[0].slug === COACH_AGENT_SLUG && runPayload?.trigger === COACH_REVIEW_TRIGGER;
+		let suppression: Awaited<ReturnType<JobManager['dispatchSuppression']>> = null;
+		task = undefined;
+		for (const candidate of candidates) {
+			const exemption = coachReview
+				? FULL_EXEMPTION
+				: await dispatchSuppressionExempt(
+						db,
+						memberId,
+						teamId,
+						candidate.id,
+						wakeupSource,
+						wakeupPayload,
+						wakeupId,
+					);
+			const held = await this.dispatchSuppression(memberId, candidate, exemption);
+			if (!held) {
+				task = candidate;
+				break;
+			}
+			suppression ??= held;
+			if (held.notice) {
+				// On the task's own team: the CEO and the Coach wake in HQ, but the
+				// admin who must reply is the one the task belongs to.
+				await postAdminNotice({
+					db,
+					teamId: candidate.team_id,
+					taskId: candidate.id,
+					content: held.notice.content,
+					unlessPostedSince: held.notice.unlessPostedSince,
+					wsManager: this.deps.wsManager,
+				}).catch((e) =>
+					log.error(
+						`Failed to post the hold notice on ${ref(candidate.identifier, candidate.id)}:`,
+						e,
+					),
+				);
+			}
+		}
+		if (!task && suppression) {
+			const heldTask = candidates[0];
 			// Warned, not debugged, for every source but the two the system raises on a
 			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its
 			// job and would drown the log; a discarded wakeup from anything else means
@@ -2591,18 +2659,7 @@ export class JobManager {
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
 			else log.warn(line);
-			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
-			if (suppression.notice) {
-				await postAdminNotice({
-					db,
-					teamId,
-					taskId: task.id,
-					content: suppression.notice,
-					wsManager: this.deps.wsManager,
-				}).catch((e) =>
-					log.error(`Failed to post the hold notice on ${ref(task.identifier, task.id)}:`, e),
-				);
-			}
+			await this.markWakeupSkipped(wakeupId, suppression.reason, heldTask.id, null);
 			// Stamp the check for the same reason the "no actionable tasks" branch
 			// above does: a pass that concluded there is nothing to do must advance the
 			// clock, or the scheduler re-selects this agent every cron tick. Without it
@@ -2623,8 +2680,9 @@ export class JobManager {
 					[WakeupStatus.Completed, wakeupId],
 				);
 			}
-			return;
+			return { held: suppression.reason };
 		}
+		if (!task) return;
 
 		// Per-task serialisation plus the per-project concurrency ceiling: only one
 		// agent runs on a given task at a time, and no more than the project's
@@ -2705,9 +2763,10 @@ export class JobManager {
 			);
 			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager, {
 				taskId: task.id,
+				projectId: projectRow.id,
 			});
-			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, teamId, null);
-			return;
+			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, null);
+			return { held: WakeupSkipReason.OverBudget };
 		}
 
 		const agentSlug = agent.rows[0].slug;
@@ -3142,7 +3201,7 @@ export class JobManager {
 	 */
 	private async selectMissedReviewTask<T>(memberId: string): Promise<T | undefined> {
 		const r = await this.deps.db.query<T>(
-			`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+			`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.team_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 			   FROM tasks i
 			   JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
 			  WHERE i.status = $1::task_status
@@ -3722,7 +3781,7 @@ export class JobManager {
 
 	async dispatchProgressUpdateNow(
 		projectId: string,
-		triggeredBy?: { member_id: string; name: string } | null,
+		triggeredBy?: WakeupTriggeredBy | null,
 	): Promise<ProgressUpdateDispatchResult> {
 		const { db } = this.deps;
 

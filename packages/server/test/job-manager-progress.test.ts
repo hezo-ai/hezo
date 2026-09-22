@@ -465,6 +465,8 @@ describe('JobManager progress-update flows', () => {
 			const result = await manager.dispatchProgressUpdateNow(projectId, {
 				member_id: 'admin-member',
 				name: 'Admin',
+				user_id: null,
+				api_key_id: null,
 			});
 			expect('queued' in result && result.queued).toBe(true);
 			const wakeupId = (result as { queued: true; wakeupId: string }).wakeupId;

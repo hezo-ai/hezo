@@ -398,17 +398,21 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 		expect(row.rows[0]).toEqual({ status: 'queued', held_config_id: null });
 	});
 
-	it('records when budgets start counting usage, and adds the card answerer column', async () => {
+	it('records when budgets start counting usage, and adds the decider and notice columns', async () => {
 		const meta = await h.db.query<{ at: string }>(
 			`SELECT value::timestamptz AS at FROM system_meta WHERE key = $1`,
 			[BUDGET_USAGE_COUNTED_FROM_META_KEY],
 		);
 		expect(Date.now() - new Date(meta.rows[0].at).getTime()).toBeLessThan(60_000);
-		const column = await h.db.query(
-			`SELECT 1 FROM information_schema.columns
-			 WHERE table_name = 'task_comments' AND column_name = 'chosen_by_user_id'`,
+		const columns = await h.db.query<{ table_name: string; column_name: string }>(
+			`SELECT table_name, column_name FROM information_schema.columns
+			 WHERE (table_name, column_name) IN (
+			   ('task_comments', 'chosen_by_user_id'),
+			   ('approvals', 'resolved_by_user_id'),
+			   ('approvals', 'resolved_by_api_key_id'),
+			   ('member_agents', 'budget_notice_key'))`,
 		);
-		expect(column.rows).toHaveLength(1);
+		expect(columns.rows).toHaveLength(4);
 	});
 
 	it('records each conversion, old and new, for the first-boot notice', async () => {

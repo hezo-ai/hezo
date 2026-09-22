@@ -13,6 +13,8 @@ import type { MessageKey } from './i18n';
 export interface ManualDispatchResult {
 	dispatched?: boolean;
 	queued?: boolean;
+	/** A hold the presser cannot lift refused the start; `reason` names it. */
+	held?: boolean;
 	wakeup_id?: string;
 	reason?: string;
 }
@@ -31,4 +33,21 @@ const QUEUED_REASON_MESSAGE: Record<string, MessageKey> = {
 
 export function queuedDispatchMessageKey(reason: string | undefined): MessageKey {
 	return (reason && QUEUED_REASON_MESSAGE[reason]) || 'tasks.dispatch.queued.fallback';
+}
+
+/** Why a hold refused a manual start, by the route's `reason`. */
+const HELD_REASON_MESSAGE: Record<string, MessageKey> = {
+	held: 'tasks.dispatch.held.task',
+	over_budget: 'tasks.dispatch.held.overBudget',
+};
+
+export function heldDispatchMessageKey(reason: string | undefined): MessageKey {
+	return (reason && HELD_REASON_MESSAGE[reason]) || 'tasks.dispatch.held.task';
+}
+
+/** The notice for a manual dispatch that did not start a run, or null when it did. */
+export function manualDispatchNoticeKey(data: ManualDispatchResult): MessageKey | null {
+	if (data.held) return heldDispatchMessageKey(data.reason);
+	if (data.queued) return queuedDispatchMessageKey(data.reason);
+	return null;
 }

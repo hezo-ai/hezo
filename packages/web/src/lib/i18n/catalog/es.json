@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Después",
 	"tasks.descriptionChange.before": "Antes",
 	"tasks.descriptionChange.toggle": "Ver el cambio",
+	"tasks.dispatch.held.overBudget": "El intento no empezó: este agente o su proyecto ha agotado su presupuesto por ahora.",
+	"tasks.dispatch.held.task": "El intento no empezó: la tarea está en espera hasta que el admin responda en ella.",
 	"tasks.dispatch.queued.agentBusy": "El intento está en cola y empezará cuando este agente termine el que tiene en marcha.",
 	"tasks.dispatch.queued.fallback": "El intento está en cola y empezará cuando Hezo esté listo.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo ha agotado su cupo de horas de contenedor de este mes. El intento empezará cuando el cupo se reinicie o se suba el límite.",

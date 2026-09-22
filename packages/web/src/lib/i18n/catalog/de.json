@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "Nachher",
 	"tasks.descriptionChange.before": "Vorher",
 	"tasks.descriptionChange.toggle": "Änderung anzeigen",
+	"tasks.dispatch.held.overBudget": "Der Lauf ist nicht gestartet: Dieser Agent oder sein Projekt hat sein Budget vorerst aufgebraucht.",
+	"tasks.dispatch.held.task": "Der Lauf ist nicht gestartet: Die Aufgabe wartet, bis der Admin darauf antwortet.",
 	"tasks.dispatch.queued.agentBusy": "Der Lauf steht in der Warteschlange und startet, sobald dieser Agent wieder frei ist.",
 	"tasks.dispatch.queued.fallback": "Der Lauf steht in der Warteschlange und startet, sobald Hezo bereit ist.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo hat sein Kontingent an Container-Stunden für diesen Monat aufgebraucht. Der Lauf startet, sobald das Kontingent zurückgesetzt oder das Limit angehoben wird.",

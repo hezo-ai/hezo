@@ -944,6 +944,8 @@
 	"tasks.descriptionChange.after": "이후",
 	"tasks.descriptionChange.before": "이전",
 	"tasks.descriptionChange.toggle": "변경 내용 보기",
+	"tasks.dispatch.held.overBudget": "실행이 시작되지 않았어요. 이 에이전트 또는 프로젝트가 지금은 예산을 모두 썼어요.",
+	"tasks.dispatch.held.task": "실행이 시작되지 않았어요. 관리자가 답할 때까지 이 작업은 보류 중이에요.",
 	"tasks.dispatch.queued.agentBusy": "실행을 대기열에 넣었어요. 이 에이전트가 현재 실행을 마치면 시작해요.",
 	"tasks.dispatch.queued.fallback": "실행을 대기열에 넣었어요. Hezo가 준비되면 시작해요.",
 	"tasks.dispatch.queued.hoursExhausted": "Hezo가 이번 달 컨테이너 시간을 다 썼어요. 할당량이 초기화되거나 한도를 올리면 실행을 시작해요.",
