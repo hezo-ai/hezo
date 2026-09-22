@@ -2010,8 +2010,8 @@ export const KIMI_DEFAULT_MODEL = 'kimi-k3';
  *
  * Kimi Code learns a model's metadata from the provider catalog, but the
  * `KIMI_MODEL_*` family registers an *in-memory* provider it can look nothing up
- * for - so it refuses to start unless the window is stated. Declaring one too
- * large is the harmful direction (the CLI compacts too late and the endpoint
+ * for - so unless the window is stated it assumes 262,144 tokens, whatever the
+ * model. Declaring one too large is the harmful direction (the CLI compacts too late and the endpoint
  * rejects the request), so an unlisted model takes the smallest window Moonshot
  * currently ships rather than the largest.
  */
@@ -2063,12 +2063,13 @@ const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
  *
  * `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
  * `buildProviderEnv` overrides it with the run's selected model when there is
- * one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
- * `downgradeUnsupportedMedia` step silently replaces every image part with
- * "[image omitted: current model has no image input]" — which would break
- * `read_project_asset`, the only path by which an agent ever sees an image.
- * Capabilities resolve as a union of declared + auto-detected, so declaring can
- * only add.
+ * one. `KIMI_MODEL_CAPABILITIES` includes `image_in` so the CLI treats the
+ * model as taking images. Without it the 0.30.0 engine replaced every image part
+ * with "[image omitted: current model has no image input]", which would break
+ * `read_project_asset`, the only path by which an agent ever sees an image. 2.0.2
+ * passed an MCP image through either way when measured, but it still reads the
+ * capability, so it stays declared. Capabilities resolve as a union of declared +
+ * auto-detected, so declaring can only add.
  */
 const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
 	staticEnv: {
@@ -2766,8 +2767,7 @@ export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
  * id against a `[models."<id>"]` table in `config.toml`, and Hezo registers its
  * model through the shell-read `KIMI_MODEL_*` family instead - an in-memory
  * provider that table knows nothing about. Passing the flag there fails the run
- * outright with `config.invalid: Model "…" is not configured in config.toml`,
- * so the id has to travel on `KIMI_MODEL_NAME` alone (`buildProviderEnv` puts
+ * outright with `Model "…" is not configured in config.toml.`, so the id has to travel on `KIMI_MODEL_NAME` alone (`buildProviderEnv` puts
  * the run's selected model there).
  *
  * Writing the model into `config.toml` instead is not an option: the same file
@@ -2804,11 +2804,12 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.Grok]: ['--permission-mode', 'bypassPermissions'],
 	// Kimi Code needs nothing here, and must not be given anything: `--prompt`
 	// is mutually exclusive with `--yolo`/`--auto`/`--plan`, so passing one would
-	// make the CLI reject the invocation outright. `-p` already applies the `auto`
-	// permission policy to tool calls on its own. If a future version still gates
-	// some call under `auto`, the escape hatches are the undocumented
-	// `--yes`/`--auto-approve` flags or `[permission.rules]` in the injected
-	// config.toml — not a flag that conflicts with `--prompt`.
+	// make the CLI reject the invocation outright. The hidden `--yes` and
+	// `--auto-approve` are aliases of `--yolo` and are refused the same way. `-p`
+	// already applies the `auto` permission policy to tool calls on its own, and
+	// 2.0.2 no longer applies `[permission.rules]` from config.toml, so there is
+	// no second lever: if a future version gates a call under `auto`, that is a
+	// bump blocker.
 	[AgentRuntime.Kimi]: [],
 };
 

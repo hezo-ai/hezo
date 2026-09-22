@@ -4290,9 +4290,10 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   a temporary in-memory provider for the launch. Hezo uses it so the key stays in env and is
   never written to a file the agent can read. `KIMI_MODEL_NAME` is what activates the family,
   so it is always set and `buildProviderEnv` overrides it with the run's selected model.
-  `KIMI_MODEL_CAPABILITIES` must include `image_in`, or the CLI's `downgradeUnsupportedMedia`
-  step silently replaces every image part with a placeholder string — which would break
-  `read_project_asset`, the only path by which an agent ever receives an image.
+  `KIMI_MODEL_CAPABILITIES` includes `image_in`. Without it the 0.30.0 engine replaced every
+  image part with a placeholder string, which would break `read_project_asset`, the only path
+  by which an agent ever receives an image. 2.0.2 passed an MCP image through either way when
+  measured, but still reads the capability, so it stays declared.
 - **`KIMI_CODE_HOME` is a real variable the CLI consumes**, unlike the Hezo-internal markers
   the Claude Code entries use in `RUNTIME_HOME_LAYOUTS`. It relocates the entire data root
   (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the

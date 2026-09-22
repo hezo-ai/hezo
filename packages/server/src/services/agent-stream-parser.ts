@@ -2191,8 +2191,9 @@ export function extractGrokUsageFromDebugLog(contents: string): AgentRunUsage | 
 //   {"role":"tool","tool_call_id":"…","content":"…"}
 //   {"role":"meta","type":"turn.step.retrying"|"session.resume_hint"|"system.version",…}
 //
-// Thinking content and tool progress go to STDERR, not this stream, so there is
-// no [thinking] rendering here — stderr passes through untouched.
+// Thinking never reaches this stream (2.0.2's stream-json writer drops it), and
+// tool progress goes to STDERR, so there is no [thinking] rendering here.
+// Recorded shapes: `kimi-2.0.2.stdout.jsonl` under `test/fixtures/kimi/`.
 //
 // Like Grok, the stream carries NO token usage, so getUsage() stays null and cost
 // comes from `extractKimiUsageFromSessionLog` post-run.

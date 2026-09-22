@@ -125,13 +125,15 @@ RUN set -eu; \
 
 # Moonshot Kimi Code (`kimi`) — the `kimi` provider's native-CLI option, alongside
 # (not instead of) its default Claude Code path above. Pinned
-# for reproducibility like GROK_VERSION: upstream ships two engine generations
-# with duplicated MCP/hook/media paths, so a bump must be re-verified against the
-# stream-json line shapes, the `[[hooks]]` Stop contract, and the session-log
-# usage fields (see `extractKimiUsageFromSessionLog`). Requires Node >= 22.19,
-# which the node:24 base satisfies; `kimi --version` fails the build if not.
-# At run time KIMI_CODE_HOME is overridden per-run to the agent's config dir.
-ARG KIMI_CODE_VERSION=0.30.0
+# for reproducibility like GROK_VERSION. From 2.0 there is one engine
+# (agent-core-v2); 0.30.0's `-p` still ran the older one, so its records and
+# hook payloads differ from what 2.x writes. A bump must be re-verified against
+# the stream-json line shapes, the `[[hooks]]` Stop contract (including the
+# `wire.jsonl` records the judge reads the final message from), and the
+# session-log usage fields (see `extractKimiUsageFromSessionLog`). Requires Node
+# >= 22.19, which the node:24 base satisfies; `kimi --version` fails the build if
+# not. At run time KIMI_CODE_HOME is overridden per-run to the agent's config dir.
+ARG KIMI_CODE_VERSION=2.0.2
 RUN npm install -g @moonshot-ai/kimi-code@${KIMI_CODE_VERSION} \
     && kimi --version
 

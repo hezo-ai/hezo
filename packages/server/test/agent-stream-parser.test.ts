@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -1275,7 +1277,35 @@ describe('kimi stream parser', () => {
 		);
 		expect(out).toBe('');
 	});
+
+	it('parses a run recorded from Kimi Code 2.0.2', () => {
+		// Five tool calls (two MCP servers, a doc-guard refusal, an image result and
+		// Bash), then a final answer, a Stop-hook block and a second answer. 2.0.2
+		// opens the stream with a `system.version` meta line.
+		const stream = readKimiFixture('kimi-2.0.2.stdout.jsonl');
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		let out = '';
+		// Chunked mid-line, as a pipe delivers it.
+		for (let i = 0; i < stream.length; i += 97) out += parser.onStdout(stream.slice(i, i + 97));
+		out += parser.flush();
+
+		expect(out).not.toContain('system.version');
+		expect(out).not.toContain('resume');
+		expect(out).toContain('[tool] mcp__hezo__echo(text=hello-from-mock)');
+		expect(out).toContain('[tool-result] bash-ran-ok');
+		expect(parser.getToolCallTotal()).toBe(5);
+		expect(parser.getFinalAssistantMessage()).toBe(
+			'SECOND_FINAL_ANSWER after the judge continued me.',
+		);
+		expect(parser.getTerminalVerdict()).toBeNull();
+		expect(parser.getUsage()).toBeNull();
+	});
 });
+
+/** A capture recorded from the pinned Kimi Code CLI against a local mock provider. */
+function readKimiFixture(name: string): string {
+	return readFileSync(resolve(import.meta.dirname, 'fixtures/kimi', name), 'utf8');
+}
 
 describe('extractKimiUsageFromSessionLog', () => {
 	const rec = (o: Record<string, unknown>) => JSON.stringify(o);
@@ -1385,6 +1415,21 @@ describe('extractKimiUsageFromSessionLog', () => {
 		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage?.inputTokens).toBe(460);
 		expect(usage?.outputTokens).toBe(40);
+	});
+
+	it('sums the usage records of a session recorded from Kimi Code 2.0.2', () => {
+		// Seven requests, each one `usage.record` with `usageScope: "turn"` and no
+		// request id. The mock billed prompt_tokens 17,500 (1,400 of it cached) and
+		// completion_tokens 385 across them.
+		const usage = extractKimiUsageFromSessionLog(readKimiFixture('kimi-2.0.2.wire.jsonl'));
+		expect(usage?.inputTokens).toBe(17_500);
+		expect(usage?.outputTokens).toBe(385);
+		expect(usage?.buckets).toEqual({
+			inputTokens: 16_100,
+			cacheReadTokens: 1_400,
+			cacheCreationTokens: 0,
+			outputTokens: 385,
+		});
 	});
 
 	it('returns null when the log carries no usage record', () => {
