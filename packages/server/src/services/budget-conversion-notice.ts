@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ID, TaskPriority, TaskStatus, wsRoom } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, englishCount, TaskPriority, TaskStatus, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import {
 	BUDGET_CONVERSION_META_KEY,
@@ -93,7 +93,7 @@ export async function postBudgetConversionNotice(
 		const lines = [
 			...record.conversions.map(
 				(c) =>
-					`${subject(c.scope, c.name, c.context)}, ${c.window}: $${(c.cents / 100).toFixed(2)} became ${c.tokens.toLocaleString('en-US')} tokens`,
+					`${subject(c.scope, c.name, c.context)}, ${c.window}: $${(c.cents / 100).toFixed(2)} became ${englishCount(c.tokens)} tokens`,
 			),
 			...invalid.map(
 				(b) =>
@@ -110,7 +110,7 @@ export async function postBudgetConversionNotice(
 				basis: record.basis,
 				conversions: record.conversions,
 				invalid,
-				text: `Budgets now count tokens, starting from this upgrade. ${record.conversions.length} dollar budget(s) were converted at ${Math.round(record.tokens_per_cent * 100).toLocaleString('en-US')} tokens per dollar:\n${lines.join('\n')}`,
+				text: `Budgets now count tokens, starting from this upgrade. ${record.conversions.length} dollar budget(s) were converted at ${englishCount(Math.round(record.tokens_per_cent * 100))} tokens per dollar:\n${lines.join('\n')}`,
 			},
 			wsManager,
 		});

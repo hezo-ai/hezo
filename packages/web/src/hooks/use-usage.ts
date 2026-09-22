@@ -12,8 +12,22 @@ export interface UsageTotals {
 	total_tokens: number;
 }
 
+/** One agent's usage, as `group_by: 'agent'` returns it. */
+export interface AgentUsageRow extends UsageTotals {
+	agent_id: string;
+	agent_title: string | null;
+	/** The agent's own name, when it has one. Null means it goes by its role. */
+	agent_name: string | null;
+}
+
+/**
+ * How many days of history a usage chart asks for: the newest page of the day
+ * series, which the server pages by whole days.
+ */
+export const USAGE_CHART_DAYS = 180;
+
 export interface UsageSummary extends UsageTotals {
-	summary?: Array<{ label: string } & UsageTotals>;
+	summary?: AgentUsageRow[];
 	entries?: Array<{
 		id: string;
 		input_tokens: number;
@@ -95,7 +109,7 @@ export function useDailyUsageSeries(
 	projectId: string,
 	params?: { agent_id?: string; from?: string; to?: string },
 ) {
-	const query = { group_by: 'day', ...params };
+	const query = { group_by: 'day', limit: String(USAGE_CHART_DAYS), ...params };
 	return useQuery({
 		queryKey: queryKeys.projects.usage(projectId, query),
 		queryFn: () =>
@@ -125,7 +139,7 @@ export interface AdapterDailyUsagePoint extends UsageTotals {
 
 /** Per-day usage split by agent - powers the stacked "by agent" chart. */
 export function useAgentDailyUsageSeries(projectId: string) {
-	const query = { group_by: 'day', breakdown: 'agent' };
+	const query = { group_by: 'day', breakdown: 'agent', limit: String(USAGE_CHART_DAYS) };
 	return useQuery({
 		queryKey: queryKeys.projects.usage(projectId, query),
 		queryFn: () =>
@@ -139,7 +153,7 @@ export function useAgentDailyUsageSeries(projectId: string) {
 
 /** Per-day usage split by AI adapter configuration - powers the stacked "by adapter" chart. */
 export function useAdapterDailyUsageSeries(projectId: string) {
-	const query = { group_by: 'day', breakdown: 'adapter' };
+	const query = { group_by: 'day', breakdown: 'adapter', limit: String(USAGE_CHART_DAYS) };
 	return useQuery({
 		queryKey: queryKeys.projects.usage(projectId, query),
 		queryFn: () =>

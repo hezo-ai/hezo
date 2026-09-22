@@ -13,6 +13,7 @@ import {
 	credentialSerializesRuns,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
+	englishCount,
 	formatCompactNumber,
 	formatContainerMetaLogLine,
 	formatRunLink,
@@ -89,7 +90,7 @@ import {
 	detectNoWakeExits,
 	fitCommentForDelivery,
 	formatNoWakeExitWarning,
-	postAgentComment,
+	postComment,
 	resolveWarnableSlugs,
 } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
@@ -222,6 +223,7 @@ import { collectFinishedWorktrees } from './sandbox/worktree-gc';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
+import type { HandbackCause } from './wakeup';
 import {
 	CONTAINER_WORKSPACE_ROOT,
 	CONTAINER_WORKTREES_ROOT,
@@ -329,13 +331,7 @@ export interface RunResult {
 	 * a turn, which the runner accepts as a handback only once the run has also
 	 * proved it spent nothing and wrote nothing.
 	 */
-	requeued?: boolean;
-	/** Which cause gave up, so the queued wakeup reports the real reason it is waiting. */
-	requeueReason?: WakeupSkipReason;
-	/** The earliest the dispatcher may claim the handed-back wakeup again, when the cause has a clock. */
-	requeueNotBefore?: Date;
-	/** The credential whose usage hold the handed-back wakeup waits on, when that is the cause. */
-	requeueHeldConfigId?: string;
+	requeue?: HandbackCause;
 }
 
 export interface RunnerDeps {
@@ -1498,7 +1494,7 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 		);
 	if (reason === 'token_ceiling')
 		return (
-			`run used more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens - ` +
+			`run used more than ${englishCount(RUN_TOKEN_CEILING)} tokens - ` +
 			'a single run that long is spending most of its allowance re-reading its own context'
 		);
 	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
@@ -1607,8 +1603,7 @@ export async function runAgent(
 		return preRunReason === 'server_shutdown'
 			? {
 					...abortedResult(startTime),
-					requeued: true,
-					requeueReason: WakeupSkipReason.ServerShutdown,
+					requeue: { reason: WakeupSkipReason.ServerShutdown },
 				}
 			: abortedResult(startTime);
 	}
@@ -1633,10 +1628,11 @@ export async function runAgent(
 		if (heldUntil) {
 			return {
 				...failedResult(describeUsageHold(heldUntil), startTime),
-				requeued: true,
-				requeueReason: WakeupSkipReason.ProviderUsageLimit,
-				requeueNotBefore: heldUntil,
-				requeueHeldConfigId: selection.config.configId,
+				requeue: {
+					reason: WakeupSkipReason.ProviderUsageLimit,
+					notBefore: heldUntil,
+					heldConfigId: selection.config.configId,
+				},
 			};
 		}
 	}
@@ -1787,10 +1783,8 @@ export async function runAgent(
 	 */
 	const finalizeRequeue = async (
 		reason: string,
-		requeueReason: WakeupSkipReason,
+		cause: HandbackCause,
 		opts: {
-			notBefore?: Date;
-			heldConfigId?: string;
 			/**
 			 * What the run used before it was handed back. The work goes back to the
 			 * queue, but the tokens were spent, so a run drained at shutdown still
@@ -1829,10 +1823,7 @@ export async function runAgent(
 			stderr: reason,
 			durationMs,
 			heartbeatRunId,
-			requeued: true,
-			requeueReason,
-			requeueNotBefore: opts.notBefore,
-			requeueHeldConfigId: opts.heldConfigId,
+			requeue: cause,
 		};
 	};
 
@@ -1862,12 +1853,7 @@ export async function runAgent(
 	const providerRefusalHandback = async (
 		verdict: RuntimeErrorVerdict,
 		refused: { configId: string; provider: AiProvider },
-	): Promise<{
-		message: string;
-		reason: WakeupSkipReason;
-		notBefore: Date;
-		heldConfigId?: string;
-	} | null> => {
+	): Promise<{ message: string; cause: HandbackCause } | null> => {
 		if (verdict.family === 'usage_limit') {
 			const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
 			const heldUntil = formatUsageHold(hold.until);
@@ -1890,9 +1876,11 @@ export async function runAgent(
 			}
 			return {
 				message: `${verdict.message} Every run on this credential waits until ${heldUntil}`,
-				reason: WakeupSkipReason.ProviderUsageLimit,
-				notBefore: hold.until,
-				heldConfigId: refused.configId,
+				cause: {
+					reason: WakeupSkipReason.ProviderUsageLimit,
+					notBefore: hold.until,
+					heldConfigId: refused.configId,
+				},
 			};
 		}
 
@@ -1915,8 +1903,10 @@ export async function runAgent(
 		}
 		return {
 			message: verdict.message,
-			reason: WakeupSkipReason.ProviderAtCapacity,
-			notBefore: new Date(Date.now() + PROVIDER_CAPACITY_COOLDOWN_MIN * 60_000),
+			cause: {
+				reason: WakeupSkipReason.ProviderAtCapacity,
+				notBefore: new Date(Date.now() + PROVIDER_CAPACITY_COOLDOWN_MIN * 60_000),
+			},
 		};
 	};
 
@@ -1929,7 +1919,9 @@ export async function runAgent(
 		// before exiting. The better the shutdown behaved, the more certainly the
 		// work was dropped.
 		if (abortReason === 'server_shutdown') {
-			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, {
+				reason: WakeupSkipReason.ServerShutdown,
+			});
 		}
 		releaseCredentialLock?.();
 		const durationMs = Date.now() - startTime;
@@ -2201,7 +2193,7 @@ export async function runAgent(
 				const stillHeldBy = credentialLockHolder(credential.configId);
 				return finalizeRequeue(
 					`${stillHeldBy?.label ?? 'Another run'} still holds this provider credential`,
-					WakeupSkipReason.CredentialBusy,
+					{ reason: WakeupSkipReason.CredentialBusy },
 				);
 			}
 			// Finalized rather than rethrown: nothing above this catches, and a
@@ -2226,11 +2218,11 @@ export async function runAgent(
 		if (checkHoldAfterWait) {
 			const holdAfterWait = await readActiveUsageHold(deps.db, credential.configId);
 			if (holdAfterWait && holdAfterWait.getTime() !== holdBeforeWait?.getTime()) {
-				return finalizeRequeue(
-					`${describeUsageHold(holdAfterWait)}, so this run did not start`,
-					WakeupSkipReason.ProviderUsageLimit,
-					{ notBefore: holdAfterWait, heldConfigId: credential.configId },
-				);
+				return finalizeRequeue(`${describeUsageHold(holdAfterWait)}, so this run did not start`, {
+					reason: WakeupSkipReason.ProviderUsageLimit,
+					notBefore: holdAfterWait,
+					heldConfigId: credential.configId,
+				});
 			}
 		}
 	}
@@ -2294,7 +2286,7 @@ export async function runAgent(
 			} catch (e) {
 				if (!(e instanceof PoolCapacityError)) throw e;
 				if (Date.now() >= parkDeadline) {
-					return finalizeRequeue(e.message, WakeupSkipReason.InstanceAtCapacity);
+					return finalizeRequeue(e.message, { reason: WakeupSkipReason.InstanceAtCapacity });
 				}
 				if (!parked) {
 					// Once, not per poll: a line every 5s would make the run log the
@@ -2806,7 +2798,7 @@ export async function runAgent(
 				ceilingHit = true;
 				emit(
 					'stderr',
-					`[runner] Run stopped at its token ceiling (${RUN_TOKEN_CEILING.toLocaleString('en-US')}). A single run this long is spending most of its allowance re-reading its own context.\n`,
+					`[runner] Run stopped at its token ceiling (${englishCount(RUN_TOKEN_CEILING)}). A single run this long is spending most of its allowance re-reading its own context.\n`,
 				);
 				runAbort.abort('token_ceiling');
 			};
@@ -2974,7 +2966,7 @@ export async function runAgent(
 			// Three stranded forms are handled here, differently:
 			//   (1) an active `@`-mention the run never posted as a comment — the agent
 			//       wrote an explicit, unambiguous wake, so deliver the message verbatim
-			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
+			//       via postComment (admin inbox / agent wakeup), flipping the run
 			//       to a success. This is the deterministic backstop to the completeness
 			//       stop-hook judge (best-effort, model-dependent).
 			//   (2) a NAME-ONLY address that reads like an ask — the unlinked bold/
@@ -3049,15 +3041,14 @@ export async function runAgent(
 								// (1) Deliver stranded active mentions verbatim.
 								const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
 								if (undeliveredActive.length > 0) {
-									await postAgentComment({
+									await postComment({
 										db: deps.db,
 										wsManager: deps.wsManager,
 										teamId: runTeamId,
 										projectId: project.id,
 										taskId: task.id,
-										authorMemberId: agent.id,
-										createdByRunId: heartbeatRunId,
-										text: fitCommentForDelivery(finalMessage, undeliveredActive),
+										author: { memberId: agent.id, runId: heartbeatRunId },
+										content: { text: fitCommentForDelivery(finalMessage, undeliveredActive) },
 									});
 									// The run delivered a real comment, so it is no longer a no-op:
 									// flip the local flag (drives `success` below) and the row column
@@ -3119,16 +3110,15 @@ export async function runAgent(
 									askerRow !== undefined &&
 									(askerRow.from_agent === false || wakeupPayload?.source === WakeupSource.Mention);
 								if (askIsDeliverable) {
-									await postAgentComment({
+									await postComment({
 										db: deps.db,
 										wsManager: deps.wsManager,
 										teamId: runTeamId,
 										projectId: project.id,
 										taskId: task.id,
-										authorMemberId: agent.id,
-										createdByRunId: heartbeatRunId,
+										author: { memberId: agent.id, runId: heartbeatRunId },
 										parentCommentId: wakingCommentId ?? undefined,
-										text: fitCommentForDelivery(finalMessage),
+										content: { text: fitCommentForDelivery(finalMessage) },
 									});
 									await deps.db.query(
 										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
@@ -3342,10 +3332,7 @@ export async function runAgent(
 					// this run's per-run secrets off a pooled container, and the row
 					// should not read terminal until that has happened.
 					await cleanupRunArtifacts();
-					return finalizeRequeue(handback.message, handback.reason, {
-						notBefore: handback.notBefore,
-						heldConfigId: handback.heldConfigId,
-					});
+					return finalizeRequeue(handback.message, handback.cause);
 				}
 			}
 
@@ -3518,9 +3505,13 @@ export async function runAgent(
 				// run's home: a Codex, Grok or Kimi run has nothing on its stream.
 				const drainedUsage = (await recoverUsageOnce()) ?? parser.getUsage();
 				await cleanupRunArtifacts();
-				return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown, {
-					usage: drainedUsage,
-				});
+				return finalizeRequeue(
+					RUN_LOST_TO_SHUTDOWN_ERROR,
+					{ reason: WakeupSkipReason.ServerShutdown },
+					{
+						usage: drainedUsage,
+					},
+				);
 			}
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
@@ -3600,7 +3591,9 @@ export async function runAgent(
 		// A shutdown landing inside the setup window strands the same work as one
 		// landing mid-exec, and has the same answer.
 		if (runAbortReason(runAbort.signal) === 'server_shutdown') {
-			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, {
+				reason: WakeupSkipReason.ServerShutdown,
+			});
 		}
 		const verdict = throwVerdict(error);
 		const durationMs = Date.now() - startTime;
@@ -5936,25 +5929,20 @@ export async function recordRunUsageAndEnforce(
 		}>(`SELECT ai_provider_config_id, provider FROM heartbeat_runs WHERE id = $1`, [runId]);
 		const adapter = runRow.rows[0];
 
-		const entry = await recordUsage(db, {
-			memberId: broadcast.memberId,
-			taskId: broadcast.taskId ?? null,
-			projectId: broadcast.projectId ?? null,
-			inputTokens: usage.inputTokens,
-			outputTokens: usage.outputTokens,
-			description: `Agent run ${runId}`,
-			aiProviderConfigId: adapter?.ai_provider_config_id ?? null,
-			provider: adapter?.provider ?? null,
-		});
-		if (entry && broadcast.wsManager) {
-			broadcastRowChange(
-				broadcast.wsManager,
-				wsRoom.team(broadcast.teamId),
-				'usage_entries',
-				'INSERT',
-				entry,
-			);
-		}
+		await recordUsage(
+			db,
+			{ wsManager: broadcast.wsManager, teamId: broadcast.teamId },
+			{
+				memberId: broadcast.memberId,
+				taskId: broadcast.taskId ?? null,
+				projectId: broadcast.projectId ?? null,
+				inputTokens: usage.inputTokens,
+				outputTokens: usage.outputTokens,
+				description: `Agent run ${runId}`,
+				aiProviderConfigId: adapter?.ai_provider_config_id ?? null,
+				provider: adapter?.provider ?? null,
+			},
+		);
 
 		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
 		if (block) {

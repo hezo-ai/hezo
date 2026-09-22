@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -64,27 +65,6 @@ beforeAll(async () => {
 afterAll(async () => {
 	await safeClose(db);
 });
-
-async function callMcpTool(
-	bearer: string,
-	toolName: string,
-	args: Record<string, unknown>,
-): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(bearer), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	return JSON.parse(body.result.content[0].text);
-}
 
 describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 	it('creates all valid items with sequential identifiers in one project', async () => {
@@ -222,7 +202,15 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 			{ projectId },
 		);
 
-		const result = (await callMcpTool(architectToken, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{
+				index: number;
+				ok: boolean;
+				task?: { id: string; assignee_id: string; created_by_run_id: string | null };
+				error?: string;
+				code?: string;
+			}>
+		>(app, architectToken, 'create_tasks', {
 			project: projectId,
 			items: [
 				{
@@ -242,13 +230,7 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 					assignee_id: captainId,
 				},
 			],
-		})) as Array<{
-			index: number;
-			ok: boolean;
-			task?: { id: string; assignee_id: string; created_by_run_id: string | null };
-			error?: string;
-			code?: string;
-		}>;
+		});
 
 		expect(result).toHaveLength(4);
 		expect(result[0]).toMatchObject({ index: 0, ok: true });
@@ -262,14 +244,19 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('chains items with zero-based index tokens in blocked_by_task_ids', async () => {
-		const result = (await callMcpTool(token, 'create_tasks', {
-			project: projectId,
-			items: [
-				{ title: 'Phase 1 chain', assignee_id: engineerId },
-				{ title: 'Phase 2 chain', assignee_id: engineerId, blocked_by_task_ids: ['#0'] },
-				{ title: 'Phase 3 chain', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
-			],
-		})) as Array<{ ok: boolean; task: { id: string; status: string } }>;
+		const result = await callMcpTool<Array<{ ok: boolean; task: { id: string; status: string } }>>(
+			app,
+			token,
+			'create_tasks',
+			{
+				project: projectId,
+				items: [
+					{ title: 'Phase 1 chain', assignee_id: engineerId },
+					{ title: 'Phase 2 chain', assignee_id: engineerId, blocked_by_task_ids: ['#0'] },
+					{ title: 'Phase 3 chain', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
+				],
+			},
+		);
 
 		expect(result).toHaveLength(3);
 		for (const row of result) expect(row.ok).toBe(true);
@@ -293,23 +280,33 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('mixes identifier references and index tokens in one item', async () => {
-		const existing = (await callMcpTool(token, 'create_task', {
-			project: projectId,
-			title: 'Pre-existing blocker',
-			assignee_id: engineerId,
-		})) as { id: string; identifier: string };
+		const existing = await callMcpTool<{ id: string; identifier: string }>(
+			app,
+			token,
+			'create_task',
+			{
+				project: projectId,
+				title: 'Pre-existing blocker',
+				assignee_id: engineerId,
+			},
+		);
 
-		const result = (await callMcpTool(token, 'create_tasks', {
-			project: projectId,
-			items: [
-				{ title: 'Mixed refs first', assignee_id: engineerId },
-				{
-					title: 'Mixed refs second',
-					assignee_id: engineerId,
-					blocked_by_task_ids: [existing.identifier, '#0'],
-				},
-			],
-		})) as Array<{ ok: boolean; task: { id: string; status: string } }>;
+		const result = await callMcpTool<Array<{ ok: boolean; task: { id: string; status: string } }>>(
+			app,
+			token,
+			'create_tasks',
+			{
+				project: projectId,
+				items: [
+					{ title: 'Mixed refs first', assignee_id: engineerId },
+					{
+						title: 'Mixed refs second',
+						assignee_id: engineerId,
+						blocked_by_task_ids: [existing.identifier, '#0'],
+					},
+				],
+			},
+		);
 
 		expect(result[0].ok).toBe(true);
 		expect(result[1].ok).toBe(true);
@@ -324,13 +321,15 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('rejects self- and forward-referencing index tokens without inserting rows', async () => {
-		const result = (await callMcpTool(token, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{ index: number; ok: boolean; code?: string; error?: string }>
+		>(app, token, 'create_tasks', {
 			project: projectId,
 			items: [
 				{ title: 'Forward ref', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
 				{ title: 'Self ref', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
 			],
-		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+		});
 
 		expect(result[0]).toMatchObject({ index: 0, ok: false, code: 'INVALID_REQUEST' });
 		expect(result[1]).toMatchObject({ index: 1, ok: false, code: 'INVALID_REQUEST' });
@@ -344,14 +343,16 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('errors an item whose token references a failed item, without aborting the rest', async () => {
-		const result = (await callMcpTool(token, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{ index: number; ok: boolean; code?: string; error?: string }>
+		>(app, token, 'create_tasks', {
 			project: projectId,
 			items: [
 				{ title: '', assignee_id: engineerId },
 				{ title: 'Depends on failed', assignee_id: engineerId, blocked_by_task_ids: ['#0'] },
 				{ title: 'Independent survivor', assignee_id: engineerId },
 			],
-		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+		});
 
 		expect(result[0]).toMatchObject({ index: 0, ok: false });
 		expect(result[1]).toMatchObject({ index: 1, ok: false, code: 'INVALID_REQUEST' });
@@ -360,13 +361,20 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('nests a batch item under an existing parent referenced by identifier', async () => {
-		const parent = (await callMcpTool(token, 'create_task', {
-			project: projectId,
-			title: 'Existing parent for batch',
-			assignee_id: engineerId,
-		})) as { id: string; identifier: string };
+		const parent = await callMcpTool<{ id: string; identifier: string }>(
+			app,
+			token,
+			'create_task',
+			{
+				project: projectId,
+				title: 'Existing parent for batch',
+				assignee_id: engineerId,
+			},
+		);
 
-		const result = (await callMcpTool(token, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{ ok: boolean; code?: string; task?: { parent_task_id: string | null } }>
+		>(app, token, 'create_tasks', {
 			project: projectId,
 			items: [
 				{
@@ -375,20 +383,22 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 					parent_task_id: parent.identifier,
 				},
 			],
-		})) as Array<{ ok: boolean; code?: string; task?: { parent_task_id: string | null } }>;
+		});
 
 		expect(result[0].ok).toBe(true);
 		expect(result[0].task?.parent_task_id).toBe(parent.id);
 	});
 
 	it('nests a later batch item under an earlier one via a #index parent token', async () => {
-		const result = (await callMcpTool(token, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{ ok: boolean; task?: { id: string; parent_task_id: string | null } }>
+		>(app, token, 'create_tasks', {
 			project: projectId,
 			items: [
 				{ title: 'Batch parent', assignee_id: engineerId },
 				{ title: 'Batch child', assignee_id: engineerId, parent_task_id: '#0' },
 			],
-		})) as Array<{ ok: boolean; task?: { id: string; parent_task_id: string | null } }>;
+		});
 
 		expect(result[0].ok).toBe(true);
 		expect(result[1].ok).toBe(true);
@@ -396,13 +406,15 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('rejects a forward-referencing #index parent token without aborting the rest', async () => {
-		const result = (await callMcpTool(token, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{ index: number; ok: boolean; code?: string; error?: string }>
+		>(app, token, 'create_tasks', {
 			project: projectId,
 			items: [
 				{ title: 'Parent forward ref', assignee_id: engineerId, parent_task_id: '#1' },
 				{ title: 'Independent after bad parent', assignee_id: engineerId },
 			],
-		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+		});
 
 		expect(result[0]).toMatchObject({ index: 0, ok: false, code: 'INVALID_REQUEST' });
 		expect(result[0].error).toMatch(/earlier item/i);
@@ -410,14 +422,16 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 	});
 
 	it('rejects malformed and out-of-range index tokens', async () => {
-		const result = (await callMcpTool(token, 'create_tasks', {
+		const result = await callMcpTool<
+			Array<{ index: number; ok: boolean; code?: string; error?: string }>
+		>(app, token, 'create_tasks', {
 			project: projectId,
 			items: [
 				{ title: 'Anchor item', assignee_id: engineerId },
 				{ title: 'Malformed token', assignee_id: engineerId, blocked_by_task_ids: ['#abc'] },
 				{ title: 'Out of range', assignee_id: engineerId, blocked_by_task_ids: ['#99'] },
 			],
-		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+		});
 
 		expect(result[0]).toMatchObject({ index: 0, ok: true });
 		expect(result[1]).toMatchObject({ index: 1, ok: false, code: 'INVALID_REQUEST' });

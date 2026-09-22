@@ -2,6 +2,7 @@ import {
 	ADMIN_MENTION_SLUG,
 	type AgentEffort,
 	COMMENT_TEXT_MAX_CHARS,
+	commentHasContent,
 	commentTextFits,
 	extractActiveAgentMentionSlugs,
 	hasActiveAdminMention,
@@ -136,7 +137,7 @@ export function CommentComposer({
 
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
-		if (!commentText.trim() && pendingAttachmentIds.length === 0) return;
+		if (!commentHasContent(commentText, pendingAttachmentIds.length)) return;
 		if (commentTooLong) return;
 		await createComment.mutateAsync({
 			content: commentText,

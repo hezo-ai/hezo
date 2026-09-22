@@ -9,7 +9,6 @@ import {
 	COACH_REVIEW_TRIGGER,
 	CONTAINER_DORMANT_RETIRE_MIN,
 	CONTAINER_IDLE_TIMEOUT_MIN,
-	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
 	HeartbeatRunKind,
@@ -79,7 +78,7 @@ import {
 	wakeAgentsWithPendingWork,
 	withContainerLifecycleLock,
 } from './containers';
-import { COHERENCE_LABEL_JSON } from './description-tasks';
+import { COHERENCE_LABEL_JSON, coachReviewsTaskSql } from './description-tasks';
 import type { ContainerEngine, ContainerProcessInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
@@ -90,8 +89,9 @@ import {
 	attemptsExhaustedOnTask,
 	dispatchSuppressionExempt,
 	FULL_EXEMPTION,
+	handoffHold,
 	handoffLimitNotice,
-	handoffRoundsExhausted,
+	loadTaskSpend,
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
@@ -100,7 +100,7 @@ import {
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
 	taskTokenCeilingNotice,
-	taskTokenCeilingReached,
+	tokenCeilingHold,
 } from './no-work-backoff';
 import {
 	detectOrphans,
@@ -128,6 +128,7 @@ import {
 	releaseClaimIfRunGone,
 } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
+import { insertSystemComment } from './task-events';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
 import {
@@ -135,6 +136,7 @@ import {
 	assignmentWakeupAlreadyServed,
 	createProgressUpdateWakeup,
 	createWakeup,
+	type HandbackCause,
 	type SettlementIntent,
 	settleWakeupForRun,
 	WAKEUP_HOLD_ELAPSED_SQL,
@@ -263,6 +265,18 @@ export interface LiveRun {
  * the agent off the task. Nothing when it launched, or had nothing to do.
  */
 type ActivationOutcome = { held: WakeupSkipReason } | undefined;
+
+/**
+ * The holds that stand until a person acts, which are never logged quietly: the
+ * no-work backoff and the parked ask lift on their own or on any reply, while
+ * these mean nothing will dispatch onto the task until someone answers.
+ */
+const HOLDS_WAITING_ON_A_PERSON: ReadonlySet<WakeupSkipReason> = new Set([
+	WakeupSkipReason.AttemptsExhausted,
+	WakeupSkipReason.RetrospectiveHold,
+	WakeupSkipReason.HandoffRoundsExhausted,
+	WakeupSkipReason.TaskTokenCeiling,
+]);
 
 /**
  * How many of an agent's own tasks a heartbeat considers, in priority order,
@@ -1936,7 +1950,10 @@ export class JobManager {
 				detail: `is held on ${at} while a retrospective finding waits on the admin`,
 			};
 		}
-		const handoff = await handoffRoundsExhausted(db, task.id, exemption.byAdmin);
+		// The two hard stops weigh one read of the task's spend.
+		if (exemption.byAdmin) return null;
+		const spend = await loadTaskSpend(db, task.id);
+		const handoff = handoffHold(spend);
 		if (handoff) {
 			return {
 				reason: WakeupSkipReason.HandoffRoundsExhausted,
@@ -1944,7 +1961,7 @@ export class JobManager {
 				notice: { content: handoffLimitNotice(handoff), unlessPostedSince: handoff.noticeSince },
 			};
 		}
-		const usage = await taskTokenCeilingReached(db, task.id, exemption.byAdmin);
+		const usage = tokenCeilingHold(spend);
 		if (usage) {
 			return {
 				reason: WakeupSkipReason.TaskTokenCeiling,
@@ -2647,14 +2664,9 @@ export class JobManager {
 			// something asked for this agent and got nothing, with the row flipped to
 			// `completed` below and gone from the queued list - which is exactly how an
 			// approved hire came to sit with nobody acting on it and no line saying so.
-			// A hold that waits on a person is never quiet, whatever woke it: the
-			// no-work backoff and the parked ask lift on their own or on any reply,
-			// while these mean nothing will dispatch onto the task until a person acts.
+			// A hold that waits on a person is never quiet, whatever woke it.
 			const quiet =
-				suppression.reason !== WakeupSkipReason.AttemptsExhausted &&
-				suppression.reason !== WakeupSkipReason.RetrospectiveHold &&
-				suppression.reason !== WakeupSkipReason.HandoffRoundsExhausted &&
-				suppression.reason !== WakeupSkipReason.TaskTokenCeiling &&
+				!HOLDS_WAITING_ON_A_PERSON.has(suppression.reason) &&
 				(wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer);
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
@@ -3211,7 +3223,7 @@ export class JobManager {
 			       WHERE hr.task_id = i.id AND hr.member_id = $3
 			    )
 			    -- Never woken for a coherence review, so never recovered for one either.
-			    AND NOT i.labels @> $4::jsonb
+			    AND ${coachReviewsTaskSql('i', '$4')}
 			  ORDER BY i.updated_at ASC
 			  LIMIT 1`,
 			[TaskStatus.Done, String(COACH_SWEEP_WINDOW_HOURS), memberId, COHERENCE_LABEL_JSON],
@@ -3679,24 +3691,14 @@ export class JobManager {
 		wakeupId: string | undefined,
 		result: {
 			success: boolean;
-			requeued?: boolean;
-			requeueReason?: WakeupSkipReason;
-			requeueNotBefore?: Date;
-			requeueHeldConfigId?: string;
+			requeue?: HandbackCause;
 			heartbeatRunId?: string;
 		},
 		/** Where to record the outcome. Omitted only where there is no run row to write. */
 		run?: { taskId: string | null; teamId: string; agentSlug: string | null },
 	): Promise<boolean> {
-		const intent: SettlementIntent = result.requeued
-			? // The runner names the wait it gave up on; capacity is only the default
-				// for a caller that predates the distinction.
-				{
-					kind: 'handback',
-					reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity,
-					notBefore: result.requeueNotBefore,
-					heldConfigId: result.requeueHeldConfigId,
-				}
+		const intent: SettlementIntent = result.requeue
+			? { kind: 'handback', ...result.requeue }
 			: result.success
 				? { kind: 'complete' }
 				: { kind: 'fail' };
@@ -3945,32 +3947,20 @@ export class JobManager {
 				: rawError
 			: null;
 
-		const inserted = await db.query<Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
-			 RETURNING *`,
-			[
+		await insertSystemComment(
+			db,
+			{
 				taskId,
-				CommentContentType.System,
-				JSON.stringify({
+				content: {
 					kind: 'run_failed',
 					run_id: runId,
 					status,
 					error: truncatedError,
 					member_id: memberId,
 					agent_slug: agentSlug,
-				}),
-			],
-		);
-		const commentRow = inserted.rows[0];
-		if (!commentRow) return;
-
-		broadcastRowChange(
-			this.deps.wsManager,
-			wsRoom.team(teamId),
-			'task_comments',
-			'INSERT',
-			commentRow,
+				},
+			},
+			{ wsManager: this.deps.wsManager, teamId },
 		);
 	}
 

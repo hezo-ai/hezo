@@ -1,9 +1,11 @@
+import { wsRoom } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../src/db/migrations/code/081_token_budgets';
 import type { Env } from '../src/lib/types';
 import { checkOverBudget, getAgentBudgetStatus, recordUsage } from '../src/services/budget';
+import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -208,15 +210,41 @@ describe('budget service - checkOverBudget gate', () => {
 });
 
 describe('budget service - recordUsage', () => {
+	it('announces the row to the team that owns it, and only that team', async () => {
+		const rooms: string[] = [];
+		const wsManager = {
+			broadcast: (room: string, msg: { table?: string }) => {
+				if (msg.table === 'usage_entries') rooms.push(room);
+			},
+		} as unknown as WebSocketManager;
+		await recordUsage(
+			db,
+			{ wsManager, teamId },
+			{
+				memberId: agentId,
+				taskId: null,
+				projectId,
+				inputTokens: 5,
+				outputTokens: 0,
+				description: 'Chat turn',
+			},
+		);
+		expect(rooms).toEqual([wsRoom.team(teamId)]);
+	});
+
 	it('inserts exactly one usage row for a run that used tokens', async () => {
-		const entry = await recordUsage(db, {
-			memberId: agentId,
-			taskId: null,
-			projectId,
-			inputTokens: 200,
-			outputTokens: 50,
-			description: 'Agent run abc',
-		});
+		const entry = await recordUsage(
+			db,
+			{ wsManager: undefined, teamId },
+			{
+				memberId: agentId,
+				taskId: null,
+				projectId,
+				inputTokens: 200,
+				outputTokens: 50,
+				description: 'Agent run abc',
+			},
+		);
 		expect(entry).toMatchObject({ input_tokens: 200, output_tokens: 50 });
 		expect((await getAgentBudgetStatus(db, agentId)).daily.usedTokens).toBe(250);
 	});
@@ -227,16 +255,20 @@ describe('budget service - recordUsage', () => {
 			 VALUES ('anthropic', 'subscription', 'Attribution Test Key', 'x') RETURNING id`,
 		);
 		const configId = cfg.rows[0].id;
-		const entry = await recordUsage(db, {
-			memberId: agentId,
-			taskId: null,
-			projectId,
-			inputTokens: 99,
-			outputTokens: 1,
-			description: 'Agent run xyz',
-			aiProviderConfigId: configId,
-			provider: 'anthropic',
-		});
+		const entry = await recordUsage(
+			db,
+			{ wsManager: undefined, teamId },
+			{
+				memberId: agentId,
+				taskId: null,
+				projectId,
+				inputTokens: 99,
+				outputTokens: 1,
+				description: 'Agent run xyz',
+				aiProviderConfigId: configId,
+				provider: 'anthropic',
+			},
+		);
 		expect(entry).toMatchObject({ ai_provider_config_id: configId, provider: 'anthropic' });
 		// A subscription credential counts toward the budget like any other.
 		await db.query('UPDATE member_agents SET daily_budget_tokens = 100 WHERE id = $1', [agentId]);
@@ -246,14 +278,18 @@ describe('budget service - recordUsage', () => {
 	});
 
 	it('is a no-op when the run used no tokens', async () => {
-		const entry = await recordUsage(db, {
-			memberId: agentId,
-			taskId: null,
-			projectId,
-			inputTokens: 0,
-			outputTokens: 0,
-			description: 'empty run',
-		});
+		const entry = await recordUsage(
+			db,
+			{ wsManager: undefined, teamId },
+			{
+				memberId: agentId,
+				taskId: null,
+				projectId,
+				inputTokens: 0,
+				outputTokens: 0,
+				description: 'empty run',
+			},
+		);
 		expect(entry).toBeNull();
 		expect((await getAgentBudgetStatus(db, agentId)).daily.usedTokens).toBe(0);
 	});

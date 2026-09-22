@@ -4,7 +4,7 @@
 // directly, with a minimal standalone TanStack router so <Link> resolves —
 // no full app boot needed (the logic under test is pure rendering).
 
-import { DEFAULT_LOCALE_SETTINGS, NumberFormat } from '@hezo/shared';
+import { DEFAULT_LOCALE_SETTINGS, HQ_PROJECT_SLUG, NumberFormat } from '@hezo/shared';
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -696,4 +696,21 @@ test('budget_conversion names each budget by scope and punctuates dollars by the
 	} finally {
 		localStorage.clear();
 	}
+});
+
+test("a handoff notice links the Coach to its HQ page, and a project agent to this project's", async () => {
+	const { findAllByTestId } = renderSystem(
+		comment({
+			kind: 'handoff_limit',
+			rounds: 8,
+			tokens: 1_000,
+			agent_slugs: ['coach', 'engineer'],
+		}),
+		'acme',
+	);
+	const hrefs = (await findAllByTestId('handoff-limit-agent')).map((a) => a.getAttribute('href'));
+	expect(hrefs).toEqual([
+		`/projects/${HQ_PROJECT_SLUG}/agents/coach`,
+		'/projects/acme/agents/engineer',
+	]);
 });

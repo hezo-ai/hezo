@@ -1,6 +1,7 @@
 import {
 	AgentRuntimeStatus,
 	BUDGET_PAUSE_STATUSES,
+	englishCount,
 	HeartbeatRunStatus,
 	wsRoom,
 } from '@hezo/shared';
@@ -150,7 +151,7 @@ export async function pauseAgentForBudget(
 			period: block.period,
 			used_tokens: block.usedTokens,
 			limit_tokens: block.limitTokens,
-			text: `@${slug} is paused: ${whose} ${block.period} budget of ${block.limitTokens.toLocaleString('en-US')} tokens is used up (${block.usedTokens.toLocaleString('en-US')} used). Raise the budget to let it run again before the window resets.`,
+			text: `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limitTokens)} tokens is used up (${englishCount(block.usedTokens)} used). Raise the budget to let it run again before the window resets.`,
 		},
 		wsManager,
 	}).catch(async (e) => {

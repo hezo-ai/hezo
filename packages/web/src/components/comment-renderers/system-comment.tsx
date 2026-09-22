@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
 import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
+import { AgentLink } from '../agent-link';
 import type {
 	BudgetConversionScope,
 	SystemBudgetConversionContent,
@@ -363,14 +364,14 @@ function RunFailedBody({
 	const timedOut = status === 'timed_out';
 	const agentNode =
 		agentSlug && projectId ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: agentSlug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={agentSlug}
 				className="text-xs text-info-soft-fg hover:underline"
-				data-testid="run-failed-agent"
+				testId="run-failed-agent"
 			>
 				@{agentSlug}
-			</Link>
+			</AgentLink>
 		) : (
 			<span className="text-xs text-text-2">{t('comment.runAgentFallback')}</span>
 		);
@@ -424,14 +425,14 @@ function RunAbandonedBody({
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 	const agentNode =
 		agentSlug && projectId ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: agentSlug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={agentSlug}
 				className="text-xs text-info-soft-fg hover:underline"
-				data-testid="run-abandoned-agent"
+				testId="run-abandoned-agent"
 			>
 				@{agentSlug}
-			</Link>
+			</AgentLink>
 		) : (
 			<span className="text-xs text-text-2">{t('comment.runAgentFallback')}</span>
 		);
@@ -479,15 +480,15 @@ function HandoffLimitBody({
 					}
 					const slug = slugs[element++];
 					return projectId ? (
-						<Link
+						<AgentLink
 							key={slug}
-							to="/projects/$projectId/agents/$agentId"
-							params={{ projectId, agentId: slug }}
+							projectId={projectId}
+							agentId={slug}
 							className="text-xs text-info-soft-fg hover:underline"
-							data-testid="handoff-limit-agent"
+							testId="handoff-limit-agent"
 						>
 							@{slug}
-						</Link>
+						</AgentLink>
 					) : (
 						<span key={slug}>@{slug}</span>
 					);
@@ -570,14 +571,14 @@ function BudgetPausedBody({
 	const slug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 	const agentNode =
 		slug && projectId ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: slug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={slug}
 				className="text-xs text-info-soft-fg hover:underline"
-				data-testid="budget-paused-agent"
+				testId="budget-paused-agent"
 			>
 				@{slug}
-			</Link>
+			</AgentLink>
 		) : (
 			<span>{slug ? `@${slug}` : t('comment.runAgentFallback')}</span>
 		);
@@ -768,14 +769,14 @@ function TaskLinkSystemBody({
 
 	const actorNode =
 		actorKind === 'agent' && actorSlug ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: actorSlug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={actorSlug}
 				className={linkClass}
-				data-testid="task-link-actor"
+				testId="task-link-actor"
 			>
 				{actorName}
-			</Link>
+			</AgentLink>
 		) : (
 			<span className={textClass}>{actorName}</span>
 		);

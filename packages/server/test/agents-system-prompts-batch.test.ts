@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -66,23 +67,6 @@ beforeAll(async () => {
 afterAll(async () => {
 	await safeClose(db);
 });
-
-async function callMcpTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	return JSON.parse(body.result.content[0].text);
-}
 
 describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	it('returns per-item results with placeholders substituted by default', async () => {
@@ -239,7 +223,7 @@ describe('MCP tool: get_agent_system_prompts', () => {
 	};
 
 	it('returns per-item resolved prompts via MCP transport', async () => {
-		const page = (await callMcpTool('get_agent_system_prompts', {
+		const page = (await callMcpTool(app, token, 'get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: agentAId }, { agent_id: agentBId }],
 		})) as PromptPage;
@@ -253,7 +237,7 @@ describe('MCP tool: get_agent_system_prompts', () => {
 	});
 
 	it('resolves a preview prompt via MCP transport (single item)', async () => {
-		const page = (await callMcpTool('get_agent_system_prompts', {
+		const page = (await callMcpTool(app, token, 'get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: agentAId, mode: 'preview' }],
 		})) as PromptPage;
@@ -264,7 +248,7 @@ describe('MCP tool: get_agent_system_prompts', () => {
 	});
 
 	it('batches previews in one call instead of forcing one request per agent', async () => {
-		const page = (await callMcpTool('get_agent_system_prompts', {
+		const page = (await callMcpTool(app, token, 'get_agent_system_prompts', {
 			project: projectSlug,
 			items: [
 				{ agent_id: agentAId, mode: 'preview' },
@@ -279,7 +263,7 @@ describe('MCP tool: get_agent_system_prompts', () => {
 	});
 
 	it("returns per-item NOT_FOUND when an agent doesn't belong to the queried team", async () => {
-		const page = (await callMcpTool('get_agent_system_prompts', {
+		const page = (await callMcpTool(app, token, 'get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: foreignAgentId }],
 		})) as PromptPage;

@@ -708,8 +708,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 
 		const run = await db.query<{ status: string; error: string }>(
 			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
@@ -741,7 +741,7 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
+		expect(result.requeue).toBeDefined();
 		const run = await db.query<{ input_tokens: number; usage_partial: boolean }>(
 			'SELECT input_tokens, usage_partial FROM heartbeat_runs WHERE id = $1',
 			[result.heartbeatRunId],
@@ -772,8 +772,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 		// No run row, deliberately: none was ever created, so none is invented.
 		expect(result.heartbeatRunId).toBeUndefined();
 	});
@@ -816,8 +816,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 	});
 
 	it('hands back a shutdown that lands in the setup window', async () => {
@@ -843,8 +843,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 	});
 
 	it('still fails a bare pre-run abort rather than re-queueing it', async () => {
@@ -863,7 +863,7 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBeFalsy();
+		expect(result.requeue).toBeUndefined();
 	});
 
 	it('returns the wakeup to the queue, which is the promise the message makes', async () => {
@@ -896,8 +896,7 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 				stderr: 'Server shut down while this run was in flight',
 				durationMs: 1,
 				heartbeatRunId: runRow.rows[0].id,
-				requeued: true,
-				requeueReason: WakeupSkipReason.ServerShutdown,
+				requeue: { reason: WakeupSkipReason.ServerShutdown },
 			},
 		);
 

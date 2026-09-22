@@ -16,7 +16,7 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { postTaskStatusBreadcrumb } from './chat-breadcrumbs';
-import { COHERENCE_LABEL_JSON } from './description-tasks';
+import { COHERENCE_LABEL_JSON, coachReviewsTaskSql } from './description-tasks';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { removeTaskWorktrees } from './repo-sync';
 import { recordStatusChange } from './task-events';
@@ -265,13 +265,11 @@ export async function triggerStatusAutomations(
 	if (newStatus === TaskStatus.Done) {
 		// The Coach is a single instance-level agent. It reviews completed work in
 		// every project; the wakeup carries the completed task's team so the Coach
-		// runs scoped to that project (see the run-team split in agent-runner). A
-		// finished coherence review is not reviewed: it is a pass over the prompts
-		// the Coach edits, so reviewing it feeds the Coach its own changes back.
+		// runs scoped to that project (see the run-team split in agent-runner).
 		const coach = await db.query<{ id: string }>(
 			`SELECT id FROM member_agents
 			 WHERE slug = $2 AND admin_status = $1::agent_admin_status
-			   AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = $3 AND t.labels @> $4::jsonb)
+			   AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = $3 AND ${coachReviewsTaskSql('t', '$4')})
 			 LIMIT 1`,
 			[AgentAdminStatus.Enabled, COACH_AGENT_SLUG, taskId, COHERENCE_LABEL_JSON],
 		);

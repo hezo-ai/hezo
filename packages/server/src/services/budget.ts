@@ -1,6 +1,8 @@
-import { type AiProvider, BudgetPeriod } from '@hezo/shared';
+import { type AiProvider, BudgetPeriod, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../db/migrations/code/081_token_budgets';
+import { broadcastRowChange } from '../lib/broadcast';
+import type { WebSocketManager } from './ws';
 
 /**
  * Budget enforcement - the single source of truth for agent and project usage.
@@ -237,11 +239,13 @@ async function entityBlock(
 
 /**
  * Record a run's or chat turn's tokens as a single `usage_entries` row - the
- * canonical usage event. No-op when nothing was used. Returns the inserted row
- * (or null on no-op) so callers can broadcast the change.
+ * canonical usage event - and tell the open pages of the team that owns it, so
+ * the Budget page refreshes. No-op when nothing was used. Returns the inserted
+ * row, or null on a no-op.
  */
 export async function recordUsage(
 	db: Db,
+	broadcast: { wsManager: WebSocketManager | undefined; teamId: string },
 	entry: {
 		memberId: string;
 		taskId: string | null;
@@ -272,7 +276,17 @@ export async function recordUsage(
 			entry.provider ?? null,
 		],
 	);
-	return res.rows[0] ?? null;
+	const row = res.rows[0] ?? null;
+	if (row) {
+		broadcastRowChange(
+			broadcast.wsManager,
+			wsRoom.team(broadcast.teamId),
+			'usage_entries',
+			'INSERT',
+			row,
+		);
+	}
+	return row;
 }
 
 /** A `usage_entries` row as the API returns it. */

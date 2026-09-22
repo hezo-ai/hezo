@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { agentDisplayNameSql } from '../lib/agent-identity';
 import { buildCursorPage, encodeCursor, parseCursorPagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -8,10 +7,17 @@ import {
 	getProjectBudgetStatus,
 	toEntityBudgetStatus,
 	USAGE_ENTRY_COLUMNS_SQL,
-	USAGE_TOKEN_SUMS_SQL,
 	USAGE_WINDOW_FLOOR_SQL,
 	USAGE_WINDOW_SUMS_SQL,
 } from '../services/budget';
+import {
+	parseUsageFilters,
+	type UsageDaySplit,
+	usageByAgent,
+	usageByDay,
+	usageTotals,
+	usageWhere,
+} from '../services/usage-read';
 
 export const usageRoutes = new Hono<Env>();
 
@@ -19,122 +25,55 @@ export const usageRoutes = new Hono<Env>();
  * Usage reads are scoped to a single project (`ue.project_id`) - usage is
  * project/agent/credential-scoped, never team-scoped. `group_by=day` powers the
  * project total chart; `breakdown=agent` / `breakdown=adapter` add a per-day
- * series split for the stacked charts on the Budgets page.
+ * series split for the stacked charts on the Budgets page. The queries are the
+ * `get_usage` tool's, from `services/usage-read.ts`.
  */
 
-/** A grouped result's rows rolled up into the response's totals. */
-function summaryTotals(
-	rows: Array<{ input_tokens: number; output_tokens: number; total_tokens: number }>,
-): { input_tokens: number; output_tokens: number; total_tokens: number } {
-	return {
-		input_tokens: rows.reduce((sum, r) => sum + r.input_tokens, 0),
-		output_tokens: rows.reduce((sum, r) => sum + r.output_tokens, 0),
-		total_tokens: rows.reduce((sum, r) => sum + r.total_tokens, 0),
-	};
-}
-
-type TokenSumRow = { input_tokens: number; output_tokens: number; total_tokens: number };
+const DAY_SPLIT_BY_BREAKDOWN: Record<string, UsageDaySplit> = {
+	agent: 'agent',
+	adapter: 'adapter',
+};
 
 usageRoutes.get('/projects/:projectId/usage', async (c) => {
-	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
-	const agentId = c.req.query('agent_id');
-	const taskId = c.req.query('task_id');
-	const from = c.req.query('from');
-	const to = c.req.query('to');
+	const parsed = parseUsageFilters(c.get('projectId') as string, {
+		agent_id: c.req.query('agent_id'),
+		task_id: c.req.query('task_id'),
+		from: c.req.query('from'),
+		to: c.req.query('to'),
+	});
+	if ('error' in parsed) return err(c, 'INVALID_REQUEST', parsed.error, 400);
+	const { filters } = parsed;
 	const groupBy = c.req.query('group_by');
-	const breakdown = c.req.query('breakdown');
-
-	const conditions: string[] = ['ue.project_id = $1'];
-	const params: unknown[] = [projectId];
-
-	if (agentId) {
-		params.push(agentId);
-		conditions.push(`ue.member_id = $${params.length}`);
-	}
-	if (taskId) {
-		params.push(taskId);
-		conditions.push(`ue.task_id = $${params.length}`);
-	}
-	if (from) {
-		params.push(from);
-		conditions.push(`ue.created_at >= $${params.length}`);
-	}
-	if (to) {
-		params.push(to);
-		conditions.push(`ue.created_at <= $${params.length}`);
-	}
-
-	const where = conditions.join(' AND ');
 
 	if (groupBy === 'agent') {
-		const result = await db.query<TokenSumRow>(
-			`SELECT ue.member_id AS agent_id,
-              COALESCE(ma.title, m.display_name) AS agent_title,
-              ${agentDisplayNameSql('ma', 'm')} AS agent_name,
-              ${USAGE_TOKEN_SUMS_SQL}
-       FROM usage_entries ue
-       LEFT JOIN members m ON m.id = ue.member_id
-       LEFT JOIN member_agents ma ON ma.id = ue.member_id
-       WHERE ${where}
-       GROUP BY ue.member_id, ma.title, ma.human_name, m.display_name`,
-			params,
-		);
-		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
+		const rows = await usageByAgent(db, filters);
+		return ok(c, { summary: rows, ...(await usageTotals(db, filters)) });
 	}
 
-	// The per-day buckets cast to `::date::text` (not bare `::date`) on purpose: PGlite
-	// deserializes a Postgres `date` into a JS Date, which Hono's c.json() then renders
-	// as a full ISO timestamp ("2024-01-15T00:00:00.000Z"). The chart parses `day` as a
-	// date-only string, so the timestamp form breaks it ("Invalid Date"). `::text` keeps
-	// it a plain "YYYY-MM-DD". Keep the cast on all three group_by=day queries below.
-	if (groupBy === 'day' && breakdown === 'agent') {
-		const result = await db.query<TokenSumRow>(
-			`SELECT date_trunc('day', ue.created_at)::date::text AS day,
-              ue.member_id AS agent_id,
-              COALESCE(ma.title, m.display_name) AS agent_title,
-              ${agentDisplayNameSql('ma', 'm')} AS agent_name,
-              ${USAGE_TOKEN_SUMS_SQL}
-       FROM usage_entries ue
-       LEFT JOIN members m ON m.id = ue.member_id
-       LEFT JOIN member_agents ma ON ma.id = ue.member_id
-       WHERE ${where}
-       GROUP BY day, ue.member_id, ma.title, ma.human_name, m.display_name
-       ORDER BY day`,
-			params,
-		);
-		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
-	}
-
-	if (groupBy === 'day' && breakdown === 'adapter') {
-		const result = await db.query<TokenSumRow>(
-			`SELECT date_trunc('day', ue.created_at)::date::text AS day,
-              ue.ai_provider_config_id,
-              ue.provider,
-              apc.label AS adapter_label,
-              ${USAGE_TOKEN_SUMS_SQL}
-       FROM usage_entries ue
-       LEFT JOIN ai_provider_configs apc ON apc.id = ue.ai_provider_config_id
-       WHERE ${where}
-       GROUP BY day, ue.ai_provider_config_id, ue.provider, apc.label
-       ORDER BY day`,
-			params,
-		);
-		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
-	}
-
+	// The day series grows for as long as the project runs, so it pages by whole
+	// days, newest first; `cursor` is the day the next page ends before. The totals
+	// cover every matching entry, not the page.
 	if (groupBy === 'day') {
-		const result = await db.query<TokenSumRow>(
-			`SELECT date_trunc('day', ue.created_at)::date::text AS day,
-              ${USAGE_TOKEN_SUMS_SQL}
-       FROM usage_entries ue
-       WHERE ${where}
-       GROUP BY day ORDER BY day`,
-			params,
-		);
-		return ok(c, { summary: result.rows, ...summaryTotals(result.rows) });
+		const split = DAY_SPLIT_BY_BREAKDOWN[c.req.query('breakdown') ?? ''] ?? 'none';
+		const cursor = c.req.query('cursor') ?? null;
+		if (cursor !== null && !/^\d{4}-\d{2}-\d{2}$/.test(cursor)) {
+			return err(c, 'invalid_cursor', 'The pagination cursor is malformed.', 400);
+		}
+		const { limit } = parseCursorPagination(c);
+		const [page, totals] = await Promise.all([
+			usageByDay(db, filters, split, { limit, beforeDay: cursor }),
+			usageTotals(db, filters),
+		]);
+		return ok(c, {
+			summary: page.rows,
+			next_cursor: page.nextBeforeDay,
+			has_more: page.nextBeforeDay !== null,
+			...totals,
+		});
 	}
 
+	const { where, params } = usageWhere(filters);
 	// Totals over every matching entry, and one page of the entries themselves,
 	// newest first. The ledger only grows, so the entries page by keyset and the
 	// totals come from the query rather than from the page.
@@ -158,10 +97,7 @@ usageRoutes.get('/projects/:projectId/usage', async (c) => {
 			 ORDER BY ue.created_at DESC, ue.id DESC LIMIT $${pageParams.length}`,
 			pageParams,
 		),
-		db.query<TokenSumRow>(
-			`SELECT ${USAGE_TOKEN_SUMS_SQL} FROM usage_entries ue WHERE ${where}`,
-			params,
-		),
+		usageTotals(db, filters),
 	]);
 	const page = buildCursorPage(entries.rows, limit, (row) =>
 		encodeCursor(new Date(row.created_at).toISOString(), row.id),
@@ -170,7 +106,7 @@ usageRoutes.get('/projects/:projectId/usage', async (c) => {
 		entries: page.data,
 		next_cursor: page.meta.next_cursor,
 		has_more: page.meta.has_more,
-		...(totals.rows[0] ?? summaryTotals([])),
+		...totals,
 	});
 });
 

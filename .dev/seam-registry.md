@@ -26,6 +26,8 @@ rather than here, is how a codebase ends up with two of everything.
 | "Did this execution strand a handoff?" | `detectNoWakeExits` (`services/comment-wakeups.ts`) |
 | "Who did this run notify without writing a comment?" | `created_by_run_id` on `agent_wakeup_requests` |
 | Which rows of a task thread a reader wants | `packages/shared/src/task-thread.ts`, SQL via `lib/comment-filters.ts` |
+| Writing a comment on a task - the REST route and the `create_comment` tool alike | `postComment` (`services/comment-wakeups.ts`) - the insert, its attachments, both broadcasts and the mention wakeups, given a `CommentAuthor`. "Does this comment say anything?" is `commentHasContent` (`packages/shared/src/task-thread.ts`), for the composer and the server both |
+| Writing a system comment on a task | `insertSystemComment` (`services/task-events.ts`) - the insert, returning `TASK_COMMENT_ROW_COLUMNS`, plus its broadcast; never a hand-written `INSERT INTO task_comments` for a system row |
 | "May these asset ids be attached here?" - a comment (route or `create_comment`) or a chat message | `checkProjectAssetIds` / `insertCommentAttachments` (`services/asset-ownership.ts`) - never a per-route copy of the ownership query |
 | "May an uncredentialed hosted MCP reach a run?" | `probed_at IS NOT NULL AND probe_error IS NULL`, written only by `discoverConnectorMethods` (`services/connectors/method-discovery.ts`) and read through `SAAS_CREDENTIALED_SQL` (`services/connectors/connections.ts`) |
 | "Is this hosted MCP answering right now?", asked by a human or an agent | `discoverConnectorMethods` + `describeProbeVerdict` (`services/connectors/method-discovery.ts`), reached through `POST .../connectors/:id/test` on both scopes. The `test_connector` MCP tool is a **second, divergent probe**: a raw `GET` that writes `auth_error` but never `probed_at`/`probe_error`, so its verdict never reaches the card, the banner or the run gate. Fold it into this seam rather than copying it |
@@ -35,6 +37,8 @@ rather than here, is how a codebase ends up with two of everything.
 | Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
 | A proposal an agent files for the admin to decide - the card on its ticket, the flip, and the wake that follows | `insertProposalComment` / `resolveProposalCommentAndWake` (`services/proposal-comment.ts`), given a `ProposalCommentSpec`. Hire and goal suggestion are two specs, not two copies |
 | "Is this wakeup a person answering the agent, or the system pinging it?" | `dispatchSuppressionExempt` (`services/no-work-backoff.ts`) - a wake carrying an answer needs a source on `DISPATCH_SUPPRESSION_EXEMPT_SOURCES`, and a conversational one must also have no agent attribution or follow a person speaking; `createWakeup` promotes a merged row onto an exempt source rather than letting a coalesce demote it |
+| "How much has this task cost since the admin last spoke?" | `loadTaskSpend` (`services/no-work-backoff.ts`) - one query feeds both the handoff hold and the token-ceiling hold |
+| "Which open task carries this system label, and may the Coach review this one?" | `findOpenLabeledTask` / `coachReviewsTaskSql` (`services/description-tasks.ts`) - the review sweep, the task automation and the dispatch gate share them |
 | A system notice a person must act on | `postAdminNotice` (`services/comment-wakeups.ts`) - a system comment plus its inbox rows in one transaction; `unlessPostedSince` posts it once per hold. A notice that only says the admin should decide reaches nobody |
 | Whether a user is the admin of a team | `isAdminUserSql` (`lib/admin-sql.ts`) - never a raw `role = 'admin'` or `is_superuser` check |
 | Which person, if any, acted on a request | `actingPersonFromAuth` (`lib/resolve.ts`) - stamped as `triggered_by`, `decided_by`, `chosen_by_user_id` or `resolved_by_*` |
@@ -62,6 +66,9 @@ rather than here, is how a codebase ends up with two of everything.
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
 | "Did the deployer fix this setting, rather than the operator?" | `pinnedSetting` / `isPinned` (`lib/system-meta.ts`), which every pinnable getter routes through - never a direct `runtimeConfig().policy` read at a call site, and never a branch on `managedBy` |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
+| Reading token usage - totals, per agent, per day | `services/usage-read.ts` (`parseUsageFilters`, `usageTotals`, `usageByAgent`, `usageByDay`) - `GET /usage` and the `get_usage` tool read the same columns through it |
+| Recording token usage | `recordUsage` (`services/budget.ts`) - the one writer of `usage_entries`; it broadcasts to the owning team so the Budget page refreshes |
+| A token count in text the server writes (a notice, a log line) | `englishCount` (`@hezo/shared`) - the web formats counts through the reader's number format instead |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |
 | A per-bucket stacked chart, and its axis/tooltip formatting | `StackedSeriesChart` + `chart-format.ts` (`packages/web/src/components/charts/`) |
@@ -77,6 +84,7 @@ rather than here, is how a codebase ends up with two of everything.
 | A server test context | `createTestContext()` (`test/helpers/context.ts`) |
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
 | A component test | `renderApp()` + `seed*()` (`packages/web/test/helpers/`) |
+| Calling an MCP tool from a server test | `callMcpTool` / `callMcpToolContent` (`test/helpers/mcp-call.ts`) - never a per-file copy of the JSON-RPC request |
 | A complete test double | `createStubDocker()` (`test/helpers/app.ts`) - never a hand-rolled partial |
 | Seeding container uptime a calendar-window reader will bill | `seedUptimeStretch()` / `seedMonthToDateSeconds()` (`test/helpers/uptime.ts`) - web tests reach them through `@hezo/server/test/helpers/uptime` |
 | A CLI runtime's own quirk (env, flags, model-id form, usage recovery, run-end behaviour) | that runtime's `services/runtime-adapters/<runtime>.ts`, its section in `agent-stream-parser.ts`, or its `RUNTIME_*` row (`@hezo/shared`) |

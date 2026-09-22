@@ -1,7 +1,7 @@
 import {
-	AuthType,
 	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
+	commentHasContent,
 	commentTextFits,
 	parseThreadRowCategories,
 	type ThreadRowCategory,
@@ -25,7 +25,6 @@ import { validateCredentialValue } from '../lib/credential-validator';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import {
 	actingPersonFromAuth,
-	apiKeyIdFromAuth,
 	resolveActor,
 	resolveReactorMemberId,
 	resolveTaskId,
@@ -34,12 +33,8 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { checkProjectAssetIds, insertCommentAttachments } from '../services/asset-ownership';
-import {
-	commentTooLongError,
-	fireCommentWakeups,
-	TASK_COMMENT_ROW_COLUMNS,
-} from '../services/comment-wakeups';
+import { checkProjectAssetIds } from '../services/asset-ownership';
+import { commentTooLongError, postComment } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { invalidateSecretsVault } from '../services/egress';
 import {
@@ -47,7 +42,7 @@ import {
 	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
-import { recordTaskLinks } from '../services/task-events';
+import { insertSystemComment } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -434,7 +429,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 
 	const body = await c.req.json<{
 		content_type?: string;
-		content: Record<string, unknown>;
+		content: Record<string, unknown> | string;
 		effort?: string;
 		parent_comment_id?: string | null;
 		attachment_ids?: string[];
@@ -454,22 +449,23 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	if (SERVER_WRITTEN_CONTENT_TYPES.has(contentType)) {
 		return err(c, 'INVALID_REQUEST', `content_type ${contentType} is written by Hezo only`, 400);
 	}
-	const isText = contentType === CommentContentType.Text;
-	if (isText) {
-		const text =
-			typeof body.content === 'string'
+	// The web composer sends a text comment's words as a bare string; stored, every
+	// text comment has the one shape agents also write.
+	const content: Record<string, unknown> | null =
+		typeof body.content === 'string'
+			? { text: body.content }
+			: body.content && typeof body.content === 'object'
 				? body.content
-				: typeof body.content === 'object' && body.content !== null
-					? ((body.content as Record<string, unknown>).text as string | undefined)
-					: undefined;
-		if ((typeof text !== 'string' || text.length === 0) && attachmentIds.length === 0) {
+				: null;
+	if (!content) return err(c, 'INVALID_REQUEST', 'content is required', 400);
+	if (contentType === CommentContentType.Text) {
+		const text = typeof content.text === 'string' ? content.text : '';
+		if (!commentHasContent(text, attachmentIds.length)) {
 			return err(c, 'INVALID_REQUEST', 'content or attachment_ids is required', 400);
 		}
-		if (typeof text === 'string' && !commentTextFits(text)) {
+		if (!commentTextFits(text)) {
 			return err(c, 'COMMENT_TOO_LONG', commentTooLongError(text.length), 400);
 		}
-	} else if (!body.content) {
-		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
 	// Optional per-comment effort override. Admin users set this to dial up/down
@@ -491,87 +487,24 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	// REST is the people's surface: a human author keeps `author_member_id` null by
 	// convention, and `author_user_id` records *which* human, so their avatar
 	// (user_icons) renders on the comment.
-	const authorMemberId: string | null = null;
-	const authorApiKeyId = apiKeyIdFromAuth(auth);
-	const authorUserId = auth.type === AuthType.Admin ? auth.userId : null;
-
-	const result = await withTransaction(db, async () => {
-		const inserted = await db.query<{ id: string; public_id: string }>(
-			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, author_user_id, parent_comment_id, content_type, content)
-     VALUES ($1, $2, $3, $4, $5, $6::comment_content_type, $7::jsonb)
-     RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
-			[
-				taskId,
-				authorMemberId,
-				authorApiKeyId,
-				authorUserId,
-				parentCommentId,
-				body.content_type ?? CommentContentType.Text,
-				JSON.stringify(body.content),
-			],
-		);
-
-		await insertCommentAttachments(db, inserted.rows[0].id, attachmentIds);
-		return inserted;
-	});
-
-	await fireCommentWakeups({
+	const person = actingPersonFromAuth(auth);
+	const { row } = await postComment({
 		db,
-		taskId,
-		teamId,
-		commentId: result.rows[0].id,
-		content: body.content,
-		contentType: body.content_type ?? CommentContentType.Text,
-		authorMemberId,
-		authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
-		authorRunId: null,
-		effort: commentEffort,
-		parentCommentId,
 		wsManager: c.get('wsManager'),
-	});
-
-	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';
-	if (commentText) {
-		recordTaskLinks(
-			db,
-			teamId,
-			taskId,
-			commentText,
-			authorMemberId,
-			authorApiKeyId,
-			c.get('wsManager'),
-			{ kind: 'comment', commentPublicId: result.rows[0].public_id },
-		).catch((e) => log.error('Failed to record task links from comment:', e));
-	}
-
-	broadcastCommentFamilyChange(
-		c.get('wsManager'),
 		teamId,
-		c.get('projectId') as string,
-		'task_comments',
-		'INSERT',
-		result.rows[0] as Record<string, unknown>,
-	);
-	if (attachmentIds.length > 0) {
-		broadcastCommentFamilyChange(
-			c.get('wsManager'),
-			teamId,
-			c.get('projectId') as string,
-			'comment_attachments',
-			'INSERT',
-			{
-				comment_id: result.rows[0].id,
-				asset_ids: attachmentIds,
-			},
-		);
-	}
+		projectId: c.get('projectId') as string,
+		taskId,
+		author: { memberId: null, userId: person.user_id, apiKeyId: person.api_key_id },
+		parentCommentId,
+		contentType: contentType as CommentContentType,
+		content,
+		effort: commentEffort,
+		attachmentIds,
+	});
 
 	const masterKeyManager = c.get('masterKeyManager');
-	const attachments = await loadAttachmentsForComments(db, [result.rows[0].id], masterKeyManager);
-	const created = {
-		...(result.rows[0] as Record<string, unknown>),
-		attachments: attachments.get(result.rows[0].id) ?? [],
-	};
+	const attachments = await loadAttachmentsForComments(db, [row.id], masterKeyManager);
+	const created = { ...row, attachments: attachments.get(row.id) ?? [] };
 	return ok(c, created, 201);
 });
 
@@ -689,18 +622,14 @@ commentsRoutes.post(
 				],
 			);
 
-			await db.query(
-				`INSERT INTO task_comments (task_id, content_type, content)
-				 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-				[
-					taskId,
-					JSON.stringify({
-						text: isConfirmation
-							? `Confirmed: ${name}`
-							: `Credential provided: ${name} (stored as secret, value not shown)`,
-					}),
-				],
-			);
+			await insertSystemComment(db, {
+				taskId,
+				content: {
+					text: isConfirmation
+						? `Confirmed: ${name}`
+						: `Credential provided: ${name} (stored as secret, value not shown)`,
+				},
+			});
 			return {
 				secretId,
 				updatedComment: updated.rows[0] as Record<string, unknown>,
@@ -860,11 +789,7 @@ commentsRoutes.post(
 					`Asset deletion approved: ${ids.length} deleted` +
 					(paths.length > 0 ? ` (${paths.map((p) => `assets/${p}`).join(', ')})` : '') +
 					(missing > 0 ? `; ${missing} no longer existed` : '');
-				await db.query(
-					`INSERT INTO task_comments (task_id, content_type, content)
-					 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-					[taskId, JSON.stringify({ text: summary })],
-				);
+				await insertSystemComment(db, { taskId, content: { text: summary } });
 				return { ids, paths, updated: updated.rows[0] as Record<string, unknown> };
 			});
 			deletedIds = result.ids;
@@ -892,11 +817,10 @@ commentsRoutes.post(
 					],
 				);
 				const refs = requestedAssets.map((a) => `assets/${a.path}`).join(', ');
-				await db.query(
-					`INSERT INTO task_comments (task_id, content_type, content)
-					 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-					[taskId, JSON.stringify({ text: `Asset deletion denied: ${refs}` })],
-				);
+				await insertSystemComment(db, {
+					taskId,
+					content: { text: `Asset deletion denied: ${refs}` },
+				});
 				return updated.rows[0] as Record<string, unknown>;
 			});
 		}

@@ -14,10 +14,10 @@ export function BudgetSection({ projectId }: { projectId: string }) {
 				<div className="flex flex-col gap-1">
 					{usage?.summary?.map((s) => (
 						<div
-							key={s.label}
+							key={s.agent_id}
 							className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 						>
-							<span>{s.label}</span>
+							<span>{s.agent_name ?? s.agent_title}</span>
 							<span className="font-mono">{formatNumber(s.total_tokens)}</span>
 						</div>
 					))}

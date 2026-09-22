@@ -295,3 +295,44 @@ test('Budget page: saving an agent cap edit refreshes the status (no stale cache
 	});
 	await waitFor(() => expect(updated.textContent ?? '').toContain('/ 50M'));
 });
+
+test("Team settings lists each agent's usage under the name the roster gives it", async () => {
+	let teamSlug = '';
+
+	const { router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			const agent = ws.agents.find((candidate) => candidate.slug === 'engineer') ?? ws.agents[0];
+			teamSlug = ws.internalSlug;
+			await apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.id}`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({ human_name: 'Rowan' }),
+			});
+			const projects = (await (await apiBase('/api/projects', { headers: ws.headers })).json()) as {
+				data: Array<{ id: string; slug: string }>;
+			};
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projects.data.find((p) => p.slug === ws.internalSlug)?.id as string,
+				inputTokens: 1_234_000,
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: teamSlug },
+	});
+
+	await waitFor(
+		() => {
+			const section = document.querySelector('#settings-budget')?.textContent ?? '';
+			expect(section).toContain('Rowan');
+			expect(section).toContain('1,234,000');
+		},
+		{ timeout: 15_000 },
+	);
+});

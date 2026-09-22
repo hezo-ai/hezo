@@ -14,6 +14,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
 /**
@@ -70,19 +71,7 @@ async function callTool(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			id: 1,
-			method: 'tools/call',
-			params: { name, arguments: args },
-		}),
-	});
-	expect(res.status).toBe(200);
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, name, args);
 }
 
 beforeAll(async () => {

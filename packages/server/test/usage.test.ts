@@ -117,3 +117,54 @@ describe('usage reads', () => {
 		expect((await res.json()).error.code).toBe('invalid_cursor');
 	});
 });
+
+describe('usage read filters and the day series', () => {
+	it('refuses a filter that is not a uuid or a date, rather than failing the query', async () => {
+		const slug = await projectSlugForTeamSlug(db, teamSlug);
+		for (const query of ['?agent_id=nope', '?task_id=42', '?from=yesterday', '?to=soon']) {
+			const res = await app.request(`/api/projects/${slug}/usage${query}`, {
+				headers: authHeader(token),
+			});
+			expect(res.status, query).toBe(400);
+			expect((await res.json()).error.code).toBe('INVALID_REQUEST');
+		}
+	});
+
+	it('pages the day series by whole UTC days, and totals every day', async () => {
+		const slug = await projectSlugForTeamSlug(db, teamSlug);
+		await db.query(
+			`DELETE FROM usage_entries WHERE project_id = (SELECT id FROM projects WHERE slug = $1)`,
+			[slug],
+		);
+		// Three days, two entries on the middle one.
+		for (const [daysAgo, tokens] of [
+			[3, 100],
+			[2, 20],
+			[2, 30],
+			[1, 7],
+		]) {
+			await db.query(
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens, created_at)
+				 SELECT $1, p.id, $2, date_trunc('day', now(), 'UTC') - ($3 || ' days')::interval
+				                        + interval '12 hours'
+				   FROM projects p WHERE p.slug = $4`,
+				[agentId, tokens, String(daysAgo), slug],
+			);
+		}
+
+		const first = await getUsage('?group_by=day&limit=2');
+		expect(first.summary.map((d: { total_tokens: number }) => d.total_tokens)).toEqual([50, 7]);
+		expect(first.has_more).toBe(true);
+		expect(first.total_tokens).toBe(157);
+
+		const second = await getUsage(`?group_by=day&limit=2&cursor=${first.next_cursor}`);
+		expect(second.summary.map((d: { total_tokens: number }) => d.total_tokens)).toEqual([100]);
+		expect(second.has_more).toBe(false);
+		expect(second.next_cursor).toBeNull();
+
+		// A split series keeps a day's rows together on one page.
+		const byAgent = await getUsage('?group_by=day&breakdown=agent&limit=1');
+		expect(byAgent.summary).toHaveLength(1);
+		expect(byAgent.summary[0]).toMatchObject({ agent_id: agentId, total_tokens: 7 });
+	});
+});

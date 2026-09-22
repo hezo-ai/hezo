@@ -9,6 +9,7 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { isAdminUserSql } from '../lib/admin-sql';
+import { trackBackground } from '../lib/background';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import {
 	detectUnlinkedTeammateReferences,
@@ -19,6 +20,7 @@ import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { insertCommentAttachments } from './asset-ownership';
 import { ADMIN_HOLD_NOTICE_KINDS, adminCommentSql, adminSpokeAtSql } from './no-work-backoff';
+import { insertSystemComment, recordTaskLinks, TASK_COMMENT_ROW_COLUMNS } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -518,16 +520,6 @@ export function formatNoWakeExitWarning(finding: NoWakeExitFinding, subject: str
 	);
 }
 
-/**
- * Every `task_comments` column a caller may need back from a write, leaving out
- * the generated `search_tsv`. That column is the whole comment re-encoded for
- * search, so returning or broadcasting it roughly doubles the payload and can
- * push an ordinary write over the tool result cap.
- */
-export const TASK_COMMENT_ROW_COLUMNS = `id, task_id, author_member_id, author_api_key_id, author_user_id,
-	parent_comment_id, content_type, content, chosen_option, chosen_at, public_id, created_by_run_id,
-	created_at`;
-
 /** The refusal an agent or API caller sees for a comment over the cap. */
 export function commentTooLongError(length: number): string {
 	return (
@@ -570,35 +562,44 @@ export function commentWriteAck(row: Record<string, unknown>): Record<string, un
 	};
 }
 
-export interface PostAgentCommentParams {
+/** Who wrote a comment. A person has a user or an API key; an agent run has its member and run. */
+export interface CommentAuthor {
+	memberId: string | null;
+	userId?: string | null;
+	apiKeyId?: string | null;
+	/** The run that wrote it, for an agent's comment. */
+	runId?: string | null;
+}
+
+export interface PostCommentParams {
 	db: Db;
 	wsManager?: WebSocketManager;
 	teamId: string;
 	projectId: string;
 	taskId: string;
-	authorMemberId: string | null;
-	authorApiKeyId?: string | null;
-	authorUserId?: string | null;
-	createdByRunId: string | null;
+	author: CommentAuthor;
 	parentCommentId?: string | null;
-	text: string;
+	/** Text unless given; any kind a person or agent may write (not system or run). */
+	contentType?: CommentContentType;
+	content: Record<string, unknown>;
 	effort?: string | null;
 	/** Asset ids already checked with `checkProjectAssetIds`, linked in the comment's transaction. */
 	attachmentIds?: readonly string[];
 }
 
 /**
- * Insert a text comment on a task and run the exact delivery side effects a
- * `create_comment` MCP call does — the realtime broadcast plus
- * `fireCommentWakeups` (mention / @admin inbox / reply fan-out). Shared by the
- * `create_comment` tool and the runner's handoff-delivery guardrail so an
- * auto-delivered final message is byte-identical to a comment the agent posts
- * itself. Returns the inserted row (it carries `public_id`, not `search_tsv`)
+ * Write a comment on a task and run every side effect a comment has - the one
+ * path for a person's REST comment, an agent's `create_comment`, and the runner's
+ * delivery of a stranded final message, so the three cannot drift. The comment
+ * and its files land in one transaction, before anyone is woken, so a teammate
+ * woken by it always finds its attachments. Then the realtime broadcasts, the
+ * mention, @admin, reply and held-task wakeups, and the task links its text
+ * names. Returns the inserted row (it carries `public_id`, not `search_tsv`)
  * alongside the slugs the fan-out actually woke, so a caller can report what the
  * write delivered instead of inferring it. Pair `woke` with a roster through
  * {@link buildWakeReceipt} for the full receipt.
  */
-export async function postAgentComment(params: PostAgentCommentParams): Promise<{
+export async function postComment(params: PostCommentParams): Promise<{
 	row: { id: string; public_id: string } & Record<string, unknown>;
 	woke: string[];
 }> {
@@ -608,32 +609,29 @@ export async function postAgentComment(params: PostAgentCommentParams): Promise<
 		teamId,
 		projectId,
 		taskId,
-		authorMemberId,
-		authorApiKeyId = null,
-		authorUserId = null,
-		createdByRunId,
+		author,
 		parentCommentId = null,
-		text,
+		contentType = CommentContentType.Text,
+		content,
 		effort,
 		attachmentIds = [],
 	} = params;
 
-	const content = { text };
-	// The comment and its files land together, before anyone is woken, so a
-	// teammate woken by this comment always finds its attachments.
 	const row = await withTransaction(db, async () => {
 		const r = await db.query<{ id: string; public_id: string } & Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id)
-			 VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7)
+			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, author_user_id,
+			                            parent_comment_id, content_type, content, created_by_run_id)
+			 VALUES ($1, $2, $3, $4, $5, $6::comment_content_type, $7::jsonb, $8)
 			 RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
 			[
 				taskId,
-				authorMemberId,
-				authorApiKeyId,
+				author.memberId,
+				author.apiKeyId ?? null,
+				author.userId ?? null,
 				parentCommentId,
-				CommentContentType.Text,
+				contentType,
 				JSON.stringify(content),
-				createdByRunId,
+				author.runId ?? null,
 			],
 		);
 		await insertCommentAttachments(db, r.rows[0].id, attachmentIds);
@@ -654,15 +652,30 @@ export async function postAgentComment(params: PostAgentCommentParams): Promise<
 		teamId,
 		commentId: row.id,
 		content,
-		contentType: CommentContentType.Text,
-		authorMemberId,
-		authorUserId,
-		authorApiKeyId,
-		authorRunId: createdByRunId,
+		contentType,
+		authorMemberId: author.memberId,
+		authorUserId: author.userId ?? null,
+		authorApiKeyId: author.apiKeyId ?? null,
+		authorRunId: author.runId ?? null,
 		effort,
 		parentCommentId,
 		wsManager,
 	});
+	const text = typeof content.text === 'string' ? content.text : '';
+	if (text) {
+		trackBackground(
+			recordTaskLinks(
+				db,
+				teamId,
+				taskId,
+				text,
+				author.memberId,
+				author.apiKeyId ?? null,
+				wsManager,
+				{ kind: 'comment', commentPublicId: row.public_id },
+			).catch((e) => log.error('Failed to record task links from comment:', e)),
+		);
+	}
 	return { row, woke };
 }
 
@@ -847,13 +860,7 @@ export async function postAdminNotice(params: PostAdminNoticeParams): Promise<st
 			);
 			if (standing.rows.length > 0) return null;
 		}
-		const r = await db.query<{ id: string } & Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
-			 RETURNING ${TASK_COMMENT_ROW_COLUMNS}, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-			[taskId, CommentContentType.System, JSON.stringify(content)],
-		);
-		const row = r.rows[0];
+		const row = await insertSystemComment(db, { taskId, content });
 		const mentions = await insertAdminMentions({
 			db,
 			teamId,

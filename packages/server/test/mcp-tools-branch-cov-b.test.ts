@@ -13,6 +13,7 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Branch-coverage tests for packages/server/src/mcp/tools.ts (part B):
 // hire proposals, CEO project creation / team setup, approvals resolution,
@@ -95,27 +96,7 @@ async function call(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result?: { content: Array<{ text: string }> };
-		error?: { message: string };
-	};
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	const text = body.result.content[0].text;
-	try {
-		return JSON.parse(text) as Record<string, unknown>;
-	} catch {
-		return { error: text };
-	}
+	return await callMcpTool(app, tokenStr, toolName, args);
 }
 
 const admin = (toolName: string, args: Record<string, unknown> = {}) => call(token, toolName, args);

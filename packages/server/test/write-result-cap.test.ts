@@ -7,6 +7,7 @@ import { MCP_RESULT_BYTE_LIMIT, oversizedWriteAck } from '../src/mcp/tools';
 import { commentWriteAck, fitCommentForDelivery } from '../src/services/comment-wakeups';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -36,20 +37,7 @@ afterAll(async () => {
 });
 
 async function callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	const text = body.result.content[0].text;
-	if (text.startsWith('MCP error')) throw new Error(`${toolName}: ${text}`);
-	return JSON.parse(text);
+	return await callMcpTool(app, token, toolName, args);
 }
 
 async function newTask(title: string): Promise<{ id: string; identifier: string }> {
@@ -115,6 +103,24 @@ describe('oversizedWriteAck', () => {
 		expect(ack.result_truncated).toBe(true);
 		expect(ack.size_bytes).toBe(900_000);
 		expect(ack).not.toHaveProperty('items');
+		expect(ack.note).toContain('The write succeeded');
+	});
+
+	it('keeps the failed items of a batch that does not fit, and does not claim success', () => {
+		const result = Array.from({ length: 5_000 }, (_, index) =>
+			index % 1_000 === 7
+				? { index, ok: false, error: `no agent ${index}` }
+				: { index, ok: true, id: `id-${index}` },
+		);
+		const ack = oversizedWriteAck(result, 900_000, 1_500) as {
+			note: string;
+			failed: Array<{ index: number; error: string }>;
+			failed_count: number;
+		};
+		expect(ack.note).toContain('Part of the write failed');
+		expect(ack.note).not.toContain('Do not repeat the call');
+		expect(ack.failed_count).toBe(5);
+		expect(ack.failed[0]).toEqual({ index: 7, error: 'no agent 7' });
 	});
 });
 

@@ -13,6 +13,7 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Branch-coverage tests for packages/server/src/mcp/tools.ts. These drive tools
 // through the real /mcp request path with an admin token (instance principal),
@@ -104,36 +105,12 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-async function call(
+function call(
 	tokenStr: string,
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result?: { content: Array<{ text: string }> };
-		error?: { message: string };
-	};
-	// A schema-validation failure comes back not as JSON but as an MCP error string
-	// ("MCP error -32602: Input validation error: ...") in the result content (or, in
-	// some transports, a JSON-RPC error). Surface either as { error } so callers
-	// assert on it uniformly alongside the handlers' own in-band { error } results.
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	const text = body.result.content[0].text;
-	try {
-		return JSON.parse(text) as Record<string, unknown>;
-	} catch {
-		return { error: text };
-	}
+	return callMcpTool(app, tokenStr, toolName, args);
 }
 
 // Admin (non-agent) create_task requires an assignee; an agent caller defaults

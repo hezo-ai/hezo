@@ -60,17 +60,32 @@ async function loadTeamContext(db: Db, teamId: string): Promise<TeamCoordination
 	return loadTeamCoordinationContext(db, teamId);
 }
 
-async function findOpenLabeledTask(db: Db, teamId: string, label: string): Promise<string | null> {
+/** A team's open task carrying `label`, or null. */
+export async function findOpenLabeledTask(
+	db: Db,
+	teamId: string,
+	label: string,
+): Promise<{ id: string; identifier: string; assignee_id: string | null } | null> {
 	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(', ');
-	const result = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
+	const result = await db.query<{ id: string; identifier: string; assignee_id: string | null }>(
+		`SELECT id, identifier, assignee_id FROM tasks
 		 WHERE team_id = $1
 		   AND labels @> $2::jsonb
 		   AND status NOT IN (${placeholders})
 		 LIMIT 1`,
 		[teamId, JSON.stringify([label]), ...TERMINAL_TASK_STATUSES],
 	);
-	return result.rows[0]?.id ?? null;
+	return result.rows[0] ?? null;
+}
+
+/**
+ * SQL predicate: the Coach reviews the task aliased `taskAlias` once it is done.
+ * A finished coherence review is not reviewed: it is a pass over the prompts the
+ * Coach edits, so reviewing it feeds the Coach its own changes back. Binds
+ * {@link COHERENCE_LABEL_JSON} at `labelParam`.
+ */
+export function coachReviewsTaskSql(taskAlias: string, labelParam: string): string {
+	return `NOT ${taskAlias}.labels @> ${labelParam}::jsonb`;
 }
 
 /** One bullet recording a change on the coherence ticket. */
@@ -342,7 +357,7 @@ export async function enqueueTeamCoherenceReviewTask(
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 
-	const existing = await findOpenLabeledTask(db, teamId, COHERENCE_LABEL);
+	const existing = (await findOpenLabeledTask(db, teamId, COHERENCE_LABEL))?.id;
 	if (existing) {
 		// Coalesce onto the open ticket. Record this change on it so the review can
 		// account for every update that triggered it, and re-wake the assignee so the

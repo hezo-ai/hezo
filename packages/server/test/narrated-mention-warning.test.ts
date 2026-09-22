@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // The screenshot case: an agent explains it is blocked because an EARLIER comment
 // carries an unanswered `@admin` ask — and writes that explanation with live
@@ -167,21 +168,7 @@ describe('MCP create_comment / update_comment warn on narrated active mentions',
 		name: string,
 		args: Record<string, unknown>,
 	): Promise<{ id?: string; warning?: string; error?: string }> {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name, arguments: args },
-				id: 1,
-			}),
-		});
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as {
-			result: { content: Array<{ type: string; text: string }> };
-		};
-		return JSON.parse(body.result.content[0].text) as {
+		return (await callMcpTool(app, agentToken, name, args)) as {
 			id?: string;
 			warning?: string;
 			error?: string;

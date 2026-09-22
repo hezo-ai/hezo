@@ -14,6 +14,7 @@ import {
 	mintAgentToken,
 	projectSlugFor,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -70,18 +71,7 @@ afterAll(async () => {
 });
 
 async function callRequestCredential(args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: 'request_credential', arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, 'request_credential', args);
 }
 
 describe('request_credential MCP tool', () => {
@@ -523,18 +513,7 @@ describe('fulfill-credential endpoint', () => {
 });
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, name, args);
 }
 
 describe('list_connectors rest_auth', () => {

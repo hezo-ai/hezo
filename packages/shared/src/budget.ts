@@ -1,3 +1,4 @@
+import { englishCount } from './i18n/format.js';
 /**
  * Budget window math - the single source of truth for the daily/weekly/monthly
  * rolling token caps on agents and projects. Imported by the web forms, every
@@ -61,7 +62,7 @@ export function retiredBudgetFieldError(body: unknown): string | null {
 
 /** A token budget as an English sentence names it: "unlimited" for 0, else the count. */
 export function describeTokenBudget(tokens: number): string {
-	return tokens > 0 ? `${tokens.toLocaleString('en-US')} tokens` : 'unlimited';
+	return tokens > 0 ? `${englishCount(tokens)} tokens` : 'unlimited';
 }
 
 const DAYS_PER_WEEK = 7;
@@ -71,11 +72,6 @@ const WEEKS_PER_MONTH = 52 / 12;
 /** A window with a 0 limit is unlimited/disabled and never constrains anything. */
 function isEnabled(tokens: number): boolean {
 	return tokens > 0;
-}
-
-/** A token count as a person reads it in an English message, e.g. 7000000 -> "7,000,000". */
-function tokenCount(tokens: number): string {
-	return tokens.toLocaleString('en-US');
 }
 
 /** Minimum weekly tokens implied by the daily cap (daily × 7). 0 when daily is unlimited. */
@@ -113,7 +109,7 @@ export function validateBudgetWindows(w: BudgetWindowsTokens): BudgetViolation[]
 		violations.push({
 			field: 'weekly_budget_tokens',
 			minTokens: weeklyFloor,
-			message: `Weekly budget must be at least ${tokenCount(weeklyFloor)} tokens to cover the daily budget (daily × 7).`,
+			message: `Weekly budget must be at least ${englishCount(weeklyFloor)} tokens to cover the daily budget (daily × 7).`,
 		});
 	}
 
@@ -133,7 +129,7 @@ export function validateBudgetWindows(w: BudgetWindowsTokens): BudgetViolation[]
 		violations.push({
 			field: 'monthly_budget_tokens',
 			minTokens: monthlyFloor,
-			message: `Monthly budget must be at least ${tokenCount(monthlyFloor)} tokens to cover the ${basis}.`,
+			message: `Monthly budget must be at least ${englishCount(monthlyFloor)} tokens to cover the ${basis}.`,
 		});
 	}
 

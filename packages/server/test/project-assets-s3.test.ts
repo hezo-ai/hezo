@@ -15,6 +15,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 import { createS3Sim, type S3Sim } from './helpers/s3-sim';
 
 /**
@@ -45,18 +46,7 @@ async function callToolViaMcp(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, authToken, toolName, args);
 }
 
 async function uploadProjectAsset(filename: string, mime: string, bytes: Uint8Array) {

@@ -136,6 +136,15 @@ export function formatMoneyUsd(cents: number, numberFormat: NumberFormat): strin
 	}).format((Number.isFinite(cents) ? cents : 0) / 100);
 }
 
+/**
+ * A count as server-written English text states it - a notice's fallback text,
+ * an error, an agent's prompt: "7,000,000". A person's screen formats counts by
+ * the operator's number format instead ({@link formatNumber}).
+ */
+export function englishCount(value: number): string {
+	return value.toLocaleString('en-US');
+}
+
 /** Plain localized number - used for token counts and the like. */
 export function formatNumber(value: number, numberFormat: NumberFormat): string {
 	const { representativeLocale } = NUMBER_FORMAT_DESCRIPTORS[numberFormat];

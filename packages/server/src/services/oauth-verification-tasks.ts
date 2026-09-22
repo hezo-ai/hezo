@@ -1,5 +1,4 @@
 import {
-	CommentContentType,
 	type PlatformType,
 	TaskPriority,
 	TaskStatus,
@@ -12,6 +11,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { loadCoordinationContext } from './internal-intake';
+import { insertSystemComment } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -121,17 +121,12 @@ export async function enqueueOAuthVerificationTask(
 
 	if (existing.rows[0]) {
 		const existingId = existing.rows[0].id;
-		await db.query(
-			`INSERT INTO task_comments (task_id, content_type, content)
-			 VALUES ($1, $2::comment_content_type, $3::jsonb)`,
-			[
-				existingId,
-				CommentContentType.System,
-				JSON.stringify({
-					text: `A new ${platformDisplayName(platform)} OAuth flow completed. Re-verify the connector.`,
-				}),
-			],
-		);
+		await insertSystemComment(db, {
+			taskId: existingId,
+			content: {
+				text: `A new ${platformDisplayName(platform)} OAuth flow completed. Re-verify the connector.`,
+			},
+		});
 		try {
 			await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Comment, {
 				task_id: existingId,

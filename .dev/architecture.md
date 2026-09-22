@@ -4873,7 +4873,7 @@ only guardrail, on every idle tick.
 
 Three stranded forms are handled, differently:
 (1) an **active `@`-mention** (`extractMentionSlugs`) the run never posted as a comment is
-delivered verbatim via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
+delivered verbatim via `postComment` — the same insert + broadcast + `fireCommentWakeups`
 path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of
 vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
 otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
@@ -4912,7 +4912,7 @@ undelivered.
 where a teammate `@`-mentions a reviewer and the verdict ends up only in the final message. When
 the run was woken by a `WakeupSource.Reply`/`Mention` and posted no comment of its own on the
 task, the final message is delivered verbatim as a reply threaded under the waking comment
-(`postAgentComment` with `parentCommentId`), flipping the no-op run to success. A human/admin
+(`postComment` with `parentCommentId`), flipping the no-op run to success. A human/admin
 author qualifies on either wake source; an **agent** author qualifies only via `Mention`, so
 routine agent-to-agent reply chatter is still excluded. That split is also the loop guard, and it
 is structural rather than heuristic: this branch only runs when the final message carries no

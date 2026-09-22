@@ -333,6 +333,17 @@ export function commentTextFits(text: string): boolean {
 }
 
 /**
+ * Whether a comment says anything: text beyond whitespace, or at least one file.
+ * The one rule the composer, the REST route and the comment tool all apply.
+ */
+export function commentHasContent(
+	text: string | null | undefined,
+	attachmentCount: number,
+): boolean {
+	return (text ?? '').trim().length > 0 || attachmentCount > 0;
+}
+
+/**
  * The most files one comment may carry. Every agent run that reads the comment
  * lists each attachment in its prompt with a signed download link, so the list
  * is bounded like any other prompt section.

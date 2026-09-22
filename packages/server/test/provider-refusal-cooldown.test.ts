@@ -133,7 +133,7 @@ describe('provider refusal hold on a wakeup', () => {
 		const until = new Date(Date.now() + 3 * 60 * 60_000);
 		const settled = await settleWakeupForRun(db, id, {
 			kind: 'handback',
-			reason: WakeupSkipReason.ProviderUsageLimit,
+			reason: WakeupSkipReason.ProviderAtCapacity,
 			notBefore: until,
 		});
 		expect(settled.kind).toBe('requeued');

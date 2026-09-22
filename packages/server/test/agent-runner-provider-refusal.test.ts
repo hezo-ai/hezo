@@ -200,8 +200,8 @@ describe('runAgent provider refusal', () => {
 			project(),
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ProviderAtCapacity);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ProviderAtCapacity);
 
 		const row = await runRow(result.heartbeatRunId as string);
 		// Cancelled, never failed: the provider being full is not the agent failing,
@@ -220,9 +220,10 @@ describe('runAgent provider refusal', () => {
 			 VALUES ($1, $2, 'timer', 'claimed', $3::jsonb) RETURNING id`,
 			[agentId, teamId, JSON.stringify({ task_id: task.id })],
 		);
+		if (!result.requeue) throw new Error('expected a handback');
 		const settled = await settleWakeupForRun(db, wakeup.rows[0].id, {
 			kind: 'handback',
-			reason: result.requeueReason as WakeupSkipReason,
+			...result.requeue,
 		});
 		expect(settled.kind).toBe('requeued');
 
@@ -247,9 +248,9 @@ describe('runAgent provider refusal', () => {
 			project(),
 		);
 
-		expect(result.requeued).toBe(true);
+		expect(result.requeue).toBeDefined();
 		// A different clock from capacity: this one resets in hours, not minutes.
-		expect(result.requeueReason).toBe(WakeupSkipReason.ProviderUsageLimit);
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ProviderUsageLimit);
 	});
 
 	it('still fails terminally when the failure is not a provider refusal', async () => {
@@ -271,7 +272,7 @@ describe('runAgent provider refusal', () => {
 			project(),
 		);
 
-		expect(result.requeued).toBeFalsy();
+		expect(result.requeue).toBeUndefined();
 		const row = await runRow(result.heartbeatRunId as string);
 		expect(row.status).toBe('failed');
 		expect(row.error).toContain('sandbox refused this command');
@@ -298,7 +299,7 @@ describe('runAgent provider refusal', () => {
 			project(),
 		);
 
-		expect(result.requeued).toBeFalsy();
+		expect(result.requeue).toBeUndefined();
 		const row = await runRow(result.heartbeatRunId as string);
 		expect(row.status).toBe('failed');
 		// The tokens it did spend are still recorded, which is the point of not
@@ -403,9 +404,9 @@ describe('runAgent usage-limit hold', () => {
 			await makeTask('Refused on a stated reset'),
 			project(),
 		);
-		expect(first.requeued).toBe(true);
-		expect(first.requeueReason).toBe(WakeupSkipReason.ProviderUsageLimit);
-		expect(first.requeueNotBefore?.getTime()).toBe(expected.getTime());
+		expect(first.requeue).toBeDefined();
+		expect(first.requeue?.reason).toBe(WakeupSkipReason.ProviderUsageLimit);
+		expect(first.requeue?.notBefore?.getTime()).toBe(expected.getTime());
 		expect((await storedHold())?.getTime()).toBe(expected.getTime());
 		const row = await runRow(first.heartbeatRunId as string);
 		expect(row.status).toBe('cancelled');
@@ -419,7 +420,7 @@ describe('runAgent usage-limit hold', () => {
 			await makeTask('Refused again inside the outage'),
 			project(),
 		);
-		expect(second.requeueNotBefore?.getTime()).toBe(expected.getTime());
+		expect(second.requeue?.notBefore?.getTime()).toBe(expected.getTime());
 		expect(await usageLimitNotices()).toHaveLength(1);
 	});
 
@@ -431,7 +432,7 @@ describe('runAgent usage-limit hold', () => {
 			await makeTask('Refused with no reset stated'),
 			project(),
 		);
-		const heldMin = ((result.requeueNotBefore?.getTime() ?? 0) - before) / 60_000;
+		const heldMin = ((result.requeue?.notBefore?.getTime() ?? 0) - before) / 60_000;
 		expect(heldMin).toBeGreaterThanOrEqual(29.9);
 		expect(heldMin).toBeLessThan(31);
 	});
@@ -453,9 +454,9 @@ describe('runAgent usage-limit hold', () => {
 			wakeupId,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ProviderUsageLimit);
-		expect(result.requeueNotBefore?.getTime()).toBe(hold.getTime());
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ProviderUsageLimit);
+		expect(result.requeue?.notBefore?.getTime()).toBe(hold.getTime());
 		expect(result.heartbeatRunId).toBeUndefined();
 		expect(docker.execStart).not.toHaveBeenCalled();
 		const runs = await db.query('SELECT 1 FROM heartbeat_runs WHERE wakeup_id = $1', [wakeupId]);
@@ -488,7 +489,7 @@ describe('runAgent usage-limit hold', () => {
 			wakeupId,
 		);
 
-		expect(result.requeued).toBeFalsy();
+		expect(result.requeue).toBeUndefined();
 		expect(result.heartbeatRunId).toBeDefined();
 		expect(await storedHold()).toBeNull();
 		const released = await db.query<{ not_before: Date | null }>(

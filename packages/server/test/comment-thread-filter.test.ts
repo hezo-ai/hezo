@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // `list_comments` returns the conversation and the task's own changes by default
 // and leaves out the one-marker-per-execution run rows, which on a long-lived
@@ -21,18 +22,7 @@ let systemId: string;
 let runId: string;
 
 async function callTool(args: Record<string, unknown>): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: 'list_comments', arguments: { project: projectSlug, ...args } },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
+	return await callMcpTool(app, token, 'list_comments', { project: projectSlug, ...args });
 }
 
 function itemIds(page: Record<string, unknown>): string[] {

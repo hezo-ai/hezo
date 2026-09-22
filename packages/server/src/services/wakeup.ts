@@ -268,14 +268,30 @@ export async function assignmentWakeupAlreadyServed(
  * exclusive and `handback` is the only one carrying data, so a caller cannot
  * spell "put it back" without saying why it is going back.
  */
+/**
+ * Why work goes back to the queue, and when it may be claimed again. A provider
+ * usage hold names the credential whose hold it waits on and when that lifts -
+ * both required, so a handback cannot leave the paced release unable to find
+ * it; no other cause carries a credential.
+ */
+export type HandbackCause =
+	| {
+			reason: typeof WakeupSkipReason.ProviderUsageLimit;
+			notBefore: Date;
+			heldConfigId: string;
+	  }
+	| {
+			reason: Exclude<WakeupSkipReason, typeof WakeupSkipReason.ProviderUsageLimit>;
+			notBefore?: Date;
+			heldConfigId?: never;
+	  };
+
 export type SettlementIntent =
 	/**
 	 * The work was not done and is owed. Put it back for the dispatcher, which may
-	 * not claim it before `notBefore` when one is given. `heldConfigId` names the
-	 * credential whose usage hold the work waits on, so lifting that hold releases
-	 * this wakeup and no other credential's.
+	 * not claim it before `notBefore` when one is given.
 	 */
-	| { kind: 'handback'; reason: WakeupSkipReason; notBefore?: Date; heldConfigId?: string }
+	| ({ kind: 'handback' } & HandbackCause)
 	/** The run did the work. */
 	| { kind: 'complete' }
 	/** The run tried and failed. Nothing here retries it. */

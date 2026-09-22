@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import {
-	AgentEffort,
+	type AgentEffort,
 	type AgentRuntime,
 	type AiProvider,
 	CEO_AGENT_SLUG,
@@ -23,10 +23,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { runtimeConfig } from '../config/runtime';
-import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
-import { broadcastRowChange } from '../lib/broadcast';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
 import { KeyedLockTimeoutError } from '../lib/keyed-lock';
 import { isUuid } from '../lib/resolve';
@@ -63,14 +60,12 @@ import {
 } from './ai-provider-keys';
 import { checkOverBudget, type OverBudgetBlock, recordUsage } from './budget';
 import {
-	buildConversationTaskDescription,
 	chatTranscriptLine,
 	getChatMemory,
 	getConversationChatMemory,
 	loadActiveWindow,
 	markCompacted,
 	selectFlush,
-	type WindowMessage,
 } from './chat-memory';
 import { detectNoWakeExits, formatNoWakeExitWarning } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
@@ -97,7 +92,6 @@ import { dockerSandboxHandle } from './sandbox/handle';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import type { BridgeRunnerArgs } from './ssh-agent';
-import { type CreateTaskCaller, createTask, type TaskRow } from './tasks';
 import { resolveSystemPrompt } from './template-resolver';
 import { CONTAINER_WORKSPACE_ROOT, getRunSocketPath } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -983,10 +977,11 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * One chat exec's tokens, recorded exactly as a run's are - a `usage_entries`
-	 * row under the session's member and project, broadcast so the Budget page
-	 * refreshes. Best-effort: a bookkeeping failure must not fail the reply the
-	 * operator already has.
+	 * One chat exec's tokens, recorded in the ledger as a run's are - a
+	 * `usage_entries` row under the session's member and project, broadcast to the
+	 * session's own team. A turn's budget is enforced before it starts
+	 * (`checkChatBudget`), not after. Best-effort: a bookkeeping failure must not
+	 * fail the reply the operator already has.
 	 */
 	private async recordChatUsage(
 		session: TurnSession,
@@ -995,25 +990,20 @@ export class ChatSessionManager {
 	): Promise<void> {
 		if (!usage || usage.inputTokens + usage.outputTokens <= 0) return;
 		try {
-			const entry = await recordUsage(this.deps.db, {
-				memberId: session.memberId,
-				taskId: null,
-				projectId: session.projectId,
-				inputTokens: usage.inputTokens,
-				outputTokens: usage.outputTokens,
-				description,
-				aiProviderConfigId: session.invocationInputs.credential.configId,
-				provider: session.invocationInputs.provider,
-			});
-			if (entry) {
-				broadcastRowChange(
-					this.deps.wsManager,
-					wsRoom.team(DEFAULT_TEAM_ID),
-					'usage_entries',
-					'INSERT',
-					entry,
-				);
-			}
+			await recordUsage(
+				this.deps.db,
+				{ wsManager: this.deps.wsManager, teamId: session.teamId },
+				{
+					memberId: session.memberId,
+					taskId: null,
+					projectId: session.projectId,
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					description,
+					aiProviderConfigId: session.invocationInputs.credential.configId,
+					provider: session.invocationInputs.provider,
+				},
+			);
 		} catch (e) {
 			log.error('failed to record chat usage', e);
 		}

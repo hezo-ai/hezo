@@ -21,6 +21,7 @@ import {
 	instanceCoachId,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // These extend the coverage of packages/server/src/mcp/tools.ts beyond what
 // mcp-tools.test.ts / mcp.test.ts / mcp-project-scope.test.ts already exercise:
@@ -132,31 +133,7 @@ async function callToolAs(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	expect(res.status).toBe(200);
-	const body = (await res.json()) as {
-		result?: { content: Array<{ type: string; text: string }> };
-		error?: { message: string };
-	};
-	// A schema-validation failure comes back as a non-JSON MCP error string
-	// ("MCP error -32602: Input validation error: ...") in the result content (or a
-	// JSON-RPC error). Surface either as { error } so callers assert uniformly.
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	const text = body.result.content[0].text;
-	try {
-		return JSON.parse(text);
-	} catch {
-		return { error: text };
-	}
+	return await callMcpTool(app, tokenStr, toolName, args);
 }
 
 type ToolResult = Record<string, unknown> & { error?: string };
@@ -819,8 +796,15 @@ describe('MCP get_usage grouping', () => {
 		const rows = (await callTool('get_usage', {
 			project: projectId,
 			group_by: 'agent',
-		})) as Array<{ member_id: string; total_tokens: number; output_tokens: number }>;
-		const mine = rows.find((r) => r.member_id === agentId);
+		})) as Array<{
+			agent_id: string;
+			agent_name: string | null;
+			total_tokens: number;
+			output_tokens: number;
+		}>;
+		// The REST read's columns: an agent's name travels with its id and title.
+		const mine = rows.find((r) => r.agent_id === agentId);
+		expect(mine).toHaveProperty('agent_name');
 		expect(mine?.total_tokens).toBeGreaterThanOrEqual(200);
 		expect(mine?.output_tokens).toBeGreaterThanOrEqual(50);
 	});

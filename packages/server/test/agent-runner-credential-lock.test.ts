@@ -306,13 +306,13 @@ describe('runAgent credential wait', () => {
 			// Cancelled and requeued, never failed: a busy credential is the
 			// instance being busy, not the agent failing, so no failure ping and no
 			// lost-run strike.
-			expect(result.requeued).toBe(true);
+			expect(result.requeue).toBeDefined();
 			// Which wait gave up, named at the source. The seam honours whatever it
 			// is handed, so only an assertion here can catch this caller choosing
 			// the wrong one - and it used to hand over `instance_at_capacity`
 			// regardless, which has the idle pass reclaim the project's container
 			// out from under work that is only waiting for a credential.
-			expect(result.requeueReason).toBe(WakeupSkipReason.CredentialBusy);
+			expect(result.requeue?.reason).toBe(WakeupSkipReason.CredentialBusy);
 
 			const row = await runRow(result.heartbeatRunId as string);
 			expect(row.status).toBe('cancelled');

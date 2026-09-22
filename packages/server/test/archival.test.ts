@@ -13,6 +13,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Archival (soft delete) for project docs and assets: agents archive via MCP,
 // only admins hard-delete, and every default listing surface is active-only.
@@ -36,18 +37,7 @@ async function callToolViaMcp(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, authToken, toolName, args);
 }
 
 async function listToolNames(authToken: string): Promise<string[]> {

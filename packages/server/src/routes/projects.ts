@@ -134,7 +134,7 @@ projectsRoutes.get('/projects', async (c) => {
           AS code_agent_count,
        (SELECT COALESCE(sum(ue.input_tokens + ue.output_tokens), 0) FROM usage_entries ue
           WHERE ue.project_id = p.id
-            AND ue.created_at >= date_trunc('day', now()))::float8
+            AND ue.created_at >= date_trunc('day', now(), 'UTC'))::float8
           AS today_tokens,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,

@@ -1,4 +1,10 @@
-import { HeartbeatRunKind, HeartbeatRunStatus, RunCancelReason, WakeupSource } from '@hezo/shared';
+import {
+	englishCount,
+	HeartbeatRunKind,
+	HeartbeatRunStatus,
+	RunCancelReason,
+	WakeupSource,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { isAdminUserSql } from '../lib/admin-sql';
 import { outstandingAdminAskExistsSql } from '../lib/task-sort';
@@ -662,26 +668,51 @@ export interface TaskUsageSoFar {
 }
 
 /**
- * What a task has used so far: its runs, their tokens, and the current handoff
- * chain. One round trip, reading runs through `idx_runs_task_started`.
+ * Everything a task has spent that the prompt states and the two hard stops
+ * weigh, from one query: its runs and their tokens, the part since the admin
+ * last spoke, and the current agent-to-agent handoff chain. A dispatch reads it
+ * once for both hard stops. Reads runs through `idx_runs_task_started`.
  */
-export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUsageSoFar> {
+export interface TaskSpend {
+	runs: number;
+	tokens: number;
+	/** When the admin last spoke on the task, or null when they have not. */
+	adminAt: Date | null;
+	/** Runs and tokens since then; the whole task's when the admin has not spoken. */
+	sinceAdmin: { runs: number; tokens: number };
+	handoff: {
+		rounds: number;
+		tokens: number;
+		agentSlugs: string[];
+		/** When the chain's newest round began, or null with no chain. */
+		newest: Date | null;
+	};
+}
+
+export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> {
 	const r = await db.query<{
 		runs: number;
 		tokens: number;
-		replied: boolean;
+		admin_at: Date | null;
 		since_runs: number;
 		since_tokens: number;
 		rounds: number;
+		chain_tokens: number;
+		chain_slugs: string[] | null;
+		chain_newest: Date | null;
 	}>(
 		`WITH ${HANDOFF_CHAIN_CTES}
 		 SELECT count(r.id)::int AS runs,
 		        COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
-		        (a.at IS NOT NULL) AS replied,
-		        count(r.id) FILTER (WHERE r.started_at > a.at)::int AS since_runs,
+		        a.at AS admin_at,
+		        count(r.id) FILTER (WHERE a.at IS NULL OR r.started_at > a.at)::int AS since_runs,
 		        COALESCE(sum(r.input_tokens + r.output_tokens)
-		                 FILTER (WHERE r.started_at > a.at), 0)::float8 AS since_tokens,
-		        (SELECT count(DISTINCT wakeup_id)::int FROM chain) AS rounds
+		                 FILTER (WHERE a.at IS NULL OR r.started_at > a.at), 0)::float8 AS since_tokens,
+		        (SELECT count(DISTINCT wakeup_id)::int FROM chain) AS rounds,
+		        (SELECT COALESCE(sum(tokens), 0)::float8 FROM chain) AS chain_tokens,
+		        (SELECT array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL)
+		           FROM chain ch LEFT JOIN member_agents ma ON ma.id = ch.member_id) AS chain_slugs,
+		        (SELECT max(started_at) FROM chain) AS chain_newest
 		   FROM admin a
 		   LEFT JOIN heartbeat_runs r ON r.task_id = $1 AND r.started_at IS NOT NULL
 		  GROUP BY a.at`,
@@ -690,9 +721,26 @@ export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUs
 	const row = r.rows[0];
 	return {
 		runs: row?.runs ?? 0,
-		tokens: row?.tokens ?? 0,
-		sinceAdminReply: row?.replied ? { runs: row.since_runs, tokens: row.since_tokens } : null,
-		handoffRounds: row?.rounds ?? 0,
+		tokens: Number(row?.tokens ?? 0),
+		adminAt: row?.admin_at ? new Date(row.admin_at) : null,
+		sinceAdmin: { runs: row?.since_runs ?? 0, tokens: Number(row?.since_tokens ?? 0) },
+		handoff: {
+			rounds: row?.rounds ?? 0,
+			tokens: Number(row?.chain_tokens ?? 0),
+			agentSlugs: row?.chain_slugs ?? [],
+			newest: row?.chain_newest ? new Date(row.chain_newest) : null,
+		},
+	};
+}
+
+/** What a task has used so far, as the Current Task block states it to the agent. */
+export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUsageSoFar> {
+	const spend = await loadTaskSpend(db, taskId);
+	return {
+		runs: spend.runs,
+		tokens: spend.tokens,
+		sinceAdminReply: spend.adminAt ? spend.sinceAdmin : null,
+		handoffRounds: spend.handoff.rounds,
 	};
 }
 
@@ -723,31 +771,14 @@ export async function handoffRoundsExhausted(
 	exempt: boolean,
 ): Promise<HandoffRounds | null> {
 	if (!taskId || exempt) return null;
+	return handoffHold(await loadTaskSpend(db, taskId));
+}
 
-	const r = await db.query<{
-		rounds: string;
-		tokens: string;
-		agent_slugs: string[] | null;
-		newest: Date | null;
-	}>(
-		`WITH ${HANDOFF_CHAIN_CTES}
-		 SELECT count(DISTINCT ch.wakeup_id) AS rounds,
-		        COALESCE(sum(ch.tokens), 0) AS tokens,
-		        array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL) AS agent_slugs,
-		        max(ch.started_at) AS newest
-		   FROM chain ch
-		   LEFT JOIN member_agents ma ON ma.id = ch.member_id`,
-		handoffChainParams(taskId),
-	);
-	const row = r.rows[0];
-	const rounds = Number(row?.rounds ?? 0);
-	if (rounds < HANDOFF_ROUND_LIMIT || !row?.newest) return null;
-	return {
-		rounds,
-		tokens: Number(row.tokens),
-		agentSlugs: row.agent_slugs ?? [],
-		noticeSince: new Date(row.newest),
-	};
+/** The handoff limit's verdict on a task's spend: the rounds when it is held, else null. */
+export function handoffHold(spend: TaskSpend): HandoffRounds | null {
+	const { rounds, tokens, agentSlugs, newest } = spend.handoff;
+	if (rounds < HANDOFF_ROUND_LIMIT || !newest) return null;
+	return { rounds, tokens, agentSlugs, noticeSince: newest };
 }
 
 /** The notice a task held by the handoff limit carries, for `postAdminNotice`. */
@@ -760,7 +791,7 @@ export function handoffLimitNotice(
 		rounds: h.rounds,
 		tokens: h.tokens,
 		agent_slugs: h.agentSlugs,
-		text: `${agents} handed this task to each other ${h.rounds} times in a row, using ${h.tokens.toLocaleString('en-US')} tokens. No agent will run on it until the admin replies.`,
+		text: `${agents} handed this task to each other ${h.rounds} times in a row, using ${englishCount(h.tokens)} tokens. No agent will run on it until the admin replies.`,
 	};
 }
 
@@ -809,21 +840,13 @@ export async function taskTokenCeilingReached(
 	exempt: boolean,
 ): Promise<TaskTokenUsage | null> {
 	if (!taskId || exempt) return null;
-	const r = await db.query<{ tokens: number; admin_at: Date | null }>(
-		`WITH admin AS (SELECT ${adminSpokeAtSql('$1')} AS at)
-		 SELECT COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
-		        p.at AS admin_at
-		   FROM admin p
-		   LEFT JOIN heartbeat_runs r
-		     ON r.task_id = $1
-		    AND r.started_at IS NOT NULL
-		    AND (p.at IS NULL OR r.started_at > p.at)
-		  GROUP BY p.at`,
-		[taskId],
-	);
-	const row = r.rows[0];
-	if (!row || row.tokens < TASK_TOKEN_CEILING) return null;
-	return { tokens: row.tokens, noticeSince: row.admin_at ? new Date(row.admin_at) : null };
+	return tokenCeilingHold(await loadTaskSpend(db, taskId));
+}
+
+/** The token ceiling's verdict on a task's spend: the usage when it is held, else null. */
+export function tokenCeilingHold(spend: TaskSpend): TaskTokenUsage | null {
+	if (spend.sinceAdmin.tokens < TASK_TOKEN_CEILING) return null;
+	return { tokens: spend.sinceAdmin.tokens, noticeSince: spend.adminAt };
 }
 
 /** The notices that hold a task until the admin replies, which a reply resumes. */
@@ -840,6 +863,6 @@ export function taskTokenCeilingNotice(
 		kind: TASK_TOKEN_CEILING_COMMENT_KIND,
 		tokens: u.tokens,
 		ceiling: TASK_TOKEN_CEILING,
-		text: `Agents have used ${u.tokens.toLocaleString('en-US')} tokens on this task since the admin last replied, past its ceiling of ${TASK_TOKEN_CEILING.toLocaleString('en-US')}. No agent will run on it until the admin replies.`,
+		text: `Agents have used ${englishCount(u.tokens)} tokens on this task since the admin last replied, past its ceiling of ${englishCount(TASK_TOKEN_CEILING)}. No agent will run on it until the admin replies.`,
 	};
 }

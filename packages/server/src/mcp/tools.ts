@@ -28,12 +28,14 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	checkInjectedTextCap,
+	commentHasContent,
 	commentTextFits,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	DocumentType,
+	englishCount,
 	extensionOf,
 	extractBacktickedLooseAssetPaths,
 	extractBacktickedMentionCandidates,
@@ -153,9 +155,8 @@ import {
 	commentWriteAck,
 	fireAdminMention,
 	fireCommentWakeups,
-	postAgentComment,
+	postComment,
 	resolveWarnableSlugs,
-	TASK_COMMENT_ROW_COLUMNS,
 } from '../services/comment-wakeups';
 import {
 	buildConnectorRecipesSkill,
@@ -167,8 +168,9 @@ import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { writeCustomPrompt } from '../services/custom-prompt';
 import {
-	COHERENCE_LABEL_JSON,
+	COHERENCE_LABEL,
 	enqueueTeamCoherenceReviewTask,
+	findOpenLabeledTask,
 } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
@@ -215,6 +217,7 @@ import {
 	recordParentChange,
 	recordTaskLinks,
 	recordTitleChange,
+	TASK_COMMENT_ROW_COLUMNS,
 	type TaskUpdateMutationRow,
 	type TaskUpdateSnapshot,
 	type TaskUpdateSnapshotKey,
@@ -234,6 +237,7 @@ import {
 	applyMarketplaceTeamToTeam,
 } from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
+import { type UsageTotals, usageByAgent, usageByDay } from '../services/usage-read';
 import { createWakeup, wakeAgentIfAssigned } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 import {
@@ -686,7 +690,7 @@ function retiredBudgetArgs() {
 }
 
 /** The comment text cap as the comment tools' descriptions state it. */
-const COMMENT_TEXT_CAP = COMMENT_TEXT_MAX_CHARS.toLocaleString('en-US');
+const COMMENT_TEXT_CAP = englishCount(COMMENT_TEXT_MAX_CHARS);
 
 /** APPROVAL_COLUMNS qualified with the `a` alias, for the keyset-paged read. */
 const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'a.$&');
@@ -777,14 +781,45 @@ function writeAckOf(value: unknown, depth: number): unknown {
  * succeeded. If even that does not fit, it says so and reports the size.
  */
 export function oversizedWriteAck(result: unknown, sizeBytes: number, byteLimit: number): unknown {
+	const fits = (value: unknown) =>
+		Buffer.byteLength(JSON.stringify(value, null, 2), 'utf8') <= byteLimit;
+	const failed = failedItemsOf(result, 0);
 	const note =
-		'The write succeeded. Its full result was too large to return, so only identifiers are shown. Do not repeat the call.';
+		failed.length === 0
+			? 'The write succeeded. Its full result was too large to return, so only identifiers are shown. Do not repeat the call.'
+			: 'Part of the write failed: the failed items are listed. The rest succeeded; its full result was too large to return. Repeat only the failed items.';
 	const ack = writeAckOf(result, 0);
 	const shaped = Array.isArray(ack)
 		? { result_truncated: true, note, items: ack }
 		: { result_truncated: true, note, ...(ack as Record<string, unknown>) };
-	if (Buffer.byteLength(JSON.stringify(shaped, null, 2), 'utf8') <= byteLimit) return shaped;
-	return { result_truncated: true, note, size_bytes: sizeBytes, limit_bytes: byteLimit };
+	if (fits(shaped)) return shaped;
+	// Identifiers do not fit either. The failures still must: a caller told only
+	// that the write succeeded would never retry the items that did not.
+	const fallback = { result_truncated: true, note, size_bytes: sizeBytes, limit_bytes: byteLimit };
+	const kept: Record<string, unknown>[] = [];
+	for (const item of failed) {
+		if (!fits({ ...fallback, failed: [...kept, item] })) break;
+		kept.push(item);
+	}
+	return kept.length > 0
+		? { ...fallback, failed: kept, failed_count: failed.length }
+		: failed.length > 0
+			? { ...fallback, failed_count: failed.length }
+			: fallback;
+}
+
+/** The items of a batch write that failed, as `{ index?, id?, error }`, in order. */
+function failedItemsOf(value: unknown, depth: number): Record<string, unknown>[] {
+	if (depth > WRITE_ACK_MAX_DEPTH || value === null || typeof value !== 'object') return [];
+	if (Array.isArray(value)) return value.flatMap((v) => failedItemsOf(v, depth + 1));
+	const item = value as Record<string, unknown>;
+	if (item.ok === false || typeof item.error === 'string') {
+		const out: Record<string, unknown> = { error: item.error ?? 'failed' };
+		if (item.index !== undefined) out.index = item.index;
+		if (item.id !== undefined) out.id = item.id;
+		return [out];
+	}
+	return Object.values(item).flatMap((v) => failedItemsOf(v, depth + 1));
 }
 
 /**
@@ -2887,22 +2922,7 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
-			const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 2}::task_status`).join(
-				', ',
-			);
-			const ticket = await db.query<{
-				id: string;
-				identifier: string;
-				assignee_id: string | null;
-			}>(
-				`SELECT id, identifier, assignee_id FROM tasks
-				 WHERE team_id = $1
-				   AND labels @> $${TERMINAL_TASK_STATUSES.length + 2}::jsonb
-				   AND status NOT IN (${placeholders})
-				 LIMIT 1`,
-				[scope.teamId, ...TERMINAL_TASK_STATUSES, COHERENCE_LABEL_JSON],
-			);
-			const row = ticket.rows[0];
+			const row = await findOpenLabeledTask(db, scope.teamId, COHERENCE_LABEL);
 			if (!row) return { error: 'No open team-setup task for this project' };
 
 			// Run-concurrency, not a reassignment guard: this claims the ticket for
@@ -3766,7 +3786,7 @@ export function registerTools(
 				COMMENT_ATTACHMENTS_MAX,
 			);
 			if (!attachments.ok) return { error: attachments.message };
-			if (text.trim().length === 0 && attachments.ids.length === 0) {
+			if (!commentHasContent(text, attachments.ids.length)) {
 				return { error: 'Provide comment text, attachment_ids, or both' };
 			}
 			let parentCommentId: string | null = null;
@@ -3784,42 +3804,25 @@ export function registerTools(
 				parentCommentId = parentCheck.rows[0].id;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const authorApiKeyId = apiKeyIdFromAuth(auth);
-			// Attribute the comment to the run that wrote it (only on the agent-run path) so the
+			// The run that wrote it is recorded (only on the agent-run path) so the
 			// goal detail page can show "this progress-update run commented on task X".
-			const createdByRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
-			// Insert + realtime broadcast + mention/@admin/reply wakeups, shared with
-			// the runner's handoff-delivery guardrail via postAgentComment so a
-			// comment the agent posts and one auto-delivered from a stranded final
-			// message are byte-identical. The reply carries public_id (the
-			// comment-link slug), so the agent can cite it without a list_comments,
-			// but never the text the agent just sent.
-			const { row, woke } = await postAgentComment({
+			// The reply carries public_id (the comment-link slug), so the agent can cite
+			// it without a list_comments, but never the text the agent just sent.
+			const { row, woke } = await postComment({
 				db,
 				wsManager,
 				teamId,
 				projectId: scope.projectId,
 				taskId,
-				authorMemberId,
-				authorApiKeyId,
-				authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
-				createdByRunId,
+				author: {
+					memberId: authorMemberId,
+					apiKeyId: apiKeyIdFromAuth(auth),
+					runId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
+				},
 				parentCommentId,
-				text: args.content as string,
+				content: { text },
 				attachmentIds: attachments.ids,
 			});
-			trackBackground(
-				recordTaskLinks(
-					db,
-					teamId,
-					taskId,
-					args.content as string,
-					authorMemberId,
-					authorApiKeyId,
-					wsManager,
-					{ kind: 'comment', commentPublicId: row.public_id },
-				).catch((e) => log.error('Failed to record task links from comment:', e)),
-			);
 			// An agent that addresses a teammate by bold/bare name (no @ prefix)
 			// notifies no one and the handoff silently stalls. Best-effort warn the
 			// author so they can re-post with the proper mention; never block the
@@ -4657,34 +4660,31 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			if (args.group_by === 'agent') {
-				const r = await db.query(
-					`SELECT ue.member_id, COALESCE(ma.title, m.display_name) AS agent_title, ${USAGE_TOKEN_SUMS_SQL}
-				 FROM usage_entries ue LEFT JOIN members m ON m.id = ue.member_id LEFT JOIN member_agents ma ON ma.id = ue.member_id
-				 WHERE ue.project_id = $1 GROUP BY ue.member_id, ma.title, m.display_name`,
-					[scope.projectId],
-				);
-				return r.rows;
-			}
+			const filters = { projectId: scope.projectId };
+			if (args.group_by === 'agent') return usageByAgent(db, filters);
 			if (args.group_by === 'day') {
 				// Usage rows accumulate for the life of the project, so the day grouping
 				// is the one branch here without a natural ceiling. It keys on the day
 				// itself: the grouping makes it unique, so no id tiebreak is needed.
 				const limit = parseListLimit(args.limit);
 				const cursor = decodeCursor(args.cursor as string | undefined);
-				const params: unknown[] = [scope.projectId];
-				let dayFilter = '';
-				if (cursor) {
-					params.push(cursor.value);
-					dayFilter = ` AND date_trunc('day', ue.created_at)::date < $${params.length}::date`;
-				}
-				const r = await db.query<{ day: string }>(
-					`SELECT date_trunc('day', ue.created_at)::date AS day, ${USAGE_TOKEN_SUMS_SQL}
-				 FROM usage_entries ue WHERE ue.project_id = $1${dayFilter}
-				 GROUP BY day ORDER BY day DESC LIMIT ${limit + 1}`,
-					params,
+				const page = await usageByDay<Record<string, unknown> & { day: string } & UsageTotals>(
+					db,
+					filters,
+					'none',
+					{
+						limit,
+						beforeDay: cursor?.value ?? null,
+					},
 				);
-				return pagedList(r.rows, limit, 'get_usage', { column: 'day', idKey: 'day' });
+				const newestFirst = [...page.rows].reverse();
+				// pagedList reads one row past the page as the sign that more exist.
+				return pagedList(
+					page.nextBeforeDay ? [...newestFirst, { day: page.nextBeforeDay }] : newestFirst,
+					limit,
+					'get_usage',
+					{ column: 'day', idKey: 'day' },
+				);
 			}
 			const r = await db.query(
 				`SELECT ${USAGE_TOKEN_SUMS_SQL}, count(*)::int AS entry_count
