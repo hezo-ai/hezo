@@ -409,15 +409,27 @@ describe('agent-runner: retry context in task prompt', () => {
 		};
 
 		const prompt = buildTaskPrompt('System prompt', task, undefined, {
-			usageSoFar: { runs: 12, tokens: 48_230_000, handoffRounds: 3 },
+			usageSoFar: { runs: 12, tokens: 48_230_000, sinceAdminReply: null, handoffRounds: 3 },
 		});
 
 		const line =
 			'**This task so far:** 12 runs, 48.2M tokens, 3 consecutive agent-to-agent handoffs.';
 		expect(prompt).toContain(line);
 		expect(prompt.indexOf(line)).toBeGreaterThan(prompt.indexOf('**Status:** in_progress'));
-		expect(taskUsageLine({ runs: 1, tokens: 900, handoffRounds: 1 })).toBe(
+		expect(taskUsageLine({ runs: 1, tokens: 900, sinceAdminReply: null, handoffRounds: 1 })).toBe(
 			'**This task so far:** 1 run, 900 tokens, 1 consecutive agent-to-agent handoff.',
+		);
+		// After the admin replies, the line splits out what came since: the part the
+		// agent weighs, so a reply to carry on is not re-asked on the next run.
+		expect(
+			taskUsageLine({
+				runs: 46,
+				tokens: 1_200_000_000,
+				sinceAdminReply: { runs: 3, tokens: 40_000_000 },
+				handoffRounds: 2,
+			}),
+		).toBe(
+			'**This task so far:** 46 runs, 1.2B tokens. **Since the admin last replied:** 3 runs, 40M tokens, 2 consecutive agent-to-agent handoffs.',
 		);
 		// No usage passed, no line: the section is not invented.
 		expect(buildTaskPrompt('System prompt', task)).not.toContain('This task so far');

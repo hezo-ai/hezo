@@ -888,7 +888,51 @@ describe('handoffRoundsExhausted', () => {
 		expect(await loadTaskUsageSoFar(db, taskId)).toEqual({
 			runs: 4,
 			tokens: 4 * 1_001_000,
+			sinceAdminReply: null,
 			handoffRounds: 3,
+		});
+	});
+
+	it('splits out the use since the admin last replied, which is what an agent weighs', async () => {
+		await clearRuns();
+		await alternate(3, 60);
+		await insertHumanReply(40);
+		await alternate(2, 30);
+
+		expect(await loadTaskUsageSoFar(db, taskId)).toEqual({
+			runs: 5,
+			tokens: 5 * 1_001_000,
+			sinceAdminReply: { runs: 2, tokens: 2 * 1_001_000 },
+			handoffRounds: 2,
+		});
+	});
+
+	it('does not reset the weighed use on a reply from someone who is not an admin', async () => {
+		await clearRuns();
+		await alternate(2, 60);
+		const member = await db.query<{ id: string }>(
+			`INSERT INTO users (display_name, is_superuser) VALUES ('Teammate', false) RETURNING id`,
+		);
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_user_id, content_type, content, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, '{"text":"keep going"}'::jsonb,
+			         now() - interval '40 minutes')`,
+			[taskId, member.rows[0].id],
+		);
+		await alternate(1, 30);
+
+		expect((await loadTaskUsageSoFar(db, taskId)).sinceAdminReply).toBeNull();
+		await db.query('DELETE FROM task_comments WHERE author_user_id = $1', [member.rows[0].id]);
+		await db.query('DELETE FROM users WHERE id = $1', [member.rows[0].id]);
+	});
+
+	it('reports a task with no runs as nothing used', async () => {
+		await clearRuns();
+		expect(await loadTaskUsageSoFar(db, taskId)).toEqual({
+			runs: 0,
+			tokens: 0,
+			sinceAdminReply: null,
+			handoffRounds: 0,
 		});
 	});
 });

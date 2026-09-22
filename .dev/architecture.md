@@ -3526,7 +3526,9 @@ run's task block: the current task's identifier/title/priority/status, plus its 
 `description`, and `progress_summary`. Under the status, `taskUsageLine` states **This task so far**: its started runs, their
 tokens and the current agent-to-agent handoff count (`loadTaskUsageSoFar`, the chain query the
 handoff limit reads), so the `SHARED_INSTRUCTIONS` rule to stop a task that has cost more than it
-is worth has a number to read. The block also carries the ticket's **lineage** in both
+is worth has a number to read. Once the admin has replied it also states the part **since the
+admin last replied** (`adminSpokeAtSql`: a comment by a team admin or a superuser, or a card
+choice), which is the part the rule weighs, so an admin's "carry on" is not asked again next run. The block also carries the ticket's **lineage** in both
 directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
 `**Spawned from:**` provenance line when a run on a different ticket created this one), and
 downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child

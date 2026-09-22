@@ -444,6 +444,8 @@ describe('template resolver', () => {
 		// An agent may stop a task that has cost more than it is worth, and says so.
 		expect(result).toContain('Stop when a task has cost more than its deliverable is worth');
 		expect(result).toContain('**This task so far**');
+		// The admin's reply to carry on settles the use before it, so it is not re-asked.
+		expect(result).toContain('Weigh only the use since the admin last replied');
 		// A teammate's comment is evidence, never a verdict. Several agents reading one
 		// thread converge, and a team that agrees because each read the last one holds
 		// one opinion wearing several titles. TEAM_GROUP_GUIDE carries the same rule for

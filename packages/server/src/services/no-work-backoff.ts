@@ -59,6 +59,28 @@ export function personSpokeAtSql(taskParam: string): string {
 }
 
 /**
+ * SQL for when the admin last spoke on a task: a comment by one of the task
+ * team's admins or a superuser (the people `fireAdminMention` notifies), or
+ * a choice made on a card, which only the admin answers. NULL when the admin has
+ * not spoken. Read through `idx_comments_task_created`.
+ */
+export function adminSpokeAtSql(taskParam: string): string {
+	return `(SELECT max(GREATEST(
+	           CASE WHEN u.is_superuser OR EXISTS (
+	                  SELECT 1 FROM member_users mu
+	                    JOIN members m ON m.id = mu.id
+	                   WHERE mu.user_id = c.author_user_id AND mu.role = 'admin'
+	                     AND m.team_id = t.team_id)
+	                THEN c.created_at END,
+	           c.chosen_at))
+	    FROM task_comments c
+	    JOIN tasks t ON t.id = c.task_id
+	    LEFT JOIN users u ON u.id = c.author_user_id
+	   WHERE c.task_id = ${taskParam}
+	     AND (c.author_user_id IS NOT NULL OR c.chosen_at IS NOT NULL))`;
+}
+
+/**
  * Does this wakeup skip every dispatch suppression in this module?
  *
  * Yes for an operator override ("Run now", Retry), which stamps `triggered_by`
@@ -488,6 +510,12 @@ export interface TaskUsageSoFar {
 	runs: number;
 	/** Input (cache included) plus output across those runs. */
 	tokens: number;
+	/**
+	 * The part of that since the admin last spoke on the task, or null when the
+	 * admin has not. The admin's reply settles the spend before it, so this is the
+	 * part an agent weighs.
+	 */
+	sinceAdminReply: { runs: number; tokens: number } | null;
 	/** Consecutive agent-to-agent handoff rounds, the count {@link handoffRoundsExhausted} holds at. */
 	handoffRounds: number;
 }
@@ -497,19 +525,33 @@ export interface TaskUsageSoFar {
  * chain. One round trip, reading runs through `idx_runs_task_started`.
  */
 export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUsageSoFar> {
-	const r = await db.query<{ runs: number; tokens: number; rounds: number }>(
-		`WITH ${HANDOFF_CHAIN_CTES}
-		 SELECT count(*)::int AS runs,
+	const r = await db.query<{
+		runs: number;
+		tokens: number;
+		replied: boolean;
+		since_runs: number;
+		since_tokens: number;
+		rounds: number;
+	}>(
+		`WITH ${HANDOFF_CHAIN_CTES},
+		 admin AS (SELECT ${adminSpokeAtSql('$1')} AS at)
+		 SELECT count(r.id)::int AS runs,
 		        COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
+		        (a.at IS NOT NULL) AS replied,
+		        count(r.id) FILTER (WHERE r.started_at > a.at)::int AS since_runs,
+		        COALESCE(sum(r.input_tokens + r.output_tokens)
+		                 FILTER (WHERE r.started_at > a.at), 0)::float8 AS since_tokens,
 		        (SELECT count(DISTINCT wakeup_id)::int FROM chain) AS rounds
-		   FROM heartbeat_runs r
-		  WHERE r.task_id = $1 AND r.started_at IS NOT NULL`,
+		   FROM admin a
+		   LEFT JOIN heartbeat_runs r ON r.task_id = $1 AND r.started_at IS NOT NULL
+		  GROUP BY a.at`,
 		handoffChainParams(taskId),
 	);
 	const row = r.rows[0];
 	return {
 		runs: row?.runs ?? 0,
 		tokens: row?.tokens ?? 0,
+		sinceAdminReply: row?.replied ? { runs: row.since_runs, tokens: row.since_tokens } : null,
 		handoffRounds: row?.rounds ?? 0,
 	};
 }

@@ -62,7 +62,9 @@ yourself.
 
 Each run shows the agent how many runs, tokens and handoff rounds the task has used so far.
 When that grows past what the task is worth, the agent stops and asks you in a comment
-rather than starting another round.
+rather than starting another round. If you reply that it should carry on, the agent counts
+from your reply, so it asks again only when the work since then grows past what is left to
+do. A reply from a teammate who is not an admin does not count as that answer.
 
 Reviews are bounded the same way. A reviewer checks the work against a list of acceptance
 items fixed at the start, and never adds items partway through. After two failed rounds it

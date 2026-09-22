@@ -4940,10 +4940,12 @@ export function buildProgressUpdatePrompt(
  * weigh further rounds against what the deliverable is worth.
  */
 export function taskUsageLine(u: TaskUsageSoFar): string {
-	const runs = `${u.runs} ${u.runs === 1 ? 'run' : 'runs'}`;
-	const tokens = `${formatCompactNumber(u.tokens, 'en')} tokens`;
+	const used = (runs: number, tokens: number) =>
+		`${runs} ${runs === 1 ? 'run' : 'runs'}, ${formatCompactNumber(tokens, 'en')} tokens`;
 	const rounds = `${u.handoffRounds} consecutive agent-to-agent ${u.handoffRounds === 1 ? 'handoff' : 'handoffs'}`;
-	return `**This task so far:** ${runs}, ${tokens}, ${rounds}.`;
+	const since = u.sinceAdminReply;
+	if (!since) return `**This task so far:** ${used(u.runs, u.tokens)}, ${rounds}.`;
+	return `**This task so far:** ${used(u.runs, u.tokens)}. **Since the admin last replied:** ${used(since.runs, since.tokens)}, ${rounds}.`;
 }
 
 export function buildTaskPrompt(
