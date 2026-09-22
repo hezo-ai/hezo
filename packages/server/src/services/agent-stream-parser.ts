@@ -1794,6 +1794,10 @@ function createGenericChatParser(fallbackModelId: string | undefined): AgentChat
 		if (model) modelId = model;
 		const captured = extractGenericUsage(event);
 		if (captured) tokens = addGenericUsage(tokens, captured);
+		// Reasoning is not shown. `--thinking` is in the shared stream args, so a
+		// chat turn's stream carries it too, with its text at `part.text` where a
+		// reply's sits - read as text, it was streamed into the reply bubble.
+		if (/reason|think/i.test(type)) return [];
 		const toolName = extractGenericTool(event, type);
 		if (toolName) return [{ toolActivity: toolName }];
 		const text = extractGenericText(event);

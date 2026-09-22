@@ -318,6 +318,18 @@ describe('agent-chat-parser — generic (OpenCode)', () => {
 		});
 	});
 
+	it('keeps reasoning out of the reply', () => {
+		// `--thinking` is in the shared stream args, so a chat turn's stream carries
+		// the model's reasoning, with its text at `part.text` exactly where a reply's
+		// text sits. Shapes as OpenCode 1.18.32 emits them.
+		const parser = createAgentChatParser(AgentRuntime.OpenCode);
+		const events = feed(parser, [
+			{ type: 'reasoning', part: { type: 'reasoning', text: 'I should call hezo_ping.' } },
+			{ type: 'text', part: { type: 'text', text: 'All done.' } },
+		]);
+		expect(events).toEqual([{ text: 'All done.' }]);
+	});
+
 	it('drops non-object lines and unrecognized events', () => {
 		const parser = createAgentChatParser(AgentRuntime.OpenCode);
 		expect(parser.onStdout('123\n')).toEqual([]); // valid JSON, but not a record
