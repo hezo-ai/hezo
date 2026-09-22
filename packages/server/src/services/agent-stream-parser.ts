@@ -166,6 +166,17 @@ export interface AgentStreamParser {
 	 * leaves such a runtime unbounded - see the ceiling's own guard.
 	 */
 	getToolCallTotal(): number;
+
+	/**
+	 * True once the stream has stated that the run's work is over - its terminal
+	 * result or turn event - so what is left is the CLI exiting.
+	 *
+	 * The per-run token ceiling reads this so it never stops a run that has
+	 * already finished: the terminal event is where a runtime that reports usage
+	 * only at the end first reports any, and a stop there would fail finished work
+	 * and skip its delivery. False for a runtime whose stream states no end.
+	 */
+	hasEnded(): boolean;
 }
 
 /**
@@ -415,6 +426,7 @@ function createPassthroughParser(): AgentStreamParser {
 		onStdout: (chunk) => chunk,
 		onStderr: (chunk) => chunk,
 		getToolCallTotal: () => 0,
+		hasEnded: () => false,
 		flush: () => '',
 		getUsage: () => null,
 		getTerminalError: () => null,
@@ -451,21 +463,30 @@ function createToolCallTally(): ToolCallTally {
 }
 
 /**
+ * What a runtime's parser reads back from the state it captures while rendering.
+ * Each reader left out answers "nothing reported".
+ */
+interface JsonlParserReaders {
+	getUsage?: () => AgentRunUsage | null;
+	getTerminalVerdict?: () => RuntimeErrorVerdict | null;
+	getFinalAssistantMessage?: () => string | null;
+	getMcpToolCounts?: () => Record<string, number> | null;
+	tally?: ToolCallTally;
+	hasEnded?: () => boolean;
+}
+
+/**
  * Shared JSONL line processor. Buffers partial stdout bytes, splits on
  * newlines, and runs each complete line through `renderEvent`. Lines that
  * fail `JSON.parse` fall through verbatim; `renderEvent` returns `[]` to drop
- * an event. `getUsage` is supplied by the caller, which captures usage in a
- * closure as it renders the terminal event.
+ * an event. The readers are supplied by the caller, which captures usage and
+ * the rest in a closure as it renders.
  */
 function createJsonlParser(
 	renderEvent: (event: unknown) => string[],
-	getUsage: () => AgentRunUsage | null,
-	getTerminalVerdict: () => RuntimeErrorVerdict | null = () => null,
-	getFinalAssistantMessage: () => string | null = () => null,
-	getMcpToolCounts: () => Record<string, number> | null = () => null,
-	getToolCallCounts: () => Record<string, number> | null = () => null,
-	getToolCallTotal: () => number = () => 0,
+	readers: JsonlParserReaders,
 ): AgentStreamParser {
+	const getTerminalVerdict = readers.getTerminalVerdict ?? (() => null);
 	let buffer = '';
 
 	const consumeLine = (line: string): string => {
@@ -498,15 +519,16 @@ function createJsonlParser(
 			buffer = '';
 			return consumeLine(remainder);
 		},
-		getUsage,
+		getUsage: readers.getUsage ?? (() => null),
 		// Both derived from the one retained verdict, here rather than in each of
 		// the six callers, so a parser cannot report a message without its class.
 		getTerminalError: () => getTerminalVerdict()?.message ?? null,
 		getTerminalVerdict,
-		getFinalAssistantMessage,
-		getMcpToolCounts,
-		getToolCallCounts,
-		getToolCallTotal,
+		getFinalAssistantMessage: readers.getFinalAssistantMessage ?? (() => null),
+		getMcpToolCounts: readers.getMcpToolCounts ?? (() => null),
+		getToolCallCounts: readers.tally?.snapshot ?? (() => null),
+		getToolCallTotal: readers.tally?.total ?? (() => 0),
+		hasEnded: readers.hasEnded ?? (() => false),
 	};
 }
 
@@ -709,6 +731,8 @@ interface ClaudeContentBlock {
 }
 
 interface ClaudeMessage {
+	/** The API message id, restated on every event split from the same message. */
+	id?: string;
 	role?: string;
 	content?: ClaudeContentBlock[] | string;
 	usage?: ClaudeUsage;
@@ -902,6 +926,16 @@ function withUnrecognizedModelFilter(base: AgentStreamParser): AgentStreamParser
 	};
 }
 
+/** One Claude Code run's token buckets, as the running total and per message. */
+interface ClaudeRunTotals {
+	input: number;
+	cacheCreation: number;
+	cacheRead: number;
+	output: number;
+}
+
+const CLAUDE_RUN_TOTAL_KEYS = ['input', 'cacheCreation', 'cacheRead', 'output'] as const;
+
 function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
@@ -913,7 +947,14 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	// carries that API call's usage; Claude Code's final `result.usage` is the sum
 	// across turns, so the running total converges to it and is replaced by the
 	// authoritative figure once `result` lands.
-	const run = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	//
+	// Counted once per message id: the CLI emits one `assistant` event per content
+	// block, each restating the whole message's usage (127 of 182 ids repeated in
+	// one real transcript), so a sum over events counted most calls two or three
+	// times. A repeat replaces the message's earlier figure; an event with no id
+	// counts as a message of its own.
+	const run: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	const countedMessages = new Map<string, ClaudeRunTotals>();
 	let sawResult = false;
 	let finalMessage: string | null = null;
 	// Kept past the session line so the runner can persist it on the run row and
@@ -986,10 +1027,16 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		if (event.type === 'assistant' && event.message) {
 			const mu = event.message.usage;
 			if (mu && !sawResult) {
-				run.input += mu.input_tokens ?? 0;
-				run.cacheCreation += mu.cache_creation_input_tokens ?? 0;
-				run.cacheRead += mu.cache_read_input_tokens ?? 0;
-				run.output += mu.output_tokens ?? 0;
+				const next: ClaudeRunTotals = {
+					input: mu.input_tokens ?? 0,
+					cacheCreation: mu.cache_creation_input_tokens ?? 0,
+					cacheRead: mu.cache_read_input_tokens ?? 0,
+					output: mu.output_tokens ?? 0,
+				};
+				const id = event.message.id;
+				const prior = id ? countedMessages.get(id) : undefined;
+				for (const key of CLAUDE_RUN_TOTAL_KEYS) run[key] += next[key] - (prior?.[key] ?? 0);
+				if (id) countedMessages.set(id, next);
 				usage = toRunUsage(modelId, {
 					inputTokens: run.input,
 					cacheCreationTokens: run.cacheCreation,
@@ -1062,15 +1109,14 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		return out;
 	};
 
-	const base = createJsonlParser(
-		renderEvent,
-		() => usage,
-		() => terminalError,
-		() => finalMessage,
-		() => mcpCounts,
-		toolTally.snapshot,
-		toolTally.total,
-	);
+	const base = createJsonlParser(renderEvent, {
+		getUsage: () => usage,
+		getTerminalVerdict: () => terminalError,
+		getFinalAssistantMessage: () => finalMessage,
+		getMcpToolCounts: () => mcpCounts,
+		tally: toolTally,
+		hasEnded: () => sawResult,
+	});
 	// Untouched passthrough unless this run's endpoint makes the diagnostic
 	// unconditional, so an unknown provider never silences a real one.
 	if (!provider || !claudeCodeProviderUsesCustomEndpoint(provider, AgentRuntime.ClaudeCode)) {
@@ -1212,15 +1258,13 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 		return [];
 	};
 
-	return createJsonlParser(
-		renderEvent,
-		() => usage,
-		() => terminalError,
-		() => finalMessage,
-		() => null,
-		toolTally.snapshot,
-		toolTally.total,
-	);
+	return createJsonlParser(renderEvent, {
+		getUsage: () => usage,
+		getTerminalVerdict: () => terminalError,
+		getFinalAssistantMessage: () => finalMessage,
+		tally: toolTally,
+		hasEnded: () => turns > 0,
+	});
 }
 
 function renderCodexItem(item: CodexItem, tally: ToolCallTally): string[] {
@@ -1301,6 +1345,8 @@ interface AntigravityEvent {
 		step_type?: string;
 		/** Present on a `tool` step, carrying the call and its result. */
 		tool_info?: { name?: string; tool_name?: string; tool?: string; args?: unknown };
+		/** The step's own usage; the terminal `result` usage is the sum over steps. */
+		usage?: AntigravityUsage;
 	};
 	result?: { status?: string; response?: string; usage?: AntigravityUsage; error?: string };
 }
@@ -1326,6 +1372,21 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 	let terminalError: RuntimeErrorVerdict | null = null;
 	// agy names its model in the `init` event; the run's own model is the fallback.
 	let model = runModel;
+	let sawResult = false;
+	// Each step's latest usage, keyed by step index, so a step reported more than
+	// once (ACTIVE, then DONE) is counted once. Their sum is the running usage
+	// until `result` replaces it with the run's own total.
+	const stepUsage = new Map<number, AntigravityUsage>();
+	let unindexedSteps = 0;
+	const runningStepUsage = (): AntigravityUsage => {
+		const sum = { input_tokens: 0, cache_read_tokens: 0, output_tokens: 0 };
+		for (const u of stepUsage.values()) {
+			sum.input_tokens += u.input_tokens ?? 0;
+			sum.cache_read_tokens += u.cache_read_tokens ?? 0;
+			sum.output_tokens += u.output_tokens ?? 0;
+		}
+		return sum;
+	};
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as AntigravityEvent;
@@ -1338,13 +1399,18 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 			return out;
 		}
 
-		// `step_update` frames carry per-step usage too, but the terminal `result`
-		// usage is their cumulative sum (verified), so they are ignored here to
-		// avoid double-counting, and render nothing - the response is in `result`.
-		// A tool step is still counted: a step goes ACTIVE then DONE, so only the
-		// terminal state is tallied or every call would count twice.
+		// `step_update` frames carry per-step usage, and the terminal `result` usage
+		// is their cumulative sum (verified), so the steps feed the running usage
+		// until `result` replaces it. They render nothing - the response is in
+		// `result`. A tool step is counted once: a step goes ACTIVE then DONE, so
+		// only the terminal state is tallied or every call would count twice.
 		if (kind === 'step_update') {
 			const step = event.step_update;
+			if (step?.usage && !sawResult) {
+				// A step with no index cannot repeat by index, so it gets a key of its own.
+				stepUsage.set(step.step_index ?? -++unindexedSteps, step.usage);
+				usage = antigravityUsage(runningStepUsage(), model);
+			}
 			if (step?.step_type === 'tool' && (step.state ?? '').toUpperCase() === 'DONE') {
 				const info = step.tool_info;
 				const name = info?.name ?? info?.tool_name ?? info?.tool;
@@ -1354,8 +1420,9 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 		}
 
 		if (kind === 'result') {
+			sawResult = true;
 			const r = event.result ?? {};
-			usage = antigravityUsage(r.usage, model);
+			usage = antigravityUsage(r.usage ?? runningStepUsage(), model);
 			const resp = (r.response ?? '').trim();
 			if (resp) {
 				finalMessage = resp;
@@ -1374,15 +1441,13 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 		return out;
 	};
 
-	return createJsonlParser(
-		renderEvent,
-		() => usage,
-		() => terminalError,
-		() => finalMessage,
-		() => null,
-		toolTally.snapshot,
-		toolTally.total,
-	);
+	return createJsonlParser(renderEvent, {
+		getUsage: () => usage,
+		getTerminalVerdict: () => terminalError,
+		getFinalAssistantMessage: () => finalMessage,
+		tally: toolTally,
+		hasEnded: () => sawResult,
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1679,15 +1744,13 @@ function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStr
 		return [];
 	};
 
-	const base = createJsonlParser(
-		renderEvent,
-		() => (tokens ? genericUsage(tokens, modelId) : null),
-		() => terminalError,
-		() => finalMessage,
-		() => null,
-		toolTally.snapshot,
-		toolTally.total,
-	);
+	const base = createJsonlParser(renderEvent, {
+		getUsage: () => (tokens ? genericUsage(tokens, modelId) : null),
+		getTerminalVerdict: () => terminalError,
+		getFinalAssistantMessage: () => finalMessage,
+		tally: toolTally,
+		hasEnded: () => doneEmitted,
+	});
 
 	return {
 		...base,
@@ -1778,6 +1841,7 @@ function grokToolName(event: GrokEvent): string {
 function createGrokParser(): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let terminalError: RuntimeErrorVerdict | null = null;
+	let ended = false;
 	let thoughtBuf = '';
 	let textBuf = '';
 	let finalMessage: string | null = null;
@@ -1823,6 +1887,7 @@ function createGrokParser(): AgentStreamParser {
 		}
 
 		if (type === 'end') {
+			ended = true;
 			const out: string[] = [];
 			flushThought(out);
 			flushText(out);
@@ -1861,15 +1926,12 @@ function createGrokParser(): AgentStreamParser {
 		return out;
 	};
 
-	return createJsonlParser(
-		renderEvent,
-		() => null,
-		() => terminalError,
-		() => finalMessage,
-		() => null,
-		toolTally.snapshot,
-		toolTally.total,
-	);
+	return createJsonlParser(renderEvent, {
+		getTerminalVerdict: () => terminalError,
+		getFinalAssistantMessage: () => finalMessage,
+		tally: toolTally,
+		hasEnded: () => ended,
+	});
 }
 
 function createGrokChatParser(): AgentChatParser {
@@ -2204,15 +2266,13 @@ function createKimiParser(): AgentStreamParser {
 		return [];
 	};
 
-	return createJsonlParser(
-		renderEvent,
-		() => null,
-		() => terminalError,
-		() => finalAssistantMessage,
-		() => null,
-		toolTally.snapshot,
-		toolTally.total,
-	);
+	// Kimi's stream states no end, so hasEnded stays false: only the moments
+	// between its last message and its exit are exposed to the ceiling.
+	return createJsonlParser(renderEvent, {
+		getTerminalVerdict: () => terminalError,
+		getFinalAssistantMessage: () => finalAssistantMessage,
+		tally: toolTally,
+	});
 }
 
 function createKimiChatParser(): AgentChatParser {

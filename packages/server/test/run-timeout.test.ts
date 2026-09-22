@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -7,7 +10,7 @@ import {
 	WakeupStatus,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeConfig } from '../src/config/runtime';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -18,6 +21,8 @@ import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { MAX_TASK_ATTEMPT_GIVEUPS } from '../src/services/no-work-backoff';
+import { CONTAINER_SUBSCRIPTION_DIR } from '../src/services/runtime-home';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -49,6 +54,7 @@ let projectSlug: string;
 let taskId: string;
 let taskIdentifier: string;
 let agentId: string;
+let adminToken: string;
 
 const originalFetch = globalThis.fetch;
 
@@ -80,7 +86,7 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 		...rest,
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
-		files: createStubDocker().files,
+		files: rest.files ?? createStubDocker().files,
 	});
 	// Transparently answer the run-user probe so those infra execs don't hit execStart.
 	return withRunUserStub(base);
@@ -157,7 +163,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
-	const adminToken = ctx.token;
+	adminToken = ctx.token;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
@@ -375,6 +381,139 @@ describe('run timeout classification (runAgent)', () => {
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].error ?? '').not.toContain(RUN_TOKEN_CEILING.toLocaleString('en-US'));
+	});
+
+	describe('on a runtime that reports usage only at its end (Codex)', () => {
+		let homeRoot: string;
+
+		beforeAll(async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ provider: 'openai', api_key: 'sk-test-codex', label: 'openai' }),
+			});
+			globalThis.fetch = originalFetch;
+		});
+
+		beforeEach(() => {
+			homeRoot = mkdtempSync(join(tmpdir(), 'run-ceiling-home-'));
+		});
+
+		afterEach(() => {
+			rmSync(homeRoot, { recursive: true, force: true });
+		});
+
+		const codexTask = () => ({ ...makeTask(), runtime_type: 'codex' as const });
+
+		/**
+		 * The per-run home, kept on disk under `homeRoot` at its container path, so
+		 * the runner's usage poll reads what the "CLI" wrote there.
+		 */
+		const homeFiles = (containerId: string, root: string) =>
+			root.startsWith(CONTAINER_SUBSCRIPTION_DIR)
+				? hostSandboxFiles(join(homeRoot, root))
+				: createStubDocker().files(containerId, root);
+
+		const codexHomeOf = (env: string[]): string =>
+			env.find((e) => e.startsWith('CODEX_HOME='))?.slice('CODEX_HOME='.length) ?? '';
+
+		const rolloutUsing = (inputTokens: number) =>
+			`${JSON.stringify({
+				type: 'event_msg',
+				payload: {
+					type: 'token_count',
+					info: {
+						total_token_usage: {
+							input_tokens: inputTokens,
+							cached_input_tokens: 0,
+							cache_write_input_tokens: 0,
+							output_tokens: 0,
+							total_tokens: inputTokens,
+						},
+					},
+				},
+			})}\n`;
+
+		it('lets a run finish whose only usage report, its terminal turn event, is over the ceiling', async () => {
+			let aborted = false;
+			const deps = makeDeps({
+				files: homeFiles,
+				execStart: async (
+					_execId: string,
+					opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+				) => {
+					await opts?.onChunk?.({
+						stream: 'stdout',
+						text: `${JSON.stringify({
+							type: 'turn.completed',
+							usage: { input_tokens: RUN_TOKEN_CEILING + 1, output_tokens: 10 },
+						})}\n`,
+					});
+					if (opts?.signal?.aborted) aborted = true;
+					return { stdout: '', stderr: '' };
+				},
+			});
+
+			const result = await runAgent(deps, makeAgent(), codexTask(), makeProject(), undefined);
+
+			expect(aborted).toBe(false);
+			const run = await db.query<{ error: string | null }>(
+				'SELECT error FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].error ?? '').not.toContain(RUN_TOKEN_CEILING.toLocaleString('en-US'));
+		});
+
+		it('stops a run mid-way once the usage file it writes crosses the ceiling', async () => {
+			let codexHome = '';
+			let waited = 0;
+			const deps: RunnerDeps = {
+				...makeDeps({
+					files: homeFiles,
+					execCreate: async (_id: string, opts: { Env?: string[] }) => {
+						codexHome = codexHomeOf(opts.Env ?? []);
+						return 'exec-codex';
+					},
+					execStart: async (
+						_execId: string,
+						opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+					) => {
+						// The CLI streams nothing with usage in it; only its rollout says what
+						// the run has used so far.
+						const dir = join(homeRoot, codexHome, 'sessions', '2026', '09', '22');
+						mkdirSync(dir, { recursive: true });
+						writeFileSync(
+							join(dir, 'rollout-2026-09-22T10-00-00-run.jsonl'),
+							rolloutUsing(RUN_TOKEN_CEILING + 1),
+						);
+						const deadline = Date.now() + 5_000;
+						while (!opts?.signal?.aborted && Date.now() < deadline) {
+							waited++;
+							await new Promise((r) => setTimeout(r, 10));
+						}
+						if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+						return { stdout: '', stderr: '' };
+					},
+				}),
+				usagePollMs: 20,
+			};
+
+			const result = await runAgent(deps, makeAgent(), codexTask(), makeProject(), undefined);
+
+			expect(waited).toBeGreaterThan(0);
+			const run = await db.query<{ status: string; error: string | null; input_tokens: number }>(
+				'SELECT status, error, input_tokens FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(run.rows[0].error).toContain(
+				`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
+			);
+			// The end-of-run recovery still records what the file held, then scrubs it.
+			expect(Number(run.rows[0].input_tokens)).toBe(RUN_TOKEN_CEILING + 1);
+			expect(existsSync(join(homeRoot, codexHome, 'sessions'))).toBe(false);
+		});
 	});
 
 	it('finalizes a bare abort (user cancel) as cancelled, not timed_out', async () => {

@@ -121,44 +121,47 @@ export const codexAdapter: RuntimeAdapter = {
 		extraEnv: [],
 		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 	}),
-	async recoverUsage({ files, onError }) {
-		// Codex names no model on its `exec --json` stream and reports usage only on
-		// the one terminal turn event, so a run killed before that event records
-		// nothing. Both are in the rollout however the run ended.
-		try {
-			const paths: string[] = [];
-			for (const dir of CODEX_ROLLOUT_DIRS) {
-				if (!(await files.exists(dir))) continue;
-				paths.push(...(await files.findByName(dir, CODEX_ROLLOUT_MATCH, CODEX_ROLLOUT_DEPTH)));
-			}
-			if (paths.length === 0) return null;
+	offStreamUsage: {
+		async read({ files, onError }) {
+			// Codex names no model on its `exec --json` stream and reports usage only on
+			// the one terminal turn event, so a run killed before that event records
+			// nothing. Both are in the rollout however the run ended.
+			try {
+				const paths: string[] = [];
+				for (const dir of CODEX_ROLLOUT_DIRS) {
+					if (!(await files.exists(dir))) continue;
+					paths.push(...(await files.findByName(dir, CODEX_ROLLOUT_MATCH, CODEX_ROLLOUT_DEPTH)));
+				}
+				if (paths.length === 0) return null;
 
-			// Summed across files rather than picking one: CODEX_HOME is per-run, so
-			// every rollout under it belongs to this run - including any a subagent
-			// wrote, which bills to the same account.
-			let total: AgentRunUsage | null = null;
-			for (const path of paths) {
-				const size = await files.size(path);
-				const whole = size !== null && size <= MAX_CODEX_ROLLOUT_TAIL_BYTES;
-				const text = whole
-					? await files.read(path)
-					: await files.readTail(path, MAX_CODEX_ROLLOUT_TAIL_BYTES);
-				const openingModel = whole
-					? undefined
-					: codexRolloutModel(await files.readHead(path, CODEX_ROLLOUT_HEAD_BYTES));
-				const usage = extractCodexUsageFromRollout(text, openingModel);
-				if (!usage) continue;
-				total = total ? mergeRunUsage(total, usage) : usage;
+				// Summed across files rather than picking one: CODEX_HOME is per-run, so
+				// every rollout under it belongs to this run - including any a subagent
+				// wrote, which bills to the same account.
+				let total: AgentRunUsage | null = null;
+				for (const path of paths) {
+					const size = await files.size(path);
+					const whole = size !== null && size <= MAX_CODEX_ROLLOUT_TAIL_BYTES;
+					const text = whole
+						? await files.read(path)
+						: await files.readTail(path, MAX_CODEX_ROLLOUT_TAIL_BYTES);
+					const openingModel = whole
+						? undefined
+						: codexRolloutModel(await files.readHead(path, CODEX_ROLLOUT_HEAD_BYTES));
+					const usage = extractCodexUsageFromRollout(text, openingModel);
+					if (!usage) continue;
+					total = total ? mergeRunUsage(total, usage) : usage;
+				}
+				return total;
+			} catch (e) {
+				onError(`failed to read codex rollout for usage: ${(e as Error).message}`);
+				return null;
 			}
-			return total;
-		} catch (e) {
-			onError(`failed to read codex rollout for usage: ${(e as Error).message}`);
-			return null;
-		} finally {
-			// Scrubbed by contract: this is the whole verbatim transcript, materially
-			// more sensitive than the credential file sitting beside it.
+		},
+		async scrub(files) {
+			// This is the whole verbatim transcript, materially more sensitive than the
+			// credential file sitting beside it.
 			for (const dir of CODEX_ROLLOUT_DIRS) await files.removeDir(dir);
-		}
+		},
 	},
 	capabilities: {
 		transport: 'streamable-http',

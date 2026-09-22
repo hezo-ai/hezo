@@ -58,6 +58,8 @@ A run's usage is the token buckets each runtime reports (regular input, cache re
 
 **Grok, Kimi Code and Codex report no usable token usage on stdout**, so the runner recovers it from a file in the per-run home and **scrubs that file after parsing** — each can carry the provider credential, and a Codex rollout is the whole verbatim transcript. Everything downstream is identical to any other runtime.
 
+**The adapter's `offStreamUsage` is two steps, `read` and `scrub`, and `read` never removes anything.** The runner calls `read` every 60 s while the CLI runs, so the per-run token ceiling applies to these runtimes too, and scrubs only once the run is over. A poll costs one end-of-run read each time: a bounded tail and head for Codex, the whole log for Grok and Kimi (counted by request id, so a tail undercounts).
+
 **Recovery runs on the failure path too, not only on a clean exit.** It used to be called once, after a successful exec, so a run of any of these three killed by the wall clock, a cancel or a handback recorded zero tokens for work that really happened — twelve such runs on one instance made 2,927 tool calls between them and were all accounted as nothing. The call is memoised, because it scrubs what it reads, and the abort path flags what it writes as `usage_partial`.
 
 **Codex is also where the run's model comes from.** Its `exec --json` stream names no model anywhere, and a subscription credential is given no `default_model` by design. The rollout's `turn_context` names the model once per turn.

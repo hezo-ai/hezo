@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AgentRuntime } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { recoverOffStreamRunUsage } from '../src/services/agent-runner';
+import { RUNTIME_ADAPTERS } from '../src/services/runtime-adapters';
 import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 /**
@@ -133,6 +134,18 @@ describe('recoverOffStreamRunUsage', () => {
 			expect(await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), onError)).toBeNull();
 			expect(errors).toEqual([]);
 		});
+
+		it("reads a rollout mid-run without removing it, so a later read or the run's end finds it", async () => {
+			const path = seedRollout(rolloutUsage(4000, 0, 40));
+			const reader = RUNTIME_ADAPTERS[AgentRuntime.Codex].offStreamUsage;
+
+			expect((await reader?.read({ files: mount(), onError }))?.inputTokens).toBe(4000);
+			expect(existsSync(path)).toBe(true);
+			expect(
+				(await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), onError))?.inputTokens,
+			).toBe(4000);
+			expect(existsSync(path)).toBe(false);
+		});
 	});
 
 	describe('kimi', () => {
@@ -160,6 +173,20 @@ describe('recoverOffStreamRunUsage', () => {
 			expect(usage?.outputTokens).toBe(250);
 			expect(usage?.model).toBe('kimi-k2.7-code');
 			expect(errors).toEqual([]);
+		});
+
+		it('reads the session log mid-run without removing it', async () => {
+			const path = seedKimiSessionLog(
+				kimiRecord({
+					type: 'usage',
+					request_id: 'r1',
+					model_id: 'kimi-k2.7-code',
+					usage: { inputTokens: 10, outputTokens: 1 },
+				}),
+			);
+			const reader = RUNTIME_ADAPTERS[AgentRuntime.Kimi].offStreamUsage;
+			await reader?.read({ files: mount(), onError });
+			expect(existsSync(path)).toBe(true);
 		});
 
 		it('scrubs the session log after reading it', async () => {
@@ -270,6 +297,17 @@ describe('recoverOffStreamRunUsage', () => {
 			expect(usage?.outputTokens).toBe(20);
 			// The debug file holds the XAI_API_KEY in plaintext.
 			expect(existsSync(path)).toBe(false);
+		});
+
+		it('reads the debug file mid-run without removing it', async () => {
+			const path = join(home, 'debug.log');
+			writeFileSync(
+				path,
+				'DEBUG session.process_conversation_turn{model_id="grok-4.5" request_id="r1" input_tokens=100 output_tokens=20 cache_read_tokens=10}: record',
+			);
+			const reader = RUNTIME_ADAPTERS[AgentRuntime.Grok].offStreamUsage;
+			expect((await reader?.read({ files: mount(), onError }))?.inputTokens).toBe(100);
+			expect(existsSync(path)).toBe(true);
 		});
 
 		it('returns null when the debug file is absent', async () => {

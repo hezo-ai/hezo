@@ -785,9 +785,13 @@ token defaults come from `seed.ts`, not from the conversion. A request still sen
 MCP tool call cannot be refused that way, since the SDK strips unknown keys before the handler.
 
 **A run and a task each have a token ceiling.** `RUN_TOKEN_CEILING` (30M, `agent-runner.ts`)
-stops a run from `onChunk` the way the tool-call ceiling does, off the usage the runtime
-reports as it goes; a runtime that reports only at the end (Codex, and the file-recovered ones)
-is bounded by the task ceiling instead. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
+stops a run the way the tool-call ceiling does, off the usage the run has reported so far: the
+parser's running usage, checked on every chunk, or for a runtime whose stream carries none until
+its end (Codex, Grok, Kimi Code) its usage file, read through the adapter's
+`offStreamUsage.read` every `OFF_STREAM_USAGE_POLL_MS` (60 s). It never stops a run once the
+parser's `hasEnded()` is true: the terminal event is where an end-reporting runtime first reports
+usage, and the work is done by then. Claude Code's running usage is counted once per message id,
+since the CLI restates a message's usage on every content-block event. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
 dispatch suppression: the tokens of every run on the task since the admin last spoke
 (`adminSpokeAtSql`), held for every agent until the admin speaks, with one `task_token_ceiling`
 notice per hold.

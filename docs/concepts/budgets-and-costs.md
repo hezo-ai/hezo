@@ -60,7 +60,9 @@ Some work goes wrong in ways no daily limit catches in time. These apply to ever
 agent, whether or not it has a budget:
 
 - **A single run stops at 30 million tokens.** A run that long spends most of its tokens
-  re-reading its own context.
+  re-reading its own context. This applies to every runtime. For Codex, Grok and Kimi Code,
+  Hezo reads the usage once a minute, so a run can go a little past the limit before it
+  stops. A run that has already finished its work is never stopped.
 - **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
   allows another 100 million. A teammate who is not an admin cannot release it.

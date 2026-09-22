@@ -567,25 +567,41 @@ describe('agent-stream-parser', () => {
 			expect(usage?.outputTokens).toBe(174);
 		});
 
-		it('takes only the result usage, ignoring per-step usage frames', () => {
+		const step = (stepIndex: number | undefined, usage: Record<string, number>) =>
+			`${JSON.stringify({ event: 'step_update', step_update: { step_index: stepIndex, state: 'DONE', step_type: 'agent_response', usage } })}\n`;
+
+		it('sums per-step usage as the run goes, then takes the result usage once it lands', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 			parser.onStdout(init('gemini-2.5-pro'));
-			// A step_update carries its own (partial) usage; the parser must ignore it
-			// and read the terminal result, whose usage is the cumulative sum.
-			parser.onStdout(
-				`${JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', usage: { input_tokens: 999, output_tokens: 999 } } })}\n`,
-			);
+			parser.onStdout(step(1, { input_tokens: 400, output_tokens: 40 }));
+			parser.onStdout(step(2, { input_tokens: 600, output_tokens: 60, cache_read_tokens: 100 }));
+			// The running sum is what the per-run ceiling reads before the run ends.
+			expect(parser.getUsage()?.inputTokens).toBe(1_100);
+			expect(parser.getUsage()?.outputTokens).toBe(100);
+			expect(parser.hasEnded()).toBe(false);
+
 			parser.onStdout(
 				result({
 					status: 'SUCCESS',
 					usage: { input_tokens: 1_000_000, output_tokens: 200_000, cache_read_tokens: 0 },
 				}),
 			);
-			// pro: 1e6*1e-5 + 2e5*3e-5 = 16 → 1600c. Not 999-derived.
 			expect(parser.getUsage()?.inputTokens).toBe(1_000_000);
+			expect(parser.hasEnded()).toBe(true);
 		});
 
-		it('charges cache_read at the cache-read rate, disjoint from input', () => {
+		it('counts a step reported more than once by its latest figure', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(step(1, { input_tokens: 400, output_tokens: 10 }));
+			parser.onStdout(step(1, { input_tokens: 400, output_tokens: 40 }));
+			parser.onStdout(step(undefined, { input_tokens: 5, output_tokens: 5 }));
+			parser.onStdout(step(undefined, { input_tokens: 5, output_tokens: 5 }));
+			// Step 1 once at its latest output; each unindexed step is its own step.
+			expect(parser.getUsage()?.inputTokens).toBe(410);
+			expect(parser.getUsage()?.outputTokens).toBe(50);
+		});
+
+		it('records cache_read in its own bucket, disjoint from input', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 			parser.onStdout(init('gemini-2.5-pro'));
 			parser.onStdout(
@@ -596,7 +612,7 @@ describe('agent-stream-parser', () => {
 			);
 			const usage = parser.getUsage();
 			// No subtraction (unlike Codex): input_tokens is already the non-cached
-			// input, so it reaches the pricing buckets as stated.
+			// input, so it reaches the buckets as stated.
 			expect(usage?.buckets).toEqual({
 				inputTokens: 52921,
 				cacheReadTokens: 40586,
@@ -1334,7 +1350,7 @@ describe('extractKimiUsageFromSessionLog', () => {
 
 	it('accepts the snake_case spelling used by the older kimi-cli logs', () => {
 		// Upstream ships two engine generations with duplicated logging paths, so
-		// both spellings are tolerated rather than silently pricing to $0.
+		// both spellings are tolerated rather than silently recording no tokens.
 		const log = rec({
 			request_id: 'r1',
 			model_id: 'kimi-k2.7-code',
@@ -1601,5 +1617,90 @@ describe('codexRolloutModel', () => {
 
 	it('returns undefined when the head names no model', () => {
 		expect(codexRolloutModel('')).toBeUndefined();
+	});
+});
+
+describe('running usage and the end of a run', () => {
+	const claudeAssistant = (id: string | undefined, usage: Record<string, number>) =>
+		`${JSON.stringify({
+			type: 'assistant',
+			message: { id, role: 'assistant', usage, content: [{ type: 'text', text: 'working' }] },
+		})}\n`;
+
+	it('counts a Claude Code message once, however many content-block events restate it', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		// One API message split into three events, each restating its usage, then a
+		// second message.
+		for (let i = 0; i < 3; i++) {
+			parser.onStdout(
+				claudeAssistant('msg_1', {
+					input_tokens: 100,
+					cache_read_input_tokens: 1_000,
+					output_tokens: 10,
+				}),
+			);
+		}
+		parser.onStdout(claudeAssistant('msg_2', { input_tokens: 50, output_tokens: 5 }));
+
+		expect(parser.getUsage()?.inputTokens).toBe(1_150);
+		expect(parser.getUsage()?.outputTokens).toBe(15);
+	});
+
+	it("takes a repeated Claude Code message's latest figure rather than adding it again", () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(claudeAssistant('msg_1', { input_tokens: 100, output_tokens: 1 }));
+		parser.onStdout(claudeAssistant('msg_1', { input_tokens: 100, output_tokens: 30 }));
+		// An event with no id cannot be matched, so it counts as a message of its own.
+		parser.onStdout(claudeAssistant(undefined, { input_tokens: 7, output_tokens: 0 }));
+		parser.onStdout(claudeAssistant(undefined, { input_tokens: 7, output_tokens: 0 }));
+
+		expect(parser.getUsage()?.inputTokens).toBe(114);
+		expect(parser.getUsage()?.outputTokens).toBe(30);
+	});
+
+	it('marks each runtime ended on the event that states its end, and not before', () => {
+		const cases: Array<[AgentRuntime, string, string]> = [
+			[
+				AgentRuntime.ClaudeCode,
+				claudeAssistant('msg_1', { input_tokens: 1, output_tokens: 1 }),
+				`${JSON.stringify({ type: 'result', usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+			],
+			[
+				AgentRuntime.Codex,
+				`${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } })}\n`,
+				`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+			],
+			[
+				AgentRuntime.Antigravity,
+				`${JSON.stringify({ event: 'init', init: { model: 'gemini-2.5-pro' } })}\n`,
+				`${JSON.stringify({ event: 'result', result: { status: 'SUCCESS' } })}\n`,
+			],
+			[
+				AgentRuntime.Grok,
+				`${JSON.stringify({ type: 'text', data: 'hi' })}\n`,
+				`${JSON.stringify({ type: 'end', stopReason: 'end_turn' })}\n`,
+			],
+			[
+				AgentRuntime.OpenCode,
+				`${JSON.stringify({ type: 'step_finish', part: { reason: 'tool-calls', tokens: { input: 1, output: 1 } } })}\n`,
+				`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', tokens: { input: 1, output: 1 } } })}\n`,
+			],
+		];
+		for (const [runtime, midRun, end] of cases) {
+			const parser = createAgentStreamParser(runtime);
+			parser.onStdout(midRun);
+			expect(parser.hasEnded(), runtime).toBe(false);
+			parser.onStdout(end);
+			expect(parser.hasEnded(), runtime).toBe(true);
+		}
+	});
+
+	it('never marks a Kimi Code run ended, since its stream states no end', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		parser.onStdout(`${JSON.stringify({ role: 'assistant', content: 'done' })}\n`);
+		parser.onStdout(
+			`${JSON.stringify({ role: 'meta', type: 'session.resume_hint', session_id: 's1' })}\n`,
+		);
+		expect(parser.hasEnded()).toBe(false);
 	});
 });

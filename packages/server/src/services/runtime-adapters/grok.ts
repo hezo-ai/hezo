@@ -112,16 +112,19 @@ export const grokAdapter: RuntimeAdapter = {
 		if (!ctx.containerHomeDir) return [];
 		return ['--debug-file', join(ctx.containerHomeDir, GROK_DEBUG_BASENAME)];
 	},
-	async recoverUsage({ files, onError }) {
-		try {
-			if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
-			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME));
-		} catch (e) {
-			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
-			return null;
-		} finally {
-			await files.remove(GROK_DEBUG_BASENAME);
-		}
+	offStreamUsage: {
+		async read({ files, onError }) {
+			// Read whole: the log repeats a request's usage record, so it is counted by
+			// request id and a tail would drop every request before it.
+			try {
+				if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
+				return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME));
+			} catch (e) {
+				onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
+				return null;
+			}
+		},
+		scrub: (files) => files.remove(GROK_DEBUG_BASENAME),
 	},
 	build(descriptors, ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {

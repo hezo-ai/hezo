@@ -12,6 +12,7 @@ import {
 	DOC_WRITE_GUARD_MATCHER,
 } from '../doc-write-guard';
 import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
+import type { SandboxFiles } from '../sandbox/types';
 import { buildJudgeScriptForRuntime } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString } from './toml';
 import type {
@@ -197,6 +198,10 @@ const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
  */
 const KIMI_SESSION_LOG_MAX_DEPTH = 8;
 
+function kimiSessionLogs(files: SandboxFiles): Promise<string[]> {
+	return files.findByName('sessions', KIMI_SESSION_LOG_BASENAME, KIMI_SESSION_LOG_MAX_DEPTH);
+}
+
 /**
  * Kimi Code accepts `low|medium|high|xhigh|max`. It has no `minimal`, so the
  * lowest Hezo level maps to `low` and `max` maps straight through. `xhigh` is
@@ -239,25 +244,25 @@ export const kimiAdapter: RuntimeAdapter = {
 		if (key === 'KIMI_MODEL_MAX_CONTEXT_SIZE') return String(kimiModelContextSize(ctx.runModel));
 		return value;
 	},
-	async recoverUsage({ files, onError }) {
-		const logPaths = await files.findByName(
-			'sessions',
-			KIMI_SESSION_LOG_BASENAME,
-			KIMI_SESSION_LOG_MAX_DEPTH,
-		);
-		if (logPaths.length === 0) return null;
-		try {
-			// The home dir is per-run, so in practice there is exactly one session.
-			// Concatenating tolerates a resumed or sub-agent session without
-			// double-counting: the extractor dedupes by record identity, not by file.
-			const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
-			return extractKimiUsageFromSessionLog(contents);
-		} catch (e) {
-			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
-			return null;
-		} finally {
-			for (const p of logPaths) await files.remove(p);
-		}
+	offStreamUsage: {
+		async read({ files, onError }) {
+			const logPaths = await kimiSessionLogs(files);
+			if (logPaths.length === 0) return null;
+			try {
+				// The home dir is per-run, so in practice there is exactly one session.
+				// Concatenating tolerates a resumed or sub-agent session without
+				// double-counting: the extractor dedupes by record identity, not by file,
+				// which is also why the logs are read whole rather than by their tail.
+				const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
+				return extractKimiUsageFromSessionLog(contents);
+			} catch (e) {
+				onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
+				return null;
+			}
+		},
+		async scrub(files) {
+			for (const p of await kimiSessionLogs(files)) await files.remove(p);
+		},
 	},
 	build(descriptors, ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {

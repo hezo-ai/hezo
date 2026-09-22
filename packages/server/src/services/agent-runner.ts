@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { basename, join, relative } from 'node:path';
 import {
 	AGENT_RUNTIME_LABELS,
 	type AgentEffort,
@@ -74,8 +74,6 @@ import { pauseAgentForBudget } from './agent-runtime-status';
 import {
 	type AgentRunUsage,
 	createAgentStreamParser,
-	extractGrokUsageFromDebugLog,
-	extractKimiUsageFromSessionLog,
 	type RuntimeErrorVerdict,
 } from './agent-stream-parser';
 import {
@@ -84,7 +82,6 @@ import {
 	readActiveUsageHold,
 	readAiProviderCredentialValue,
 	resolveRunCredential,
-	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordUsage } from './budget';
@@ -204,7 +201,6 @@ import {
 	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
 	persistRotatedSubscriptionAuth,
-	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
 	type SubscriptionMount as SubscriptionMountImpl,
@@ -224,7 +220,6 @@ import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import { collectFinishedWorktrees } from './sandbox/worktree-gc';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
-import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
 import {
@@ -357,6 +352,11 @@ export interface RunnerDeps {
 	egressCAPath?: string | null;
 	/** When present, a container the runner lazy-starts resubscribes its log stream. */
 	containerLogStreamer?: ContainerLogStreamer;
+	/**
+	 * How often a run's usage file is read while its CLI runs. Defaults to
+	 * {@link OFF_STREAM_USAGE_POLL_MS}; overridden only by tests.
+	 */
+	usagePollMs?: number;
 	/**
 	 * How long a run blocked on container capacity waits, and how often it
 	 * re-tries. Defaults to {@link CAPACITY_PARK_POLL_MS} /
@@ -600,35 +600,14 @@ export function assertPromptAcceptable(runtime: AgentRuntime, prompt: string): v
 	}
 }
 
-// Basename of Kimi Code's per-session wire log, written under
-// `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
-// `stream-json` stdout carries no token usage at all, so - as with Grok - usage is
-// recovered from this file. The path depth is an upstream implementation detail,
-// so the runner searches the per-run home rather than reconstructing it.
-const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
-
-// Depth cap for the wire-log search. The real path sits 5 levels below the home
-// dir; 8 leaves room for an upstream layout change without ever letting a
-// symlink loop or a surprise `node_modules` turn run teardown into a full-disk
-// walk.
-const KIMI_SESSION_LOG_MAX_DEPTH = 8;
-
 /**
- * Recover a run's token usage for the runtimes that report none on stdout.
- *
- * Two runtimes need this and they need it for the same structural reason — their
- * stream carries no usage — so the dispatch lives here rather than being copied
- * per runtime:
- *
- *   - **Grok** — the per-run `--debug-file`.
- *   - **Kimi Code** — the per-session `wire.jsonl` under the per-run home.
- *
- * Both files are scrubbed after parsing: Grok's holds the XAI_API_KEY in
- * plaintext, and a "wire" log plausibly captures request headers (i.e. the
- * Moonshot bearer token), so neither should outlive the run on the host.
+ * Recover a run's token usage from the file its CLI writes into the per-run home,
+ * for the runtimes whose stream reports none, or none until its end (Codex, Grok,
+ * Kimi Code), then scrub that file. Each file can carry the provider credential,
+ * and a Codex rollout is the whole transcript, so none outlives the run.
  *
  * Returns null for every other runtime, so the caller keeps the parser's stream
- * usage. Best-effort throughout: a missing or unreadable log yields null (no
+ * usage. Best-effort throughout: a missing or unreadable file yields null (no
  * usage rather than a failed run), and the home mount is removed at cleanup
  * regardless.
  */
@@ -637,10 +616,63 @@ export async function recoverOffStreamRunUsage(
 	files: SandboxFiles | null,
 	onError: (msg: string) => void,
 ): Promise<AgentRunUsage | null> {
-	if (!files) return null;
-	const recover = RUNTIME_ADAPTERS[runtimeType].recoverUsage;
-	if (!recover) return null;
-	return recover({ files, onError });
+	const usage = RUNTIME_ADAPTERS[runtimeType].offStreamUsage;
+	if (!files || !usage) return null;
+	try {
+		return await usage.read({ files, onError });
+	} finally {
+		await usage.scrub(files);
+	}
+}
+
+/** How often a run's usage file is read while its CLI runs. */
+export const OFF_STREAM_USAGE_POLL_MS = 60_000;
+
+/**
+ * Read a run's usage file on an interval while its CLI runs, so the per-run token
+ * ceiling applies to a runtime that reports no usage on its stream.
+ *
+ * Reads never overlap: a tick that finds the previous read still going skips.
+ * `stop` clears the interval, drops what a read in flight finds, and waits for
+ * it, so the caller can scrub the file afterwards without racing it.
+ *
+ * Each read costs what the end-of-run recovery costs once: a bounded tail and
+ * head of a Codex rollout, or the whole Grok or Kimi log (counted by request id,
+ * so a tail would undercount). Polling multiplies that IO by the run's minutes;
+ * it does not raise the peak a single read holds in memory.
+ */
+function pollOffStreamUsage(
+	runtimeType: AgentRuntime,
+	files: SandboxFiles | null,
+	intervalMs: number,
+	onUsage: (usage: AgentRunUsage) => void,
+	onError: (msg: string) => void,
+): { stop(): Promise<void> } {
+	const usage = RUNTIME_ADAPTERS[runtimeType].offStreamUsage;
+	if (!files || !usage) return { stop: async () => {} };
+	let inFlight: Promise<void> | null = null;
+	let stopped = false;
+	const timer = setInterval(() => {
+		if (inFlight) return;
+		inFlight = usage
+			.read({ files, onError })
+			.then((read) => {
+				// A read that lands after the exec ended reports nothing: the run is
+				// over, and the end-of-run recovery owns its usage from here.
+				if (read && !stopped) onUsage(read);
+			})
+			.catch((e) => onError(`usage poll failed: ${(e as Error).message}`))
+			.finally(() => {
+				inFlight = null;
+			});
+	}, intervalMs);
+	return {
+		async stop() {
+			stopped = true;
+			clearInterval(timer);
+			await inFlight;
+		},
+	};
 }
 
 // Deliver the prompt one of three ways, selected per runtime via the
@@ -2746,14 +2778,37 @@ export async function runAgent(
 			const maxToolCalls = runtimeConfig().runs.maxToolCalls;
 			let ceilingHit = false;
 
+			// The usage the runtime streams, or else the usage its file held at the
+			// last poll, for a runtime that streams none until its end.
+			let polledUsage: AgentRunUsage | null = null;
+			const refreshUsage = () => {
+				// Surfaced to the log flush so it's persisted crash-safely (see
+				// currentUsage / onFlush above).
+				currentUsage = parser.getUsage() ?? polledUsage;
+			};
+
+			// The same stop as the tool-call ceiling, measured in what the run has used
+			// rather than what it has called. Never once the stream has stated the
+			// run's end: that is where a runtime reporting only at the end first
+			// reports anything, and the work it reports on is already done.
+			const enforceTokenCeiling = () => {
+				if (ceilingHit || parser.hasEnded()) return;
+				const used = currentUsage ? currentUsage.inputTokens + currentUsage.outputTokens : 0;
+				if (used < RUN_TOKEN_CEILING) return;
+				ceilingHit = true;
+				emit(
+					'stderr',
+					`[runner] Run stopped at its token ceiling (${RUN_TOKEN_CEILING.toLocaleString('en-US')}). A single run this long is spending most of its allowance re-reading its own context.\n`,
+				);
+				runAbort.abort('token_ceiling');
+			};
+
 			const onChunk = async (chunk: ExecLogChunk) => {
 				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
-				// Surface the latest running usage to the log flush so it's persisted
-				// crash-safely (see currentUsage / onFlush above).
-				currentUsage = parser.getUsage();
+				refreshUsage();
 				await persistMcpToolCounts();
 
 				if (!ceilingHit && maxToolCalls > 0 && parser.getToolCallTotal() >= maxToolCalls) {
@@ -2764,31 +2819,35 @@ export async function runAgent(
 					);
 					runAbort.abort('tool_call_ceiling');
 				}
-				// The same stop, measured in what the run has used rather than what it
-				// has called. It reads the usage the runtime reports as it goes; a
-				// runtime that reports only at the end is bounded by the task ceiling.
-				const used = currentUsage ? currentUsage.inputTokens + currentUsage.outputTokens : 0;
-				if (!ceilingHit && used >= RUN_TOKEN_CEILING) {
-					ceilingHit = true;
-					emit(
-						'stderr',
-						`[runner] Run stopped at its token ceiling (${RUN_TOKEN_CEILING.toLocaleString('en-US')}). A single run this long is spending most of its allowance re-reading its own context.\n`,
-					);
-					runAbort.abort('token_ceiling');
-				}
+				enforceTokenCeiling();
 			};
 
+			const usagePoll = pollOffStreamUsage(
+				runtimeType,
+				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
+				deps.usagePollMs ?? OFF_STREAM_USAGE_POLL_MS,
+				(usage) => {
+					polledUsage = usage;
+					refreshUsage();
+					enforceTokenCeiling();
+				},
+				(msg) => log.warn(`Run ${heartbeatRunId}: ${msg}`),
+			);
+
 			// Unelevated: the agent writes into the bind-mounted worktree, and those
-			// files must stay owned by the run user rather than root.
-			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser).exec({
-				cmd: context.execCmd,
-				env: context.env,
-				workingDir: prep.workingDir,
-				// The derived signal, so a tunnel that dies mid-run tears the exec down
-				// instead of leaving it to burn the rest of the budget toolless.
-				signal: runAbort.signal,
-				onChunk,
-			});
+			// files must stay owned by the run user rather than root. The poll stops
+			// however the exec ends, before anything reads and scrubs the usage file.
+			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser)
+				.exec({
+					cmd: context.execCmd,
+					env: context.env,
+					workingDir: prep.workingDir,
+					// The derived signal, so a tunnel that dies mid-run tears the exec down
+					// instead of leaving it to burn the rest of the budget toolless.
+					signal: runAbort.signal,
+					onChunk,
+				})
+				.finally(() => usagePoll.stop());
 			const tail = parser.flush();
 			if (tail) emit('stdout', tail);
 			const durationMs = Date.now() - startTime;
@@ -2852,11 +2911,11 @@ export async function runAgent(
 			const unpushedError =
 				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
 
-			// Codex, Grok and Kimi Code emit no usage on their streams; recover it
-			// from the file each writes into the per-run home mount, then scrub that
-			// file (they can carry the provider credential, and a Codex rollout is the
-			// whole transcript). Falls back to null (⇒ $0) if the file is
-			// missing/unparseable; the home mount is removed at cleanup anyway.
+			// Codex, Grok and Kimi Code stream no usage, or none until their end;
+			// recover it from the file each writes into the per-run home mount, then
+			// scrub that file (they can carry the provider credential, and a Codex
+			// rollout is the whole transcript). Null, recording no tokens, if the file
+			// is missing or unparseable; the home mount is removed at cleanup anyway.
 			const runUsage = await recoverUsageOnce();
 
 			// A clean exit is only a real success if the run produced persisted
