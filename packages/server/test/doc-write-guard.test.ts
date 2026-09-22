@@ -104,6 +104,38 @@ describe('doc-write guard script', () => {
 		expect(r.status).toBe(0);
 	});
 
+	it('resolves a relative path against the session cwd before checking it is tracked', () => {
+		// Kimi Code passes `path` relative to the session's cwd and puts that cwd in
+		// the payload. Taken as-is, `docs/todo-spec.md` was looked up from inside
+		// `docs/` and a tracked file was refused.
+		const repo = join(dir, 'relative-repo');
+		mkdirSync(join(repo, 'docs'), { recursive: true });
+		for (const args of [
+			['init', '-q'],
+			['config', 'user.email', 'test@example.com'],
+			['config', 'user.name', 'Test'],
+			['config', 'commit.gpgsign', 'false'],
+		]) {
+			execFileSync('git', args, { cwd: repo });
+		}
+		writeFileSync(join(repo, 'docs', 'todo-spec.md'), '# a real repo file\n');
+		execFileSync('git', ['add', 'docs/todo-spec.md'], { cwd: repo });
+		execFileSync('git', ['commit', '-qm', 'add'], { cwd: repo });
+
+		const write = (path: string) => ({
+			hook_event_name: 'PreToolUse',
+			cwd: repo,
+			tool_name: 'Write',
+			tool_input: { path, content: 'x' },
+		});
+		// From the repo itself, and from somewhere else with only the payload's cwd
+		// to go on.
+		expect(runGuard(write('docs/todo-spec.md'), repo).status).toBe(0);
+		expect(runGuard(write('docs/todo-spec.md'), dir).status).toBe(0);
+		// An untracked copy given the same way is still refused.
+		expect(runGuard(write('notes/todo-spec.md'), repo).status).toBe(2);
+	});
+
 	it('fails open on anything unexpected rather than blocking real work', () => {
 		const workdir = join(dir, 'untracked');
 		// Unguarded tool, malformed payload, and a missing path all allow.

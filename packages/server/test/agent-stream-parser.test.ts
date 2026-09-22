@@ -1270,6 +1270,40 @@ describe('kimi stream parser', () => {
 		expect(parser.getTerminalError()).toMatch(/authentication failed/i);
 	});
 
+	it('classifies a provider failure Kimi reports only on stderr', () => {
+		// A rejected key or an empty balance is not retried, and nothing about it
+		// reaches stdout. Lines as Kimi Code 2.0.2 prints them, split across chunks.
+		const cases: Array<[string, string]> = [
+			['error: failed to run prompt: provider.auth_error: 401 Invalid Authentication', 'auth'],
+			[
+				'error: failed to run prompt: provider.api_error: 402 Your account is suspended due to insufficient balance',
+				'credit',
+			],
+			[
+				'error: failed to run prompt: provider.rate_limit: 429 Too many requests, rate limit reached',
+				'rate_limit',
+			],
+		];
+		for (const [stderr, family] of cases) {
+			const parser = createAgentStreamParser(AgentRuntime.Kimi);
+			parser.onStdout(line({ role: 'meta', type: 'system.version', version: '2.0.2' }));
+			const half = Math.floor(stderr.length / 2);
+			// Stderr still reaches the run log unchanged.
+			expect(parser.onStderr(stderr.slice(0, half))).toBe(stderr.slice(0, half));
+			expect(parser.onStderr(`${stderr.slice(half)}\n`)).toBe(`${stderr.slice(half)}\n`);
+			expect(parser.getTerminalVerdict()?.family, stderr).toBe(family);
+		}
+		// Also when the line is the last thing written, with no newline.
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		parser.onStderr(cases[0][0]);
+		parser.flush();
+		expect(parser.getTerminalVerdict()?.family).toBe('auth');
+		// Other stderr is not read as a failure.
+		const quiet = createAgentStreamParser(AgentRuntime.Kimi);
+		quiet.onStderr('Warning: this folder is not trusted; skipped 1 project-level MCP servers\n');
+		expect(quiet.getTerminalVerdict()).toBeNull();
+	});
+
 	it('drops session.resume_hint noise from the run log', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Kimi);
 		const out = parser.onStdout(
@@ -1430,6 +1464,25 @@ describe('extractKimiUsageFromSessionLog', () => {
 			cacheCreationTokens: 0,
 			outputTokens: 385,
 		});
+		// The usage records name `__kimi_env_model__`, the CLI's alias for the
+		// env-registered provider; the run is recorded under the real model id.
+		expect(usage?.model).toBe('kimi-k3');
+	});
+
+	it('resolves the model alias from the request that preceded each usage record', () => {
+		const log = [
+			rec({ type: 'llm.request', model: 'kimi-k3', modelAlias: '__kimi_env_model__' }),
+			rec({
+				type: 'usage.record',
+				model: '__kimi_env_model__',
+				usage: { inputOther: 100, output: 10 },
+				usageScope: 'turn',
+			}),
+		].join('\n');
+		expect(extractKimiUsageFromSessionLog(log)?.model).toBe('kimi-k3');
+		// A record naming a real model keeps it.
+		const named = rec({ model: 'kimi-k2', usage: { inputOther: 1, output: 1 } });
+		expect(extractKimiUsageFromSessionLog(`${log}\n${named}`)?.model).toBe('kimi-k2');
 	});
 
 	it('returns null when the log carries no usage record', () => {

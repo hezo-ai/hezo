@@ -311,13 +311,14 @@ interface JudgeRuntimeSpec {
 	 * Recover the final assistant message from the run's own session log when
 	 * `inputFields` yields nothing.
 	 *
-	 * Kimi Code's Stop payload carries only `hook_event_name` / `session_id` /
-	 * `cwd` — the agent's final message is not passed under any field name — so
-	 * without this the judge would have nothing to evaluate and would always fail
-	 * open. The script walks `$KIMI_CODE_HOME` (a per-run directory Hezo owns) for
-	 * the session's JSONL and takes the last assistant message. Set only for
-	 * runtimes whose payload genuinely lacks the message; every other runtime
-	 * leaves it unset and keeps the cheaper stdin-only path.
+	 * Kimi Code's Stop payload carries `hook_event_name` / `session_id` / `cwd` /
+	 * `client_type` and a `stop_hook_active` that is always false — the agent's
+	 * final message is not passed under any field name — so without this the
+	 * judge would have nothing to evaluate and would always fail open. The script
+	 * walks `$KIMI_CODE_HOME` (a per-run directory Hezo owns) for the session's
+	 * JSONL and asks `finalMessageFn` for the last assistant message in it. Set
+	 * only for runtimes whose payload genuinely lacks the message; every other
+	 * runtime leaves it unset and keeps the cheaper stdin-only path.
 	 */
 	sessionLogLookup?: {
 		/** Env var holding the runtime's data root. */
@@ -333,6 +334,14 @@ interface JudgeRuntimeSpec {
 		 * not both. No runtime uses it today; the emitted script handles both.
 		 */
 		logSuffix?: string;
+		/**
+		 * Source of `function finalMessage(records)`: given one log file's parsed
+		 * records in order, return the last assistant message they hold, or
+		 * undefined. The record shape is the runtime's own, so it lives here rather
+		 * than in the shared script body - and it is exactly what a CLI bump must
+		 * re-check, since a shape this does not recognise fails open silently.
+		 */
+		finalMessageFn: string;
 	};
 	/**
 	 * Use a marker file rather than `stop_hook_active` as the "already continued
@@ -376,6 +385,7 @@ const GUARD_BASENAME = ${JSON.stringify(guard?.basename ?? '')};
 const LOG_HOME_ENV = ${JSON.stringify(lookup?.homeEnvVar ?? '')};
 const LOG_BASENAME = ${JSON.stringify(lookup?.logBasename ?? '')};
 const LOG_SUFFIX = ${JSON.stringify(lookup?.logSuffix ?? '')};
+${lookup?.finalMessageFn ?? 'function finalMessage() { return undefined; }'}
 
 function guardPath() {
 	if (!GUARD_HOME_ENV || !GUARD_BASENAME) return null;
@@ -421,9 +431,10 @@ function matchesLog(name) {
 
 // Last assistant message from the run's own session log, for runtimes whose Stop
 // payload omits it. Prefers the file whose path contains the session id when the
-// run has more than one session dir.
+// run has more than one session dir. The record shape is read by the runtime's
+// own \`finalMessage\`, declared above.
 function messageFromSessionLog(sessionId) {
-	if (!LOG_HOME_ENV || !LOG_BASENAME) return undefined;
+	if (!LOG_HOME_ENV || !(LOG_BASENAME || LOG_SUFFIX)) return undefined;
 	const home = process.env[LOG_HOME_ENV];
 	if (!home) return undefined;
 	let files = findLogs(home, 0);
@@ -436,24 +447,14 @@ function messageFromSessionLog(sessionId) {
 	for (const f of files) {
 		let contents;
 		try { contents = fs.readFileSync(f, 'utf8'); } catch { continue; }
+		const records = [];
 		for (const line of contents.split('\\n')) {
 			const t = line.trim();
 			if (!t) continue;
-			let rec;
-			try { rec = JSON.parse(t); } catch { continue; }
-			if (!rec || rec.role !== 'assistant') continue;
-			const c = rec.content;
-			// Content is a plain string on some runtimes and a parts array on others
-			// (text / thinking / tool-call parts); take the text parts.
-			const text = typeof c === 'string'
-				? c
-				: Array.isArray(c)
-					? c.filter((part) => part && part.type === 'text' && typeof part.text === 'string')
-							.map((part) => part.text)
-							.join('')
-					: '';
-			if (text.trim()) latest = text;
+			try { records.push(JSON.parse(t)); } catch { /* a torn last line */ }
 		}
+		const text = finalMessage(records);
+		if (typeof text === 'string' && text.trim()) latest = text;
 	}
 	return latest;
 }
@@ -578,14 +579,15 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 	// Kimi's Stop hook is genuinely blockable (one of only three such events, with
 	// UserPromptSubmit and PreToolUse), and a blocked stop feeds the reason back as
 	// a new user message — the same continue-the-turn semantics as Codex. But its
-	// payload is thinner than any other runtime's: it carries `hook_event_name`,
-	// `session_id` and `cwd` and nothing else we need. Hence the two extras:
+	// payload is thinner than any other runtime's: past `hook_event_name`,
+	// `session_id`, `cwd` and `client_type` it carries a `stop_hook_active` that is
+	// always false. Hence the two extras:
 	//
 	//  - `inputFields` is still probed first (cheap, and future-proof if upstream
 	//    starts passing the message), but realistically `sessionLogLookup` is what
 	//    supplies the final message;
-	//  - `loopGuardFile` replaces the absent `stop_hook_active` so the one-block
-	//    ceiling is real rather than nominal.
+	//  - `loopGuardFile` stands in for `stop_hook_active`. The CLI allows one Stop
+	//    continuation per turn by itself; the marker makes it one per run.
 	//
 	// Both read `$KIMI_CODE_HOME`, which the runner points at a per-run directory
 	// (see RUNTIME_HOME_LAYOUTS), so neither can leak across runs. The API key is
@@ -604,7 +606,32 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		// which one the installed version honours.
 		blockExitCode: 2,
 		blockReasonToStderr: true,
-		sessionLogLookup: { homeEnvVar: 'KIMI_CODE_HOME', logBasename: 'wire.jsonl' },
+		sessionLogLookup: {
+			homeEnvVar: 'KIMI_CODE_HOME',
+			logBasename: 'wire.jsonl',
+			// Kimi Code writes no assistant-message record while a turn is still open:
+			// the text arrives as `content.part` loop events, one per part, each tagged
+			// with the step it belongs to. The final message is the text of the last
+			// step that had any. A subagent logs under its own `agentId`, and those
+			// records are skipped; 0.30.0 wrote no `agentId` at all. Recorded shape:
+			// `test/fixtures/kimi/kimi-2.0.2.wire.jsonl`.
+			finalMessageFn: `function finalMessage(records) {
+	let latest;
+	let step;
+	let stepText = '';
+	for (const rec of records) {
+		if (!rec || rec.type !== 'context.append_loop_event') continue;
+		if (rec.agentId !== undefined && rec.agentId !== 'main') continue;
+		const ev = rec.event;
+		if (!ev || ev.type !== 'content.part' || !ev.part) continue;
+		if (ev.part.type !== 'text' || typeof ev.part.text !== 'string') continue;
+		if (ev.stepUuid !== step) { step = ev.stepUuid; stepText = ''; }
+		stepText += ev.part.text;
+		if (stepText.trim()) latest = stepText;
+	}
+	return latest;
+}`,
+		},
 		loopGuardFile: { homeEnvVar: 'KIMI_CODE_HOME', basename: '.hezo-stop-blocked' },
 	},
 };

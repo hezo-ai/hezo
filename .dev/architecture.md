@@ -4682,8 +4682,9 @@ carrying any other, which would break every run on that runtime rather than just
 **Grok and Kimi Code report no token usage on their streams** — for Grok the runner points at
 a per-run `--debug-file` and parses the `process_conversation_turn` tracing spans
 (`extractGrokUsageFromDebugLog`); for Kimi Code it reads the per-session `wire.jsonl` under
-the run home (`extractKimiUsageFromSessionLog`, counting turn-scoped records and never
-summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both and scrubs the
+the run home (`extractKimiUsageFromSessionLog`, summing its per-request `usage.record` deltas and
+reading the model from the `llm.request` record beside each, since the usage record names only
+the CLI's alias). `recoverOffStreamRunUsage` dispatches both and scrubs the
 file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
 Moonshot bearer.
 
@@ -4817,10 +4818,12 @@ the same headless exec: the Codex and Kimi scripts guard it in code, and the Cla
 hook now instructs the judge to do the same.
 
 **Kimi Code needs two substitutes to run the same judge.** Its `Stop` hook *is* blockable
-(one of only three such events), but its stdin payload carries only `hook_event_name`,
-`session_id` and `cwd` — neither the agent's final message nor `stop_hook_active`. So its
-`JUDGE_SPECS` entry sets `sessionLogLookup` (read the last assistant message from the run's own
-`wire.jsonl` under `$KIMI_CODE_HOME` — the same file the usage scrape parses) and
+(one of only three such events), but its stdin payload carries no final message, and a
+`stop_hook_active` that is always false. So its `JUDGE_SPECS` entry sets `sessionLogLookup`
+(read the final message from the run's own `wire.jsonl` under `$KIMI_CODE_HOME` — the same file
+the usage scrape parses — as the text `content.part` loop events of the last step; the spec
+carries that record shape as `finalMessageFn`, because no assistant-message record exists while
+the turn is open and the earlier lookup for one never fired the judge) and
 `loopGuardFile` (a `.hezo-stop-blocked` marker in that home, written before emitting a block
 and checked on entry, standing in for the absent flag so the one-block ceiling is real rather
 than nominal). Both are opt-in fields that stay unset for every other runtime. A block is
@@ -4862,7 +4865,8 @@ and the handoff-delivery net are:
   project's active doc slugs, shipped through `mcpInjection.files` and wired as a Claude Code
   `PreToolUse` hook of `type: "command"` matching `Write|Edit|MultiEdit|NotebookEdit`. It refuses
   a write whose basename matches a doc slug **and** which `git ls-files --error-unmatch` says is
-  untracked — a repo that legitimately carries its own `spec.md` keeps writing to it. The refusal
+  untracked — a repo that legitimately carries its own `spec.md` keeps writing to it. The path is
+  resolved against the payload's `cwd` first, because Kimi Code passes it relative. The refusal
   names `write_project_doc`/`edit_project_doc` explicitly, and is emitted on all three channels
   (exit 2, stderr, stdout JSON). It fails **open** on any malformed payload or error: a guard that
   blocked real work would be worse than the problem. `buildClaudeCodeSettings` emits the hook only

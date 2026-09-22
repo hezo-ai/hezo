@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { AgentRuntime } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildJudgeScriptForRuntime } from '../src/services/stop-hook-prompt';
@@ -115,6 +115,103 @@ describe('generated stop-hook judge scripts', () => {
 			});
 			expect(out.trim()).toBe('');
 			rmSync(home, { recursive: true, force: true });
+		});
+	});
+
+	describe('kimi final message from the session log', () => {
+		// The Stop payload carries no final message, so the judge reads it from the
+		// run's own wire.jsonl. The log here is recorded from Kimi Code 2.0.2, cut
+		// where the Stop hook fires: after the first final answer, before the judge
+		// has continued the turn.
+		const SESSION = 'session_63bb03bc-129d-4f04-bef8-3bcc1befee16';
+		const recorded = readFileSync(
+			resolve(import.meta.dirname, 'fixtures/kimi/kimi-2.0.2.wire.jsonl'),
+			'utf8',
+		)
+			.split('\n')
+			.filter(Boolean);
+		const atStop = recorded.slice(
+			0,
+			recorded.findIndex((l) => l.includes('FIRST_FINAL_ANSWER')) + 1,
+		);
+
+		/**
+		 * Run the Kimi judge against a seeded home, with `fetch` replaced by a stub
+		 * that records the request and answers with `verdict`.
+		 */
+		const judge = (wire: string[], verdict: unknown) => {
+			const home = mkdtempSync(join(tmpdir(), 'hezo-kimi-home-'));
+			const logDir = join(home, 'sessions', 'wd_ws_0', SESSION, 'agents', 'main');
+			mkdirSync(logDir, { recursive: true });
+			writeFileSync(join(logDir, 'wire.jsonl'), `${wire.join('\n')}\n`);
+			const requestLog = join(home, 'judge-request.json');
+			const stub = join(home, 'fetch-stub.mjs');
+			writeFileSync(
+				stub,
+				`import fs from 'node:fs';
+globalThis.fetch = async (url, init) => {
+	fs.writeFileSync(${JSON.stringify(requestLog)}, JSON.stringify({ url: String(url), body: JSON.parse(init.body) }));
+	return new Response(JSON.stringify({ choices: [{ message: { content: ${JSON.stringify(JSON.stringify(verdict))} } }] }), { status: 200 });
+};
+`,
+			);
+			const script = join(home, 'judge.mjs');
+			writeFileSync(script, buildJudgeScriptForRuntime(AgentRuntime.Kimi) ?? '', { mode: 0o700 });
+			const result = spawnSync(process.execPath, ['--import', stub, script], {
+				// The payload as 2.0.2 sends it.
+				input: JSON.stringify({
+					hook_event_name: 'Stop',
+					session_id: SESSION,
+					cwd: '/workspace/repo',
+					client_type: 'kimi_code_cli',
+					stop_hook_active: false,
+				}),
+				encoding: 'utf8',
+				env: {
+					PATH: process.env.PATH ?? '',
+					KIMI_CODE_HOME: home,
+					KIMI_MODEL_API_KEY: 'sk-test',
+				},
+			});
+			let request: { url: string; body: { messages: { content: string }[] } } | null = null;
+			try {
+				request = JSON.parse(readFileSync(requestLog, 'utf8'));
+			} catch {}
+			rmSync(home, { recursive: true, force: true });
+			return { ...result, request };
+		};
+
+		it('judges the final answer the recorded log holds, and blocks by exit code 2', () => {
+			const { status, stderr, request } = judge(atStop, {
+				decision: 'block',
+				reason: 'Post the handoff first.',
+			});
+			expect(request?.url).toBe('https://api.moonshot.ai/v1/chat/completions');
+			expect(request?.body.messages[1].content).toBe(
+				"Agent's final response:\nFIRST_FINAL_ANSWER: all steps done.",
+			);
+			expect(status).toBe(2);
+			expect(stderr).toBe('Post the handoff first.');
+		});
+
+		it('allows the stop when the judge allows it', () => {
+			const { status, request } = judge(atStop, { decision: 'allow', reason: '' });
+			expect(request).not.toBeNull();
+			expect(status).toBe(0);
+		});
+
+		it("ignores a subagent's text", () => {
+			const subagent = JSON.stringify({
+				type: 'context.append_loop_event',
+				agentId: 'agent-7',
+				event: {
+					type: 'content.part',
+					stepUuid: 'sub-step',
+					part: { type: 'text', text: 'SUBAGENT REPORT' },
+				},
+			});
+			const { request } = judge([...atStop, subagent], { decision: 'allow', reason: '' });
+			expect(request?.body.messages[1].content).toContain('FIRST_FINAL_ANSWER');
 		});
 	});
 });

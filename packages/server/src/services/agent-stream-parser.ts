@@ -2226,6 +2226,9 @@ function kimiContentText(content: unknown): string {
 	return extractToolResultText(content);
 }
 
+/** How Kimi Code prefixes a provider failure it does not retry, on stderr. */
+const KIMI_PROMPT_FAILURE_PREFIX = 'error: failed to run prompt:';
+
 function createKimiParser(): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let terminalError: RuntimeErrorVerdict | null = null;
@@ -2267,10 +2270,11 @@ function createKimiParser(): AgentStreamParser {
 
 		if (event.role === 'meta') {
 			if (event.type === 'turn.step.retrying') {
-				// A retry is the only place Kimi surfaces an upstream failure on stdout
-				// (402/401 land here), so it is both logged and classified. It is not
-				// necessarily fatal — the CLI retries — but if the run then fails, this
-				// is the most useful cause to report.
+				// A retry (a rate limit, an overload) is the only place Kimi surfaces an
+				// upstream failure on stdout, so it is both logged and classified. It is
+				// not necessarily fatal — the CLI retries — but if the run then fails,
+				// this is the most useful cause to report. A failure it does not retry
+				// never reaches stdout; see `onStderr` below.
 				const msg = extractErrorMessage(undefined, event.error_message ?? event.error_name);
 				if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
 				const attempt =
@@ -2289,11 +2293,40 @@ function createKimiParser(): AgentStreamParser {
 
 	// Kimi's stream states no end, so hasEnded stays false: only the moments
 	// between its last message and its exit are exposed to the ceiling.
-	return createJsonlParser(renderEvent, {
+	const base = createJsonlParser(renderEvent, {
 		getTerminalVerdict: () => terminalError,
 		getFinalAssistantMessage: () => finalAssistantMessage,
 		tally: toolTally,
 	});
+
+	// Kimi fails fast, without retrying, on a rejected credential or an empty
+	// balance (a 401, a 402, a quota 429). Nothing about it reaches stdout: the
+	// cause is one stderr line, `error: failed to run prompt: provider.<code>:
+	// <status> <message>`. Read it there; stderr itself passes through untouched.
+	let stderrLine = '';
+	const readFailure = (line: string) => {
+		const at = line.indexOf(KIMI_PROMPT_FAILURE_PREFIX);
+		if (at === -1) return;
+		const msg = line.slice(at + KIMI_PROMPT_FAILURE_PREFIX.length).trim();
+		if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
+	};
+	return {
+		...base,
+		onStderr(chunk: string): string {
+			stderrLine += chunk;
+			const lines = stderrLine.split('\n');
+			stderrLine = lines.pop() ?? '';
+			for (const line of lines) readFailure(line);
+			// Past this length the held line cannot be the one-line failure.
+			if (stderrLine.length > STDERR_FILTER_BUFFER_LIMIT) stderrLine = '';
+			return chunk;
+		},
+		flush(): string {
+			readFailure(stderrLine);
+			stderrLine = '';
+			return base.flush();
+		},
+	};
 }
 
 function createKimiChatParser(): AgentChatParser {
@@ -2339,21 +2372,29 @@ const KIMI_RECORD_ID_KEYS = ['request_id', 'requestId', 'id'] as const;
  * log records usage per API call with the buckets Hezo needs:
  * `inputOther` / `output` / `inputCacheRead` / `inputCacheCreation`.
  *
- * Two hazards this handles:
+ * What 0.30.0 and 2.0.2 actually write is one `usage.record` per request, a
+ * delta with no request id, tagged `usageScope: "turn"` or `"session"` - where
+ * "session" means a request outside a turn (a compaction, a title), still a
+ * delta. So every record is summed. Recorded shape:
+ * `test/fixtures/kimi/kimi-2.0.2.wire.jsonl`. **Never add `usageScope` to
+ * `KIMI_SCOPE_KEYS`**: that would drop the non-turn requests and undercount.
  *
- *  1. **Turn- vs session-scoped records.** Session-scoped records are *cumulative
- *     totals*, so summing them alongside per-turn records double-counts. When any
- *     scope-tagged turn record is present, only those are summed; otherwise the
- *     last session-scoped record is taken as the authoritative total. Untagged
- *     records are summed, which is the natural reading of a wire log (one record
- *     per request).
- *  2. **Duplicate records.** As with Grok's spans, a record may be echoed; entries
- *     are keyed by request id (last write wins) before summing.
+ * Two hazards are still handled for shapes not seen on those versions:
  *
- * Field spellings are probed in both camelCase and snake_case. That is deliberate
- * hedging, not indecision: the CLI ships two engine generations with duplicated
- * logging paths, and the older `kimi-cli` used the snake_case spelling. Accepting
- * both costs nothing and avoids silently losing usage on an upstream version bump.
+ *  1. **Cumulative records.** A record tagged by `KIMI_SCOPE_KEYS` as
+ *     session-scoped is read as a running total: when any scope-tagged turn
+ *     record is present only those are summed, otherwise the last session record
+ *     is taken. Untagged records are summed.
+ *  2. **Duplicate records.** A record carrying a request id is keyed by it (last
+ *     write wins) before summing.
+ *
+ * The usage record names the model by the CLI's alias for the env-registered
+ * provider (`__kimi_env_model__`), not by its id. The `llm.request` record that
+ * precedes it carries both, so the model is read from there.
+ *
+ * Field spellings are probed in both camelCase and snake_case: the older
+ * `kimi-cli` used the snake_case spelling. Accepting both costs nothing and
+ * avoids silently losing usage on an upstream version bump.
  *
  * Returns null when the log carries no usable record - the caller then records
  * no usage, failing low rather than inventing a number.
@@ -2369,6 +2410,9 @@ export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage 
 	}
 	const byId = new Map<string, Rec>();
 	let counter = 0;
+	// The model and alias named by the latest `llm.request`, to resolve the alias a
+	// usage record names instead of the model.
+	let request: { model: string; alias: unknown } | undefined;
 
 	for (const line of contents.split('\n')) {
 		const trimmed = line.trim();
@@ -2381,6 +2425,10 @@ export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage 
 		}
 		if (!parsed || typeof parsed !== 'object') continue;
 		const record = parsed as Record<string, unknown>;
+		if (record.type === 'llm.request' && typeof record.model === 'string' && record.model) {
+			request = { model: record.model, alias: record.modelAlias };
+			continue;
+		}
 
 		// The buckets live under `usage` (Kimi Code) or `token_usage` (older
 		// kimi-cli). Anything without one of those is not a usage record.
@@ -2400,12 +2448,14 @@ export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage 
 
 		const scope = pickString(record, KIMI_SCOPE_KEYS) ?? pickString(usage, KIMI_SCOPE_KEYS) ?? '';
 		const id = pickString(record, KIMI_RECORD_ID_KEYS) ?? `#${counter++}`;
+		let model = pickString(record, KIMI_MODEL_KEYS) ?? pickString(usage, KIMI_MODEL_KEYS);
+		if (request && (model === undefined || model === request.alias)) model = request.model;
 		byId.set(id, {
 			input: input ?? 0,
 			output: output ?? 0,
 			cacheRead: cacheRead ?? 0,
 			cacheCreation: cacheCreation ?? 0,
-			model: pickString(record, KIMI_MODEL_KEYS) ?? pickString(usage, KIMI_MODEL_KEYS),
+			model,
 			sessionScoped: scope.toLowerCase().includes('session'),
 		});
 	}
