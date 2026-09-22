@@ -11,6 +11,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // A comment's author avatar: a human author resolves to their user_icons image,
 // returned as a signed `author_icon_url` on the comments feed (skeleton + full).
@@ -26,7 +27,6 @@ let teamId: string;
 let projectSlug: string;
 let taskId: string;
 let agentId: string;
-let agentSlug: string;
 let adminUserId: string;
 
 function pngWithDimensions(width: number, height: number): Buffer {
@@ -95,7 +95,6 @@ beforeAll(async () => {
 		).json()
 	).data;
 	agentId = agent.id;
-	agentSlug = agent.slug;
 
 	const task = (
 		await (
@@ -143,7 +142,12 @@ describe('comment author avatar', () => {
 
 	it('carries the agent author\u2019s avatar spec, not a signed upload URL', async () => {
 		const agentAuth = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
-		const commentId = await postComment(agentAuth.token, 'from the bot');
+		const created = await callMcpTool(app, agentAuth.token, 'create_comment', {
+			project: projectSlug,
+			task_id: taskId,
+			content: 'from the bot',
+		});
+		const commentId = created.id as string;
 
 		const rows = await skeletons();
 		const row = rows.find((r) => r.id === commentId);

@@ -957,7 +957,7 @@ rendered like a task comment; `buildDocVersionHistory`
 that *produced* it (a one-step shift, since revisions snapshot prior content), so the current
 head's changelog is the newest revision's `change_summary`. Selecting an older revision renders it
 read-only with the review layer suppressed — review comments exist only for the latest content —
-under a "viewing revision N" banner. Restore stays admin-only (agents 403 on the REST route; no
+under a "viewing revision N" banner. Restore stays admin-only (REST refuses agent run tokens, § 10; no
 MCP restore tool). `skills` is the reusable-know-how reference store
 (manifest-injected into runs, full-text-searchable) with `skill_revisions` history. One skill
 is **virtual**: the read-only `connector-recipes` skill is rendered from the bundled connector
@@ -1098,17 +1098,17 @@ transaction that does the write and return a `status: 'archived'` discriminant i
 writing, so there is no check-then-write race and a new caller inherits the refusal (this
 is what closed the approved-`update_prd` handler and `restoreRevision`, which previously had
 no check at all). Callers map that status to their own surface error — 409 `ASSET_ARCHIVED`
-/ 409 `CONFLICT` on REST, an "unarchive it first" string on MCP — and the write paths keep a
-cheap pre-flight (`archivedAssetHolderId`, `isDocumentArchived`) so a 10 MB blob (possibly an
-S3 PUT) isn't spent on a doomed call. Beyond content writes, `PATCH …/assets/:assetId
+/ 409 `CONFLICT` on REST, an "unarchive it first" string on MCP — and the asset write paths keep a
+cheap pre-flight (`archivedAssetHolderId`) so a 10 MB blob (possibly an S3 PUT) isn't spent
+on a doomed call. Beyond content writes, `PATCH …/assets/:assetId
 { folder }` refuses an archived asset (409 `ASSET_ARCHIVED`, matching `move_project_asset`,
 whose client-side counterpart is the hidden Move action on archived cards),
 `move_project_asset`/`copy_project_asset` refuse an archived source, asset review mutations
 403, and `read_project_asset`'s width/height self-heal reports the parsed dimensions but
-skips the `UPDATE` on an archived row. **Hard deletion is human/admin-only** (agents get 403 on both
-DELETE routes; in the UI Delete only appears on archived items — a deliberate two-step).
+skips the `UPDATE` on an archived row. **Hard deletion is human/admin-only** (both DELETE routes are REST,
+which refuses agent run tokens, § 10; in the UI Delete only appears on archived items — a deliberate two-step).
 The legacy `request_asset_deletion` tool is gone, but its resolve endpoint
-(`POST …/comments/:commentId/resolve-asset-deletion`, agents 403) and comment renderer
+(`POST …/comments/:commentId/resolve-asset-deletion`, REST only) and comment renderer
 remain so pending `asset_deletion_request` cards from older instances stay resolvable —
 approve deletes rows + blobs server-side, deny keeps everything, both wake the requester
 (`asset_deletion_resolved`). `asset.created`, `asset.archived`, `asset.deletion_requested`,
@@ -5971,12 +5971,14 @@ password** while signed in).
   to its own project team, both false, with a 24h TTL re-minted per turn.
 
 By surface: **REST** is the human/browser API (user JWT only). **MCP** accepts the **agent
-JWT** (internal per-run) and the **API key** (external, instance-scoped). The API key is the
-one credential confined to MCP — an external caller can obtain neither a user JWT (needs the
+JWT** (internal per-run, and the chat-session JWT that shares its principal type) and the
+**API key** (external, instance-scoped). The auth middleware refuses both on `/api` from one
+table (`REST_REFUSED_AUTH`), so REST route handlers never see an agent or key principal and
+carry no agent-only branches. An agent run reaches Hezo through `POST /mcp` and the multipart
+upload at `POST /mcp/assets` only. An external caller can obtain neither a user JWT (needs the
 master-key seed) nor an agent JWT (minted only for a server-side run), so an API key is its
-only way in. Although an approved key is admin-equivalent, it never reaches REST: the auth
-middleware rejects `hezo_` tokens on `/api`, so admin-equivalence applies only to its MCP
-surface (and the instance-management MCP tools).
+only way in. Although an approved key is admin-equivalent, admin-equivalence applies only to
+its MCP surface (and the instance-management MCP tools).
 
 **Authorization** (`AGENTS.md` › Route authorization is authoritative). Routes with
 `:projectId` resolve the project → its backing team and verify access **per request** in
@@ -7187,8 +7189,9 @@ hand the result to a teammate by passing its id in `create_comment`'s `attachmen
 field the REST comment route takes. Both check the ids through one ownership check (UUIDs, live
 assets in the task's project, deduplicated, at most `COMMENT_ATTACHMENTS_MAX`), which the chat
 routes share. The run prompt lists the files attached to each comment a handoff quotes, since the
-thread block only back-references a quoted comment. **API keys authenticate the MCP surface only**; REST is
-the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
+thread block only back-references a quoted comment. **API keys and agent run tokens authenticate the
+MCP surface only** (an agent run also reaches `/mcp/assets`); REST is the user-JWT (human/browser)
+surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full
 tool-by-tool page with parameters and return shapes — is generated from the same registry

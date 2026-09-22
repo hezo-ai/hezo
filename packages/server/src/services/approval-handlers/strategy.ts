@@ -5,7 +5,11 @@ import type { ApprovalHandler, ApprovalSideEffectCtx, SideEffectBroadcast } from
 
 const log = logger.child('approvals');
 
-/** Apply an approved strategy action — today only the `update_prd` document write. */
+/**
+ * Apply an approved strategy action. The only one with a side effect is the
+ * `update_prd` document write, which earlier releases filed when an agent wrote
+ * prd.md; nothing files it now, but a pending one still applies when approved.
+ */
 export const strategyHandler: ApprovalHandler = {
 	async applyApproved(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]> {
 		const { db, approval, payload } = ctx;

@@ -356,7 +356,7 @@ describe('chat memory', () => {
 			headers: json(agentToken),
 			body: JSON.stringify({ content: 'x' }),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 });
 
@@ -438,7 +438,7 @@ describe('system prompt fetch / preview / revisions / restore', () => {
 				body: JSON.stringify({ revision_number: 1 }),
 			},
 		);
-		expect(forbidden.status).toBe(403);
+		expect(forbidden.status).toBe(401);
 
 		const missingAgent = await ctx.app.request(
 			`/api/projects/${projectSlug}/agents/nobody/system-prompt/restore`,

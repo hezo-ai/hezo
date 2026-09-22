@@ -8,6 +8,7 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
+import { callMcpTool } from './helpers/mcp-call';
 
 let ctx: ServerTestContext;
 let teamId: string;
@@ -194,16 +195,23 @@ describe('task: progress_summary and rules', () => {
 			teamId,
 			taskId,
 		);
-		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: 'Completed API endpoints, working on tests' }),
+		const result = await callMcpTool(ctx.app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: taskId,
+			progress_summary: 'Completed API endpoints, working on tests',
 		});
-		expect(patchRes.status).toBe(200);
-		const updated = ((await patchRes.json()) as any).data;
-		expect(updated.progress_summary).toBe('Completed API endpoints, working on tests');
-		expect(updated.progress_summary_updated_at).toBeTruthy();
-		expect(updated.progress_summary_updated_by).toBe(engineerAgentId);
+		expect(result.error).toBeUndefined();
+		const row = await ctx.db.query<{
+			progress_summary: string;
+			progress_summary_updated_at: string | null;
+			progress_summary_updated_by: string | null;
+		}>(
+			'SELECT progress_summary, progress_summary_updated_at, progress_summary_updated_by FROM tasks WHERE id = $1',
+			[taskId],
+		);
+		expect(row.rows[0].progress_summary).toBe('Completed API endpoints, working on tests');
+		expect(row.rows[0].progress_summary_updated_at).toBeTruthy();
+		expect(row.rows[0].progress_summary_updated_by).toBe(engineerAgentId);
 	});
 
 	it('rejects a human writing progress_summary, leaving what the agent wrote intact', async () => {
@@ -225,10 +233,10 @@ describe('task: progress_summary and rules', () => {
 			teamId,
 			taskId,
 		);
-		await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: 'Agent checkpoint' }),
+		await callMcpTool(ctx.app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: taskId,
+			progress_summary: 'Agent checkpoint',
 		});
 
 		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {

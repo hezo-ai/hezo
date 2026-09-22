@@ -584,7 +584,7 @@ describe('POST /projects/:projectId/auth-start (connector DCR walk)', () => {
 });
 
 describe('POST /connectors/:id/auth-start (instance-admin surface)', () => {
-	it('403s for a non-admin (agent) caller', async () => {
+	it('refuses an agent run token', async () => {
 		const agent = await db.query<{ id: string }>(
 			`SELECT id FROM members WHERE team_id = $1 AND member_type = 'agent' LIMIT 1`,
 			[teamId],
@@ -594,7 +594,7 @@ describe('POST /connectors/:id/auth-start (instance-admin surface)', () => {
 			method: 'POST',
 			headers: { ...authHeader(minted.token), 'Content-Type': 'application/json' },
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('resolves a PRM-less MCP server to { auth_url: null } without failing the connector', async () => {

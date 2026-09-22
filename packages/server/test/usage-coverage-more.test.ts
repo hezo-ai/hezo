@@ -1,8 +1,7 @@
 /**
  * Coverage-focused tests for the usage routes: every group_by/breakdown
  * aggregation shape with exact math over seeded entries, the query filters,
- * usage-entry creation (validation, explicit project attribution, over-budget
- * reactive pause), and the project budget-status payload.
+ * and the project budget-status payload.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, createTestProject, createTestTeam } from './helpers/app';
@@ -68,10 +67,6 @@ beforeAll(async () => {
 afterAll(async () => {
 	await destroyTestContext(ctx);
 });
-
-function jsonHeaders() {
-	return { ...authHeader(token), 'content-type': 'application/json' };
-}
 
 async function getUsage(query = ''): Promise<{
 	entries?: Array<Record<string, unknown>>;
@@ -220,105 +215,5 @@ describe('GET /projects/:projectId/budget-status', () => {
 			expect(idle.daily.usedTokens).toBe(0);
 			expect(idle.monthly.usedTokens).toBe(0);
 		}
-	});
-});
-
-describe('POST /projects/:projectId/usage', () => {
-	it('rejects a missing member_id, missing tokens, and non-positive token counts', async () => {
-		const post = (body: Record<string, unknown>) =>
-			ctx.app.request(`/api/projects/${projectSlug}/usage`, {
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify(body),
-			});
-
-		for (const body of [
-			{ input_tokens: 100 },
-			{ member_id: otherAgentId },
-			{ member_id: otherAgentId, input_tokens: 0 },
-			{ member_id: otherAgentId, input_tokens: -5 },
-		]) {
-			const res = await post(body);
-			expect(res.status).toBe(400);
-			expect((await res.json()).error.code).toBe('INVALID_REQUEST');
-		}
-	});
-
-	it('records a usage entry attributed to the path project with task and description', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/usage`, {
-			method: 'POST',
-			headers: jsonHeaders(),
-			body: JSON.stringify({
-				member_id: otherAgentId,
-				input_tokens: 150,
-				task_id: planningTaskId,
-				description: 'run usage',
-			}),
-		});
-		expect(res.status).toBe(201);
-		const entry = (await res.json()).data;
-		expect(entry.input_tokens).toBe(150);
-		expect(entry.project_id).toBe(projectId);
-		expect(entry.task_id).toBe(planningTaskId);
-		expect(entry.description).toBe('run usage');
-
-		const row = await ctx.db.query<{ input_tokens: number }>(
-			`SELECT input_tokens FROM usage_entries WHERE id = $1`,
-			[entry.id],
-		);
-		expect(row.rows[0].input_tokens).toBe(150);
-	});
-
-	it('honours an explicit project_id in the body over the path project', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/usage`, {
-			method: 'POST',
-			headers: jsonHeaders(),
-			body: JSON.stringify({
-				member_id: otherAgentId,
-				input_tokens: 75,
-				project_id: projectId,
-			}),
-		});
-		expect(res.status).toBe(201);
-		const entry = (await res.json()).data;
-		expect(entry.project_id).toBe(projectId);
-		expect(entry.task_id).toBeNull();
-		expect(entry.description).toBe('');
-	});
-
-	it('records over-budget usage (never a 402) and reactively pauses the agent', async () => {
-		// Give the engineer a window to blow. Agents ship uncapped now, and an
-		// unlimited window never trips - so without this there is no over-budget
-		// state for the usage below to reach.
-		await ctx.db.query(`UPDATE member_agents SET monthly_budget_tokens = 3000 WHERE id = $1`, [
-			engineerId,
-		]);
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/usage`, {
-			method: 'POST',
-			headers: jsonHeaders(),
-			body: JSON.stringify({
-				member_id: engineerId,
-				input_tokens: 9_999_999,
-				description: 'blows the monthly window',
-			}),
-		});
-		expect(res.status).toBe(201);
-
-		// The engineer's own window trips (the project is unlimited), so it lands in
-		// the agent-scoped budget-pause state.
-		const agent = await ctx.db.query<{ runtime_status: string }>(
-			`SELECT runtime_status FROM member_agents WHERE id = $1`,
-			[engineerId],
-		);
-		expect(agent.rows[0].runtime_status).toBe('out_of_agent_budget');
-
-		// budget-status now flags the agent (and any agent inherits project overage flags).
-		const status = await ctx.app.request(`/api/projects/${projectSlug}/budget-status`, {
-			headers: authHeader(token),
-		});
-		const data = (await status.json()).data;
-		const engineer = data.agents.find((a: { agent_id: string }) => a.agent_id === engineerId);
-		expect(engineer.agent_over_budget).toBe(true);
-		expect(engineer.overBudget).toBe(true);
 	});
 });

@@ -1,16 +1,11 @@
-import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
-import { broadcastChange } from '../lib/broadcast';
 import { buildCursorPage, encodeCursor, parseCursorPagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { pauseAgentForBudget } from '../services/agent-runtime-status';
 import {
 	type BudgetLimits,
-	checkOverBudget,
 	getProjectBudgetStatus,
-	recordUsage,
 	toEntityBudgetStatus,
 	USAGE_ENTRY_COLUMNS_SQL,
 	USAGE_TOKEN_SUMS_SQL,
@@ -176,73 +171,6 @@ usageRoutes.get('/projects/:projectId/usage', async (c) => {
 		has_more: page.meta.has_more,
 		...(totals.rows[0] ?? summaryTotals([])),
 	});
-});
-
-usageRoutes.post('/projects/:projectId/usage', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const projectId = c.get('projectId') as string;
-	const db = c.get('db');
-
-	const body = await c.req.json<{
-		member_id: string;
-		input_tokens?: number;
-		output_tokens?: number;
-		amount_cents?: unknown;
-		task_id?: string;
-		project_id?: string;
-		description?: string;
-	}>();
-
-	if (body.amount_cents !== undefined) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			'Usage is recorded in tokens, not dollars. Send input_tokens and output_tokens instead of amount_cents.',
-			400,
-		);
-	}
-	const input = body.input_tokens ?? 0;
-	const output = body.output_tokens ?? 0;
-	if (
-		!body.member_id ||
-		!Number.isSafeInteger(input) ||
-		!Number.isSafeInteger(output) ||
-		input < 0 ||
-		output < 0 ||
-		input + output <= 0
-	) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			'member_id and a positive whole input_tokens or output_tokens are required',
-			400,
-		);
-	}
-
-	// Usage is always recorded; budgets are enforced by windowed sums
-	// (services/budget.ts), not a debit counter. Usage is project-scoped, so
-	// attribute it to the path project unless the body names a specific one. After
-	// recording, reactively pause the agent if this pushed it or its project over
-	// any window - mirroring the run-completion path.
-	const usageProjectId = body.project_id ?? projectId;
-	const row = await recordUsage(db, {
-		memberId: body.member_id,
-		taskId: body.task_id ?? null,
-		projectId: usageProjectId,
-		inputTokens: input,
-		outputTokens: output,
-		description: body.description ?? '',
-	});
-	if (row) broadcastChange(c, wsRoom.team(teamId), 'usage_entries', 'INSERT', row);
-
-	const block = await checkOverBudget(db, body.member_id, usageProjectId);
-	if (block) {
-		await pauseAgentForBudget(db, body.member_id, teamId, block, c.get('wsManager'), {
-			taskId: body.task_id ?? null,
-		});
-	}
-
-	return ok(c, row, 201);
 });
 
 /**

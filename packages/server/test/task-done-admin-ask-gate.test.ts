@@ -73,6 +73,19 @@ async function patchStatus(
 	});
 }
 
+/** An agent sets a status through its own surface, the `update_task` tool. */
+async function agentSetStatus(
+	agentToken: string,
+	taskIdArg: string,
+	status: TaskStatus,
+): Promise<{ error?: string }> {
+	return (await mcpCall(agentToken, 'update_task', {
+		project: projectId,
+		task_id: taskIdArg,
+		status,
+	})) as { error?: string };
+}
+
 /**
  * The incident shape: the task's own assignee posts an active @admin question.
  * Returns the asking agent's token and run so tests can close (or fail to
@@ -149,16 +162,14 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('closure rules — unanswered @admin ask blocks done (REST PATCH)', () => {
+describe('closure rules — an unanswered @admin ask blocks an agent closing the task', () => {
 	it('rejects done from an agent while an @admin ask is unanswered', async () => {
 		const taskId = await insertTask(captainId, 'Blocked by open ask');
 		const { agentToken } = await postAdminAsk(taskId);
 
-		const res = await patchStatus(agentToken, taskId, TaskStatus.Done);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toMatch(/@admin/);
-		expect(body.error.message).toMatch(/in_progress/);
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Done);
+		expect(res.error).toMatch(/@admin/);
+		expect(res.error).toMatch(/in_progress/);
 		expect(await taskStatus(taskId)).toBe(TaskStatus.InProgress);
 	});
 
@@ -177,8 +188,8 @@ describe('closure rules — unanswered @admin ask blocks done (REST PATCH)', () 
 		const { agentToken } = await postAdminAsk(taskId);
 		await humanReply(taskId, 'Yes — the change is intentional. Proceed.');
 
-		const res = await patchStatus(agentToken, taskId, TaskStatus.Done);
-		expect(res.status).toBe(200);
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Done);
+		expect(res.error).toBeUndefined();
 		expect(await taskStatus(taskId)).toBe(TaskStatus.Done);
 	});
 
@@ -191,18 +202,16 @@ describe('closure rules — unanswered @admin ask blocks done (REST PATCH)', () 
 			[taskId],
 		);
 
-		const res = await patchStatus(agentToken, taskId, TaskStatus.Done);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toMatch(/@admin/);
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Done);
+		expect(res.error).toMatch(/@admin/);
 	});
 
 	it('leaves cancelled ungated', async () => {
 		const taskId = await insertTask(captainId, 'Cancel with open ask');
 		const { agentToken } = await postAdminAsk(taskId);
 
-		const res = await patchStatus(agentToken, taskId, TaskStatus.Cancelled);
-		expect(res.status).toBe(200);
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Cancelled);
+		expect(res.error).toBeUndefined();
 		expect(await taskStatus(taskId)).toBe(TaskStatus.Cancelled);
 	});
 
@@ -211,10 +220,8 @@ describe('closure rules — unanswered @admin ask blocks done (REST PATCH)', () 
 		await humanReply(taskId, 'Some earlier, unrelated context.');
 		const { agentToken } = await postAdminAsk(taskId);
 
-		const res = await patchStatus(agentToken, taskId, TaskStatus.Done);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toMatch(/@admin/);
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Done);
+		expect(res.error).toMatch(/@admin/);
 	});
 });
 

@@ -180,7 +180,7 @@ describe('GET /api/support', () => {
 	it('answers 404 to an agent run', async () => {
 		withSso(SSO);
 		setPolicy(policy(CHATWOOT));
-		expect((await getSupport(agentToken)).status).toBe(404);
+		expect((await getSupport(agentToken)).status).toBe(401);
 	});
 
 	it('answers 404 on an instance with no issuer, even to the superuser', async () => {

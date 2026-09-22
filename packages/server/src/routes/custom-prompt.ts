@@ -1,4 +1,4 @@
-import { AuthType, DocumentType } from '@hezo/shared';
+import { DocumentType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -59,9 +59,6 @@ customPromptRoutes.post('/projects/:projectId/custom-prompt/restore', async (c) 
 	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
-	}
 
 	const db = c.get('db');
 	const body = await c.req.json<{ revision_number: number }>();

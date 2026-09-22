@@ -232,24 +232,31 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }, 401);
 	}
 
-	// API keys authenticate the MCP endpoint (POST /mcp) only. REST is the
-	// human/browser surface (user JWT); external/programmatic access goes through MCP.
-	if (auth.type === AuthType.ApiKey) {
-		return c.json(
-			{
-				error: {
-					code: 'UNAUTHORIZED',
-					message:
-						'API keys authenticate the MCP endpoint only; use a session token for the REST API.',
-				},
-			},
-			401,
-		);
+	const refused = humanSurfaceRefusal(auth);
+	if (refused) {
+		return c.json({ error: { code: 'UNAUTHORIZED', message: refused } }, 401);
 	}
 
 	c.set('auth', auth);
 	return next();
 });
+
+/**
+ * REST and the realtime socket are the human/browser surfaces (user JWT). An API key
+ * reaches Hezo through MCP, and an agent run through MCP and its file upload, so both
+ * are refused here with the surface each one should use.
+ */
+const HUMAN_SURFACE_REFUSALS: Partial<Record<AuthType, string>> = {
+	[AuthType.ApiKey]:
+		'API keys authenticate the MCP endpoint only; use a session token for the REST API.',
+	[AuthType.Agent]:
+		'Agent run tokens authenticate the MCP endpoint and /mcp/assets only; the REST API is for people.',
+};
+
+/** Why `auth` may not use a human surface, or null when it may. */
+export function humanSurfaceRefusal(auth: AuthInfo): string | null {
+	return HUMAN_SURFACE_REFUSALS[auth.type] ?? null;
+}
 
 export async function signAdminJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
@@ -527,13 +534,6 @@ export function isAdminEquivalent(auth: AuthInfo): boolean {
 }
 
 /**
- * Gate for instance-management routes an approved API key should reach (create
- * projects, AI providers, secrets, connectors, skills, instance settings, …).
- * Allows the human superuser and approved API keys; still rejects board users
- * and ordinary agent runs. (API keys are MCP-only — `authMiddleware` rejects them
- * on REST before any handler runs — so on REST this is effectively superuser-only.)
- */
-/**
  * The same gate as {@link requireAdminEquivalent}, but for a route listed in
  * `PUBLIC_PATHS` — where `authMiddleware` never ran, so `c.var.auth` is unset
  * and the route has to resolve the bearer itself (the self-authenticating
@@ -558,6 +558,13 @@ export async function requireAdminEquivalentBearer(c: Context<Env>): Promise<Res
 	return null;
 }
 
+/**
+ * Gate for instance-management routes an approved API key should reach (create
+ * projects, AI providers, secrets, connectors, skills, instance settings, …).
+ * Allows the human superuser and approved API keys; still rejects board users
+ * and agent runs. `authMiddleware` refuses API keys and agent runs on REST, so on
+ * REST this is superuser-only.
+ */
 export function requireAdminEquivalent(c: Context<Env>): Response | null {
 	const auth = c.get('auth');
 	if (!isAdminEquivalent(auth)) {

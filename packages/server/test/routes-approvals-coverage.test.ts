@@ -1,12 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-	authHeader,
-	createTestProject,
-	createTestTeam,
-	mintAgentToken,
-	projectSlugFor,
-} from './helpers/app';
+import { authHeader, createTestProject, createTestTeam, projectSlugFor } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 /**
@@ -397,19 +391,6 @@ describe('POST /approvals/:approvalId/resolve', () => {
 		);
 		expect(doc.rows).toHaveLength(1);
 		expect(doc.rows[0].content).toContain('Approved direction');
-	});
-
-	it('resolves via agent auth, attributing the agent member as actor', async () => {
-		const approval = await createApproval('plan_review', { summary: 'agent resolves' });
-		const { token: agentToken } = await mintAgentToken(
-			ctx.db,
-			ctx.masterKeyManager,
-			agentId,
-			teamId,
-		);
-		const res = await resolveApprovalReq(approval.id, { status: 'approved' }, agentToken);
-		expect(res.status).toBe(200);
-		expect(((await res.json()).data as { status: string }).status).toBe('approved');
 	});
 
 	it('403s for a board user outside the team', async () => {

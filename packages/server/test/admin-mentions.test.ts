@@ -454,7 +454,7 @@ describe('GET /teams/:teamId/inbox/count', () => {
 		const res = await app.request(`/api/projects/${projectSlug}/inbox/count`, {
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('excludes archived rows so the badge cannot exceed the default-tab list', async () => {

@@ -268,6 +268,6 @@ describe('POST /api/mentions/resolve — authorization', () => {
 			teamAId,
 		);
 		const { status } = await resolve({ tasks: ['qq-7'] }, agentToken);
-		expect(status).toBe(403);
+		expect(status).toBe(401);
 	});
 });

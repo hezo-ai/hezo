@@ -131,6 +131,31 @@ export async function seedTaskProgress(task: SeededTask, summary: string): Promi
 	);
 }
 
+/**
+ * Record usage for an agent in a project, as a finished run records it. Runs and
+ * chat turns are the only writers of the ledger, so tests seed it directly.
+ */
+export async function seedUsage(input: {
+	memberId: string;
+	projectId: string;
+	inputTokens: number;
+	outputTokens?: number;
+	description?: string;
+}): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		`INSERT INTO usage_entries (member_id, project_id, input_tokens, output_tokens, description)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		[
+			input.memberId,
+			input.projectId,
+			input.inputTokens,
+			input.outputTokens ?? 0,
+			input.description ?? 'Agent run',
+		],
+	);
+}
+
 export interface SeededGoal {
 	id: string;
 	title: string;

@@ -62,46 +62,6 @@ describe('PUT /projects/:projectId/docs/:filename — validation + PRD approval'
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('routes an agent prd.md update into a pending Strategy approval (202)', async () => {
-		const agentId = await captainId();
-		const { token: agentToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			null,
-			{
-				projectId,
-			},
-		);
-
-		const res = await app.request(`/api/projects/${projectId}/docs/prd.md`, {
-			method: 'PUT',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: '# PRD\n\nAgent-proposed product requirements.' }),
-		});
-		expect(res.status).toBe(202);
-		const body = await res.json();
-		expect(body.data.pending_approval).toBe(true);
-		expect(body.data.filename).toBe('prd.md');
-
-		// The approval row exists and carries the proposed content + project id.
-		const approval = await db.query<{ payload: { action: string; project_id: string } }>(
-			`SELECT payload FROM approvals WHERE team_id = $1 AND type = 'strategy'`,
-			[teamId],
-		);
-		expect(approval.rows.length).toBe(1);
-		expect(approval.rows[0].payload.action).toBe('update_prd');
-		expect(approval.rows[0].payload.project_id).toBe(projectId);
-
-		// And the doc itself was NOT written — the agent path defers to approval.
-		const doc = await db.query(
-			"SELECT 1 FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = 'prd.md'",
-			[projectId],
-		);
-		expect(doc.rows.length).toBe(0);
-	});
-
 	it('an admin prd.md update writes directly (no approval gate)', async () => {
 		const res = await app.request(`/api/projects/${projectId}/docs/prd.md`, {
 			method: 'PUT',
@@ -135,7 +95,7 @@ describe('GET /projects/:projectId/docs/:filename/revisions — missing doc', ()
 });
 
 describe('POST /projects/:projectId/docs/:filename/restore — guards', () => {
-	it('403s when an agent attempts a restore', async () => {
+	it('refuses an agent run token on restore', async () => {
 		const agentId = await captainId();
 		const { token: agentToken } = await mintAgentToken(
 			db,
@@ -152,8 +112,8 @@ describe('POST /projects/:projectId/docs/:filename/restore — guards', () => {
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ revision_number: 1 }),
 		});
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.message).toMatch(/Only the admin/);
+		expect(res.status).toBe(401);
+		expect((await res.json()).error.message).toMatch(/MCP/);
 	});
 
 	it('400s when revision_number is missing/not a number', async () => {

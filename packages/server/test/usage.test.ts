@@ -3,13 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import {
-	authHeader,
-	createTestApp,
-	createTestTeam,
-	projectSlugFor,
-	projectSlugForTeamSlug,
-} from './helpers/app';
+import { authHeader, createTestApp, createTestTeam, projectSlugForTeamSlug } from './helpers/app';
 
 let app: Hono<Env>;
 let db: Db;
@@ -49,145 +43,67 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('usage CRUD', () => {
-	it('records a usage entry', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/usage`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					member_id: agentId,
-					input_tokens: 100,
-					description: 'Tool call',
-				}),
-			},
-		);
-		expect(res.status).toBe(201);
-		const body = await res.json();
-		expect(body.data.input_tokens).toBe(100);
+/** A usage row for the engineer in the team's project, as a finished run records one. */
+async function seedUsage(inputTokens: number, outputTokens = 0): Promise<string> {
+	const slug = await projectSlugForTeamSlug(db, teamSlug);
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO usage_entries (member_id, project_id, input_tokens, output_tokens, description)
+		 SELECT $1, p.id, $2, $3, 'Agent run' FROM projects p WHERE p.slug = $4
+		 RETURNING id`,
+		[agentId, inputTokens, outputTokens, slug],
+	);
+	return r.rows[0].id;
+}
+
+async function getUsage(query = ''): Promise<Record<string, any>> {
+	const slug = await projectSlugForTeamSlug(db, teamSlug);
+	const res = await app.request(`/api/projects/${slug}/usage${query}`, {
+		headers: authHeader(token),
 	});
+	expect(res.status).toBe(200);
+	return (await res.json()).data;
+}
 
-	it('lists usage entries', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/usage`,
-			{
-				headers: authHeader(token),
-			},
-		);
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.entries.length).toBeGreaterThanOrEqual(1);
-		expect(body.data.total_tokens).toBeGreaterThan(0);
-	});
-
-	it('groups usage by agent', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/usage?group_by=agent`,
-			{
-				headers: authHeader(token),
-			},
-		);
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.summary.length).toBeGreaterThanOrEqual(1);
-		expect(body.data.total_tokens).toBeGreaterThan(0);
-	});
-
-	it('records over-budget usage and pauses the agent', async () => {
-		const slug = await projectSlugForTeamSlug(db, teamSlug);
-		// Give the agent a window to blow. Agents ship uncapped now, and an
-		// unlimited window never trips - so without this there is no over-budget
-		// state for the usage below to reach.
-		await db.query(`UPDATE member_agents SET monthly_budget_tokens = 3000 WHERE id = $1`, [
-			agentId,
-		]);
-		// Far exceeds any monthly limit. Usage is always recorded (no 402), but the
-		// agent is reactively paused since this pushes it over budget.
-		const res = await app.request(`/api/projects/${slug}/usage`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				member_id: agentId,
-				input_tokens: 9_999_999,
-				description: 'Way over budget',
-			}),
-		});
-		expect(res.status).toBe(201);
-
-		const agentRes = await app.request(`/api/projects/${slug}/agents/${agentId}`, {
-			headers: authHeader(token),
-		});
-		const agent = (await agentRes.json()).data;
-		// The agent's own monthly window trips (the project is unlimited), so it
-		// lands in the scoped budget-pause state — not a manual `paused`.
-		expect(agent.runtime_status).toBe('out_of_agent_budget');
-	});
-});
-
-describe('usage entry validation and paging', () => {
-	it('refuses a dollar amount and names the token fields that replace it', async () => {
-		const slug = await projectSlugForTeamSlug(db, teamSlug);
-		const res = await app.request(`/api/projects/${slug}/usage`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ member_id: agentId, amount_cents: 250 }),
-		});
-		expect(res.status).toBe(400);
-		const body = await res.json();
-		expect(body.error.message).toContain('input_tokens');
-		expect(body.error.message).toContain('amount_cents');
-	});
-
-	it('counts output tokens in the totals alongside input', async () => {
-		const slug = await projectSlugForTeamSlug(db, teamSlug);
-		const before = (
-			await (
-				await app.request(`/api/projects/${slug}/usage`, { headers: authHeader(token) })
-			).json()
-		).data;
-		const res = await app.request(`/api/projects/${slug}/usage`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ member_id: agentId, input_tokens: 40, output_tokens: 60 }),
-		});
-		expect(res.status).toBe(201);
-		const after = (
-			await (
-				await app.request(`/api/projects/${slug}/usage`, { headers: authHeader(token) })
-			).json()
-		).data;
+describe('usage reads', () => {
+	it('lists usage entries with input, output and total tokens', async () => {
+		const before = await getUsage();
+		await seedUsage(40, 60);
+		const after = await getUsage();
+		expect(after.entries.length).toBeGreaterThanOrEqual(1);
 		expect(after.input_tokens - before.input_tokens).toBe(40);
 		expect(after.output_tokens - before.output_tokens).toBe(60);
 		expect(after.total_tokens - before.total_tokens).toBe(100);
 	});
 
-	it('pages the entries by cursor while the totals cover every entry', async () => {
+	it('groups usage by agent', async () => {
+		await seedUsage(100);
+		const data = await getUsage('?group_by=agent');
+		expect(data.summary.length).toBeGreaterThanOrEqual(1);
+		expect(data.total_tokens).toBeGreaterThan(0);
+	});
+
+	it('has no write route: usage is recorded by runs and chat turns only', async () => {
 		const slug = await projectSlugForTeamSlug(db, teamSlug);
-		const all = (
-			await (
-				await app.request(`/api/projects/${slug}/usage`, { headers: authHeader(token) })
-			).json()
-		).data;
+		const res = await app.request(`/api/projects/${slug}/usage`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ member_id: agentId, input_tokens: 100 }),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('pages the entries by cursor while the totals cover every entry', async () => {
+		await seedUsage(10);
+		await seedUsage(20);
+		const all = await getUsage();
 		expect(all.entries.length).toBeGreaterThanOrEqual(2);
 
-		const first = (
-			await (
-				await app.request(`/api/projects/${slug}/usage?limit=1`, { headers: authHeader(token) })
-			).json()
-		).data;
+		const first = await getUsage('?limit=1');
 		expect(first.entries).toHaveLength(1);
 		expect(first.has_more).toBe(true);
 		expect(first.total_tokens).toBe(all.total_tokens);
 
-		const second = (
-			await (
-				await app.request(
-					`/api/projects/${slug}/usage?limit=1&cursor=${encodeURIComponent(first.next_cursor)}`,
-					{ headers: authHeader(token) },
-				)
-			).json()
-		).data;
+		const second = await getUsage(`?limit=1&cursor=${encodeURIComponent(first.next_cursor)}`);
 		expect(second.entries).toHaveLength(1);
 		expect(second.entries[0].id).toBe(all.entries[1].id);
 	});

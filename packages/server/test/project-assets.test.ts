@@ -526,7 +526,7 @@ describe('project asset deletion', () => {
 			method: 'DELETE',
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('deletes an asset and removes its bytes from disk', async () => {
@@ -1208,7 +1208,7 @@ describe('admin move endpoint (PATCH /projects/:projectId/assets/:assetId)', () 
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ folder: 'anywhere' }),
 		});
-		expect(agentRes.status).toBe(403);
+		expect(agentRes.status).toBe(401);
 
 		const badRes = await app.request(`/api/projects/${projectId}/assets/${up.data.id}`, {
 			method: 'PATCH',

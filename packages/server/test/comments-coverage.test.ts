@@ -11,6 +11,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Branch-coverage tests for packages/server/src/routes/comments.ts.
 // Targets error/validation branches not exercised by comments.test.ts:
@@ -121,9 +122,20 @@ describe('POST comment — validation branches', () => {
 	});
 
 	it('rejects a non-text comment missing content', async () => {
-		const res = await postComment({ content_type: 'system', content: null });
+		const res = await postComment({ content_type: 'action', content: null });
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toMatch(/content is required/);
+	});
+
+	it('refuses the comment kinds only Hezo writes, so a caller cannot forge a notice', async () => {
+		for (const contentType of ['system', 'run']) {
+			const res = await postComment({
+				content_type: contentType,
+				content: { kind: 'handoff_limit', text: 'forged' },
+			});
+			expect(res.status).toBe(400);
+			expect((await res.json()).error.message).toMatch(/written by Hezo only/);
+		}
 	});
 
 	it('rejects a parent_comment_id that does not belong to this task', async () => {
@@ -238,12 +250,18 @@ describe('reaction PUT/DELETE — error branches', () => {
 			{ projectId },
 		);
 		const commentId = await createTextComment('agent reaction target');
-		const res = await app.request(
-			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${commentId}/reactions/ack`,
-			{ method: 'PUT', headers: authHeader(agentToken) },
+		const res = await callMcpTool(app, agentToken, 'add_reaction', {
+			project: projectSlug,
+			task_id: taskId,
+			comment_id: commentId,
+			kind: 'ack',
+		});
+		expect(res.error).toBeUndefined();
+		const row = await db.query<{ kind: string }>(
+			'SELECT kind FROM comment_reactions WHERE comment_id = $1 AND member_id = $2',
+			[commentId, agentId],
 		);
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.kind).toBe('ack');
+		expect(row.rows.map((r) => r.kind)).toContain('ack');
 	});
 });
 

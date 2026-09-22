@@ -623,21 +623,6 @@ export async function restoreRevision(
 	return { status: 'restored', row };
 }
 
-/**
- * Whether the scoped document is archived, or null when there is no such doc.
- * A narrow read for callers that only need the flag — `getDocument` would pull
- * the whole unbounded `content` column to answer it.
- */
-export async function isDocumentArchived(db: Db, scope: DocumentScope): Promise<boolean | null> {
-	const where = scopeWhere(scope, '');
-	const r = await db.query<{ archived_at: string | null }>(
-		`SELECT archived_at FROM documents WHERE ${where.sql}`,
-		where.params,
-	);
-	if (r.rows.length === 0) return null;
-	return r.rows[0].archived_at !== null;
-}
-
 export async function getAgentSystemPrompt(
 	db: Db,
 	teamId: string,

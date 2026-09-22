@@ -11,13 +11,13 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let teamSlug: string;
 let internalProjectId: string;
 let projectId: string;
 let projectSlug: string;
@@ -35,7 +35,6 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Comment Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -115,13 +114,10 @@ describe('comments CRUD', () => {
 				projectId: internalProjectId,
 			},
 		);
-		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: 'text',
-				content: { text: 'From the agent' },
-			}),
+		await callMcpTool(app, agentToken, 'create_comment', {
+			project: projectSlug,
+			task_id: taskId,
+			content: 'From the agent',
 		});
 
 		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {

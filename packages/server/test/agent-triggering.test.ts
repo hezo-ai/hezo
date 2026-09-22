@@ -11,6 +11,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let db: Db;
 let app: Hono<Env>;
@@ -435,12 +436,12 @@ describe('agent triggering', () => {
 			taskId,
 			{ projectId },
 		);
-		const selfRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(ceoToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: { text: '@captain self-mention should be skipped' } }),
+		const selfRes = await callMcpTool(app, ceoToken, 'create_comment', {
+			project: projectSlug,
+			task_id: taskId,
+			content: '@captain self-mention should be skipped',
 		});
-		expect(selfRes.status).toBe(201);
+		expect(selfRes.error).toBeUndefined();
 		await new Promise((r) => setTimeout(r, 50));
 
 		const selfMentions = (await getWakeups(agentId)).filter((w: any) => w.source === 'mention');

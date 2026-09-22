@@ -51,6 +51,12 @@ import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
 
+/** Comment kinds only the server writes, refused on the create route. */
+const SERVER_WRITTEN_CONTENT_TYPES: ReadonlySet<string> = new Set([
+	CommentContentType.System,
+	CommentContentType.Run,
+]);
+
 export const commentsRoutes = new Hono<Env>();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -442,6 +448,11 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	if (!attachmentCheck.ok) return err(c, 'INVALID_REQUEST', attachmentCheck.message, 400);
 	const attachmentIds = attachmentCheck.ids;
 	const contentType = body.content_type ?? CommentContentType.Text;
+	// Hezo writes system notices and run cards itself. A caller posting one would
+	// forge a hold notice or a run the thread never had.
+	if (SERVER_WRITTEN_CONTENT_TYPES.has(contentType)) {
+		return err(c, 'INVALID_REQUEST', `content_type ${contentType} is written by Hezo only`, 400);
+	}
 	const isText = contentType === CommentContentType.Text;
 	if (isText) {
 		const text =
@@ -476,16 +487,11 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		parentCommentId = body.parent_comment_id;
 	}
 
-	let authorMemberId: string | null = null;
-	if (auth.type === AuthType.Admin) {
-		authorMemberId = null;
-	} else if (auth.type === AuthType.Agent) {
-		authorMemberId = auth.memberId;
-	}
-	// An API key authors as its first-class identity, not a member.
+	// REST is the people's surface: a human author keeps `author_member_id` null by
+	// convention, and `author_user_id` records *which* human, so their avatar
+	// (user_icons) renders on the comment.
+	const authorMemberId: string | null = null;
 	const authorApiKeyId = apiKeyIdFromAuth(auth);
-	// A human author keeps `author_member_id` null by convention; `author_user_id`
-	// records *which* human, so their avatar (user_icons) renders on the comment.
 	const authorUserId = auth.type === AuthType.Admin ? auth.userId : null;
 
 	const result = await withTransaction(db, async () => {
@@ -517,7 +523,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		contentType: body.content_type ?? CommentContentType.Text,
 		authorMemberId,
 		authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
-		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
+		authorRunId: null,
 		effort: commentEffort,
 		parentCommentId,
 		wsManager: c.get('wsManager'),
@@ -770,11 +776,6 @@ commentsRoutes.post(
 		const teamId = c.get('teamId') as string;
 		const projectId = c.get('projectId') as string;
 		const auth = c.get('auth');
-		// Deletion is destructive and admin-gated by design — an agent (even the
-		// requester) must never be able to resolve its own request.
-		if (auth.type === AuthType.Agent) {
-			return err(c, 'FORBIDDEN', 'Only the admin can resolve asset deletion requests', 403);
-		}
 		const db = c.get('db');
 		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);

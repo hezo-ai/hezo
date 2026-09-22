@@ -1,7 +1,7 @@
 import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
-import { seedProject, seedWorkspace } from './helpers/seed';
+import { seedProject, seedUsage, seedWorkspace } from './helpers/seed';
 
 test("Budget page renders a named agent's generated avatar instead of initials", async () => {
 	let teamSlug = '';
@@ -55,15 +55,11 @@ test('Budgets page shows per-agent windows and flags an over-budget agent', asyn
 				data: Array<{ id: string; slug: string }>;
 			};
 			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
-			await apiBase(`/api/projects/${ws.internalSlug}/usage`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({
-					member_id: agent.id,
-					input_tokens: 2_500_000,
-					project_id: projectId,
-					description: 'over budget',
-				}),
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projectId as string,
+				inputTokens: 2_500_000,
+				description: 'over budget',
 			});
 		},
 	});
@@ -94,16 +90,12 @@ test('Budgets page renders per-day breakdown panels by agent and adapter', async
 				data: Array<{ id: string; slug: string }>;
 			};
 			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
-			await apiBase(`/api/projects/${ws.internalSlug}/usage`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({
-					member_id: agent.id,
-					input_tokens: 120_000,
-					output_tokens: 4_000,
-					project_id: projectId,
-					description: 'a run',
-				}),
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projectId as string,
+				inputTokens: 120_000,
+				outputTokens: 4_000,
+				description: 'a run',
 			});
 		},
 	});
@@ -218,15 +210,11 @@ test('Budget page: project window columns render caps and the binding-window ban
 			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
 
 			// 9M project tokens → daily 90% (the binding window), weekly 9%, monthly 2%.
-			await apiBase(`/api/projects/${ws.internalSlug}/usage`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({
-					member_id: agent.id,
-					input_tokens: 9_000_000,
-					project_id: projectId,
-					description: 'project usage',
-				}),
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projectId as string,
+				inputTokens: 9_000_000,
+				description: 'project usage',
 			});
 		},
 	});

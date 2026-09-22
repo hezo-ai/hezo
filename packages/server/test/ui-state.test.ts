@@ -17,7 +17,6 @@ let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let team2Id: string;
 let projectSlug: string;
 let project2Slug: string;
 
@@ -35,7 +34,6 @@ beforeAll(async () => {
 
 	const team2Res = await createTestTeam(db, { name: 'UI State Co 2' });
 	const team2 = (await team2Res.json()).data;
-	team2Id = team2.id;
 	project2Slug = `${await projectSlugFor(db, team2.id)}`;
 });
 
@@ -119,7 +117,7 @@ describe('UI state', () => {
 		expect(body2.data.sidebar.team_expanded).toBe(false);
 	});
 
-	it('rejects agent auth with 403', async () => {
+	it('refuses an agent run token', async () => {
 		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -143,14 +141,14 @@ describe('UI state', () => {
 		const getRes = await app.request(`/api/projects/${projectSlug}/ui-state`, {
 			headers: authHeader(agentToken),
 		});
-		expect(getRes.status).toBe(403);
+		expect(getRes.status).toBe(401);
 
 		const patchRes = await app.request(`/api/projects/${projectSlug}/ui-state`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sidebar: { team_expanded: false } }),
 		});
-		expect(patchRes.status).toBe(403);
+		expect(patchRes.status).toBe(401);
 	});
 
 	it('rejects access to team user is not a member of', async () => {

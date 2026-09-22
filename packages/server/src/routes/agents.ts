@@ -21,21 +21,17 @@ import {
 	InjectedTextCapError,
 	inferGender,
 	isAgentEffort,
-	isAllowedProjectIconStoredMime,
 	isBudgetPauseStatus,
 	isReservedAgentSlug,
 	isRunOutcomeFilter,
 	MemberType,
-	PROJECT_ICON_MAX_BYTES,
-	PROJECT_ICON_MAX_DIMENSION,
 	RunOutcomeFilter,
 	TaskPriority,
 	TaskStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
-import { type Context, Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
+import { Hono } from 'hono';
 import type { Db } from '../db/database';
 import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
 import {
@@ -47,8 +43,6 @@ import {
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { budgetWindowsError, retiredBudgetFieldError } from '../lib/budget-validation';
-import { signEntityIconUrl, verifyEntityIconUrl } from '../lib/entity-icon-urls';
-import { readImageDimensions } from '../lib/image-dimensions';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
@@ -766,11 +760,6 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/chat-memory/restore', as
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const auth = c.get('auth');
-	// Compaction is automatic, so an agent could otherwise undo an operator's own
-	// correction by restoring. Restoring stays the admin's call, as it is for docs.
-	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
-	}
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	const body = await c.req
@@ -903,9 +892,6 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/system-prompt/restore', 
 	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
-	}
 
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -1009,14 +995,8 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		}
 	}
 
-	// A supplied system prompt must keep the required substitution variables.
-	// Instance singletons (CEO/Coach) are exempt — they have no in-team manager,
-	// so the {{reports_to}} requirement does not apply to them.
+	// A supplied system prompt must pass the authored-prompt style check.
 	if (body.system_prompt?.trim()) {
-		const agentMeta = await db.query<{ slug: string }>(
-			'SELECT slug FROM member_agents WHERE id = $1',
-			[agentId],
-		);
 		const styleError = authoredPromptError(body.system_prompt);
 		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 	}

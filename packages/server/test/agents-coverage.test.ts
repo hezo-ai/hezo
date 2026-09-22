@@ -223,8 +223,8 @@ describe('system-prompt revisions / restore / preview 404s', () => {
 				body: JSON.stringify({ revision_number: 1 }),
 			},
 		);
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.code).toBe('FORBIDDEN');
+		expect(res.status).toBe(401);
+		expect((await res.json()).error.code).toBe('UNAUTHORIZED');
 	});
 
 	it('preview 404s for an unknown agent', async () => {

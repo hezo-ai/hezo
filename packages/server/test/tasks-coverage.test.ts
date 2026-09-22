@@ -652,6 +652,6 @@ describe('agent PATCH terminal guard with unused agent token var', () => {
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'backlog' }),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 });

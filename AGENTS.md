@@ -333,7 +333,7 @@ Every route enforces authorization - never trust URL parameters alone.
 - **Nested resources verify they belong to the parent** before any read or write. Global endpoints still verify team access.
 - **Socket subscriptions verify team membership matches the room.**
 - **Tool handlers enforce the same authorization as their route equivalents.**
-- **API keys authenticate the tool surface only** - rejected on the REST and socket surfaces. An approved key is instance-scoped and admin-equivalent, so key management stays human-superuser-only: a key can never mint or approve keys.
+- **API keys and agent run tokens authenticate the tool surface only** - rejected on the REST and socket surfaces. An approved key is instance-scoped and admin-equivalent, so key management stays human-superuser-only: a key can never mint or approve keys.
 
 ## AI runtime hooks
 

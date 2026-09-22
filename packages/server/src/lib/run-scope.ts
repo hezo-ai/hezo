@@ -13,9 +13,9 @@ import type { AuthInfo } from './types';
  * capacity / busy checks in the wakeup dispatcher — doing it here misattributes
  * the work/cost to the current ticket and lets a concurrent run double up.
  *
- * `targetTaskId` MUST be the resolved task UUID — callers normalize identifiers
- * like "TO-8" to a UUID first (the MCP `tool()` wrapper and the REST route's
- * `resolveTaskId` both do this), and `auth.taskId` is always a UUID.
+ * `targetTaskId` MUST be the resolved task UUID — the MCP `tool()` wrapper
+ * normalizes identifiers like "TO-8" first, and `auth.taskId` is always a UUID.
+ * Agents reach Hezo only through MCP, so `update_task` is the one caller.
  *
  * Returns an error message to reject with, or `null` to allow. Board / API-key
  * callers and runs not bound to a task (null `task_id`, e.g. idle heartbeats)

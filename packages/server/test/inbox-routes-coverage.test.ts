@@ -95,7 +95,7 @@ afterAll(async () => {
 });
 
 describe('admin-only guard', () => {
-	it('rejects agent JWTs on every inbox endpoint with 403', async () => {
+	it('refuses agent run tokens on every inbox endpoint', async () => {
 		const requests: Array<[string, string]> = [
 			['GET', `/api/projects/${projectSlug}/inbox/mentions`],
 			['GET', `/api/projects/${projectSlug}/inbox/count`],
@@ -107,8 +107,8 @@ describe('admin-only guard', () => {
 		];
 		for (const [method, path] of requests) {
 			const res = await ctx.app.request(path, { method, headers: authHeader(agentToken) });
-			expect(res.status).toBe(403);
-			expect((await res.json()).error.code).toBe('FORBIDDEN');
+			expect(res.status).toBe(401);
+			expect((await res.json()).error.code).toBe('UNAUTHORIZED');
 		}
 	});
 });
