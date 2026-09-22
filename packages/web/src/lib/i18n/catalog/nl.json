@@ -278,6 +278,7 @@
 	"chat.typing": "{name} is aan het typen",
 	"comment.autoUnblocked": "Automatisch gedeblokkeerd nadat {trigger} werd gesloten",
 	"comment.autoUnblockedFallback": "een blokkerende taak",
+	"comment.handoffLimit": "{agents} hebben deze taak {rounds} keer achter elkaar aan elkaar doorgegeven en daarbij {tokens} tokens gebruikt. Geen agent werkt er verder aan tot je reageert.",
 	"comment.linkedFrom": "Gelinkt vanuit {source} door {actor}",
 	"comment.linkedFromComment": "Gelinkt vanuit {comment} op {source} door {actor}",
 	"comment.linkedFromCommentLabel": "een reactie",

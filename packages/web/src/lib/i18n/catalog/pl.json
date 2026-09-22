@@ -278,6 +278,7 @@
 	"chat.typing": "{name} pisze",
 	"comment.autoUnblocked": "Automatycznie odblokowano po zamknięciu {trigger}",
 	"comment.autoUnblockedFallback": "zadania blokującego",
+	"comment.handoffLimit": "{agents} przekazywali sobie to zadanie {rounds} razy z rzędu, zużywając {tokens} tokenów. Żaden agent nie zajmie się nim, dopóki nie odpowiesz.",
 	"comment.linkedFrom": "Powiązano z {source} przez {actor}",
 	"comment.linkedFromComment": "Powiązano z {comment} w {source} przez {actor}",
 	"comment.linkedFromCommentLabel": "komentarza",

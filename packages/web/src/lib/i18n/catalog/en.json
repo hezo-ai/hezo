@@ -278,6 +278,7 @@
 	"chat.typing": "{name} is typing",
 	"comment.autoUnblocked": "Auto-unblocked after {trigger} closed",
 	"comment.autoUnblockedFallback": "a blocker",
+	"comment.handoffLimit": "{agents} handed this task to each other {rounds} times in a row, using {tokens} tokens. No agent will run on it until you reply.",
 	"comment.linkedFrom": "Linked from {source} by {actor}",
 	"comment.linkedFromComment": "Linked from {comment} on {source} by {actor}",
 	"comment.linkedFromCommentLabel": "a comment",

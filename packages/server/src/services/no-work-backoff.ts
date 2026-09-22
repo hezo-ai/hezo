@@ -4,13 +4,11 @@ import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 
 /**
- * Wakeup sources no dispatch suppression in this module ever applies to.
- *
- * Each is somebody asking this agent for something it could not have served on
- * its last pass: a human or teammate addressing it, an operator pressing "Run
- * now", a credential, asset or proposal decision it was parked on. The backoff
- * exists to stop the system re-asking a question it already answered, never to
- * delay an answer to a new one.
+ * Wakeup sources that can carry somebody asking this agent for something it
+ * could not have served on its last pass: a human or teammate addressing it, an
+ * operator pressing "Run now", a credential, asset or proposal decision it was
+ * parked on. The backoff exists to stop the system re-asking a question it
+ * already answered, never to delay an answer to a new one.
  *
  * The complement - `heartbeat`, `assignment`, `timer`, `automation` - is
  * everything the system raises on its own behalf, which is exactly what a
@@ -19,6 +17,10 @@ import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
  * own: an agent parked on a proposal it filed cannot serve the decision before
  * the admin has made it, so a "nothing to do" verdict from before the decision
  * says nothing about the run that must follow it.
+ *
+ * A source on this list is necessary, not sufficient: the conversational ones
+ * below are raised by agents as often as by people, so whether one wakeup is
+ * exempt is decided by {@link dispatchSuppressionExempt}.
  */
 export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set([
 	WakeupSource.Mention,
@@ -29,6 +31,69 @@ export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set(
 	WakeupSource.AssetDeletionResolved,
 	WakeupSource.ApprovalResolved,
 ]);
+
+/**
+ * The sources one agent hands a task to another through: a comment on its task,
+ * an @-mention, a reply. A person uses the same three, which is why neither the
+ * source nor the wakeup's run attribution alone says who is asking.
+ */
+export const CONVERSATIONAL_SOURCES: ReadonlySet<string> = new Set([
+	WakeupSource.Mention,
+	WakeupSource.Comment,
+	WakeupSource.Reply,
+]);
+
+/**
+ * Does this wakeup skip every dispatch suppression in this module?
+ *
+ * Yes for an operator override ("Run now", Retry), which stamps `triggered_by`
+ * on the payload whatever the wakeup's source, and for a decision a person made
+ * (a credential, an asset deletion, an approval).
+ *
+ * A conversational wakeup is exempt when no agent run raised it, or when a
+ * person has spoken on the task since this agent last ran on it - a comment they
+ * wrote or a choice they made on a card. A queued wakeup absorbs later triggers
+ * and keeps the first agent's attribution through them, so an attributed row may
+ * still carry a person's words; the thread says whether it does. An agent's own
+ * mention or reply is exempt from nothing: before this rule it bypassed every
+ * hold, which is how two agents handed one task back and forth for a day while a
+ * retrospective hold stood on it.
+ */
+export async function dispatchSuppressionExempt(
+	db: Db,
+	memberId: string,
+	taskId: string | null | undefined,
+	source: string,
+	payload: Record<string, unknown> | undefined,
+	wakeupId: string | null | undefined,
+): Promise<boolean> {
+	if (payload?.triggered_by) return true;
+	if (!DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+	if (!CONVERSATIONAL_SOURCES.has(source) || !taskId) return true;
+
+	const r = await db.query<{ exempt: boolean }>(
+		`WITH last_run AS (
+		   SELECT max(started_at) AS at FROM heartbeat_runs
+		    WHERE task_id = $2 AND member_id = $1
+		 )
+		 SELECT (
+		   NOT EXISTS (
+		     SELECT 1 FROM agent_wakeup_requests w
+		      WHERE w.id = $3 AND w.created_by_run_id IS NOT NULL
+		   )
+		   OR EXISTS (
+		     SELECT 1 FROM task_comments c CROSS JOIN last_run lr
+		      WHERE c.task_id = $2
+		        AND (
+		          (c.author_user_id IS NOT NULL AND (lr.at IS NULL OR c.created_at > lr.at))
+		          OR (c.chosen_at IS NOT NULL AND (lr.at IS NULL OR c.chosen_at > lr.at))
+		        )
+		   )
+		 ) AS exempt`,
+		[memberId, taskId, wakeupId ?? null],
+	);
+	return r.rows[0]?.exempt === true;
+}
 
 /**
  * Would dispatching this agent onto this task re-run a no-op it just finished?
@@ -67,16 +132,15 @@ export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set(
  * never engage.
  *
  * One round trip. Returns false for a task-less wakeup (nothing to be idle
- * about) and for every exempt source.
+ * about) and for an exempt one.
  */
 export async function noWorkCooldownActive(
 	db: Db,
 	memberId: string,
 	taskId: string | null | undefined,
-	source: string,
+	exempt: boolean,
 ): Promise<boolean> {
-	if (!taskId) return false;
-	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+	if (!taskId || exempt) return false;
 
 	const r = await db.query<{ cooldown: boolean }>(
 		`WITH last_run AS (
@@ -136,17 +200,17 @@ export async function noWorkCooldownActive(
  *
  * Deliberately unbounded in time, unlike the no-work backoff. That one expires at
  * the agent's own cadence because "nothing to do *yet*" goes stale; this one is a
- * question addressed to a person, and it goes stale only when they answer. The
- * exempt sources above carry every form that answer can take, so the reply that
- * lifts this can never be blocked by it, and an operator can always force a pass
- * with "Run now" (`on_demand`).
+ * question addressed to a person, and it goes stale only when they answer. A
+ * person's answer is an exempt wakeup, and a teammate's comment lifts the park
+ * itself, so the reply that lifts this can never be blocked by it, and an
+ * operator can always force a pass with "Run now" (`on_demand`).
  *
  * Over-suppression is possible and accepted: any `@admin` in a comment parks the
  * task, including one written inside a routine status update. The cost is a delayed
  * heartbeat on a thread whose last word was a question to a human; the escape
  * hatches above are one click and one reply.
  *
- * One round trip. Returns false for a task-less wakeup and for every exempt source.
+ * One round trip. Returns false for a task-less wakeup and for an exempt one.
  *
  * Kept as a sibling of {@link noWorkCooldownActive} rather than folded into its
  * query: migration 061's frozen comment names that function and this file, so
@@ -158,10 +222,9 @@ export async function parkedOnAdminAsk(
 	db: Db,
 	memberId: string,
 	taskId: string | null | undefined,
-	source: string,
+	exempt: boolean,
 ): Promise<boolean> {
-	if (!taskId) return false;
-	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+	if (!taskId || exempt) return false;
 
 	// `newest_other` reads this task's comments through idx_comments_task_created
 	// (task_id, created_at), filtering out the agent's own unanswered ones; the ask
@@ -257,10 +320,9 @@ export async function attemptsExhaustedOnTask(
 	db: Db,
 	memberId: string,
 	taskId: string | null | undefined,
-	source: string,
+	exempt: boolean,
 ): Promise<boolean> {
-	if (!taskId) return false;
-	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+	if (!taskId || exempt) return false;
 
 	// Served by idx (member_id, task_id, finished_at DESC) from migration 061.
 	const r = await db.query<{ attempts: string }>(
@@ -315,19 +377,19 @@ export async function attemptsExhaustedOnTask(
  *    writing one of their own, so testing authorship alone would miss it.
  *
  * Deliberately unbounded in time, like {@link parkedOnAdminAsk}: a judgement handed
- * to a person goes stale when they answer, not on a clock. The exempt sources carry
- * every form that answer takes, and "Run now" is always the operator's override.
+ * to a person goes stale when they answer, not on a clock. A person's answer is an
+ * exempt wakeup whatever form it takes, and "Run now" is always the operator's
+ * override.
  *
- * Returns false for a task-less wakeup and for every exempt source.
+ * Returns false for a task-less wakeup and for an exempt one.
  */
 export async function retrospectiveHoldActive(
 	db: Db,
 	_memberId: string,
 	taskId: string | null | undefined,
-	source: string,
+	exempt: boolean,
 ): Promise<boolean> {
-	if (!taskId) return false;
-	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+	if (!taskId || exempt) return false;
 
 	const r = await db.query<{ held: boolean }>(
 		`WITH finding AS (
@@ -351,4 +413,132 @@ export async function retrospectiveHoldActive(
 		[taskId, HeartbeatRunKind.Retrospective],
 	);
 	return r.rows[0]?.held === true;
+}
+
+/**
+ * How many rounds in a row agents may hand one task to each other before every
+ * agent is held off it until a person speaks.
+ *
+ * Eight, from eleven days of production runs: it holds the two-agent loop that
+ * spent most of a week's provider allowance on one task, and it interrupts no
+ * task that went on to finish.
+ */
+export const HANDOFF_ROUND_LIMIT = 8;
+
+/**
+ * How many of a task's newest runs the count reads. Several runs can share one
+ * wakeup, so the window is wider than the limit, and it caps the cost of the
+ * query on a task with a long history.
+ */
+const HANDOFF_SCAN_RUNS = HANDOFF_ROUND_LIMIT * 8;
+
+/** The system comment kind that tells the admin a task is held by the handoff limit. */
+export const HANDOFF_LIMIT_COMMENT_KIND = 'handoff_limit';
+
+/** A task held by {@link handoffRoundsExhausted}, as the notice to the admin states it. */
+export interface HandoffRounds {
+	/** Consecutive agent-to-agent rounds since a person last spoke. */
+	rounds: number;
+	/** Input (cache included) plus output across those rounds' runs. */
+	tokens: number;
+	/** The agents that ran those rounds. */
+	agentSlugs: string[];
+	/** Whether the task already carries a notice for this hold. */
+	notified: boolean;
+}
+
+/**
+ * Have agents handed this task back and forth too many times without a person?
+ *
+ * A round is a run whose wakeup an agent's comment, mention or reply raised - a
+ * conversational source with `created_by_run_id` set and no operator
+ * `triggered_by`. Rounds are read newest first and counted by distinct wakeup;
+ * a handed-back run did no work and is skipped. The count restarts at the first
+ * run anything else started (an assignment, a heartbeat, a timer, "Run now"),
+ * and whenever a person speaks on the task: a comment they wrote, or a choice
+ * they made on a card.
+ *
+ * At the limit the whole task is held, for every agent and every non-exempt
+ * source, until a person speaks - the rule {@link retrospectiveHoldActive}
+ * uses. {@link parkedOnAdminAsk} would lift the moment the other agent replied,
+ * which in a two-agent loop is at once, and every other bound here keys on a
+ * failure signal that a loop of successful runs never raises.
+ *
+ * Returns the rounds when the task is held, and null otherwise. One round trip,
+ * reading runs through `idx_runs_task_started`.
+ */
+export async function handoffRoundsExhausted(
+	db: Db,
+	taskId: string | null | undefined,
+	exempt: boolean,
+): Promise<HandoffRounds | null> {
+	if (!taskId || exempt) return null;
+
+	const r = await db.query<{
+		rounds: string;
+		tokens: string;
+		agent_slugs: string[] | null;
+		notified: boolean;
+	}>(
+		`WITH person AS (
+		   SELECT max(GREATEST(
+		            CASE WHEN c.author_user_id IS NOT NULL THEN c.created_at END,
+		            c.chosen_at)) AS at
+		     FROM task_comments c
+		    WHERE c.task_id = $1
+		      AND (c.author_user_id IS NOT NULL OR c.chosen_at IS NOT NULL)
+		 ),
+		 recent AS (
+		   SELECT r.wakeup_id, r.member_id, r.started_at,
+		          r.input_tokens + r.output_tokens AS tokens,
+		          COALESCE(
+		            w.source::text = ANY($2::text[])
+		            AND w.created_by_run_id IS NOT NULL
+		            AND w.payload->'triggered_by' IS NULL,
+		            false) AS handoff
+		     FROM heartbeat_runs r
+		     CROSS JOIN person p
+		     LEFT JOIN agent_wakeup_requests w ON w.id = r.wakeup_id
+		    WHERE r.task_id = $1
+		      AND r.started_at IS NOT NULL
+		      AND (p.at IS NULL OR r.started_at > p.at)
+		      AND r.cancel_reason IS DISTINCT FROM $3
+		    ORDER BY r.started_at DESC
+		    LIMIT $4
+		 ),
+		 chain AS (
+		   SELECT * FROM recent
+		    WHERE handoff
+		      AND started_at > COALESCE(
+		            (SELECT max(started_at) FROM recent WHERE NOT handoff), '-infinity')
+		 )
+		 SELECT count(DISTINCT ch.wakeup_id) AS rounds,
+		        COALESCE(sum(ch.tokens), 0) AS tokens,
+		        array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL) AS agent_slugs,
+		        EXISTS (
+		          SELECT 1 FROM task_comments n
+		           WHERE n.task_id = $1
+		             AND n.content_type = 'system'::comment_content_type
+		             AND n.content->>'kind' = $5
+		             AND n.created_at > (SELECT max(started_at) FROM chain)
+		        ) AS notified
+		   FROM chain ch
+		   LEFT JOIN member_agents ma ON ma.id = ch.member_id`,
+		[
+			taskId,
+			[...CONVERSATIONAL_SOURCES],
+			RunCancelReason.HandedBack,
+			HANDOFF_SCAN_RUNS,
+			HANDOFF_LIMIT_COMMENT_KIND,
+		],
+	);
+	const row = r.rows[0];
+	const rounds = Number(row?.rounds ?? 0);
+	if (rounds < HANDOFF_ROUND_LIMIT) return null;
+	return {
+		rounds,
+		tokens: Number(row.tokens),
+		agentSlugs: row.agent_slugs ?? [],
+		notified: row.notified,
+	};
 }

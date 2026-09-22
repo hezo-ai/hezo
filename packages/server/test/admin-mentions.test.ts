@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { postAdminNotice } from '../src/services/comment-wakeups';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -377,6 +378,32 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 		// from the spec the row carries.
 		expect(row?.author_icon_url).toBeNull();
 		expect(row?.author_avatar_spec).toMatchObject({ seed: expect.any(String) });
+	});
+});
+
+describe('postAdminNotice', () => {
+	it('puts a system notice in every admin inbox, under Hezo rather than a person', async () => {
+		const taskIdLocal = await insertTask(captainId, 'System notice test');
+		const commentId = await postAdminNotice({
+			db,
+			teamId,
+			taskId: taskIdLocal,
+			content: { kind: 'handoff_limit', text: 'No agent will run on this task until you reply.' },
+		});
+
+		const rows = await mentionsForComment(commentId);
+		expect(rows.map((r) => r.user_id)).toEqual(
+			expect.arrayContaining([testAdminUserId, secondAdminUserId]),
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const row = ((await res.json()).data as Array<Record<string, unknown>>).find(
+			(m) => m.comment_id === commentId,
+		);
+		expect(row?.author_display_name).toBe('Hezo');
+		expect(row?.snippet).toBe('No agent will run on this task until you reply.');
 	});
 });
 

@@ -1,12 +1,13 @@
 import { formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
 import { Trans, useI18n } from '../../lib/i18n';
 import type {
 	SystemContent,
 	SystemDescriptionChangeContent,
+	SystemHandoffLimitContent,
 	SystemParentChangeContent,
 	SystemRepoDesignatedContent,
 	SystemRunAbandonedContent,
@@ -34,6 +35,9 @@ function isRunFailed(c: SystemContent): c is SystemRunFailedContent {
 }
 function isRunAbandoned(c: SystemContent): c is SystemRunAbandonedContent {
 	return c.kind === 'run_abandoned';
+}
+function isHandoffLimit(c: SystemContent): c is SystemHandoffLimitContent {
+	return c.kind === 'handoff_limit';
 }
 function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
@@ -80,6 +84,10 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isRunAbandoned(content)) {
 		return <RunAbandonedBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isHandoffLimit(content)) {
+		return <HandoffLimitBody content={content} projectId={projectId} timestamp={timestamp} />;
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -411,6 +419,71 @@ function RunAbandonedBody({
 				<span>
 					<Trans k="comment.runAbandoned" vars={{ agent: agentNode }} />
 				</span>
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+/**
+ * The handoff-limit notice: which agents went back and forth, how many times,
+ * and what it used. The agents are joined by the reader's own list rules.
+ */
+function HandoffLimitBody({
+	content,
+	projectId,
+	timestamp,
+}: {
+	content: SystemHandoffLimitContent;
+	projectId?: string;
+	timestamp: React.ReactNode;
+}) {
+	const { t, formatNumber, language } = useI18n();
+	const slugs = Array.isArray(content.agent_slugs)
+		? content.agent_slugs.filter((s): s is string => typeof s === 'string' && s.length > 0)
+		: [];
+	let element = 0;
+	const agentsNode =
+		slugs.length > 0 ? (
+			new Intl.ListFormat(language, { type: 'conjunction' })
+				.formatToParts(slugs.map((slug) => `@${slug}`))
+				.map((part) => {
+					// A separator always follows the element before it, whose slug is unique.
+					if (part.type !== 'element') {
+						return <Fragment key={`after-${slugs[element - 1]}`}>{part.value}</Fragment>;
+					}
+					const slug = slugs[element++];
+					return projectId ? (
+						<Link
+							key={slug}
+							to="/projects/$projectId/agents/$agentId"
+							params={{ projectId, agentId: slug }}
+							className="text-xs text-info-soft-fg hover:underline"
+							data-testid="handoff-limit-agent"
+						>
+							@{slug}
+						</Link>
+					) : (
+						<span key={slug}>@{slug}</span>
+					);
+				})
+		) : (
+			<span>{t('comment.runAgentFallback')}</span>
+		);
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="handoff-limit-comment"
+		>
+			<span className="text-xs text-text-2">
+				<Trans
+					k="comment.handoffLimit"
+					vars={{
+						agents: agentsNode,
+						rounds: formatNumber(Number(content.rounds ?? 0)),
+						tokens: formatNumber(Number(content.tokens ?? 0)),
+					}}
+				/>
 			</span>
 			{timestamp}
 		</div>

@@ -736,3 +736,38 @@ export async function fireAdminMention(params: FireAdminMentionParams): Promise<
 		);
 	}
 }
+
+export interface PostAdminNoticeParams {
+	db: Db;
+	teamId: string;
+	taskId: string;
+	/**
+	 * The system comment's content. `kind` picks the renderer; `text` is the
+	 * fallback every system comment carries for a surface with no renderer.
+	 */
+	content: { kind: string; text: string } & Record<string, unknown>;
+	wsManager?: WebSocketManager;
+}
+
+/**
+ * Post a system comment that needs a person to act, and put it in the admin inbox.
+ *
+ * A notice that only says a person should decide reaches nobody. The inbox row
+ * is what raises the badge, and it is what `outstandingAdminAskExistsSql` reads
+ * as a task waiting on a person. Returns the comment id.
+ */
+export async function postAdminNotice(params: PostAdminNoticeParams): Promise<string> {
+	const { db, teamId, taskId, content, wsManager } = params;
+	const r = await db.query<{ id: string } & Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
+		 RETURNING ${TASK_COMMENT_ROW_COLUMNS}, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+		[taskId, CommentContentType.System, JSON.stringify(content)],
+	);
+	const row = r.rows[0];
+	if (wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
+	}
+	await fireAdminMention({ db, teamId, taskId, commentId: row.id, authorUserId: null, wsManager });
+	return row.id;
+}

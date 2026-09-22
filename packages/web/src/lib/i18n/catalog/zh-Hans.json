@@ -278,6 +278,7 @@
 	"chat.typing": "{name}正在输入",
 	"comment.autoUnblocked": "{trigger} 关闭后自动解除阻塞",
 	"comment.autoUnblockedFallback": "阻塞任务",
+	"comment.handoffLimit": "{agents} 已连续 {rounds} 次互相传递此任务，共使用 {tokens} 个 token。在您回复之前，任何智能体都不会处理此任务。",
 	"comment.linkedFrom": "{actor} 从 {source} 建立了关联",
 	"comment.linkedFromComment": "{actor} 从 {source} 的{comment}建立了关联",
 	"comment.linkedFromCommentLabel": "评论",

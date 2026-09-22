@@ -278,6 +278,7 @@
 	"chat.typing": "{name} 입력 중",
 	"comment.autoUnblocked": "{trigger}이(가) 완료되어 자동으로 차단이 해제되었어요",
 	"comment.autoUnblockedFallback": "차단 중인 작업",
+	"comment.handoffLimit": "{agents}이(가) 이 작업을 {rounds}번 연속으로 서로 넘겼고, {tokens} 토큰을 사용했어요. 답장하실 때까지 어떤 에이전트도 이 작업을 실행하지 않아요.",
 	"comment.linkedFrom": "{actor} 님이 {source}에서 연결했어요",
 	"comment.linkedFromComment": "{actor} 님이 {source}의 {comment}에서 연결했어요",
 	"comment.linkedFromCommentLabel": "댓글",

@@ -53,6 +53,7 @@ import {
 	setAgentIdleIfNoActiveRuns,
 } from './agent-runtime-status';
 import { checkOverBudget } from './budget';
+import { postAdminNotice } from './comment-wakeups';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	budgetAllowsContainerStart,
@@ -87,6 +88,10 @@ import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
 import {
 	attemptsExhaustedOnTask,
+	dispatchSuppressionExempt,
+	HANDOFF_LIMIT_COMMENT_KIND,
+	type HandoffRounds,
+	handoffRoundsExhausted,
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
@@ -1872,6 +1877,78 @@ export class JobManager {
 		}
 	}
 
+	/**
+	 * The first dispatch suppression that holds this agent off this task, or null.
+	 * Each predicate returns false for an exempt wakeup.
+	 */
+	private async dispatchSuppression(
+		memberId: string,
+		task: { id: string; identifier: string },
+		exempt: boolean,
+	): Promise<{ reason: WakeupSkipReason; detail: string; handoff?: HandoffRounds } | null> {
+		const { db } = this.deps;
+		const at = ref(task.identifier, task.id);
+		if (await noWorkCooldownActive(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.NoWorkCooldown,
+				detail: `reported no work on ${at} within its heartbeat interval and nothing has changed since`,
+			};
+		}
+		if (await parkedOnAdminAsk(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.ParkedOnAdmin,
+				detail: `is waiting on an unanswered ask on ${at} and nobody has replied since`,
+			};
+		}
+		if (await attemptsExhaustedOnTask(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.AttemptsExhausted,
+				detail: `has given up on ${at} ${MAX_TASK_ATTEMPT_GIVEUPS} times in the last ${TASK_ATTEMPT_WINDOW_HOURS}h without finishing it`,
+			};
+		}
+		if (await retrospectiveHoldActive(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.RetrospectiveHold,
+				detail: `is held on ${at} while a retrospective finding waits on the admin`,
+			};
+		}
+		const handoff = await handoffRoundsExhausted(db, task.id, exempt);
+		if (handoff) {
+			return {
+				reason: WakeupSkipReason.HandoffRoundsExhausted,
+				detail: `is held on ${at} after ${handoff.rounds} agent-to-agent handoffs with no person speaking`,
+				handoff,
+			};
+		}
+		return null;
+	}
+
+	/**
+	 * Tell the admin a task is held by the handoff limit, once per hold. The
+	 * notice names the agents, the rounds and the tokens they used, and it is
+	 * what the admin replies to: their reply lifts the hold.
+	 */
+	private async postHandoffLimitNotice(
+		teamId: string,
+		taskId: string,
+		handoff: HandoffRounds,
+	): Promise<void> {
+		const agents = handoff.agentSlugs.map((slug) => `@${slug}`).join(', ');
+		await postAdminNotice({
+			db: this.deps.db,
+			teamId,
+			taskId,
+			content: {
+				kind: HANDOFF_LIMIT_COMMENT_KIND,
+				rounds: handoff.rounds,
+				tokens: handoff.tokens,
+				agent_slugs: handoff.agentSlugs,
+				text: `${agents} handed this task to each other ${handoff.rounds} times in a row, using ${handoff.tokens.toLocaleString('en-US')} tokens. No agent will run on it until a person replies.`,
+			},
+			wsManager: this.deps.wsManager,
+		});
+	}
+
 	private async resolveProjectForTask(
 		taskId: string,
 	): Promise<{ id: string; slug: string } | null> {
@@ -2502,33 +2579,19 @@ export class JobManager {
 		// per source would have to be re-added to each new source; this cannot be
 		// missed.
 		//
-		// Both ask the same question - would this run reach a conclusion the last one
-		// already reached? - and differ only in what makes it stale. The no-work
-		// backoff expires at the agent's own cadence; the parked-on-admin one expires
-		// when a person answers. Each is skipped rather than re-queued: there is
-		// nothing to retry, and the exempt sources in `no-work-backoff.ts` mean any
-		// real new input dispatches immediately.
-		const suppression = (await noWorkCooldownActive(db, memberId, task.id, wakeupSource))
-			? {
-					reason: WakeupSkipReason.NoWorkCooldown,
-					detail: `reported no work on ${ref(task.identifier, task.id)} within its heartbeat interval and nothing has changed since`,
-				}
-			: (await parkedOnAdminAsk(db, memberId, task.id, wakeupSource))
-				? {
-						reason: WakeupSkipReason.ParkedOnAdmin,
-						detail: `is waiting on an unanswered ask on ${ref(task.identifier, task.id)} and nobody has replied since`,
-					}
-				: (await attemptsExhaustedOnTask(db, memberId, task.id, wakeupSource))
-					? {
-							reason: WakeupSkipReason.AttemptsExhausted,
-							detail: `has given up on ${ref(task.identifier, task.id)} ${MAX_TASK_ATTEMPT_GIVEUPS} times in the last ${TASK_ATTEMPT_WINDOW_HOURS}h without finishing it`,
-						}
-					: (await retrospectiveHoldActive(db, memberId, task.id, wakeupSource))
-						? {
-								reason: WakeupSkipReason.RetrospectiveHold,
-								detail: `is held on ${ref(task.identifier, task.id)} while a retrospective finding waits on the admin`,
-							}
-						: null;
+		// The no-work backoff expires at the agent's own cadence; the others lift when
+		// a person answers or acts. Each is skipped rather than re-queued: there is
+		// nothing to retry, and `dispatchSuppressionExempt` lets a person's new input
+		// and an operator's override dispatch immediately.
+		const exempt = await dispatchSuppressionExempt(
+			db,
+			memberId,
+			task.id,
+			wakeupSource,
+			wakeupPayload,
+			wakeupId,
+		);
+		const suppression = await this.dispatchSuppression(memberId, task, exempt);
 		if (suppression) {
 			// Warned, not debugged, for every source but the two the system raises on a
 			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its
@@ -2536,18 +2599,27 @@ export class JobManager {
 			// something asked for this agent and got nothing, with the row flipped to
 			// `completed` below and gone from the queued list - which is exactly how an
 			// approved hire came to sit with nobody acting on it and no line saying so.
-			// An exhausted task is never quiet, whatever woke it: the other two
-			// suppressions are a backoff that lifts on its own, while this one means
-			// the agent has stopped making progress and nothing will dispatch onto the
-			// task until a person acts.
+			// A hold that waits on a person is never quiet, whatever woke it: the
+			// no-work backoff and the parked ask lift on their own or on any reply,
+			// while these mean nothing will dispatch onto the task until a person acts.
 			const quiet =
 				suppression.reason !== WakeupSkipReason.AttemptsExhausted &&
 				suppression.reason !== WakeupSkipReason.RetrospectiveHold &&
+				suppression.reason !== WakeupSkipReason.HandoffRoundsExhausted &&
 				(wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer);
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
 			else log.warn(line);
 			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
+			const handoff = suppression.handoff;
+			if (handoff && !handoff.notified) {
+				await this.postHandoffLimitNotice(teamId, task.id, handoff).catch((e) =>
+					log.error(
+						`Failed to post the handoff-limit notice on ${ref(task.identifier, task.id)}:`,
+						e,
+					),
+				);
+			}
 			// Stamp the check for the same reason the "no actionable tasks" branch
 			// above does: a pass that concluded there is nothing to do must advance the
 			// clock, or the scheduler re-selects this agent every cron tick. Without it
@@ -3044,7 +3116,7 @@ export class JobManager {
 		teamId: string,
 	): Promise<'queued' | 'exhausted' | 'failed'> {
 		const { db } = this.deps;
-		if (await attemptsExhaustedOnTask(db, memberId, taskId, WakeupSource.Timer)) {
+		if (await attemptsExhaustedOnTask(db, memberId, taskId, false)) {
 			log.warn(
 				`Not queuing timeout continuation for member ${memberId} on task ${taskId}: ${MAX_TASK_ATTEMPT_GIVEUPS} unproductive attempts in the last ${TASK_ATTEMPT_WINDOW_HOURS}h`,
 			);

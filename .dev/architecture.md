@@ -2868,9 +2868,17 @@ in-progress flip and would report "changed" on the quietest run. **Answering a c
 writes no row** - it sets `chosen_option` on the card already there - so `chosen_at`
 (stamped by a trigger, migration 074) is read alongside `created_at`; without it the one
 event that most conclusively ends a wait was the one event neither suppression could see.
-Conversational sources (`mention`, `comment`, `reply`, `on_demand`, `credential_provided`,
-`asset_deletion_resolved`, `approval_resolved`) are exempt: each is somebody asking for
-something the last pass could not have served. A suppressed wakeup is marked `completed` with
+**Which wakeups are exempt** is decided once per dispatch by `dispatchSuppressionExempt` and
+passed to every predicate. An operator override (`payload.triggered_by`, stamped by Run now and
+Retry on whatever source the row has) is exempt, and so are `on_demand`, `credential_provided`,
+`asset_deletion_resolved` and `approval_resolved`: each is a person asking for something the
+last pass could not have served. A conversational wakeup (`mention`, `comment`, `reply`) is
+exempt only when no agent run raised it (`created_by_run_id IS NULL`) or when a person has
+spoken on the task since this agent last ran there (an `author_user_id` comment, or a
+`chosen_at`). A coalesce keeps the first agent's attribution through later triggers, so an
+attributed row may still carry a person's words and the thread settles it. Before this rule an
+agent's mention skipped every hold, which is how two agents kept one task going for a day
+under a retrospective hold. A suppressed wakeup is marked `completed` with
 `last_skipped_reason = no_work_cooldown` - answered, not re-queued to ask again, and not left
 dangling in `claimed`. The skip is logged at `warn` for every source but `heartbeat` and
 `timer`: on those two it is the backoff working, on anything else it means something asked
@@ -2889,8 +2897,8 @@ applies - and nobody but this agent has commented since, `chosen_at` counting as
 speaking whoever authored the card. The agent's own later comments are excluded: chasing its
 own question is not an answer to it. Unlike the no-work backoff it is
 **unbounded in time**, because a question addressed to a person goes stale only when they
-answer; the same exempt sources carry every form that answer can take, and `on_demand` ("Run
-now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
+answer; a person's answer is an exempt wakeup whatever form it takes, a teammate's comment
+lifts the park by itself, and `on_demand` ("Run now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
 parks the task, including one inside a routine status update. It is marked `completed` with
 `last_skipped_reason = parked_on_admin`. Kept a sibling predicate rather than folded into the
 same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
@@ -2923,9 +2931,22 @@ nothing, and watch the loop it named run for another week. `retrospectiveHoldAct
 (`services/no-work-backoff.ts`) holds while a comment authored by a `retrospective` run stands on
 the task with no `author_user_id` comment after it. The author's run kind is the whole condition:
 no label, no column, nothing another path must remember to set. Like the attempts bound it is never
-logged quietly - parking a task is a standing state - and the shared exempt sources lift it, so a
-mention, a reply or "Run now" always gets through. Marked with
+logged quietly - parking a task is a standing state - and an exempt wakeup gets through, so a
+person's mention or reply, or "Run now", always does. A teammate's mention does not. Marked with
 `last_skipped_reason = retrospective_hold`.
+
+**The handoff limit.** The fifth applied after task resolution, and the one that bounds a loop of
+*successful* runs, which every other bound misses because each keys on a failure signal.
+`handoffRoundsExhausted` (`services/no-work-backoff.ts`) reads the task's newest runs through
+`idx_runs_task_started` and counts, by distinct wakeup, the consecutive ones whose wakeup is
+conversational, has `created_by_run_id` set and carries no `triggered_by`. A handed-back run is
+skipped; the count restarts at a run anything else started and whenever a person speaks. At
+`HANDOFF_ROUND_LIMIT` (8) the task is held for every agent and every non-exempt source until a
+person speaks - the lifting rule of the retrospective hold, since `parkedOnAdminAsk` lifts on the
+other agent's reply. The first held dispatch posts a `handoff_limit` system comment through
+`postAdminNotice`, naming the agents, the rounds and their tokens, which raises the admin's
+inbox row; later held dispatches see it and post nothing. Never logged quietly. Marked with
+`last_skipped_reason = handoff_rounds_exhausted`.
 
 **The provider-refusal hold.** The last suppression, and the only one applied *before*
 the claim rather than after task resolution. A handback after a provider refusal writes

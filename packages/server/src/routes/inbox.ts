@@ -40,6 +40,19 @@ function buildSnippet(content: unknown): string {
 	return `${stripped.slice(0, SNIPPET_MAX_LEN - 1).trimEnd()}…`;
 }
 
+/**
+ * Who a row names as its author. A system notice has no author member, and a
+ * person reading "Admin asked you" about a notice Hezo raised would look for a
+ * colleague who never wrote it.
+ */
+function mentionAuthorName(
+	row: { content_type: string; author_display_name: string | null },
+	fallback: string,
+): string {
+	if (row.author_display_name) return row.author_display_name;
+	return row.content_type === CommentContentType.System ? 'Hezo' : fallback;
+}
+
 /** The secret being asked for, on a credential-request row only. */
 function credentialName(contentType: string, content: unknown): string | null {
 	if (contentType !== CommentContentType.CredentialRequest) return null;
@@ -127,7 +140,7 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 				credential_name: credentialName(r.content_type, r.content),
 				snippet: buildSnippet(r.content),
 				author_member_id: r.author_member_id,
-				author_display_name: r.author_display_name ?? 'Admin',
+				author_display_name: mentionAuthorName(r, 'Admin'),
 				author_slug: r.author_slug,
 				// A human author's uploaded avatar. An agent is drawn from its own
 				// `avatar_spec`, and the built-in CEO/Coach portraits resolve
@@ -374,7 +387,7 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 				content_type: m.content_type,
 				credential_name: credentialName(m.content_type, m.content),
 				snippet: buildSnippet(m.content),
-				author_display_name: m.author_display_name ?? 'Agent',
+				author_display_name: mentionAuthorName(m, 'Agent'),
 				created_at: m.created_at,
 			},
 		})),

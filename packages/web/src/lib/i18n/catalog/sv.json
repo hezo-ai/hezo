@@ -278,6 +278,7 @@
 	"chat.typing": "{name} skriver",
 	"comment.autoUnblocked": "Automatiskt avblockerad efter att {trigger} stängdes",
 	"comment.autoUnblockedFallback": "en blockerande uppgift",
+	"comment.handoffLimit": "{agents} skickade den här uppgiften mellan sig {rounds} gånger i rad och använde {tokens} tokens. Ingen agent arbetar med den förrän du svarar.",
 	"comment.linkedFrom": "Länkad från {source} av {actor}",
 	"comment.linkedFromComment": "Länkad från {comment} i {source} av {actor}",
 	"comment.linkedFromCommentLabel": "en kommentar",

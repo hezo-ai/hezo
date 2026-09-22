@@ -1001,6 +1001,13 @@ export const WakeupSkipReason = {
 	 */
 	RetrospectiveHold: 'retrospective_hold',
 	/**
+	 * Agents have handed this task to each other too many times in a row with no
+	 * person speaking, so every agent is held off it until a person replies. The
+	 * rounds are counted from runs an agent's comment, mention or reply started.
+	 * See `handoffRoundsExhausted` in `services/no-work-backoff.ts`.
+	 */
+	HandoffRoundsExhausted: 'handoff_rounds_exhausted',
+	/**
 	 * Another run still held the rotating provider credential when this one gave
 	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
 	 * on different clocks: capacity frees when the idle pass reclaims a container,

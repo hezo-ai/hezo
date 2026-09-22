@@ -190,6 +190,43 @@ test('run_abandoned: agent_slug present but no projectId → span, no link', asy
 	expect(queryByTestId('run-abandoned-agent')).toBeNull();
 });
 
+// ─── handoff_limit ────────────────────────────────────────────────────────
+
+test('handoff_limit: names each agent, the rounds and the tokens, and asks for a reply', async () => {
+	const { findByTestId, findAllByTestId } = renderSystem(
+		comment({
+			kind: 'handoff_limit',
+			rounds: 9,
+			tokens: 412345678,
+			agent_slugs: ['researcher', 'reviewer'],
+			text: 'fallback',
+		}),
+		'proj',
+	);
+	const wrapper = await findByTestId('handoff-limit-comment');
+	expect(wrapper.textContent).toContain('@researcher and @reviewer handed this task');
+	expect(wrapper.textContent).toContain('9 times in a row');
+	expect(wrapper.textContent).toContain('412,345,678 tokens');
+	expect(wrapper.textContent).toContain('until you reply');
+	expect(wrapper.textContent).not.toContain('fallback');
+
+	const links = (await findAllByTestId('handoff-limit-agent')) as HTMLAnchorElement[];
+	expect(links.map((l) => l.getAttribute('href'))).toEqual([
+		'/projects/proj/agents/researcher',
+		'/projects/proj/agents/reviewer',
+	]);
+});
+
+test('handoff_limit: no agent slugs → fallback word, no links', async () => {
+	const { findByTestId, queryByTestId } = renderSystem(
+		comment({ kind: 'handoff_limit', rounds: 8, tokens: 1 }),
+		'proj',
+	);
+	const wrapper = await findByTestId('handoff-limit-comment');
+	expect(wrapper.textContent).toContain('agent handed this task');
+	expect(queryByTestId('handoff-limit-agent')).toBeNull();
+});
+
 // ─── run_failed ───────────────────────────────────────────────────────────
 
 test('run_failed: timed_out status, agent link, and error suffix', async () => {

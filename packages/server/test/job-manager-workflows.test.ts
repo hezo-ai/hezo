@@ -9,6 +9,7 @@ import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { HANDOFF_ROUND_LIMIT } from '../src/services/no-work-backoff';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -606,6 +607,127 @@ describe('JobManager workflow methods', () => {
 			// cases expect to start from.
 			await db.query('DELETE FROM tasks WHERE id = $1', [parkedTaskId]);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+		});
+
+		it('holds two agents handing one task back and forth, and tells the admin once', async () => {
+			const manager = createJobManager();
+			const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+				headers: authHeader(token),
+			});
+			const otherAgentId = (await agentsRes.json()).data[1].id as string;
+
+			await db.query(
+				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'cancelled')",
+				[agentId],
+			);
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const looped = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, 'Handed back and forth', '', $6::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					TaskStatus.InProgress,
+				],
+			);
+			const loopTaskId = looped.rows[0].id;
+
+			// Each round: the previous agent's run mentions the next agent, whose run
+			// that mention starts. The first mention comes from a run on another task.
+			const opener = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at, finished_at)
+				 VALUES ($1, $2, 'succeeded', now() - interval '1 day', now() - interval '1 day')
+				 RETURNING id`,
+				[teamId, otherAgentId],
+			);
+			let previousRunId = opener.rows[0].id;
+			for (let i = 0; i < HANDOFF_ROUND_LIMIT; i++) {
+				const member = i % 2 === 0 ? agentId : otherAgentId;
+				const wakeup = await db.query<{ id: string }>(
+					`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status, created_by_run_id)
+					 VALUES ($1, $2, 'mention', $3::jsonb, 'completed', $4)
+					 RETURNING id`,
+					[member, teamId, JSON.stringify({ task_id: loopTaskId }), previousRunId],
+				);
+				const run = await db.query<{ id: string }>(
+					`INSERT INTO heartbeat_runs
+					   (team_id, member_id, task_id, wakeup_id, status, started_at, finished_at, input_tokens, output_tokens)
+					 VALUES ($1, $2, $3, $4, 'succeeded', now() - ($5 || ' minutes')::interval,
+					         now() - ($5 || ' minutes')::interval + interval '1 minute', 2000000, 5000)
+					 RETURNING id`,
+					[teamId, member, loopTaskId, wakeup.rows[0].id, String((HANDOFF_ROUND_LIMIT - i) * 5)],
+				);
+				previousRunId = run.rows[0].id;
+			}
+
+			const queueMention = async (payload: Record<string, unknown> = {}) => {
+				const w = await db.query<{ id: string }>(
+					`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status, created_by_run_id)
+					 VALUES ($1, $2, 'mention', $3::jsonb, 'claimed', $4)
+					 RETURNING id`,
+					[agentId, teamId, JSON.stringify({ task_id: loopTaskId, ...payload }), previousRunId],
+				);
+				const id = w.rows[0].id;
+				await (manager as any).activateAgent(
+					agentId,
+					teamId,
+					id,
+					{ task_id: loopTaskId, ...payload },
+					'mention',
+				);
+				const row = await db.query<{ status: string; last_skipped_reason: string | null }>(
+					'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+					[id],
+				);
+				return row.rows[0];
+			};
+			const notices = async () =>
+				db.query<{ id: string; content: Record<string, unknown> }>(
+					`SELECT id, content FROM task_comments
+					 WHERE task_id = $1 AND content->>'kind' = 'handoff_limit'`,
+					[loopTaskId],
+				);
+
+			const held = await queueMention();
+			expect(held.status).toBe(WakeupStatus.Completed);
+			expect(held.last_skipped_reason).toBe('handoff_rounds_exhausted');
+
+			const posted = await notices();
+			expect(posted.rows).toHaveLength(1);
+			expect(posted.rows[0].content.rounds).toBe(HANDOFF_ROUND_LIMIT);
+			expect(posted.rows[0].content.tokens).toBe(HANDOFF_ROUND_LIMIT * 2_005_000);
+			const inbox = await db.query('SELECT 1 FROM admin_mentions WHERE comment_id = $1', [
+				posted.rows[0].id,
+			]);
+			expect(inbox.rows.length).toBeGreaterThan(0);
+
+			// Held again, but the admin is told once per hold.
+			expect((await queueMention()).last_skipped_reason).toBe('handoff_rounds_exhausted');
+			expect((await notices()).rows).toHaveLength(1);
+
+			// "Run now" is the operator's override and always dispatches.
+			const override = await queueMention({ triggered_by: { member_id: null, name: 'Admin' } });
+			expect(override.last_skipped_reason).toBeNull();
+			await waitForBackground();
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE payload->>$1 = $2', [
+				'task_id',
+				loopTaskId,
+			]);
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1 OR id = $2', [
+				loopTaskId,
+				opener.rows[0].id,
+			]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [loopTaskId]);
 		});
 
 		it('launches (lazy-starting the container) when the project has no container', async () => {

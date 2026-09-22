@@ -97,6 +97,18 @@ export interface SystemRunAbandonedContent {
 	text?: string;
 }
 
+/**
+ * Agents handed a task to each other too many times in a row, so every agent is
+ * held off it until a person replies. Posted once per hold, with an inbox row.
+ */
+export interface SystemHandoffLimitContent {
+	kind: 'handoff_limit';
+	rounds?: number;
+	tokens?: number;
+	agent_slugs?: string[];
+	text?: string;
+}
+
 export interface SystemRepoDesignatedContent {
 	kind: 'repo_designated';
 	repo_identifier?: string;
@@ -123,6 +135,7 @@ export type SystemContent =
 	| SystemDescriptionChangeContent
 	| SystemRunFailedContent
 	| SystemRunAbandonedContent
+	| SystemHandoffLimitContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;
 

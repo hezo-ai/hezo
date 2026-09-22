@@ -278,6 +278,7 @@
 	"chat.typing": "{name}が入力中です",
 	"comment.autoUnblocked": "{trigger} が完了したため自動的にブロック解除されました",
 	"comment.autoUnblockedFallback": "ブロック元のタスク",
+	"comment.handoffLimit": "{agents} がこのタスクを {rounds} 回続けて受け渡し、{tokens} トークンを使用しました。返信があるまで、どのエージェントもこのタスクを実行しません。",
 	"comment.linkedFrom": "{actor} により {source} からリンクされました",
 	"comment.linkedFromComment": "{actor} により {source} の{comment}からリンクされました",
 	"comment.linkedFromCommentLabel": "コメント",

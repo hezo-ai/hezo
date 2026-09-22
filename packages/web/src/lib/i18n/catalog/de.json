@@ -278,6 +278,7 @@
 	"chat.typing": "{name} schreibt",
 	"comment.autoUnblocked": "Automatisch entsperrt, nachdem {trigger} geschlossen wurde",
 	"comment.autoUnblockedFallback": "eine blockierende Aufgabe",
+	"comment.handoffLimit": "{agents} haben diese Aufgabe {rounds} Mal hintereinander weitergereicht und dabei {tokens} Token verbraucht. Kein Agent arbeitet daran weiter, bis Sie antworten.",
 	"comment.linkedFrom": "Verlinkt aus {source} von {actor}",
 	"comment.linkedFromComment": "Verlinkt aus {comment} in {source} von {actor}",
 	"comment.linkedFromCommentLabel": "einem Kommentar",
