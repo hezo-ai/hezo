@@ -124,7 +124,7 @@ describe('checkDocsTree', () => {
 });
 
 describe('the real docs tree', () => {
-	it('has no broken internal links, anchors, or repo-file links', () => {
+	const readDocsTree = () => {
 		const files = new Map<string, string>();
 		const walk = (dir: string) => {
 			for (const entry of readdirSync(join(repoRoot, dir), { withFileTypes: true })) {
@@ -135,8 +135,22 @@ describe('the real docs tree', () => {
 			}
 		};
 		walk('docs');
+		return files;
+	};
+
+	it('has no broken internal links, anchors, or repo-file links', () => {
+		const files = readDocsTree();
 		expect(files.size).toBeGreaterThan(40);
 		const problems = checkDocsTree(files, (p) => existsSync(join(repoRoot, p)));
 		expect(problems).toEqual([]);
+	});
+
+	it('links directly to the canonical pricing URL', () => {
+		const redirects = [...readDocsTree()].flatMap(([path, content]) =>
+			extractLinks(content)
+				.filter(({ target }) => target === 'https://hezo.ai/pricing')
+				.map(({ line, target }) => `${path}:${line} ${target}`),
+		);
+		expect(redirects).toEqual([]);
 	});
 });
