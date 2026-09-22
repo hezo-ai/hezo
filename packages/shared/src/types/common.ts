@@ -296,6 +296,17 @@ export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 
 /**
+ * Body limit for a route that takes one attachment as multipart form data.
+ *
+ * The file cap above measures the file; on the wire it travels inside a
+ * multipart envelope (boundary, part headers, form fields), so a body limit of
+ * exactly `ATTACHMENT_MAX_BYTES` rejects a valid maximum-size file. The route's
+ * own check on the file's size still answers an oversized file with its
+ * specific error.
+ */
+export const ATTACHMENT_UPLOAD_BODY_MAX_BYTES = ATTACHMENT_MAX_BYTES + 1024 * 1024;
+
+/**
  * Ceiling on any `/api` request body - a backstop against an unbounded body, not
  * a per-route policy. It MUST stay comfortably above every per-route cap:
  *

@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Arraste e solte arquivos para anexar",
 	"attachments.maxSize": "Máx. {size} por arquivo",
 	"attachments.supportedTypes": "Tipos de arquivo suportados",
+	"attachments.tooMany": "Um comentário aceita no máximo {max} arquivos",
 	"budget.agentRunTime": "Trabalhou {duration} neste mês",
 	"budget.hours.allowance.remaining": "Restam {hours} h. Reinicia em {date}.",
 	"budget.hours.allowance.title": "Usado neste período",

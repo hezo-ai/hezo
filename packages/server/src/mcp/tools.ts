@@ -19,6 +19,8 @@ import {
 	CAPTAIN_SETTABLE_GOAL_HEALTH,
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
+	COMMENT_ATTACHMENTS_MAX,
+	COMMENT_TEXT_MAX_CHARS,
 	CommentContentType,
 	ConnectorAccess,
 	ConnectorStatus,
@@ -139,6 +141,7 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
+import { checkProjectAssetIds } from '../services/asset-ownership';
 import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
 import { upsertChatMemory, upsertConversationChatMemory } from '../services/chat-memory';
 import {
@@ -606,7 +609,7 @@ async function withBacktickWarning<T extends object>(
 }
 
 /** Flag an agent run as having produced output. Idempotent and self-contained. */
-async function markRunProducedOutput(db: Db, runId: string): Promise<void> {
+export async function markRunProducedOutput(db: Db, runId: string): Promise<void> {
 	await db.query(
 		'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1 AND produced_output = false',
 		[runId],
@@ -636,6 +639,9 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
+
+/** The comment text cap as the comment tools' descriptions state it. */
+const COMMENT_TEXT_CAP = COMMENT_TEXT_MAX_CHARS.toLocaleString('en-US');
 
 /** APPROVAL_COLUMNS qualified with the `a` alias, for the keyset-paged read. */
 const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'a.$&');
@@ -1237,16 +1243,27 @@ async function resolveTaskScope(
 	if ('error' in scope) return scope;
 	const raw = typeof args.task_id === 'string' ? args.task_id : '';
 	if (!raw) return { error: 'task_id is required' };
+	const task = await findProjectTask(db, scope, raw);
+	if ('error' in task) return task;
+	return { ...scope, taskId: task.id };
+}
+
+/** Resolve a task reference (identifier or UUID) that must belong to the scope's project. */
+export async function findProjectTask(
+	db: Db,
+	scope: ToolScope,
+	raw: string,
+): Promise<{ id: string; identifier: string } | { error: string }> {
 	const taskId = await resolveTaskId(db, scope.teamId, raw);
 	if (!taskId) return { error: `Task not found: ${raw}` };
-	const r = await db.query<{ project_id: string }>(
-		'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
+	const r = await db.query<{ project_id: string; identifier: string }>(
+		'SELECT project_id, identifier FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, scope.teamId],
 	);
 	if (r.rows.length === 0 || r.rows[0].project_id !== scope.projectId) {
 		return { error: `Task not found in project: ${raw}` };
 	}
-	return { ...scope, taskId };
+	return { id: taskId, identifier: r.rows[0].identifier };
 }
 
 /** Standard schema entry for the optional `project` selector shared by project-scoped tools. */
@@ -3676,11 +3693,21 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID - it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead. Comment text is limited to 16,000 characters: save anything longer as a file and reference it rather than pasting it in.',
+		`Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment's UUID - it wakes the original author with source=reply (so they're notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead. To hand a file to a teammate, upload it (multipart POST to /mcp/assets with a task field) and pass its id in attachment_ids; never paste file contents or encoded bytes into the text. Comment text is limited to ${COMMENT_TEXT_CAP} characters.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
-			content: z.string().describe('Comment text, at most 16,000 characters'),
+			content: z
+				.string()
+				.describe(
+					`Comment text, at most ${COMMENT_TEXT_CAP} characters. May be empty when attachment_ids is set.`,
+				),
+			attachment_ids: z
+				.array(z.string())
+				.optional()
+				.describe(
+					`Ids of up to ${COMMENT_ATTACHMENTS_MAX} assets to attach, from uploads to /mcp/assets or write_project_asset in this project. Readers get each file as a signed download link.`,
+				),
 			parent_comment_id: z
 				.string()
 				.optional()
@@ -3694,6 +3721,16 @@ export function registerTools(
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
+			const attachments = await checkProjectAssetIds(
+				db,
+				scope.projectId,
+				args.attachment_ids,
+				COMMENT_ATTACHMENTS_MAX,
+			);
+			if (!attachments.ok) return { error: attachments.message };
+			if (text.trim().length === 0 && attachments.ids.length === 0) {
+				return { error: 'Provide comment text, attachment_ids, or both' };
+			}
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
 				// Accept the parent's id (UUID) or its public_id; store the resolved
@@ -3731,6 +3768,7 @@ export function registerTools(
 				createdByRunId,
 				parentCommentId,
 				text: args.content as string,
+				attachmentIds: attachments.ids,
 			});
 			trackBackground(
 				recordTaskLinks(
@@ -3797,10 +3835,11 @@ export function registerTools(
 				// right. An agent that meant to ask sees `woke: []` with the teammate it
 				// addressed sitting in `named_not_woken`.
 				const wake = await buildWakeReceiptForTask(db, taskId, commentText, woke, knownSlugs);
-				if (warning) return { ...commentWriteAck(row), wake, warning };
-				return { ...commentWriteAck(row), wake };
+				const ack = { ...commentWriteAck(row), attachment_ids: attachments.ids };
+				if (warning) return { ...ack, wake, warning };
+				return { ...ack, wake };
 			}
-			return commentWriteAck(row);
+			return { ...commentWriteAck(row), attachment_ids: attachments.ids };
 		},
 		db,
 		{ write: true },
@@ -6128,7 +6167,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; a .csv renders as a table with the raw file behind the same toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, and optional `task` to file it with that task\'s attachments; same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; a .csv renders as a table with the raw file behind the same toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z

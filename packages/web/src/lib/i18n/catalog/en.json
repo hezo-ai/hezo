@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Drag and drop files to attach",
 	"attachments.maxSize": "Max {size} per file",
 	"attachments.supportedTypes": "Supported attachment types",
+	"attachments.tooMany": "A comment takes at most {max} files",
 	"budget.agentRunTime": "Ran {duration} this month",
 	"budget.hours.allowance.remaining": "{hours} h left. Resets {date}.",
 	"budget.hours.allowance.title": "Used this period",

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
-import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { API_BODY_MAX_BYTES, ATTACHMENT_UPLOAD_BODY_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { compress } from 'hono/compress';
@@ -790,7 +790,7 @@ export function buildApp(
 	app.post(
 		'/mcp/assets',
 		bodyLimit({
-			maxSize: ATTACHMENT_MAX_BYTES,
+			maxSize: ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 			onError: (c) =>
 				c.json({ error: { code: 'TOO_LARGE', message: 'Attachment exceeds 10 MB' } }, 413),
 		}),

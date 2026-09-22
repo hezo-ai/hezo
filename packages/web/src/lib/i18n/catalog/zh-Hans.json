@@ -175,6 +175,7 @@
 	"attachments.dragHint": "拖放文件即可添加附件",
 	"attachments.maxSize": "每个文件最大 {size}",
 	"attachments.supportedTypes": "支持的附件类型",
+	"attachments.tooMany": "每条评论最多可添加 {max} 个文件",
 	"budget.agentRunTime": "本月运行 {duration}",
 	"budget.hours.allowance.remaining": "剩余 {hours} 小时，{date} 重置。",
 	"budget.hours.allowance.title": "本周期已用",

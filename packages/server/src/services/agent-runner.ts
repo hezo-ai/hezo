@@ -8,6 +8,7 @@ import {
 	AiAuthMethod,
 	type AiProvider,
 	COACH_REVIEW_TRIGGER,
+	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
 	ContainerStatus,
 	type CostTokens,
@@ -926,6 +927,10 @@ export async function buildRuntimeInvocation(
 
 	const env: string[] = [
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
+		// Where the agent's own bearer token is accepted outside MCP: the multipart
+		// upload at `/mcp/assets`, which is how a file reaches a comment attachment
+		// without passing through the model.
+		`HEZO_API_URL=${endpoints.hezoBaseUrl}`,
 		`HEZO_AGENT_ID=${agentId}`,
 		`HEZO_HEARTBEAT_RUN_ID=${resourceId}`,
 		`HEZO_TEAM_ID=${runTeamId}`,
@@ -1181,6 +1186,21 @@ async function buildRunContext(
 			(task as TaskInfo).id,
 			heartbeatRunId,
 		);
+		const quotedCommentIds = [
+			mentionContext?.triggeringCommentId,
+			replyContext?.replyCommentId,
+			replyContext?.originalCommentId,
+			commentWakeContext?.commentId,
+		].filter((id): id is string => typeof id === 'string');
+		const handoffAttachments =
+			quotedCommentIds.length > 0
+				? await loadAgentAttachmentsForComments(
+						deps.db,
+						quotedCommentIds,
+						deps.masterKeyManager,
+						endpoints.hezoBaseUrl,
+					)
+				: undefined;
 		basePrompt = buildTaskPrompt(inlineSystemPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
 			replyContext,
@@ -1190,6 +1210,7 @@ async function buildRunContext(
 			recentComments,
 			wakingCommentId,
 			catchUp,
+			handoffAttachments,
 		});
 	}
 	// Appended the same way as the effort directive: a runtime note is guidance the
@@ -4240,7 +4261,7 @@ export async function loadAgentAttachmentsForComments(
 		 ) ranked
 		 WHERE rn <= $2
 		 ORDER BY comment_id, rn`,
-		[commentIds, PROMPT_ATTACHMENTS_PER_COMMENT_LIMIT],
+		[commentIds, COMMENT_ATTACHMENTS_MAX],
 	);
 	const out = new Map<string, AgentAttachment[]>();
 	for (const row of rows.rows) {
@@ -4454,14 +4475,16 @@ export function renderCommentHistory(
 				: '';
 			const base = `${head}: ${text}${tag}${overflow}`;
 			const reactionLine = formatReactionLine(c.reactions);
-			const attachmentLines = c.attachments.map(
-				(a) =>
-					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`,
-			);
+			const attachmentLines = c.attachments.map(formatAttachmentLine);
 			const extra = [reactionLine, ...attachmentLines].filter((l): l is string => l !== null);
 			return extra.length > 0 ? `${base}\n${extra.join('\n')}` : base;
 		})
 		.join('\n');
+}
+
+/** One prompt line naming an attachment and where to download it. */
+function formatAttachmentLine(a: AgentAttachment): string {
+	return `  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`;
 }
 
 export interface CommentWakeContext {
@@ -4508,7 +4531,12 @@ export interface BuildTaskPromptContext {
 	recentComments?: RenderableComment[];
 	wakingCommentId?: string;
 	catchUp?: CatchUpContext | null;
+	/** Attachments on the comments a handoff section quotes, keyed by comment id. */
+	handoffAttachments?: HandoffFiles;
 }
+
+/** Attachments on the comments a handoff quotes, keyed by comment id. */
+type HandoffFiles = ReadonlyMap<string, AgentAttachment[]> | undefined;
 
 /** How many of a task's most recent comments to inline in every run prompt as a head-start. */
 export const RECENT_COMMENTS_LIMIT = 3;
@@ -4526,12 +4554,6 @@ export const COACH_REVIEW_COMMENTS_LIMIT = 20;
 
 /** Runs listed in the Coach's Agent Runs block; `list_task_runs` serves the rest. */
 export const COACH_REVIEW_RUNS_LIMIT = 20;
-
-/**
- * Attachments rendered per comment. A prompt line each, and a signed URL each,
- * so this bounds both the text and the signing work.
- */
-export const PROMPT_ATTACHMENTS_PER_COMMENT_LIMIT = 10;
 
 /** One due goal handed to the Captain in a progress-update run. */
 export interface ProgressUpdateGoal {
@@ -4918,15 +4940,16 @@ export function buildTaskPrompt(
 	// here: the reply and the comment it answers.
 	const quotedAbove = new Set<string>();
 
+	const files = ctx.handoffAttachments;
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
-		parts.push(...renderReplyHandoff(task, replyContext, budget));
+		parts.push(...renderReplyHandoff(task, replyContext, budget, files));
 		quotedAbove.add(replyContext.replyCommentId);
 		quotedAbove.add(replyContext.originalCommentId);
 	} else if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
-		parts.push(...renderMentionHandoff(task, mentionContext, budget));
+		parts.push(...renderMentionHandoff(task, mentionContext, budget, files));
 		quotedAbove.add(mentionContext.triggeringCommentId);
 	} else if (commentWakeContext && wakeupPayload?.source === WakeupSource.Comment) {
-		parts.push(...renderCommentWakeHandoff(task, commentWakeContext, budget));
+		parts.push(...renderCommentWakeHandoff(task, commentWakeContext, budget, files));
 		quotedAbove.add(commentWakeContext.commentId);
 	}
 
@@ -5040,8 +5063,12 @@ function quoteCommentForHandoff(
 	section: PromptSection,
 	text: string,
 	commentId: string,
+	files: HandoffFiles,
 ): string[] {
 	const cut = budget.take(section, text);
+	// The thread block below only back-references a quoted comment, so its files
+	// are listed here or not at all.
+	const attached = (files?.get(commentId) ?? []).map(formatAttachmentLine);
 	const block =
 		cut.text.length > 0
 			? cut.text
@@ -5050,21 +5077,25 @@ function quoteCommentForHandoff(
 					.join('\n')
 			: '> (empty)';
 	const call = `get_comment(comment_id: "${commentId}")`;
-	return cut.truncated
-		? [block, '', overflowNote(cut.text.length, cut.length, call)]
-		: [block, '', `_(comment id \`${commentId}\`)_`];
+	const idLine = cut.truncated
+		? overflowNote(cut.text.length, cut.length, call)
+		: `_(comment id \`${commentId}\`)_`;
+	return attached.length > 0
+		? [block, '', idLine, 'Files attached to it:', ...attached]
+		: [block, '', idLine];
 }
 
 function renderCommentWakeHandoff(
 	task: TaskInfo,
 	ctx: CommentWakeContext,
 	budget: PromptBudget,
+	files: HandoffFiles,
 ): string[] {
 	return [
 		'## New Comment on Your Task',
 		`${ctx.authorName} commented on ${task.identifier}, which woke this run — what they wrote:`,
 		'',
-		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.commentId),
+		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.commentId, files),
 		'',
 		'Read it carefully: it may add or change the instructions for this task. Then review the rest of the thread (see Recent Comments below, and `list_comments` for the full history) before you act.',
 		'',
@@ -5073,7 +5104,12 @@ function renderCommentWakeHandoff(
 	];
 }
 
-function renderMentionHandoff(task: TaskInfo, ctx: MentionContext, budget: PromptBudget): string[] {
+function renderMentionHandoff(
+	task: TaskInfo,
+	ctx: MentionContext,
+	budget: PromptBudget,
+	files: HandoffFiles,
+): string[] {
 	const ticketList =
 		ctx.openTickets.length === 0
 			? 'none'
@@ -5084,7 +5120,7 @@ function renderMentionHandoff(task: TaskInfo, ctx: MentionContext, budget: Promp
 		'## Mention Handoff',
 		`You were mentioned by ${ctx.authorName} in ${task.identifier} — what they wrote:`,
 		'',
-		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.triggeringCommentId),
+		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.triggeringCommentId, files),
 		'',
 		'### Your open tasks',
 		ticketList,
@@ -5178,7 +5214,12 @@ export async function loadReplyContext(
 	};
 }
 
-function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext, budget: PromptBudget): string[] {
+function renderReplyHandoff(
+	task: TaskInfo,
+	ctx: ReplyContext,
+	budget: PromptBudget,
+	files: HandoffFiles,
+): string[] {
 	const referenced =
 		ctx.referencedTasks.length === 0
 			? 'none'
@@ -5195,12 +5236,14 @@ function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext, budget: PromptBud
 		'wakingComment',
 		ctx.replyExcerpt,
 		ctx.replyCommentId,
+		files,
 	);
 	const originalLines = quoteCommentForHandoff(
 		budget,
 		'replyOriginal',
 		ctx.originalExcerpt,
 		ctx.originalCommentId,
+		files,
 	);
 	return [
 		'## Reply Received',

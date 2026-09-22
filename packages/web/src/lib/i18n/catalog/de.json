@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Dateien zum Anhängen hierher ziehen",
 	"attachments.maxSize": "Max. {size} pro Datei",
 	"attachments.supportedTypes": "Unterstützte Dateitypen",
+	"attachments.tooMany": "Ein Kommentar kann höchstens {max} Dateien enthalten",
 	"budget.agentRunTime": "Diesen Monat {duration} gelaufen",
 	"budget.hours.allowance.remaining": "Noch {hours} h. Zurückgesetzt am {date}.",
 	"budget.hours.allowance.title": "In diesem Zeitraum genutzt",

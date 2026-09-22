@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Glissez-déposez des fichiers pour les joindre",
 	"attachments.maxSize": "Max. {size} par fichier",
 	"attachments.supportedTypes": "Types de fichiers pris en charge",
+	"attachments.tooMany": "Un commentaire peut contenir au maximum {max} fichiers",
 	"budget.agentRunTime": "A tourné {duration} ce mois-ci",
 	"budget.hours.allowance.remaining": "{hours} h restantes. Remise à zéro le {date}.",
 	"budget.hours.allowance.title": "Utilisé sur cette période",

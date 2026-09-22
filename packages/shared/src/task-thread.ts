@@ -331,3 +331,10 @@ export const COMMENT_TEXT_MAX_CHARS = 16_000;
 export function commentTextFits(text: string): boolean {
 	return text.length <= COMMENT_TEXT_MAX_CHARS;
 }
+
+/**
+ * The most files one comment may carry. Every agent run that reads the comment
+ * lists each attachment in its prompt with a signed download link, so the list
+ * is bounded like any other prompt section.
+ */
+export const COMMENT_ATTACHMENTS_MAX = 10;

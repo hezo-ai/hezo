@@ -7135,8 +7135,16 @@ project/team; § 10). It also exposes `POST /mcp/assets` (multipart) for binary 
 since JSON-RPC can't carry a file — with optional `project`, `path` (the full destination
 path, folders + basename, up to 2 levels, preserved verbatim — also honoured from the file
 part's `filename=`), `overwrite` (`true` replaces an existing asset at the path in place,
-like `write_project_asset`), and the legacy `folder` field (placing the basename in a
-library folder; ignored when `path` is given). **API keys authenticate the MCP surface only**; REST is
+like `write_project_asset`), `task` (files the upload under `uploads/<task-identifier>/`, the
+folder a person's comment upload uses, unless `path` is given; a task outside the scope project is
+a `404`), and the legacy `folder` field (placing the basename in a library folder; ignored when
+`path` is given). A successful upload from an agent run marks that run `produced_output`. Agents
+reach it from inside the container through `HEZO_API_URL` with their own `HEZO_AGENT_TOKEN`, and
+hand the result to a teammate by passing its id in `create_comment`'s `attachment_ids`, the same
+field the REST comment route takes. Both check the ids through one ownership check (UUIDs, live
+assets in the task's project, deduplicated, at most `COMMENT_ATTACHMENTS_MAX`), which the chat
+routes share. The run prompt lists the files attached to each comment a handoff quotes, since the
+thread block only back-references a quoted comment. **API keys authenticate the MCP surface only**; REST is
 the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full

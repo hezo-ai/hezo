@@ -20,6 +20,7 @@ import { buildCursorPage, decodeCursor, encodeCursor } from '../lib/pagination';
 import { isUuid } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { checkProjectAssetIds } from '../services/asset-ownership';
 import { postChatSystemMessage } from '../services/chat-breadcrumbs';
 import { prewarmChatContainer } from '../services/containers';
 import { hoursQuotaExhausted } from '../services/run-concurrency';
@@ -278,13 +279,12 @@ async function validateChatAttachments(
 ): Promise<boolean> {
 	const allAttachmentIds = batch.flatMap((m) => m.attachmentIds);
 	if (allAttachmentIds.length === 0) return true;
-	const matched = await c
-		.get('db')
-		.query<{ id: string }>(
-			`SELECT DISTINCT id FROM assets WHERE id = ANY($1::uuid[]) AND project_id = $2`,
-			[allAttachmentIds, c.get('projectId') as string],
-		);
-	return matched.rows.length === new Set(allAttachmentIds).size;
+	const check = await checkProjectAssetIds(
+		c.get('db'),
+		c.get('projectId') as string,
+		allAttachmentIds,
+	);
+	return check.ok;
 }
 
 // Send a turn to an agent's DM. Same batch shape as the CEO send; the reply

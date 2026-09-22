@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Dra och släpp filer för att bifoga dem",
 	"attachments.maxSize": "Max {size} per fil",
 	"attachments.supportedTypes": "Filtyper som stöds",
+	"attachments.tooMany": "En kommentar kan ha högst {max} filer",
 	"budget.agentRunTime": "Körde {duration} den här månaden",
 	"budget.hours.allowance.remaining": "{hours} h kvar. Nollställs {date}.",
 	"budget.hours.allowance.title": "Använt den här perioden",

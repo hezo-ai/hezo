@@ -175,6 +175,7 @@
 	"attachments.dragHint": "파일을 끌어다 놓아 첨부하세요",
 	"attachments.maxSize": "파일당 최대 {size}",
 	"attachments.supportedTypes": "지원되는 첨부 파일 형식",
+	"attachments.tooMany": "댓글 하나에 최대 {max}개 파일까지 첨부할 수 있어요",
 	"budget.agentRunTime": "이번 달 {duration} 실행",
 	"budget.hours.allowance.remaining": "{hours}시간 남음. {date}에 초기화됩니다.",
 	"budget.hours.allowance.title": "이번 기간 사용량",

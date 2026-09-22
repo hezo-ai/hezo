@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Sleep bestanden hierheen om ze toe te voegen",
 	"attachments.maxSize": "Max. {size} per bestand",
 	"attachments.supportedTypes": "Ondersteunde bestandstypen",
+	"attachments.tooMany": "Een reactie kan maximaal {max} bestanden bevatten",
 	"budget.agentRunTime": "Deze maand {duration} gedraaid",
 	"budget.hours.allowance.remaining": "Nog {hours} u. Wordt op {date} hersteld.",
 	"budget.hours.allowance.title": "Deze periode gebruikt",

@@ -14,7 +14,9 @@ import {
 	extractMentionSlugs,
 	extractPassiveMentionSlugs,
 } from '../lib/mentions';
+import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
+import { insertCommentAttachments } from './asset-ownership';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -463,7 +465,7 @@ export const TASK_COMMENT_ROW_COLUMNS = `id, task_id, author_member_id, author_a
 export function commentTooLongError(length: number): string {
 	return (
 		`Comment text is ${length} characters; the limit is ${COMMENT_TEXT_MAX_CHARS}. ` +
-		'Nothing was posted. Save long content as a file and reference it instead of pasting it into the comment.'
+		'Nothing was posted. Upload long content as a file and attach it with attachment_ids instead of pasting it into the comment.'
 	);
 }
 
@@ -514,6 +516,8 @@ export interface PostAgentCommentParams {
 	parentCommentId?: string | null;
 	text: string;
 	effort?: string | null;
+	/** Asset ids already checked with `checkProjectAssetIds`, linked in the comment's transaction. */
+	attachmentIds?: readonly string[];
 }
 
 /**
@@ -544,27 +548,39 @@ export async function postAgentComment(params: PostAgentCommentParams): Promise<
 		parentCommentId = null,
 		text,
 		effort,
+		attachmentIds = [],
 	} = params;
 
 	const content = { text };
-	const r = await db.query<{ id: string; public_id: string } & Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id)
-		 VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7)
-		 RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
-		[
-			taskId,
-			authorMemberId,
-			authorApiKeyId,
-			parentCommentId,
-			CommentContentType.Text,
-			JSON.stringify(content),
-			createdByRunId,
-		],
-	);
-	const row = r.rows[0];
+	// The comment and its files land together, before anyone is woken, so a
+	// teammate woken by this comment always finds its attachments.
+	const row = await withTransaction(db, async () => {
+		const r = await db.query<{ id: string; public_id: string } & Record<string, unknown>>(
+			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id)
+			 VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7)
+			 RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
+			[
+				taskId,
+				authorMemberId,
+				authorApiKeyId,
+				parentCommentId,
+				CommentContentType.Text,
+				JSON.stringify(content),
+				createdByRunId,
+			],
+		);
+		await insertCommentAttachments(db, r.rows[0].id, attachmentIds);
+		return r.rows[0];
+	});
 	// Realtime: notify open task pages. task_comments has no project_id column, so
 	// the helper injects it for the web client's slug resolution.
 	broadcastCommentFamilyChange(wsManager, teamId, projectId, 'task_comments', 'INSERT', row);
+	if (attachmentIds.length > 0) {
+		broadcastCommentFamilyChange(wsManager, teamId, projectId, 'comment_attachments', 'INSERT', {
+			comment_id: row.id,
+			asset_ids: attachmentIds,
+		});
+	}
 	const woke = await fireCommentWakeups({
 		db,
 		taskId,

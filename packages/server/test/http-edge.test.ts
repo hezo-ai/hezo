@@ -1,4 +1,8 @@
-import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import {
+	API_BODY_MAX_BYTES,
+	ATTACHMENT_MAX_BYTES,
+	ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -50,7 +54,8 @@ describe('global /api body limit', () => {
 		// error rather than an opaque 413. This is the regression that setting the
 		// ceiling to ATTACHMENT_MAX_BYTES introduced: it also meant a *valid*
 		// maximum-size attachment was rejected for its multipart envelope.
-		expect(API_BODY_MAX_BYTES).toBeGreaterThan(ATTACHMENT_MAX_BYTES);
+		expect(API_BODY_MAX_BYTES).toBeGreaterThan(ATTACHMENT_UPLOAD_BODY_MAX_BYTES);
+		expect(ATTACHMENT_UPLOAD_BODY_MAX_BYTES).toBeGreaterThan(ATTACHMENT_MAX_BYTES);
 		const res = await app.request('/api/projects', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

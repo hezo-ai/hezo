@@ -3,6 +3,7 @@ import {
 	AssetSortOrder,
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
+	ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 	AuthType,
 	assetBasename,
 	assetContentDisposition,
@@ -274,7 +275,7 @@ export async function readUploadForm(
 assetsRoutes.post(
 	'/projects/:projectId/tasks/:taskId/assets',
 	bodyLimit({
-		maxSize: ATTACHMENT_MAX_BYTES,
+		maxSize: ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
 	}),
 	async (c) => {
@@ -321,7 +322,7 @@ assetsRoutes.post(
 assetsRoutes.post(
 	'/projects/:projectId/assets',
 	bodyLimit({
-		maxSize: ATTACHMENT_MAX_BYTES,
+		maxSize: ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
 	}),
 	async (c) => {

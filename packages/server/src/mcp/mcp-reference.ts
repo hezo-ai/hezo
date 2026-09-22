@@ -214,12 +214,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_comment: {
 		category: 'Comments & reactions',
 		returns:
-			"An acknowledgement of the created comment (`id`, `public_id`, `task_id`, `parent_comment_id`, `author_member_id`, `created_at`, `content_length`) - never the text you sent - always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }`, with nothing posted, if `parent_comment_id` does not belong to the task or the text is over 16,000 characters. Setting `parent_comment_id` wakes the parent comment's author.",
+			"An acknowledgement of the created comment (`id`, `public_id`, `task_id`, `parent_comment_id`, `author_member_id`, `created_at`, `content_length`, and the `attachment_ids` it carries) - never the text you sent - always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }`, with nothing posted, if `parent_comment_id` does not belong to the task, the text is over the length cap in the tool description, there are more attachment ids than the cap there allows, or an attachment id is malformed, archived or from another project. Setting `parent_comment_id` wakes the parent comment's author.",
 	},
 	update_comment: {
 		category: 'Comments & reactions',
 		returns:
-			'An acknowledgement of the updated comment (same shape as `create_comment`), always with a `wake` receipt and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run, or the new text is over 16,000 characters. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
+			'An acknowledgement of the updated comment (same shape as `create_comment`), always with a `wake` receipt and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run, or the new text is over the `create_comment` length cap. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
 		auth: 'An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.',
 	},
 	add_reaction: {
@@ -716,8 +716,9 @@ export function generateMcpReference(
 		'- **Discovery:** call `tools/list` for the live machine-readable schemas, then invoke a',
 		'  tool with `tools/call`.',
 		'- **File uploads:** binary files cannot ride a JSON-RPC call - `POST` them to',
-		'  `/mcp/assets` as `multipart/form-data` (a `file` field, plus an optional `project`',
-		'  field). They then appear in `list_project_assets` / `read_project_asset`.',
+		'  `/mcp/assets` as `multipart/form-data` (a `file` field, plus optional `project` and',
+		'  `task` fields). They then appear in `list_project_assets` / `read_project_asset`, and',
+		'  the returned `id` can be attached to a comment with `create_comment` `attachment_ids`.',
 		'',
 		'## Conventions',
 		'',

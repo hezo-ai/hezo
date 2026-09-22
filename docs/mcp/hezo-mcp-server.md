@@ -118,6 +118,8 @@ header and a `file` field. Optional fields:
   reference stable (the same behaviour as re-saving through `write_project_asset`);
   otherwise a colliding name is auto-suffixed.
 - `project` - name the project when you're acting across projects.
+- `task` - a task identifier (or id). The upload is filed with that task's attachments,
+  under `uploads/<task-identifier>/`, ready to attach to a comment on it.
 - `folder` - legacy: place the basename inside a library folder (up to two levels).
   Ignored when `path` is given.
 
@@ -129,10 +131,14 @@ curl -X POST http://localhost:3100/mcp/assets \
   -F overwrite=true
 ```
 
-The response returns the stored asset (including its `byte_size`, so you can confirm the
-full file landed) and a signed read URL, and the file then shows up in the
+The response returns the stored asset (including its `id`, and its `byte_size` so you can
+confirm the full file landed) and a signed read URL, and the file then shows up in the
 `list_project_assets` and `read_project_asset` tools under its full path
 (`launch/images/diagram.png`).
+
+To hand the file to someone on a task, pass its `id` in `attachment_ids` when you call
+`create_comment`. Anyone reading the comment gets the file as a download link. Don't paste a
+file's contents into comment text instead: comments are limited to 16,000 characters.
 
 Prefer this streaming endpoint for any large binary: base64 in a `write_project_asset`
 call can be silently cut short by a runtime's tool-call argument-size cap. If you do write

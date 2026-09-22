@@ -1,5 +1,6 @@
 import {
 	AuthType,
+	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
 	commentTextFits,
 	parseThreadRowCategories,
@@ -32,6 +33,7 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { checkProjectAssetIds, insertCommentAttachments } from '../services/asset-ownership';
 import {
 	commentTooLongError,
 	fireCommentWakeups,
@@ -415,8 +417,8 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const auth = c.get('auth');
 
-	const taskCheck = await db.query<{ id: string; assignee_id: string | null }>(
-		'SELECT id, assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
+	const taskCheck = await db.query<{ id: string; assignee_id: string | null; project_id: string }>(
+		'SELECT id, assignee_id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
 	);
 	if (taskCheck.rows.length === 0) {
@@ -431,7 +433,14 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		attachment_ids?: string[];
 	}>();
 
-	const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
+	const attachmentCheck = await checkProjectAssetIds(
+		db,
+		taskCheck.rows[0].project_id,
+		body.attachment_ids,
+		COMMENT_ATTACHMENTS_MAX,
+	);
+	if (!attachmentCheck.ok) return err(c, 'INVALID_REQUEST', attachmentCheck.message, 400);
+	const attachmentIds = attachmentCheck.ids;
 	const contentType = body.content_type ?? CommentContentType.Text;
 	const isText = contentType === CommentContentType.Text;
 	if (isText) {
@@ -449,22 +458,6 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		}
 	} else if (!body.content) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
-	}
-	if (attachmentIds.length > 0) {
-		const matched = await db.query<{ id: string }>(
-			`SELECT id FROM assets
-			 WHERE id = ANY($1::uuid[])
-			   AND project_id = (SELECT project_id FROM tasks WHERE id = $2)`,
-			[attachmentIds, taskId],
-		);
-		if (matched.rows.length !== attachmentIds.length) {
-			return err(
-				c,
-				'INVALID_REQUEST',
-				'One or more attachments do not belong to this project',
-				400,
-			);
-		}
 	}
 
 	// Optional per-comment effort override. Admin users set this to dial up/down
@@ -511,14 +504,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 			],
 		);
 
-		if (attachmentIds.length > 0) {
-			const newCommentId = inserted.rows[0].id;
-			await db.query(
-				`INSERT INTO comment_attachments (comment_id, asset_id)
-				 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
-				[newCommentId, attachmentIds],
-			);
-		}
+		await insertCommentAttachments(db, inserted.rows[0].id, attachmentIds);
 		return inserted;
 	});
 

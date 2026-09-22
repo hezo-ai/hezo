@@ -175,6 +175,7 @@
 	"attachments.dragHint": "Trascina qui i file da allegare",
 	"attachments.maxSize": "Massimo {size} per file",
 	"attachments.supportedTypes": "Tipi di file supportati",
+	"attachments.tooMany": "Un commento può avere al massimo {max} file",
 	"budget.agentRunTime": "Ha lavorato {duration} questo mese",
 	"budget.hours.allowance.remaining": "Restano {hours} h. Si azzera il {date}.",
 	"budget.hours.allowance.title": "Usato in questo periodo",

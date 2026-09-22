@@ -17,6 +17,7 @@ import { isUuid, resolveProject } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireTeamAccessForResource } from '../middleware/auth';
+import { checkProjectAssetIds } from '../services/asset-ownership';
 import { postChatSystemMessage } from '../services/chat-breadcrumbs';
 import { hoursQuotaExhausted } from '../services/run-concurrency';
 import { CreateTaskError, createTask } from '../services/tasks';
@@ -197,11 +198,8 @@ chatRoutes.post('/chat/messages', async (c) => {
 		const db = c.get('db');
 		const hqProjectId = await resolveHqProjectId(db);
 		if (!hqProjectId) return err(c, 'UNAVAILABLE', 'HQ project not found', 503);
-		const matched = await db.query<{ id: string }>(
-			`SELECT DISTINCT id FROM assets WHERE id = ANY($1::uuid[]) AND project_id = $2`,
-			[allAttachmentIds, hqProjectId],
-		);
-		if (matched.rows.length !== new Set(allAttachmentIds).size) {
+		const attachments = await checkProjectAssetIds(db, hqProjectId, allAttachmentIds);
+		if (!attachments.ok) {
 			return err(c, 'BAD_REQUEST', 'One or more attachments are invalid', 400);
 		}
 	}
