@@ -60,6 +60,15 @@ notice in your inbox. The notice names the agents, the number of rounds and the 
 used. Reply on the task to let the agents continue, or use **Run now** to start one agent
 yourself.
 
+Each run shows the agent how many runs, tokens and handoff rounds the task has used so far.
+When that grows past what the task is worth, the agent stops and asks you in a comment
+rather than starting another round.
+
+Reviews are bounded the same way. A reviewer checks the work against a list of acceptance
+items fixed at the start, and never adds items partway through. After two failed rounds it
+asks you what to do, instead of asking for a third. Later rounds re-check only what changed
+since the last passing review.
+
 ## Reading a busy thread
 
 A long-running task accumulates far more machinery than conversation - every run, status

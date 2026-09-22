@@ -80,6 +80,7 @@ import {
 	wakeAgentsWithPendingWork,
 	withContainerLifecycleLock,
 } from './containers';
+import { COHERENCE_LABEL_JSON } from './description-tasks';
 import type { ContainerEngine, ContainerProcessInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
@@ -3147,9 +3148,11 @@ export class JobManager {
 			      SELECT 1 FROM heartbeat_runs hr
 			       WHERE hr.task_id = i.id AND hr.member_id = $3
 			    )
+			    -- Never woken for a coherence review, so never recovered for one either.
+			    AND NOT i.labels @> $4::jsonb
 			  ORDER BY i.updated_at ASC
 			  LIMIT 1`,
-			[TaskStatus.Done, String(COACH_SWEEP_WINDOW_HOURS), memberId],
+			[TaskStatus.Done, String(COACH_SWEEP_WINDOW_HOURS), memberId, COHERENCE_LABEL_JSON],
 		);
 		return r.rows[0];
 	}

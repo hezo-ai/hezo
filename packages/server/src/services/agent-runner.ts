@@ -13,6 +13,7 @@ import {
 	credentialSerializesRuns,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
+	formatCompactNumber,
 	formatContainerMetaLogLine,
 	formatRunLink,
 	HeartbeatRunKind,
@@ -148,7 +149,11 @@ import {
 	MCP_CLI_WRAPPER_SOURCE,
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
-import { PROVIDER_CAPACITY_COOLDOWN_MIN } from './no-work-backoff';
+import {
+	loadTaskUsageSoFar,
+	PROVIDER_CAPACITY_COOLDOWN_MIN,
+	type TaskUsageSoFar,
+} from './no-work-backoff';
 import {
 	clearAgentErrorApprovalsOnRecovery,
 	fileProviderCredentialRejectedApproval,
@@ -1136,7 +1141,7 @@ async function buildRunContext(
 		project.id,
 		project.is_internal,
 	);
-	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
+	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
 	const isCoachReview = wakeupPayload?.trigger === COACH_REVIEW_TRIGGER;
@@ -1187,12 +1192,10 @@ async function buildRunContext(
 			endpoints.hezoBaseUrl,
 			{ limit: RECENT_COMMENTS_LIMIT, categories: DEFAULT_THREAD_ROW_CATEGORIES },
 		);
-		const catchUp = await loadCatchUpSinceLastRun(
-			deps.db,
-			agent.id,
-			(task as TaskInfo).id,
-			heartbeatRunId,
-		);
+		const [catchUp, usageSoFar] = await Promise.all([
+			loadCatchUpSinceLastRun(deps.db, agent.id, (task as TaskInfo).id, heartbeatRunId),
+			loadTaskUsageSoFar(deps.db, (task as TaskInfo).id),
+		]);
 		const quotedCommentIds = [
 			mentionContext?.triggeringCommentId,
 			replyContext?.replyCommentId,
@@ -1218,6 +1221,7 @@ async function buildRunContext(
 			wakingCommentId,
 			catchUp,
 			handoffAttachments,
+			usageSoFar,
 		});
 	}
 	// Appended the same way as the effort directive: a runtime note is guidance the
@@ -4542,6 +4546,8 @@ export interface BuildTaskPromptContext {
 	catchUp?: CatchUpContext | null;
 	/** Attachments on the comments a handoff section quotes, keyed by comment id. */
 	handoffAttachments?: HandoffFiles;
+	/** What the task has used so far, stated under its status. */
+	usageSoFar?: TaskUsageSoFar;
 }
 
 /** Attachments on the comments a handoff quotes, keyed by comment id. */
@@ -4929,6 +4935,17 @@ export function buildProgressUpdatePrompt(
 	return parts.join('\n');
 }
 
+/**
+ * The Current Task line stating what the task has used so far, so an agent can
+ * weigh further rounds against what the deliverable is worth.
+ */
+export function taskUsageLine(u: TaskUsageSoFar): string {
+	const runs = `${u.runs} ${u.runs === 1 ? 'run' : 'runs'}`;
+	const tokens = `${formatCompactNumber(u.tokens, 'en')} tokens`;
+	const rounds = `${u.handoffRounds} consecutive agent-to-agent ${u.handoffRounds === 1 ? 'handoff' : 'handoffs'}`;
+	return `**This task so far:** ${runs}, ${tokens}, ${rounds}.`;
+}
+
 export function buildTaskPrompt(
 	systemPrompt: string,
 	task: TaskInfo,
@@ -4965,6 +4982,7 @@ export function buildTaskPrompt(
 	parts.push(`## Current Task: ${task.identifier} — ${budget.take('taskTitle', task.title).text}`);
 	parts.push(`**Priority:** ${task.priority}`);
 	parts.push(`**Status:** ${task.status}`);
+	if (ctx.usageSoFar) parts.push(taskUsageLine(ctx.usageSoFar));
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
 	if (openSubTasks.length > 0) {

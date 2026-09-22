@@ -35,6 +35,12 @@ Skipping any step is asserting, not verifying.
 
 The same rule applies outside code: a research report is verified by re-checking its claims against sources; a marketing asset by viewing it at final size; a plan by walking each requirement of the brief.
 
+## Checking someone else's verification
+
+- **Verify the claim, not the whole piece of work again.** Inspect the evidence the author gives: the output, the diff, the rendered result.
+- **Re-run a check only for work that changed since it last passed.** A check that passed stays passed until the work under it changes.
+- **Name the check you re-ran and why.** "Re-ran the totals because section 3 changed" tells the next reviewer what is already settled.
+
 ## Red flags — stop and verify
 
 - Using "should", "probably", "seems to"
@@ -52,7 +58,7 @@ The same rule applies outside code: a research report is verified by re-checking
 | "I'm confident" | Confidence is not evidence. |
 | "Just this once" | No exceptions. |
 | "A partial check is enough" | Partial proves nothing about the rest. |
-| "They said it succeeded" | Verify independently. |
+| "They said it succeeded" | Inspect their evidence. Re-run only what changed. |
 
 ## When to apply
 

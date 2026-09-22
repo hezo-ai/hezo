@@ -164,7 +164,10 @@ import {
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { writeCustomPrompt } from '../services/custom-prompt';
-import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
+import {
+	COHERENCE_LABEL_JSON,
+	enqueueTeamCoherenceReviewTask,
+} from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
@@ -2876,10 +2879,10 @@ export function registerTools(
 			}>(
 				`SELECT id, identifier, assignee_id FROM tasks
 				 WHERE team_id = $1
-				   AND labels @> '["team-coherence-review"]'::jsonb
+				   AND labels @> $${TERMINAL_TASK_STATUSES.length + 2}::jsonb
 				   AND status NOT IN (${placeholders})
 				 LIMIT 1`,
-				[scope.teamId, ...TERMINAL_TASK_STATUSES],
+				[scope.teamId, ...TERMINAL_TASK_STATUSES, COHERENCE_LABEL_JSON],
 			);
 			const row = ticket.rows[0];
 			if (!row) return { error: 'No open team-setup task for this project' };
@@ -4961,6 +4964,7 @@ export function registerTools(
 			trackBackground(
 				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
 					changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
+					byRunId: auth.type === AuthType.Agent ? auth.runId : null,
 				}).catch((e) =>
 					log.error('Failed to enqueue team coherence review after prompt update:', e),
 				),
@@ -5078,6 +5082,7 @@ export function registerTools(
 				trackBackground(
 					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
 						changeSummary: summary,
+						byRunId: auth.type === AuthType.Agent ? auth.runId : null,
 					}).catch((e) =>
 						log.error('Failed to enqueue team coherence review after batch prompt update:', e),
 					),

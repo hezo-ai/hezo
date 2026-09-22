@@ -14,6 +14,7 @@ import {
 	dispatchSuppressionExempt,
 	HANDOFF_ROUND_LIMIT,
 	handoffRoundsExhausted,
+	loadTaskUsageSoFar,
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
@@ -870,6 +871,25 @@ describe('handoffRoundsExhausted', () => {
 		await alternate(HANDOFF_ROUND_LIMIT);
 		expect(await handoffRoundsExhausted(db, taskId, true)).toBeNull();
 		expect(await handoffRoundsExhausted(db, null, false)).toBeNull();
+	});
+
+	it('reports the task usage an agent sees, with the handoff count the limit reads', async () => {
+		await clearRuns();
+		await insertRound({
+			memberId: agentId,
+			minutesAgo: 60,
+			source: WakeupSource.Heartbeat,
+			byRun: false,
+		});
+		await alternate(3, 30);
+
+		// Every started run and its tokens count; only the chain since the heartbeat
+		// run counts as handoffs.
+		expect(await loadTaskUsageSoFar(db, taskId)).toEqual({
+			runs: 4,
+			tokens: 4 * 1_001_000,
+			handoffRounds: 3,
+		});
 	});
 });
 

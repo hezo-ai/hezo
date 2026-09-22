@@ -302,6 +302,70 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		);
 		expect(wakeups.rows[0].n).toBeGreaterThanOrEqual(1);
 	});
+
+	it('does not re-file or re-wake the review when the run working it makes the change', async () => {
+		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Updated the engineer prompt',
+		})) as string;
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now()) RETURNING id`,
+			[teamId, captainMemberId, review],
+		);
+		const wakeupsBefore = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
+			[review],
+		);
+
+		// The Captain's review run rewrites a prompt as step 4 tells it to.
+		const result = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Rewrote the designer prompt during the review',
+			byRunId: run.rows[0].id,
+		});
+
+		expect(result).toBeNull();
+		const task = await db.query<{ description: string }>(
+			'SELECT description FROM tasks WHERE id = $1',
+			[review],
+		);
+		expect(task.rows[0].description).not.toContain('Rewrote the designer prompt');
+		const wakeupsAfter = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
+			[review],
+		);
+		expect(wakeupsAfter.rows[0].n).toBe(wakeupsBefore.rows[0].n);
+		const reviews = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM tasks
+			 WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb`,
+			[teamId],
+		);
+		expect(reviews.rows[0].n).toBe(1);
+		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
+	});
+
+	it('still files a change made by a run on another task', async () => {
+		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Updated the engineer prompt',
+		})) as string;
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status, now()) RETURNING id`,
+			[teamId, captainMemberId],
+		);
+
+		const result = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Coach added a learned rule',
+			byRunId: run.rows[0].id,
+		});
+
+		expect(result).toBe(review);
+		const task = await db.query<{ description: string }>(
+			'SELECT description FROM tasks WHERE id = $1',
+			[review],
+		);
+		expect(task.rows[0].description).toContain('Coach added a learned rule');
+		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
+	});
 });
 
 describe('project creation', () => {

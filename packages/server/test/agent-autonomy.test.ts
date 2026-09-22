@@ -394,6 +394,35 @@ describe('agent-runner: retry context in task prompt', () => {
 		expect(prompt).not.toContain('### Progress Summary');
 	});
 
+	it('buildTaskPrompt states what the task has used so far under its status', async () => {
+		const { buildTaskPrompt, taskUsageLine } = await import('../src/services/agent-runner');
+		const task = {
+			id: 'test-id',
+			identifier: 'AUT-9',
+			title: 'Long-running review',
+			description: '',
+			status: 'in_progress',
+			priority: 'medium',
+			project_id: 'test-project',
+			rules: null,
+			progress_summary: null,
+		};
+
+		const prompt = buildTaskPrompt('System prompt', task, undefined, {
+			usageSoFar: { runs: 12, tokens: 48_230_000, handoffRounds: 3 },
+		});
+
+		const line =
+			'**This task so far:** 12 runs, 48.2M tokens, 3 consecutive agent-to-agent handoffs.';
+		expect(prompt).toContain(line);
+		expect(prompt.indexOf(line)).toBeGreaterThan(prompt.indexOf('**Status:** in_progress'));
+		expect(taskUsageLine({ runs: 1, tokens: 900, handoffRounds: 1 })).toBe(
+			'**This task so far:** 1 run, 900 tokens, 1 consecutive agent-to-agent handoff.',
+		);
+		// No usage passed, no line: the section is not invented.
+		expect(buildTaskPrompt('System prompt', task)).not.toContain('This task so far');
+	});
+
 	it('buildTaskPrompt includes rules when present', async () => {
 		const { buildTaskPrompt } = await import('../src/services/agent-runner');
 

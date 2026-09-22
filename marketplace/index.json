@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 34,
+			"version": 35,
 			"roster_count": 10,
-			"latest_notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
+			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-reviews the items that failed rather than the whole task again."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 25,
+			"version": 26,
 			"roster_count": 7,
-			"latest_notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
+			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 26,
+			"version": 27,
 			"roster_count": 6,
-			"latest_notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
+			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max."
 		}
 	]
 }

@@ -1663,16 +1663,12 @@ export class ChatSessionManager {
 			selection.requiredRuntime,
 		);
 		if (!credential) throw new Error(`No ${selection.provider} credential configured`);
-		const agent = await db.query<{ slug: string; default_effort: string | null }>(
-			`SELECT slug, default_effort FROM member_agents WHERE id = $1`,
+		const agent = await db.query<{ default_effort: string | null }>(
+			`SELECT default_effort FROM member_agents WHERE id = $1`,
 			[args.memberId],
 		);
-		// Max thinking for the CEO - its chat runs at the highest reasoning
-		// effort; a worker gets its own configured default.
-		const effort =
-			args.kind === 'ceo'
-				? AgentEffort.Max
-				: resolveEffort(null, agent.rows[0]?.default_effort ?? null, agent.rows[0]?.slug ?? null);
+		// Every chat turn runs at the agent's configured effort; the CEO is seeded at max.
+		const effort = resolveEffort(null, agent.rows[0]?.default_effort ?? null);
 		const sessionId = await this.ensureTurnSessionRow(args, selection.runtimeType, containerId);
 		// The turn's own allocation key - see allocateHostSide for why the shared
 		// session id cannot key host-side resources.

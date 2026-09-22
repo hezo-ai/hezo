@@ -8,7 +8,11 @@ import { createWakeup } from './wakeup';
 
 const log = logger.child('description-tasks');
 
-const COHERENCE_LABEL = 'team-coherence-review';
+/** The label every team coherence review task carries. */
+export const COHERENCE_LABEL = 'team-coherence-review';
+
+/** {@link COHERENCE_LABEL} as the JSONB array a `labels @>` test binds. */
+export const COHERENCE_LABEL_JSON = JSON.stringify([COHERENCE_LABEL]);
 
 /** Heading under which each triggering change is recorded on the coherence ticket. */
 const COHERENCE_CHANGES_HEADER = '## Changes that triggered this review';
@@ -301,13 +305,40 @@ export async function pendingSetupReviewBlockerId(
 	return r.rows[0]?.id ?? null;
 }
 
+/** Whether `runId` is a run on one of `teamId`'s coherence review tasks. */
+async function runIsWorkingCoherenceReview(
+	db: Db,
+	runId: string,
+	teamId: string,
+): Promise<boolean> {
+	const r = await db.query(
+		`SELECT 1 FROM heartbeat_runs r
+		   JOIN tasks t ON t.id = r.task_id
+		  WHERE r.id = $1 AND t.team_id = $2 AND t.labels @> $3::jsonb`,
+		[runId, teamId, COHERENCE_LABEL_JSON],
+	);
+	return r.rows.length > 0;
+}
+
 export async function enqueueTeamCoherenceReviewTask(
 	db: Db,
 	teamId: string,
 	reason: TeamCoherenceReviewReason,
-	opts: { autoStart?: boolean; changeSummary?: string } = {},
+	opts: {
+		autoStart?: boolean;
+		changeSummary?: string;
+		/** The agent run that made the change, when an agent made it. */
+		byRunId?: string | null;
+	} = {},
 ): Promise<string | null> {
 	if (process.env.HEZO_E2E_SKIP_COHERENCE_REVIEW) return null;
+	// A change made while working this team's coherence review is part of that
+	// review. Filing it back onto the review would wake the same assignee to review
+	// its own edits, and every such run makes more of them.
+	if (opts.byRunId && (await runIsWorkingCoherenceReview(db, opts.byRunId, teamId))) {
+		log.debug(`Change by run ${opts.byRunId} is part of the coherence review it is working`);
+		return null;
+	}
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 

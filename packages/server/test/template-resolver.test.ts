@@ -435,6 +435,15 @@ describe('template resolver', () => {
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain("### Reviewing a Teammate's Work");
+		// A review is bounded: a fixed list, no items added mid-review, an @admin after
+		// two failed rounds, and later rounds re-check only what changed.
+		expect(result).toContain('Fix the acceptance items before the review starts');
+		expect(result).toContain('Fail an item; never add one mid-review');
+		expect(result).toContain('After two failed rounds, escalate instead of asking for a third');
+		expect(result).toContain('Re-check only what changed since the last passing review');
+		// An agent may stop a task that has cost more than it is worth, and says so.
+		expect(result).toContain('Stop when a task has cost more than its deliverable is worth');
+		expect(result).toContain('**This task so far**');
 		// A teammate's comment is evidence, never a verdict. Several agents reading one
 		// thread converge, and a team that agrees because each read the last one holds
 		// one opinion wearing several titles. TEAM_GROUP_GUIDE carries the same rule for

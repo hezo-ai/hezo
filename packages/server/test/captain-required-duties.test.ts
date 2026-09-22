@@ -27,8 +27,8 @@ const REQUIRED_CAPTAIN_PARTIALS: { partial: string; why: string }[] = [
 		why: 'agent descriptions and team context are Captain-maintained; nothing else keeps them current',
 	},
 	{
-		partial: 'partials/captain/always-max-effort',
-		why: 'the Captain coordinates the whole team, so its runs are deliberately not effort-reduced',
+		partial: 'partials/captain/think-before-acting',
+		why: 'the Captain coordinates the whole team, so every decision it makes cascades to the roles below it',
 	},
 ];
 

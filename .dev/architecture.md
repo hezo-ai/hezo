@@ -500,7 +500,7 @@ not the assignee's own ask, `parkedOnAdminAsk` does not park anything for it —
 `retrospectiveHoldActive` suppression below does.
 
 **The Coach's missed-review sweep.** A task closing wakes the Coach with the task named
-(`COACH_REVIEW_TRIGGER`), and that wakeup can be lost. Nothing else picks the task up afterwards:
+(`COACH_REVIEW_TRIGGER`), except a team coherence review, and that wakeup can be lost. Nothing else picks the task up afterwards:
 the Coach is never an assignee, so the assignment-based selection every other agent uses cannot see
 it. On the Coach's heartbeat, `selectMissedReviewTask` finds a recently closed task with no run by
 the Coach against it and synthesizes the same trigger, so the recovered run is the run the lost
@@ -2598,7 +2598,7 @@ resolve on the
 `CHAT_SHARED_INSTRUCTIONS` replaces the ~80 KB task-run block, the run manifest, the
 repository block and the container-environment block are dropped, and Project
 State/Team/Teammates stay; effort is the agent's configured default via `resolveEffort`
-(Captain/CEO stay Max). Boundary events for a project DM fan to `chat:team:<teamUuid>`
+for every agent, the CEO included (seeded at max, like the Captain; no override forces it). Boundary events for a project DM fan to `chat:team:<teamUuid>`
 (gated `canAccessTeam`, resolved through the manager's per-conversation scope map) instead
 of `chat:global`, which stays HQ/CEO-only; deltas stream only on the per-conversation room
 either way. That team copy is list-shaped - `content` sliced to
@@ -3509,7 +3509,10 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 `enqueueTeamCoherenceReviewTask`, passing a `changeSummary` that is recorded on the ticket under a
 "Changes that triggered this review" section (accumulated across coalesced changes), so the reviewer
 knows what changed and why the review was triggered — regardless of who made the change (agent or
-admin).
+admin). The one exception is a change made by a run working that team's coherence review
+(`byRunId` names the calling run): it is part of the review, so it is neither recorded on the
+ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. A finished
+coherence review does not wake the Coach, and the missed-review sweep skips it too.
 
 **Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
 wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
@@ -3520,7 +3523,10 @@ run's log when the comments don't explain a struggle.
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. The block also carries the ticket's **lineage** in both
+`description`, and `progress_summary`. Under the status, `taskUsageLine` states **This task so far**: its started runs, their
+tokens and the current agent-to-agent handoff count (`loadTaskUsageSoFar`, the chain query the
+handoff limit reads), so the `SHARED_INSTRUCTIONS` rule to stop a task that has cost more than it
+is worth has a number to read. The block also carries the ticket's **lineage** in both
 directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
 `**Spawned from:**` provenance line when a run on a different ticket created this one), and
 downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child

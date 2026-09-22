@@ -86,7 +86,7 @@ A project nobody has worked in is skipped entirely, so a quiet project costs not
 
 ## Learned rules
 
-A **learned rule** is a short, specific instruction the Coach appends to an agent's
+A **learned rule** is a short, specific instruction the Coach adds to an agent's
 system prompt - collected together in a dedicated *Learned Rules* section so they're easy
 to find. A rule is a generalisable lesson ("always confirm the target environment before
 running a migration"), never a one-off fix for a single task.
@@ -94,12 +94,15 @@ running a migration"), never a one-off fix for a single task.
 The Coach is deliberately conservative about what it writes:
 
 - **Only durable, generalisable lessons** - patterns, not isolated incidents.
-- **Additive only** - it appends new rules and never rewrites or removes an agent's
-  existing instructions.
+- **Learned Rules only** - it adds, merges and removes rules in that section, and never
+  rewrites or removes the agent's own instructions.
+- **Rules earn their place** - a rule that adds a check says what the check costs, and a
+  rule that added work to a task without catching a problem is removed. An agent carries
+  at most 20 learned rules.
 - **No duplicates** - it reads an agent's current prompt first and skips anything already
   covered.
 - **When in doubt, it skips** - a false lesson is worse than a missed one, and a task
-  that went cleanly gets no changes at all.
+  that went cleanly gets no new rules.
 
 Because learned rules are additions to the system prompt, they behave exactly like the
 prompts you write by hand: they take effect on the agent's next run, and they are visible and

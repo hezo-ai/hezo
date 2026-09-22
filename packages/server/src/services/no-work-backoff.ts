@@ -447,6 +447,74 @@ export interface HandoffRounds {
 }
 
 /**
+ * SQL: CTEs ending in `chain`, the runs of the current agent-to-agent handoff
+ * chain on task `$1`. Binds `$2` the conversational sources, `$3` the handed-back
+ * cancel reason and `$4` the scan limit, in {@link handoffChainParams} order.
+ */
+const HANDOFF_CHAIN_CTES = `person AS (SELECT ${personSpokeAtSql('$1')} AS at),
+		 recent AS (
+		   SELECT r.wakeup_id, r.member_id, r.started_at,
+		          r.input_tokens + r.output_tokens AS tokens,
+		          COALESCE(
+		            w.source::text = ANY($2::text[])
+		            AND w.created_by_run_id IS NOT NULL
+		            AND w.payload->'triggered_by' IS NULL,
+		            false) AS handoff
+		     FROM heartbeat_runs r
+		     CROSS JOIN person p
+		     LEFT JOIN agent_wakeup_requests w ON w.id = r.wakeup_id
+		    WHERE r.task_id = $1
+		      AND r.started_at IS NOT NULL
+		      AND (p.at IS NULL OR r.started_at > p.at)
+		      AND r.cancel_reason IS DISTINCT FROM $3
+		    ORDER BY r.started_at DESC
+		    LIMIT $4
+		 ),
+		 chain AS (
+		   SELECT * FROM recent
+		    WHERE handoff
+		      AND started_at > COALESCE(
+		            (SELECT max(started_at) FROM recent WHERE NOT handoff), '-infinity')
+		 )`;
+
+/** The bind values {@link HANDOFF_CHAIN_CTES} reads, in order. */
+function handoffChainParams(taskId: string): unknown[] {
+	return [taskId, [...CONVERSATIONAL_SOURCES], RunCancelReason.HandedBack, HANDOFF_SCAN_RUNS];
+}
+
+/** What a task has used so far, as the Current Task block states it to the agent. */
+export interface TaskUsageSoFar {
+	/** Runs that started on the task. */
+	runs: number;
+	/** Input (cache included) plus output across those runs. */
+	tokens: number;
+	/** Consecutive agent-to-agent handoff rounds, the count {@link handoffRoundsExhausted} holds at. */
+	handoffRounds: number;
+}
+
+/**
+ * What a task has used so far: its runs, their tokens, and the current handoff
+ * chain. One round trip, reading runs through `idx_runs_task_started`.
+ */
+export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUsageSoFar> {
+	const r = await db.query<{ runs: number; tokens: number; rounds: number }>(
+		`WITH ${HANDOFF_CHAIN_CTES}
+		 SELECT count(*)::int AS runs,
+		        COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
+		        (SELECT count(DISTINCT wakeup_id)::int FROM chain) AS rounds
+		   FROM heartbeat_runs r
+		  WHERE r.task_id = $1 AND r.started_at IS NOT NULL`,
+		handoffChainParams(taskId),
+	);
+	const row = r.rows[0];
+	return {
+		runs: row?.runs ?? 0,
+		tokens: row?.tokens ?? 0,
+		handoffRounds: row?.rounds ?? 0,
+	};
+}
+
+/**
  * Have agents handed this task back and forth too many times without a person?
  *
  * A round is a run whose wakeup an agent's comment, mention or reply raised - a
@@ -479,44 +547,14 @@ export async function handoffRoundsExhausted(
 		agent_slugs: string[] | null;
 		notified: boolean;
 	}>(
-		`WITH person AS (SELECT ${personSpokeAtSql('$1')} AS at),
-		 recent AS (
-		   SELECT r.wakeup_id, r.member_id, r.started_at,
-		          r.input_tokens + r.output_tokens AS tokens,
-		          COALESCE(
-		            w.source::text = ANY($2::text[])
-		            AND w.created_by_run_id IS NOT NULL
-		            AND w.payload->'triggered_by' IS NULL,
-		            false) AS handoff
-		     FROM heartbeat_runs r
-		     CROSS JOIN person p
-		     LEFT JOIN agent_wakeup_requests w ON w.id = r.wakeup_id
-		    WHERE r.task_id = $1
-		      AND r.started_at IS NOT NULL
-		      AND (p.at IS NULL OR r.started_at > p.at)
-		      AND r.cancel_reason IS DISTINCT FROM $3
-		    ORDER BY r.started_at DESC
-		    LIMIT $4
-		 ),
-		 chain AS (
-		   SELECT * FROM recent
-		    WHERE handoff
-		      AND started_at > COALESCE(
-		            (SELECT max(started_at) FROM recent WHERE NOT handoff), '-infinity')
-		 )
+		`WITH ${HANDOFF_CHAIN_CTES}
 		 SELECT count(DISTINCT ch.wakeup_id) AS rounds,
 		        COALESCE(sum(ch.tokens), 0) AS tokens,
 		        array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL) AS agent_slugs,
 		        ${noticePostedSinceSql('$1', '$5', '(SELECT max(started_at) FROM chain)')} AS notified
 		   FROM chain ch
 		   LEFT JOIN member_agents ma ON ma.id = ch.member_id`,
-		[
-			taskId,
-			[...CONVERSATIONAL_SOURCES],
-			RunCancelReason.HandedBack,
-			HANDOFF_SCAN_RUNS,
-			HANDOFF_LIMIT_COMMENT_KIND,
-		],
+		[...handoffChainParams(taskId), HANDOFF_LIMIT_COMMENT_KIND],
 	);
 	const row = r.rows[0];
 	const rounds = Number(row?.rounds ?? 0);
