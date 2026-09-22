@@ -1,6 +1,7 @@
 import {
 	AuthType,
 	CommentContentType,
+	commentTextFits,
 	parseThreadRowCategories,
 	type ThreadRowCategory,
 	WakeupSource,
@@ -31,7 +32,11 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { fireCommentWakeups } from '../services/comment-wakeups';
+import {
+	commentTooLongError,
+	fireCommentWakeups,
+	TASK_COMMENT_ROW_COLUMNS,
+} from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { invalidateSecretsVault } from '../services/egress';
 import {
@@ -439,6 +444,9 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		if ((typeof text !== 'string' || text.length === 0) && attachmentIds.length === 0) {
 			return err(c, 'INVALID_REQUEST', 'content or attachment_ids is required', 400);
 		}
+		if (typeof text === 'string' && !commentTextFits(text)) {
+			return err(c, 'COMMENT_TOO_LONG', commentTooLongError(text.length), 400);
+		}
 	} else if (!body.content) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
@@ -491,7 +499,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		const inserted = await db.query<{ id: string; public_id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, author_user_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4, $5, $6::comment_content_type, $7::jsonb)
-     RETURNING *`,
+     RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
 			[
 				taskId,
 				authorMemberId,

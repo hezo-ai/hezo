@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildThreadItems,
+	COMMENT_TEXT_MAX_CHARS,
+	commentTextFits,
 	contentTypesForCategories,
 	DEFAULT_TASK_VIEW,
 	DEFAULT_THREAD_ROW_CATEGORIES,
@@ -358,5 +360,16 @@ describe('thread row categories', () => {
 		expect(parseThreadRowCategories('')).toBeNull();
 		expect(parseThreadRowCategories([])).toBeNull();
 		expect(parseThreadRowCategories(undefined)).toBeNull();
+	});
+});
+
+describe('commentTextFits', () => {
+	it('admits a comment at the cap and refuses one character past it', () => {
+		expect(commentTextFits('x'.repeat(COMMENT_TEXT_MAX_CHARS))).toBe(true);
+		expect(commentTextFits('x'.repeat(COMMENT_TEXT_MAX_CHARS + 1))).toBe(false);
+	});
+
+	it('keeps the cap above the largest legitimate comment seen in production', () => {
+		expect(COMMENT_TEXT_MAX_CHARS).toBeGreaterThanOrEqual(15_000);
 	});
 });

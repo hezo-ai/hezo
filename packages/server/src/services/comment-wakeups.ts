@@ -1,5 +1,6 @@
 import {
 	ADMIN_MENTION_SLUG,
+	COMMENT_TEXT_MAX_CHARS,
 	CommentContentType,
 	DEFAULT_TEAM_ID,
 	TERMINAL_TASK_STATUSES,
@@ -448,6 +449,58 @@ export function formatNoWakeExitWarning(finding: NoWakeExitFinding, subject: str
 	);
 }
 
+/**
+ * Every `task_comments` column a caller may need back from a write, leaving out
+ * the generated `search_tsv`. That column is the whole comment re-encoded for
+ * search, so returning or broadcasting it roughly doubles the payload and can
+ * push an ordinary write over the tool result cap.
+ */
+export const TASK_COMMENT_ROW_COLUMNS = `id, task_id, author_member_id, author_api_key_id, author_user_id,
+	parent_comment_id, content_type, content, chosen_option, chosen_at, public_id, created_by_run_id,
+	created_at`;
+
+/** The refusal an agent or API caller sees for a comment over the cap. */
+export function commentTooLongError(length: number): string {
+	return (
+		`Comment text is ${length} characters; the limit is ${COMMENT_TEXT_MAX_CHARS}. ` +
+		'Nothing was posted. Save long content as a file and reference it instead of pasting it into the comment.'
+	);
+}
+
+/**
+ * Fit text the system posts on an agent's behalf under the comment cap.
+ *
+ * Only the runner's handoff-delivery path uses this: it delivers a final
+ * message the agent never posted, so refusing it would lose the answer. The
+ * cut keeps the start, says where the rest is, and re-appends any mention the
+ * delivery exists to carry, since a mention past the cut would wake nobody.
+ */
+export function fitCommentForDelivery(text: string, keepMentions: readonly string[] = []): string {
+	if (text.length <= COMMENT_TEXT_MAX_CHARS) return text;
+	const mentions = keepMentions.map((slug) => `@${slug}`).join(' ');
+	const note = `\n\n[Cut to fit the comment limit. The full message is in this run's log.]${mentions ? ` ${mentions}` : ''}`;
+	return text.slice(0, COMMENT_TEXT_MAX_CHARS - note.length) + note;
+}
+
+/**
+ * What a comment write hands back: enough to cite, reply to or edit the comment,
+ * never the text the caller just sent.
+ */
+export function commentWriteAck(row: Record<string, unknown>): Record<string, unknown> {
+	const content = row.content as { text?: unknown } | string | null | undefined;
+	const text =
+		typeof content === 'string' ? content : typeof content?.text === 'string' ? content.text : '';
+	return {
+		id: row.id,
+		public_id: row.public_id,
+		task_id: row.task_id,
+		parent_comment_id: row.parent_comment_id ?? null,
+		author_member_id: row.author_member_id ?? null,
+		created_at: row.created_at,
+		content_length: text.length,
+	};
+}
+
 export interface PostAgentCommentParams {
 	db: Db;
 	wsManager?: WebSocketManager;
@@ -469,7 +522,7 @@ export interface PostAgentCommentParams {
  * `fireCommentWakeups` (mention / @admin inbox / reply fan-out). Shared by the
  * `create_comment` tool and the runner's handoff-delivery guardrail so an
  * auto-delivered final message is byte-identical to a comment the agent posts
- * itself. Returns the inserted row (`RETURNING *`, so it carries `public_id`)
+ * itself. Returns the inserted row (it carries `public_id`, not `search_tsv`)
  * alongside the slugs the fan-out actually woke, so a caller can report what the
  * write delivered instead of inferring it. Pair `woke` with a roster through
  * {@link buildWakeReceipt} for the full receipt.
@@ -495,7 +548,9 @@ export async function postAgentComment(params: PostAgentCommentParams): Promise<
 
 	const content = { text };
 	const r = await db.query<{ id: string; public_id: string } & Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7) RETURNING *`,
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id)
+		 VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7)
+		 RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
 		[
 			taskId,
 			authorMemberId,

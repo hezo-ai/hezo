@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "Esecuzione per {agent} scaduta.",
 	"comment.runTimedOutWithError": "Esecuzione per {agent} scaduta: {error}",
 	"comment.statusChanged": "{actor} ha cambiato lo stato da {from} a {to}",
+	"comment.tooLong": "Questo commento ha {count} caratteri. Il limite è {max}. Allega i contenuti lunghi come file.",
 	"common.actionFailed": "Qualcosa è andato storto. Riprova.",
 	"common.back": "Indietro",
 	"common.cancel": "Annulla",

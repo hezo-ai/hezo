@@ -90,6 +90,7 @@ import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordRunCost } from './budget';
 import {
 	detectNoWakeExits,
+	fitCommentForDelivery,
 	formatNoWakeExitWarning,
 	postAgentComment,
 	resolveWarnableSlugs,
@@ -2957,7 +2958,7 @@ export async function runAgent(
 										taskId: task.id,
 										authorMemberId: agent.id,
 										createdByRunId: heartbeatRunId,
-										text: finalMessage,
+										text: fitCommentForDelivery(finalMessage, undeliveredActive),
 									});
 									// The run delivered a real comment, so it is no longer a no-op:
 									// flip the local flag (drives `success` below) and the row column
@@ -3028,7 +3029,7 @@ export async function runAgent(
 										authorMemberId: agent.id,
 										createdByRunId: heartbeatRunId,
 										parentCommentId: wakingCommentId ?? undefined,
-										text: finalMessage,
+										text: fitCommentForDelivery(finalMessage),
 									});
 									await deps.db.query(
 										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',

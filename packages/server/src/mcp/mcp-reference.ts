@@ -214,12 +214,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_comment: {
 		category: 'Comments & reactions',
 		returns:
-			"The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
+			"An acknowledgement of the created comment (`id`, `public_id`, `task_id`, `parent_comment_id`, `author_member_id`, `created_at`, `content_length`) - never the text you sent - always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }`, with nothing posted, if `parent_comment_id` does not belong to the task or the text is over 16,000 characters. Setting `parent_comment_id` wakes the parent comment's author.",
 	},
 	update_comment: {
 		category: 'Comments & reactions',
 		returns:
-			'The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
+			'An acknowledgement of the updated comment (same shape as `create_comment`), always with a `wake` receipt and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run, or the new text is over 16,000 characters. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
 		auth: 'An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.',
 	},
 	add_reaction: {
@@ -651,12 +651,15 @@ export function mcpConventionLines(surface: 'docs' | 'wire'): string[] {
 		'  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus',
 		'    `next_index`; call again with the same `items` and `start_index` set to it.',
 		'- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource',
-		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is',
-		'  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
+		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap a read discards the',
+		'  whole result and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
 		'  `remedies` are built from the parameters that tool actually declares, so follow',
 		'  them rather than guessing - and when the tool takes a batch, they name the exact',
 		'  item count to retry with. Split the work and retry; do not fall back to one call',
 		'  per item, and do not narrow what you cover to whatever fits in one call.',
+		'- **Oversized writes:** a write tool never answers `result_too_large`, because its',
+		'  write has already happened. Over the cap it returns `result_truncated: true` with',
+		'  the ids of what it wrote. The write succeeded, so do not repeat the call.',
 		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
 		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
 		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',

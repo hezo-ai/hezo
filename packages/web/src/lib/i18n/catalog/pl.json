@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "Uruchomienie dla {agent} przekroczyło limit czasu.",
 	"comment.runTimedOutWithError": "Uruchomienie dla {agent} przekroczyło limit czasu: {error}",
 	"comment.statusChanged": "{actor} zmienił status z {from} na {to}",
+	"comment.tooLong": "Ten komentarz ma {count} znaków. Limit to {max}. Długą treść załącz jako plik.",
 	"common.actionFailed": "Coś poszło nie tak. Spróbuj ponownie.",
 	"common.back": "Wstecz",
 	"common.cancel": "Anuluj",

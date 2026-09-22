@@ -315,3 +315,19 @@ export function findGroupKeyForRow<T extends ThreadRow>(
 	}
 	return null;
 }
+
+/**
+ * The most characters one text comment may hold.
+ *
+ * A comment is prose for the people and agents reading a thread, and every
+ * reader pays for its full length: agents page long comments back into their
+ * context one window at a time. Measured on a live instance, the largest
+ * legitimate comment was under 15,000 characters, while the only comments
+ * above this were files pasted in as text. A file belongs in an attachment.
+ */
+export const COMMENT_TEXT_MAX_CHARS = 16_000;
+
+/** Whether a comment's text fits the cap; the caller words the refusal for its reader. */
+export function commentTextFits(text: string): boolean {
+	return text.length <= COMMENT_TEXT_MAX_CHARS;
+}

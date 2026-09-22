@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "Run for {agent} timed out.",
 	"comment.runTimedOutWithError": "Run for {agent} timed out: {error}",
 	"comment.statusChanged": "{actor} changed status from {from} to {to}",
+	"comment.tooLong": "This comment is {count} characters. The limit is {max}. Attach long content as a file instead.",
 	"common.actionFailed": "Something went wrong. Please try again.",
 	"common.back": "Back",
 	"common.cancel": "Cancel",

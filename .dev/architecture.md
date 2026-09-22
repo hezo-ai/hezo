@@ -6151,6 +6151,19 @@ derived from the page size, with a shrink loop behind it for the part arithmetic
 `excerpt_chars_applied`. `getCommentsFull` remains the one deliberately unbounded read here -
 no `LIMIT` at all - because the web app needs the whole thread to fold it.
 
+**A write never reports failure after it commits.** The byte cap is a read-side guard: over
+it, a read discards its result and tells the caller to split and retry. Applied to a write,
+the same answer arrives after the row is saved, so the caller repeats a write that already
+happened. That is how one agent posted a 3.9 MB archive as 110 comments, and how an oversized
+`create_tasks` batch was created twice. For a tool registered `write: true` the wrapper
+returns `oversizedWriteAck` instead: `result_truncated: true` and the identifiers of what was
+written. `create_comment` and `update_comment` never return the comment text or `search_tsv`
+(`TASK_COMMENT_ROW_COLUMNS`, `commentWriteAck`), and comment text is capped at
+`COMMENT_TEXT_MAX_CHARS` by one `@hezo/shared` check that the REST route, both tools and the
+web composer call. The runner's handoff-delivery guardrail is the one writer that fits text to
+the cap instead of refusing it (`fitCommentForDelivery`), because the message it delivers would
+otherwise be lost.
+
 **Catch-up has an end.** Each task run's prompt carries the timestamp its previous run on
 that task finished plus how much is new since (one seek on `idx_runs_member_task_finished`,
 added by `061`), and names the exact `list_comments(since: …)` call. Without that an agent was

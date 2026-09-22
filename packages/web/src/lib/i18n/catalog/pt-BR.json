@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "A execução de {agent} expirou.",
 	"comment.runTimedOutWithError": "A execução de {agent} expirou: {error}",
 	"comment.statusChanged": "{actor} alterou o status de {from} para {to}",
+	"comment.tooLong": "Este comentário tem {count} caracteres. O limite é {max}. Anexe conteúdo longo como arquivo.",
 	"common.actionFailed": "Algo deu errado. Tente novamente.",
 	"common.back": "Voltar",
 	"common.cancel": "Cancelar",

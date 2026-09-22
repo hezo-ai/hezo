@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "Zeitüberschreitung beim Lauf für {agent}.",
 	"comment.runTimedOutWithError": "Zeitüberschreitung beim Lauf für {agent}: {error}",
 	"comment.statusChanged": "{actor} hat den Status von {from} zu {to} geändert",
+	"comment.tooLong": "Dieser Kommentar hat {count} Zeichen. Das Limit liegt bei {max}. Hängen Sie lange Inhalte stattdessen als Datei an.",
 	"common.actionFailed": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.",
 	"common.back": "Zurück",
 	"common.cancel": "Abbrechen",

@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "{agent} の実行がタイムアウトしました。",
 	"comment.runTimedOutWithError": "{agent} の実行がタイムアウトしました: {error}",
 	"comment.statusChanged": "{actor} がステータスを {from} から {to} に変更しました",
+	"comment.tooLong": "このコメントは {count} 文字です。上限は {max} 文字です。長い内容はファイルとして添付してください。",
 	"common.actionFailed": "問題が発生しました。もう一度お試しください。",
 	"common.back": "戻る",
 	"common.cancel": "キャンセル",

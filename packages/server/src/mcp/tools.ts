@@ -26,6 +26,7 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	checkInjectedTextCap,
+	commentTextFits,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
@@ -142,10 +143,13 @@ import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
 import { upsertChatMemory, upsertConversationChatMemory } from '../services/chat-memory';
 import {
 	buildWakeReceiptForTask,
+	commentTooLongError,
+	commentWriteAck,
 	fireAdminMention,
 	fireCommentWakeups,
 	postAgentComment,
 	resolveWarnableSlugs,
+	TASK_COMMENT_ROW_COLUMNS,
 } from '../services/comment-wakeups';
 import {
 	buildConnectorRecipesSkill,
@@ -670,6 +674,69 @@ export const SYSTEM_PROMPT_RESULT_BYTES = 131_072;
 const BATCH_RETRY_SAFETY = 0.8;
 
 /**
+ * Fields a write result keeps when it is too large to return whole: the ones
+ * a caller needs to find, cite or act on what it just wrote.
+ */
+const WRITE_ACK_FIELDS: ReadonlySet<string> = new Set([
+	'id',
+	'public_id',
+	'task_id',
+	'identifier',
+	'slug',
+	'status',
+	'approval_id',
+	'document_id',
+	'reference',
+	'index',
+	'ok',
+	'error',
+	'written',
+	'applied',
+	'applied_count',
+	'parent_comment_id',
+	'author_member_id',
+	'created_at',
+]);
+
+/** How deep an acknowledgement follows nested objects before dropping them. */
+const WRITE_ACK_MAX_DEPTH = 2;
+
+function writeAckOf(value: unknown, depth: number): unknown {
+	if (Array.isArray(value)) return value.map((v) => writeAckOf(v, depth + 1));
+	if (value === null || typeof value !== 'object') return value;
+	const out: Record<string, unknown> = {};
+	for (const [key, v] of Object.entries(value)) {
+		if (v !== null && typeof v === 'object') {
+			if (depth < WRITE_ACK_MAX_DEPTH) out[key] = writeAckOf(v, depth + 1);
+		} else if (WRITE_ACK_FIELDS.has(key)) {
+			out[key] = v;
+		}
+	}
+	return out;
+}
+
+/**
+ * The reply for a write tool whose result is over the byte cap.
+ *
+ * A write has already happened by the time its result is measured, so the
+ * read-side answer - discard the result and tell the caller to split the work
+ * and retry - is wrong here: a retry repeats the write. A batch created twice,
+ * or an approval "resolved" a second time into an error, is the result. The
+ * write instead answers with the identifiers of what it wrote and says it
+ * succeeded. If even that does not fit, it says so and reports the size.
+ */
+export function oversizedWriteAck(result: unknown, sizeBytes: number, byteLimit: number): unknown {
+	const note =
+		'The write succeeded. Its full result was too large to return, so only identifiers are shown. Do not repeat the call.';
+	const ack = writeAckOf(result, 0);
+	const shaped = Array.isArray(ack)
+		? { result_truncated: true, note, items: ack }
+		: { result_truncated: true, note, ...(ack as Record<string, unknown>) };
+	if (Buffer.byteLength(JSON.stringify(shaped, null, 2), 'utf8') <= byteLimit) return shaped;
+	return { result_truncated: true, note, size_bytes: sizeBytes, limit_bytes: byteLimit };
+}
+
+/**
  * Remedies for an oversized result, built from what the called tool actually
  * declares rather than from a fixed list.
  *
@@ -959,6 +1026,10 @@ function tool(
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
 		const byteLimit = opts.resultByteLimit ?? MCP_RESULT_BYTE_LIMIT;
+		if (sizeBytes > byteLimit && opts.write && !isErrorResult(result)) {
+			const ack = JSON.stringify(oversizedWriteAck(result, sizeBytes, byteLimit), null, 2);
+			return { content: [{ type: 'text' as const, text: ack }] };
+		}
 		if (sizeBytes > byteLimit) {
 			const guard = JSON.stringify(
 				{
@@ -3605,11 +3676,11 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID - it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID - it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead. Comment text is limited to 16,000 characters: save anything longer as a file and reference it rather than pasting it in.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
-			content: z.string().describe('Comment text'),
+			content: z.string().describe('Comment text, at most 16,000 characters'),
 			parent_comment_id: z
 				.string()
 				.optional()
@@ -3618,6 +3689,8 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
+			const text = args.content as string;
+			if (!commentTextFits(text)) return { error: commentTooLongError(text.length) };
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
@@ -3643,8 +3716,9 @@ export function registerTools(
 			// Insert + realtime broadcast + mention/@admin/reply wakeups, shared with
 			// the runner's handoff-delivery guardrail via postAgentComment so a
 			// comment the agent posts and one auto-delivered from a stranded final
-			// message are byte-identical. RETURNING * includes public_id (the
-			// comment-link slug), so the agent gets it back without a list_comments.
+			// message are byte-identical. The reply carries public_id (the
+			// comment-link slug), so the agent can cite it without a list_comments,
+			// but never the text the agent just sent.
 			const { row, woke } = await postAgentComment({
 				db,
 				wsManager,
@@ -3723,10 +3797,10 @@ export function registerTools(
 				// right. An agent that meant to ask sees `woke: []` with the teammate it
 				// addressed sitting in `named_not_woken`.
 				const wake = await buildWakeReceiptForTask(db, taskId, commentText, woke, knownSlugs);
-				if (warning) return { ...row, wake, warning };
-				return { ...row, wake };
+				if (warning) return { ...commentWriteAck(row), wake, warning };
+				return { ...commentWriteAck(row), wake };
 			}
-			return row;
+			return commentWriteAck(row);
 		},
 		db,
 		{ write: true },
@@ -3746,6 +3820,8 @@ export function registerTools(
 			content: z.string().describe('The replacement comment text (overwrites the existing body).'),
 		},
 		async (args, db, auth) => {
+			const text = args.content as string;
+			if (!commentTextFits(text)) return { error: commentTooLongError(text.length) };
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
@@ -3776,7 +3852,7 @@ export function registerTools(
 			}
 			const content = { text: args.content };
 			const r = await db.query<{ id: string; public_id: string }>(
-				`UPDATE task_comments SET content = $1::jsonb WHERE id = $2 RETURNING *`,
+				`UPDATE task_comments SET content = $1::jsonb WHERE id = $2 RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
 				[JSON.stringify(content), args.comment_id],
 			);
 			broadcastCommentFamilyChange(
@@ -3854,8 +3930,8 @@ export function registerTools(
 			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
-			if (warning) return { ...r.rows[0], wake, warning };
-			return { ...r.rows[0], wake };
+			if (warning) return { ...commentWriteAck(r.rows[0]), wake, warning };
+			return { ...commentWriteAck(r.rows[0]), wake };
 		},
 		db,
 		{ write: true, audience: 'agent_run' },

@@ -1,3 +1,4 @@
+import { COMMENT_TEXT_MAX_CHARS } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
@@ -684,4 +685,36 @@ test('a comment link to another comment renders as a clickable link to its hash'
 	expect(link.getAttribute('href')).toBe(
 		`/projects/${seeded.projectSlug}/tasks/${seeded.taskId}#comment-${seeded.targetCommentId}`,
 	);
+});
+
+test('a comment over the length cap shows why and cannot be sent', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByPlaceholderText, findByTestId, getByRole, queryByTestId, router } = await renderApp(
+		{
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Long Comment Project' });
+				const task = await seedTask(ws, project, { title: 'Long Comment Task' });
+				seeded.projectSlug = project.slug;
+				seeded.taskId = task.identifier.toLowerCase();
+			},
+		},
+	);
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	const userMod = await import('@testing-library/user-event');
+	const user = userMod.default.setup({ delay: null });
+	await user.click(composer);
+	await user.paste('a'.repeat(COMMENT_TEXT_MAX_CHARS));
+	expect(queryByTestId('comment-too-long')).toBeNull();
+	expect((getByRole('button', { name: /^Comment/ }) as HTMLButtonElement).disabled).toBe(false);
+
+	await user.paste('b');
+	expect((await findByTestId('comment-too-long')).textContent).toContain('The limit is');
+	expect((getByRole('button', { name: /^Comment/ }) as HTMLButtonElement).disabled).toBe(true);
 });

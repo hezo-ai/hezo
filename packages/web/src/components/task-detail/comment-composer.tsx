@@ -1,6 +1,8 @@
 import {
 	ADMIN_MENTION_SLUG,
 	type AgentEffort,
+	COMMENT_TEXT_MAX_CHARS,
+	commentTextFits,
 	extractActiveAgentMentionSlugs,
 	hasActiveAdminMention,
 } from '@hezo/shared';
@@ -11,6 +13,7 @@ import { useAgents } from '../../hooks/use-agents';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import type { Comment, useCreateComment } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
+import { useI18n } from '../../lib/i18n';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { CommentAttachmentsDrop } from '../comment-attachments-drop';
 import { MentionTextarea } from '../mention-textarea';
@@ -72,6 +75,8 @@ export function CommentComposer({
 	commentTextareaRef,
 }: CommentComposerProps) {
 	const [commentText, setCommentText] = useState('');
+	const { t, formatNumber } = useI18n();
+	const commentTooLong = !commentTextFits(commentText);
 	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
 	// Expand the composer to a full-viewport editor (available at every breakpoint —
 	// the inline box is cramped on mobile too). In expanded mode the textarea fills
@@ -132,6 +137,7 @@ export function CommentComposer({
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
 		if (!commentText.trim() && pendingAttachmentIds.length === 0) return;
+		if (commentTooLong) return;
 		await createComment.mutateAsync({
 			content: commentText,
 			...(commentEffort ? { effort: commentEffort } : {}),
@@ -181,6 +187,14 @@ export function CommentComposer({
 						}
 					/>
 				</CommentAttachmentsDrop>
+				{commentTooLong && (
+					<p className="text-[13px] text-danger" role="alert" data-testid="comment-too-long">
+						{t('comment.tooLong', {
+							count: formatNumber(commentText.length),
+							max: formatNumber(COMMENT_TEXT_MAX_CHARS),
+						})}
+					</p>
+				)}
 				{replyTarget && (
 					<div
 						className="flex items-center gap-2 text-[13px] text-text-2"
@@ -248,6 +262,7 @@ export function CommentComposer({
 							shortcutFire={false}
 							disabled={
 								(!commentText.trim() && pendingAttachmentIds.length === 0) ||
+								commentTooLong ||
 								createComment.isPending
 							}
 						>

@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "{agent} 실행이 시간을 초과했어요.",
 	"comment.runTimedOutWithError": "{agent} 실행이 시간을 초과했어요: {error}",
 	"comment.statusChanged": "{actor} 님이 상태를 {from}에서 {to}(으)로 변경했어요",
+	"comment.tooLong": "이 댓글은 {count}자예요. 최대 {max}자까지 쓸 수 있어요. 긴 내용은 파일로 첨부해 주세요.",
 	"common.actionFailed": "문제가 발생했습니다. 다시 시도해 주세요.",
 	"common.back": "뒤로",
 	"common.cancel": "취소",

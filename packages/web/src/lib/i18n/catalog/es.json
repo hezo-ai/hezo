@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "La ejecución de {agent} agotó el tiempo.",
 	"comment.runTimedOutWithError": "La ejecución de {agent} agotó el tiempo: {error}",
 	"comment.statusChanged": "{actor} cambió el estado de {from} a {to}",
+	"comment.tooLong": "Este comentario tiene {count} caracteres. El límite es {max}. Adjunta el contenido largo como archivo.",
 	"common.actionFailed": "Algo salió mal. Inténtalo de nuevo.",
 	"common.back": "Atrás",
 	"common.cancel": "Cancelar",

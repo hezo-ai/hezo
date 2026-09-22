@@ -294,6 +294,7 @@
 	"comment.runTimedOut": "{agent} 的运行超时。",
 	"comment.runTimedOutWithError": "{agent} 的运行超时：{error}",
 	"comment.statusChanged": "{actor} 将状态从 {from} 更改为 {to}",
+	"comment.tooLong": "此评论有 {count} 个字符，上限为 {max} 个。较长的内容请作为附件添加。",
 	"common.actionFailed": "出了点问题，请重试。",
 	"common.back": "返回",
 	"common.cancel": "取消",
