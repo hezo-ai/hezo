@@ -2,9 +2,9 @@ import {
 	CEO_AGENT_SLUG,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DEFAULT_MONTHLY_BUDGET_TOKENS,
-	retiredBudgetFieldError,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { budgetWriteError } from '../lib/budget-validation';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -32,6 +32,16 @@ agentTypesRoutes.get('/agent-types', async (c) => {
 	return ok(c, result.rows);
 });
 
+/**
+ * The windows an agent type's budget is checked against: it sets the monthly
+ * default only, so the daily and weekly windows are unlimited.
+ */
+const NO_DAILY_OR_WEEKLY_BUDGET = {
+	daily_budget_tokens: 0,
+	weekly_budget_tokens: 0,
+	monthly_budget_tokens: 0,
+};
+
 agentTypesRoutes.post('/agent-types', async (c) => {
 	const body = await c.req.json<{
 		name: string;
@@ -48,8 +58,9 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
-	const retiredField = retiredBudgetFieldError(body);
-	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
+	// A type carries a monthly default only, which every agent made from it copies.
+	const budgetError = budgetWriteError(body, NO_DAILY_OR_WEEKLY_BUDGET);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 
 	const slug = body.slug?.trim() || toSlug(body.name);
 	if (!slug) {
@@ -112,8 +123,8 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 		monthly_budget_tokens?: number;
 	}>();
 
-	const retiredField = retiredBudgetFieldError(body);
-	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
+	const budgetError = budgetWriteError(body, NO_DAILY_OR_WEEKLY_BUDGET);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 	const isBuiltin = existing.rows[0].is_builtin;
 
 	const sets: string[] = [];

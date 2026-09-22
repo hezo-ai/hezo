@@ -1,6 +1,7 @@
 import {
 	ArchiveFilter,
 	AuthType,
+	BUDGET_WINDOW_FIELDS,
 	CONTAINER_DISK_GB_MAX,
 	CONTAINER_DISK_GB_MIN,
 	ContainerStatus,
@@ -23,7 +24,7 @@ import {
 	broadcastProjectsChanged,
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
-import { budgetWindowsError, retiredBudgetFieldError } from '../lib/budget-validation';
+import { budgetWriteError, retiredBudgetFieldError } from '../lib/budget-validation';
 import { buildContainerDeps } from '../lib/container-deps';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
@@ -684,26 +685,14 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		params.push(body.container_disk_gb);
 		idx++;
 	}
-	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)
-	// since a PATCH may touch only one window — enforces both per-field integer ≥ 0
-	// and the cross-window consistency rules (shared with the web forms).
-	const budgetColumns = [
-		'daily_budget_tokens',
-		'weekly_budget_tokens',
-		'monthly_budget_tokens',
-	] as const;
-	if (budgetColumns.some((column) => body[column] !== undefined)) {
-		const current = existing.rows[0];
-		const merged = {
-			daily_budget_tokens: body.daily_budget_tokens ?? current.daily_budget_tokens,
-			weekly_budget_tokens: body.weekly_budget_tokens ?? current.weekly_budget_tokens,
-			monthly_budget_tokens: body.monthly_budget_tokens ?? current.monthly_budget_tokens,
-		};
-		const budgetError = budgetWindowsError(merged);
+	// Budget limits: 0 = unlimited. A PATCH may touch only one window, so the trio
+	// it leaves is checked, merged over the stored one.
+	if (BUDGET_WINDOW_FIELDS.some((column) => body[column] !== undefined)) {
+		const budgetError = budgetWriteError(body, existing.rows[0]);
 		if (budgetError) {
 			return err(c, 'INVALID_REQUEST', budgetError, 400);
 		}
-		for (const column of budgetColumns) {
+		for (const column of BUDGET_WINDOW_FIELDS) {
 			if (body[column] === undefined) continue;
 			sets.push(`${column} = $${idx}`);
 			params.push(body[column]);

@@ -799,9 +799,15 @@ its scope and the project or team type that tells two lines with one name apart.
 posts them as one `budget_conversion` notice on an unassigned HQ task, deleting the record in
 the same transaction. Built-in agent types are re-seeded every boot, so their token defaults
 come from `seed.ts`, not from the conversion: every one is 0, since the per-run and per-task
-ceilings bound runaway work. A request still sending a
-`*_budget_cents` field is refused with `retiredBudgetFieldError`, naming the replacement; an
-MCP tool call cannot be refused that way, since the SDK strips unknown keys before the handler.
+ceilings bound runaway work. Every budget write runs `budgetWriteError`
+(`lib/budget-validation.ts`): a `*_budget_cents` field is refused by name
+(`retiredBudgetFieldError`), and the trio a write leaves, merged over the stored one, must be
+whole, non-negative and coherent. The hire paths reach it through `prepareHireProposal` and
+`prepareHirePayloadPatch`, so the admin's REST edit and the Captain's `update_hire_proposal`
+check a revision as the create path checks a proposal. The MCP SDK strips an undeclared
+argument before the handler, so the hire tools declare the retired fields
+(`retiredBudgetArgs`) for the refusal to see them. The marketplace parser accepts a retired
+field only at 0, the value it is still published with.
 
 **A run and a task each have a token ceiling.** `RUN_TOKEN_CEILING` (30M, `agent-runner.ts`)
 stops a run the way the tool-call ceiling does, off the usage the run has reported so far: the

@@ -1691,7 +1691,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 		const result = (await callToolAs(captain, 'update_hire_proposal', {
 			approval_id: created.approval_id,
 		})) as ToolResult;
-		expect(result.error).toContain('no fields to update');
+		expect(result.error).toContain('No fields to update');
 	});
 
 	it('update_hire_proposal rejects a cross-team approval id', async () => {

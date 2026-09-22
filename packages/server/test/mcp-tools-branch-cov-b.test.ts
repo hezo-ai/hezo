@@ -209,7 +209,7 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 	it('update_hire_proposal with no fields errors', async () => {
 		const at = await agentToken(captainId, teamId, taskId);
 		const r = await call(at, 'update_hire_proposal', { approval_id: approvalId });
-		expect(r.error).toBe('no fields to update');
+		expect(r.error).toBe('No fields to update');
 	});
 
 	it('update_hire_proposal patches the payload', async () => {

@@ -50,6 +50,7 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
+	RETIRED_BUDGET_FIELDS,
 	ReactionKind,
 	SEARCH_SCOPES,
 	summarizeMethodAccess,
@@ -184,10 +185,10 @@ import {
 import { listGoals, recordGoalProgress } from '../services/goals';
 import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
 import {
-	buildHirePayloadPatch,
 	type HirePayloadPatchInput,
 	type HireProposalInput,
 	insertHireApproval,
+	prepareHirePayloadPatch,
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
@@ -647,6 +648,42 @@ const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 /** What a budget counts, as every budget parameter's description states it. */
 const BUDGET_TOKENS_NOTE =
 	'A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited.';
+
+/**
+ * The three budget windows a hire tool takes, described with `lead` ("Daily
+ * budget", "Updated daily budget"). Whole-number and coherence checks run in the
+ * handler, through the same validation every budget write uses.
+ */
+function budgetWindowArgs(lead: (window: string) => string) {
+	return {
+		daily_budget_tokens: z
+			.number()
+			.optional()
+			.describe(`${lead('daily')}, in tokens. ${BUDGET_TOKENS_NOTE}`),
+		weekly_budget_tokens: z
+			.number()
+			.optional()
+			.describe(`${lead('weekly')}, in tokens. ${BUDGET_TOKENS_NOTE}`),
+		monthly_budget_tokens: z
+			.number()
+			.optional()
+			.describe(`${lead('monthly')}, in tokens. ${BUDGET_TOKENS_NOTE}`),
+	};
+}
+
+/**
+ * The dollar budget fields budgets used before they counted tokens, declared so
+ * a call still sending one reaches the handler and is refused by name: the SDK
+ * strips an undeclared argument, which dropped the budget in silence.
+ */
+function retiredBudgetArgs() {
+	return Object.fromEntries(
+		Object.entries(RETIRED_BUDGET_FIELDS).map(([field, replacement]) => [
+			field,
+			z.number().optional().describe(`Retired. Refused: send ${replacement} instead.`),
+		]),
+	);
+}
 
 /** The comment text cap as the comment tools' descriptions state it. */
 const COMMENT_TEXT_CAP = COMMENT_TEXT_MAX_CHARS.toLocaleString('en-US');
@@ -2505,10 +2542,8 @@ export function registerTools(
 				.min(heartbeatIntervalFloorMin())
 				.optional()
 				.describe(`Updated heartbeat interval. ${heartbeatIntervalArgDescription()}`),
-			monthly_budget_tokens: z
-				.number()
-				.optional()
-				.describe(`Updated monthly budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
+			...budgetWindowArgs((window) => `Updated ${window} budget`),
+			...retiredBudgetArgs(),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 		},
 		async (args, db, auth) => {
@@ -2545,21 +2580,14 @@ export function registerTools(
 				return { error: 'Hire approval is already resolved' };
 			}
 
-			// A revised manager must resolve to an agent on this team (empty clears it).
-			if (typeof args.reports_to === 'string' && args.reports_to.trim()) {
-				const raw = args.reports_to.trim();
-				if (raw === row.payload.slug) {
-					return { error: 'reports_to: an agent cannot report to itself' };
-				}
-				const managerId = await resolveAgentId(db, row.team_id, raw);
-				if (!managerId) return { error: `reports_to: no agent '${raw}' in this team` };
-			}
-
-			const patch = buildHirePayloadPatch(args as HirePayloadPatchInput);
-
-			if (Object.keys(patch).length === 0) {
-				return { error: 'no fields to update' };
-			}
+			const prepared = await prepareHirePayloadPatch(
+				db,
+				row.team_id,
+				row.payload,
+				args as HirePayloadPatchInput,
+			);
+			if ('error' in prepared) return { error: prepared.error };
+			const { patch } = prepared;
 
 			const updated = await db.query<Record<string, unknown>>(
 				`UPDATE approvals SET payload = payload || $1::jsonb
@@ -2609,18 +2637,8 @@ export function registerTools(
 				.int()
 				.min(heartbeatIntervalFloorMin())
 				.describe(heartbeatIntervalArgDescription()),
-			daily_budget_tokens: z
-				.number()
-				.optional()
-				.describe(`Daily budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
-			weekly_budget_tokens: z
-				.number()
-				.optional()
-				.describe(`Weekly budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
-			monthly_budget_tokens: z
-				.number()
-				.optional()
-				.describe(`Monthly budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
+			...budgetWindowArgs((window) => `${window[0].toUpperCase()}${window.slice(1)} budget`),
+			...retiredBudgetArgs(),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 			task_id: z
 				.string()

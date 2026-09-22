@@ -668,7 +668,12 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | No | Updated heartbeat interval. How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
+| `daily_budget_tokens` | `number` | No | Updated daily budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `weekly_budget_tokens` | `number` | No | Updated weekly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
 | `monthly_budget_tokens` | `number` | No | Updated monthly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `daily_budget_cents` | `number` | No | Retired. Refused: send daily_budget_tokens instead. |
+| `weekly_budget_cents` | `number` | No | Retired. Refused: send weekly_budget_tokens instead. |
+| `monthly_budget_cents` | `number` | No | Retired. Refused: send monthly_budget_tokens instead. |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 
 **Returns:** The updated approval row, or `{ error }` if no field changed or the approval is invalid.
@@ -696,6 +701,9 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `daily_budget_tokens` | `number` | No | Daily budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
 | `weekly_budget_tokens` | `number` | No | Weekly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
 | `monthly_budget_tokens` | `number` | No | Monthly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `daily_budget_cents` | `number` | No | Retired. Refused: send daily_budget_tokens instead. |
+| `weekly_budget_cents` | `number` | No | Retired. Refused: send weekly_budget_tokens instead. |
+| `monthly_budget_cents` | `number` | No | Retired. Refused: send monthly_budget_tokens instead. |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 | `task_id` | `string` | No | Optional originating task to link the proposal to - a task identifier (e.g. "HM-1") or UUID |
 

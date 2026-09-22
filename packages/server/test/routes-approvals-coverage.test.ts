@@ -303,9 +303,9 @@ describe('PATCH /approvals/:approvalId (hire proposal edit)', () => {
 	});
 
 	it('merges a valid patch (prompt + manager) into the payload', async () => {
+		// Normalized like every hire path: the slug is derived from the title.
 		const hire = await createApproval('hire', {
-			title: 'Analyst',
-			slug: 'cover-analyst',
+			title: 'Cover Analyst',
 			system_prompt: 'Draft.',
 		});
 		const res = await ctx.app.request(`/api/approvals/${hire.id}`, {

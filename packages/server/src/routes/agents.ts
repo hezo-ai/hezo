@@ -5,6 +5,8 @@ import {
 	type AiProvider,
 	ALL_AI_PROVIDERS,
 	AuthType,
+	BUDGET_WINDOW_FIELDS,
+	type BudgetWindowsTokens,
 	CAPTAIN_AGENT_SLUG,
 	CEO_AGENT_SLUG,
 	checkInjectedTextCap,
@@ -42,7 +44,7 @@ import {
 } from '../lib/agent-identity';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { budgetWindowsError, retiredBudgetFieldError } from '../lib/budget-validation';
+import { budgetWriteError, retiredBudgetFieldError } from '../lib/budget-validation';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
@@ -316,8 +318,12 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	if (!body.title?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'title is required', 400);
 	}
-	const retiredField = retiredBudgetFieldError(body);
-	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
+	const budgetError = budgetWriteError(body, {
+		daily_budget_tokens: 0,
+		weekly_budget_tokens: 0,
+		monthly_budget_tokens: DEFAULT_MONTHLY_BUDGET_TOKENS,
+	});
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
@@ -336,15 +342,6 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 				rejection.code === 'TAKEN' ? 409 : 400,
 			);
 		}
-	}
-
-	const budgetError = budgetWindowsError({
-		daily_budget_tokens: body.daily_budget_tokens ?? 0,
-		weekly_budget_tokens: body.weekly_budget_tokens ?? 0,
-		monthly_budget_tokens: body.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
-	});
-	if (budgetError) {
-		return err(c, 'INVALID_REQUEST', budgetError, 400);
 	}
 
 	if (body.system_prompt?.trim()) {
@@ -1049,32 +1046,16 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		}
 	}
 
-	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)
-	// since a PATCH may touch only one window — per-field integer ≥ 0 plus the
-	// cross-window consistency rules (shared with the web forms).
-	if (
-		body.daily_budget_tokens !== undefined ||
-		body.weekly_budget_tokens !== undefined ||
-		body.monthly_budget_tokens !== undefined
-	) {
-		const current = await db.query<{
-			daily_budget_tokens: number;
-			weekly_budget_tokens: number;
-			monthly_budget_tokens: number;
-		}>(
+	// Budget limits: 0 = unlimited. A PATCH may touch only one window, so the trio
+	// it leaves is checked, merged over the stored one.
+	if (BUDGET_WINDOW_FIELDS.some((field) => body[field] !== undefined)) {
+		const stored = await db.query<BudgetWindowsTokens>(
 			`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
 			 FROM member_agents WHERE id = $1`,
 			[agentId],
 		);
-		const stored = current.rows[0];
-		const budgetError = budgetWindowsError({
-			daily_budget_tokens: body.daily_budget_tokens ?? stored.daily_budget_tokens,
-			weekly_budget_tokens: body.weekly_budget_tokens ?? stored.weekly_budget_tokens,
-			monthly_budget_tokens: body.monthly_budget_tokens ?? stored.monthly_budget_tokens,
-		});
-		if (budgetError) {
-			return err(c, 'INVALID_REQUEST', budgetError, 400);
-		}
+		const budgetError = budgetWriteError(body, stored.rows[0]);
+		if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 	}
 
 	// A rename or a regenerated face, applied inside the same transaction as the

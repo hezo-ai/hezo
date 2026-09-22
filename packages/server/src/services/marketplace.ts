@@ -19,6 +19,7 @@ import {
 	MARKETPLACE_SCHEMA_VERSION,
 	type MarketplaceIndexEntry,
 	type MarketplaceTeamDef,
+	RETIRED_BUDGET_FIELDS,
 	toMarketplaceIndexEntry,
 } from '@hezo/shared';
 import { z } from 'zod';
@@ -32,6 +33,14 @@ const REPO = 'hezo-ai/hezo';
 const TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
+/** A retired dollar field: 0 passes, anything else is refused with its token replacement. */
+function retiredBudgetCents(field: keyof typeof RETIRED_BUDGET_FIELDS) {
+	return z
+		.literal(0, {
+			error: `Budgets are counted in tokens, not dollars. Set ${RETIRED_BUDGET_FIELDS[field]} instead of ${field}.`,
+		})
+		.optional();
+}
 const rosterAgentSchema = z.object({
 	slug: z.string().min(1),
 	title: z.string().min(1),
@@ -58,10 +67,12 @@ const rosterAgentSchema = z.object({
 	monthly_budget_tokens: z.number().int().min(0).default(0),
 	daily_budget_tokens: z.number().int().min(0).default(0),
 	weekly_budget_tokens: z.number().int().min(0).default(0),
-	// Retired dollar fields. Emitted as 0 for older instances and ignored here.
-	monthly_budget_cents: z.literal(0).catch(0).default(0),
-	daily_budget_cents: z.literal(0).catch(0).default(0),
-	weekly_budget_cents: z.literal(0).catch(0).default(0),
+	// Retired dollar fields, still emitted as 0 for instances that have not
+	// upgraded. Any other value is a budget this catalog meant to set, and reading
+	// it as unlimited would provision the role with no brake, so it is refused.
+	monthly_budget_cents: retiredBudgetCents('monthly_budget_cents'),
+	daily_budget_cents: retiredBudgetCents('daily_budget_cents'),
+	weekly_budget_cents: retiredBudgetCents('weekly_budget_cents'),
 	touches_code: z.boolean(),
 });
 
