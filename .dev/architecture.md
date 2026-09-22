@@ -763,24 +763,39 @@ conventions:** `heartbeat_runs.input_tokens` and the `[done]` line carry the TOT
 cache, while `TokenBuckets.inputTokens` is the UNCACHED remainder. `heartbeat_runs.model`
 records the model that did the work. Budgets are **windowed and computed on demand**: limits
 live as `daily_/weekly_/monthly_budget_tokens` on `member_agents` and `projects` (0 = unlimited;
-there is **no team budget**), and usage is summed from `usage_entries` over rolling UTC windows
-through `services/budget.ts` - no counter, no reset event (§ 5). The REST read is `/usage` and its
+there is **no team budget**), and usage is summed from `usage_entries` over UTC calendar windows
+through `services/budget.ts` - no counter, no reset event (§ 5). The windows truncate with the
+three-argument `date_trunc(..., 'UTC')`, so the session time zone never shifts them, and every
+sum is bounded below by `USAGE_WINDOW_FLOOR_SQL`: the start of the longer window, or the
+`budget_usage_counted_from` instant 081 records, whichever is later. Budgets count usage from the
+upgrade on; earlier usage stays in the ledger for the charts. The dispatch gate
+(`checkOverBudget`) reads an entity's limits first and skips the sums when all three are 0. The REST read is `/usage` and its
 tool twin `get_usage`; the grouped shapes are bounded by the roster or page by day, and the
 ungrouped read returns totals over every entry plus one keyset page of the entries themselves.
 A run killed mid-flight never
 reaches the completion record, so `reconcileOnStartup` counts its surviving token snapshot on
-reboot (shared `recordRunUsageAndEnforce`). Every budget pause that has a task posts a
+reboot (shared `recordRunUsageAndEnforce`). A run drained at shutdown is handed back rather than
+failed, and `finalizeRequeue` records what it used, flagged partial, before the work returns
+to the queue. Every budget pause that has a task posts a
 `budget_paused` notice through `postAdminNotice`, once per transition into the pause.
 
 **Migration 081 converts, it never resets.** It prices the instance's last 30 days of runs
-from `model_pricing` with a frozen copy of the service's lookup, converts every non-zero dollar
-budget (agents, projects, custom agent types, team-type overrides, and the budgets inside hire
-approvals and their cards) at that tokens-per-cent rate, falling back to one million tokens per
-dollar with no priced history, rebuilds `usage_entries` from `heartbeat_runs` and `chat_messages`
-so the windows are right at the first dispatch, and records the conversions in `system_meta`.
-The first boot posts them as one `budget_conversion` notice on an unassigned HQ task, deleting
-the record in the same transaction. Built-in agent types are re-seeded every boot, so their
-token defaults come from `seed.ts`, not from the conversion. A request still sending a
+from `model_pricing` with a frozen copy of the service's lookup (exact, normalized, then
+segment-aligned prefix), converts every non-zero dollar budget (agents, projects, custom agent
+types, team-type overrides, and the budgets inside hire approvals and their cards) at that
+tokens-per-cent rate, falling back to one million tokens per dollar with no priced history, and
+raises each converted trio to the window floors (a frozen copy of the shared rules), so
+rounding each window alone never leaves one the editor refuses. Hire proposal budgets are
+converted in JS: an agent wrote them, so a string, a boolean or an absurd number becomes
+unlimited and is listed, rather than failing the cast and blocking startup. It rebuilds
+`usage_entries` from finished `heartbeat_runs` (reconciliation records a run left running) and
+from `chat_messages` for the history, records `budget_usage_counted_from`, adds
+`task_comments.chosen_by_user_id`, and records the conversions in `system_meta`, each line with
+its scope and the project or team type that tells two lines with one name apart. The first boot
+posts them as one `budget_conversion` notice on an unassigned HQ task, deleting the record in
+the same transaction. Built-in agent types are re-seeded every boot, so their token defaults
+come from `seed.ts`, not from the conversion: every one is 0, since the per-run and per-task
+ceilings bound runaway work. A request still sending a
 `*_budget_cents` field is refused with `retiredBudgetFieldError`, naming the replacement; an
 MCP tool call cannot be refused that way, since the SDK strips unknown keys before the handler.
 

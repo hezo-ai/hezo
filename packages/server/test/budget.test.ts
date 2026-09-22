@@ -1,14 +1,9 @@
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../src/db/migrations/code/081_token_budgets';
 import type { Env } from '../src/lib/types';
-import {
-	checkOverBudget,
-	getAgentBudgetStatus,
-	getAgentUsage,
-	getProjectBudgetStatus,
-	recordUsage,
-} from '../src/services/budget';
+import { checkOverBudget, getAgentBudgetStatus, recordUsage } from '../src/services/budget';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -101,17 +96,54 @@ describe('budget service - windowed usage', () => {
 		await insertUsageToday(100); // in daily, weekly, and monthly
 		await insertUsage(400, '40 days'); // older than any month → excluded from every window
 
-		const usage = await getAgentUsage(db, agentId);
+		const usage = await getAgentBudgetStatus(db, agentId);
 		// Today's entry is the only one inside any window; the 40-day-old entry is
 		// excluded from all three (40 days predates every window floor year-round).
-		expect(usage.daily).toBe(100);
-		expect(usage.weekly).toBe(100);
-		expect(usage.monthly).toBe(100);
+		expect(usage.daily.usedTokens).toBe(100);
+		expect(usage.weekly.usedTokens).toBe(100);
+		expect(usage.monthly.usedTokens).toBe(100);
 	});
 
 	it('counts input and output tokens together', async () => {
 		await insertUsageToday(700, 300);
-		expect((await getAgentUsage(db, agentId)).daily).toBe(1000);
+		expect((await getAgentBudgetStatus(db, agentId)).daily.usedTokens).toBe(1000);
+	});
+
+	it('counts only usage from the upgrade that made budgets count tokens', async () => {
+		await insertUsageToday(100);
+		await db.query(
+			`INSERT INTO system_meta (key, value) VALUES ($1, (now() - interval '1 second')::text)`,
+			[BUDGET_USAGE_COUNTED_FROM_META_KEY],
+		);
+		try {
+			await db.query(
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 40)`,
+				[agentId, projectId],
+			);
+			const status = await getAgentBudgetStatus(db, agentId);
+			expect(status.daily.usedTokens).toBe(40);
+			expect(status.monthly.usedTokens).toBe(40);
+		} finally {
+			await db.query('DELETE FROM system_meta WHERE key = $1', [
+				BUDGET_USAGE_COUNTED_FROM_META_KEY,
+			]);
+		}
+	});
+
+	it('starts each window at UTC midnight whatever the session time zone', async () => {
+		// Two hours before UTC midnight is yesterday in UTC, but today in a zone 14
+		// hours ahead: a window truncated in the session zone would count it.
+		await db.query(
+			`INSERT INTO usage_entries (member_id, project_id, input_tokens, created_at)
+			 VALUES ($1, $2, 55, date_trunc('day', now(), 'UTC') - interval '2 hours')`,
+			[agentId, projectId],
+		);
+		await db.query(`SET TIME ZONE 'Pacific/Kiritimati'`);
+		try {
+			expect((await getAgentBudgetStatus(db, agentId)).daily.usedTokens).toBe(0);
+		} finally {
+			await db.query('RESET TIME ZONE');
+		}
 	});
 });
 
@@ -186,7 +218,7 @@ describe('budget service - recordUsage', () => {
 			description: 'Agent run abc',
 		});
 		expect(entry).toMatchObject({ input_tokens: 200, output_tokens: 50 });
-		expect((await getAgentUsage(db, agentId)).daily).toBe(250);
+		expect((await getAgentBudgetStatus(db, agentId)).daily.usedTokens).toBe(250);
 	});
 
 	it('attributes the usage to the AI provider credential that produced it', async () => {
@@ -223,7 +255,7 @@ describe('budget service - recordUsage', () => {
 			description: 'empty run',
 		});
 		expect(entry).toBeNull();
-		expect((await getAgentUsage(db, agentId)).daily).toBe(0);
+		expect((await getAgentBudgetStatus(db, agentId)).daily.usedTokens).toBe(0);
 	});
 });
 

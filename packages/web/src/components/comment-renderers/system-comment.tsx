@@ -1,10 +1,11 @@
-import { formatTaskStatus } from '@hezo/shared';
+import { formatMoneyUsd, formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
 import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
 import type {
+	BudgetConversionScope,
 	SystemBudgetConversionContent,
 	SystemBudgetPausedContent,
 	SystemContent,
@@ -610,6 +611,21 @@ const CONVERSION_LINE_KEYS: Record<'daily' | 'weekly' | 'monthly', MessageKey> =
 	monthly: 'comment.budgetConversion.line.monthly',
 };
 
+const INVALID_BUDGET_KEYS: Record<'daily' | 'weekly' | 'monthly', MessageKey> = {
+	daily: 'comment.budgetConversion.invalid.daily',
+	weekly: 'comment.budgetConversion.invalid.weekly',
+	monthly: 'comment.budgetConversion.invalid.monthly',
+};
+
+/** How each converted budget names itself, so two lines with one name read apart. */
+const CONVERSION_SUBJECT_KEYS: Record<BudgetConversionScope, MessageKey> = {
+	agent: 'comment.budgetConversion.subject.agent',
+	project: 'comment.budgetConversion.subject.project',
+	agent_type: 'comment.budgetConversion.subject.agentType',
+	team_type: 'comment.budgetConversion.subject.teamType',
+	hire_proposal: 'comment.budgetConversion.subject.hireProposal',
+};
+
 /** The upgrade's conversion of dollar budgets to tokens, one line per budget. */
 function BudgetConversionBody({
 	content,
@@ -618,10 +634,15 @@ function BudgetConversionBody({
 	content: SystemBudgetConversionContent;
 	timestamp: React.ReactNode;
 }) {
-	const { t, formatNumber, language } = useI18n();
-	const dollars = new Intl.NumberFormat(language, { style: 'currency', currency: 'USD' });
+	const { t, formatNumber, number_format } = useI18n();
 	const rate = formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100));
 	const conversions = Array.isArray(content.conversions) ? content.conversions : [];
+	const invalid = Array.isArray(content.invalid) ? content.invalid : [];
+	const subject = (scope: BudgetConversionScope, name: string, context?: string | null) =>
+		t(CONVERSION_SUBJECT_KEYS[scope] ?? CONVERSION_SUBJECT_KEYS.agent, {
+			name,
+			context: context ?? '',
+		});
 	return (
 		<div className="flex flex-col gap-1 leading-[22px]" data-testid="budget-conversion-comment">
 			<span className="text-xs text-text-2">
@@ -634,11 +655,19 @@ function BudgetConversionBody({
 			</span>
 			<ul className="ml-4 list-disc text-xs text-text-2">
 				{conversions.map((c) => (
-					<li key={`${c.id}-${c.window}`}>
+					<li key={`${c.scope}-${c.id}-${c.window}`}>
 						{t(CONVERSION_LINE_KEYS[c.window] ?? CONVERSION_LINE_KEYS.monthly, {
-							name: c.name,
-							dollars: dollars.format(c.cents / 100),
+							name: subject(c.scope, c.name, c.context),
+							dollars: formatMoneyUsd(c.cents, number_format),
 							tokens: formatNumber(c.tokens),
+						})}
+					</li>
+				))}
+				{invalid.map((b) => (
+					<li key={`invalid-${b.id}-${b.window}`}>
+						{t(INVALID_BUDGET_KEYS[b.window] ?? INVALID_BUDGET_KEYS.monthly, {
+							name: subject('hire_proposal', b.name, b.context),
+							value: b.value,
 						})}
 					</li>
 				))}

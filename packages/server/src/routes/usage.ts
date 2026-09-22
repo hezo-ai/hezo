@@ -9,6 +9,7 @@ import {
 	toEntityBudgetStatus,
 	USAGE_ENTRY_COLUMNS_SQL,
 	USAGE_TOKEN_SUMS_SQL,
+	USAGE_WINDOW_FLOOR_SQL,
 	USAGE_WINDOW_SUMS_SQL,
 } from '../services/budget';
 
@@ -191,7 +192,7 @@ usageRoutes.get('/projects/:projectId/budget-status', async (c) => {
 	// Budget hero's "{N} runs" line. Same UTC month boundary the windowed sums use.
 	const runsRow = await db.query<{ runs: number }>(
 		`SELECT count(*)::int AS runs FROM usage_entries
-		 WHERE project_id = $1 AND created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')`,
+		 WHERE project_id = $1 AND created_at >= date_trunc('month', now(), 'UTC')`,
 		[projectId],
 	);
 	const runsThisMonth = runsRow.rows[0]?.runs ?? 0;
@@ -217,7 +218,8 @@ usageRoutes.get('/projects/:projectId/budget-status', async (c) => {
 		        ${USAGE_WINDOW_SUMS_SQL}
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 LEFT JOIN usage_entries ue ON ue.member_id = ma.id
+		 LEFT JOIN usage_entries ue
+		   ON ue.member_id = ma.id AND ue.created_at >= ${USAGE_WINDOW_FLOOR_SQL}
 		 WHERE m.team_id = $1
 		 GROUP BY ma.id, ma.title, ma.slug, ma.human_name, ma.avatar_spec, ma.runtime_status,
 		          ma.daily_budget_tokens, ma.weekly_budget_tokens, ma.monthly_budget_tokens

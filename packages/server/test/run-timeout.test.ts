@@ -219,6 +219,17 @@ async function resetTaskHistory() {
 	await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [taskId]);
 }
 
+/** A Claude Code assistant turn reporting the tokens it used. */
+const turnUsing = (inputTokens: number) =>
+	`${JSON.stringify({
+		type: 'assistant',
+		message: {
+			role: 'assistant',
+			usage: { input_tokens: inputTokens, output_tokens: 0 },
+			content: [{ type: 'text', text: 'working' }],
+		},
+	})}\n`;
+
 describe('run timeout classification (runAgent)', () => {
 	it('finalizes a run aborted for run_timeout as timed_out and flags result.timedOut', async () => {
 		const ac = new AbortController();
@@ -314,17 +325,6 @@ describe('run timeout classification (runAgent)', () => {
 		);
 		expect(run.rows[0].error ?? '').not.toContain('tool-call ceiling');
 	});
-
-	/** A Claude Code assistant turn reporting the tokens it used. */
-	const turnUsing = (inputTokens: number) =>
-		`${JSON.stringify({
-			type: 'assistant',
-			message: {
-				role: 'assistant',
-				usage: { input_tokens: inputTokens, output_tokens: 0 },
-				content: [{ type: 'text', text: 'working' }],
-			},
-		})}\n`;
 
 	it('stops a run whose tokens cross the per-run ceiling, and fails it', async () => {
 		// Counted from the running usage the runtime streams, so the stop lands
@@ -720,6 +720,39 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
 		expect(run.rows[0].error).toContain('Server shut down while this run was in flight');
 		expect(run.rows[0].error).toContain('returning this run to the queue');
+	});
+
+	it('records what a drained run used, though the work goes back to the queue', async () => {
+		const ac = new AbortController();
+		const deps = makeDeps({
+			execStart: async (_execId: string, opts?: { onChunk?: (c: any) => void | Promise<void> }) => {
+				await opts?.onChunk?.({ stream: 'stdout', text: turnUsing(12_345) });
+				ac.abort('server_shutdown');
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		const run = await db.query<{ input_tokens: number; usage_partial: boolean }>(
+			'SELECT input_tokens, usage_partial FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(Number(run.rows[0].input_tokens)).toBe(12_345);
+		expect(run.rows[0].usage_partial).toBe(true);
+		const ledger = await db.query<{ input_tokens: number }>(
+			'SELECT input_tokens FROM usage_entries WHERE description = $1',
+			[`Agent run ${result.heartbeatRunId}`],
+		);
+		expect(ledger.rows.map((r) => Number(r.input_tokens))).toEqual([12_345]);
 	});
 
 	it('hands back a run the drain caught before it had a row at all', async () => {

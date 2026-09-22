@@ -128,18 +128,35 @@ export interface SystemBudgetPausedContent {
 	text?: string;
 }
 
+/** Which budget a conversion line is about. */
+export type BudgetConversionScope =
+	| 'agent'
+	| 'project'
+	| 'agent_type'
+	| 'team_type'
+	| 'hire_proposal';
+
 /** The dollar budgets an upgrade converted to tokens, posted once on an HQ task. */
 export interface SystemBudgetConversionContent {
 	kind: 'budget_conversion';
 	tokens_per_cent?: number;
 	basis?: 'history' | 'fallback';
 	conversions?: Array<{
-		scope: string;
+		scope: BudgetConversionScope;
 		id: string;
 		name: string;
+		context?: string | null;
 		window: 'daily' | 'weekly' | 'monthly';
 		cents: number;
 		tokens: number;
+	}>;
+	/** Pending hire budgets that were not a dollar amount, now unlimited. */
+	invalid?: Array<{
+		id: string;
+		name: string;
+		context?: string | null;
+		window: 'daily' | 'weekly' | 'monthly';
+		value: string;
 	}>;
 	text?: string;
 }

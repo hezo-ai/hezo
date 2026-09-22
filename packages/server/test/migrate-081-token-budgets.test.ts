@@ -1,8 +1,9 @@
-import { DEFAULT_TEAM_ID } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, validateBudgetWindows } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import {
 	BUDGET_CONVERSION_META_KEY,
+	BUDGET_USAGE_COUNTED_FROM_META_KEY,
 	type BudgetConversionRecord,
 	FALLBACK_TOKENS_PER_CENT,
 } from '../src/db/migrations/code/081_token_budgets';
@@ -52,6 +53,13 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 	// $1 and $2 per million, costs $1.20. That is 1,100,000 tokens per 120 cents.
 	const TOKENS_PER_CENT = 1_100_000 / 120;
 	const toTokens = (cents: number) => Math.round(cents * TOKENS_PER_CENT);
+	// A daily $1 implies more than a monthly $30 (365/12 days), so the monthly
+	// window is raised to the floor its daily window sets.
+	const engineerMonthly = Math.ceil(toTokens(100) * (365 / 12));
+	let flooredAgentId: string;
+	let runningRunId: string;
+	let badApprovalId: string;
+	let resolvedBadApprovalId: string;
 
 	beforeAll(async () => {
 		h = await createDataPreservationHarness();
@@ -169,6 +177,53 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 		);
 		wakeupId = wakeup.rows[0].id;
 
+		// Daily $0.01 and weekly $0.07 round to 9,167 and 64,167 tokens, below the
+		// 64,169 that seven days of the daily budget imply.
+		const floored = await h.db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'Writer') RETURNING id`,
+			[teamId],
+		);
+		flooredAgentId = floored.rows[0].id;
+		await h.db.query(
+			`INSERT INTO member_agents
+			   (id, title, slug, daily_budget_cents, weekly_budget_cents, monthly_budget_cents)
+			 VALUES ($1, 'Writer', 'writer', 1, 7, 31)`,
+			[flooredAgentId],
+		);
+
+		// A run still going when the old process stopped: its mid-run snapshot is on
+		// the row, and startup reconciliation records it, so the rebuild must not.
+		const running = await h.db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, status, started_at, input_tokens, output_tokens)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status, now(), 900, 90) RETURNING id`,
+			[teamId, cappedAgentId],
+		);
+		runningRunId = running.rows[0].id;
+
+		// An agent wrote these: every value a JSON number cast could choke on.
+		const bad = await h.db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, payload)
+			 VALUES ($1, 'hire', $2::jsonb) RETURNING id`,
+			[
+				teamId,
+				JSON.stringify({
+					title: 'Scout',
+					daily_budget_cents: 'NaN',
+					weekly_budget_cents: true,
+					monthly_budget_cents: 1e30,
+				}),
+			],
+		);
+		badApprovalId = bad.rows[0].id;
+		const resolvedBad = await h.db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, status, payload)
+			 VALUES ($1, 'hire', 'approved', $2::jsonb) RETURNING id`,
+			[teamId, JSON.stringify({ title: 'Old', monthly_budget_cents: -5 })],
+		);
+		resolvedBadApprovalId = resolvedBad.rows[0].id;
+
 		await h.applyTarget(TARGET);
 	});
 
@@ -187,7 +242,7 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 		expect(agent.rows[0]).toEqual({
 			daily_budget_tokens: toTokens(100),
 			weekly_budget_tokens: 0,
-			monthly_budget_tokens: toTokens(3000),
+			monthly_budget_tokens: engineerMonthly,
 		});
 		const project = await h.db.query<{ monthly_budget_tokens: number }>(
 			`SELECT monthly_budget_tokens FROM projects WHERE id = $1`,
@@ -199,6 +254,30 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 			[agentTypeId],
 		);
 		expect(type.rows[0].monthly_budget_tokens).toBe(toTokens(5000));
+	});
+
+	it('raises a converted window to the floor its shorter windows set', async () => {
+		const agent = await h.db.query<{
+			daily_budget_tokens: number;
+			weekly_budget_tokens: number;
+			monthly_budget_tokens: number;
+		}>(
+			`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
+			 FROM member_agents WHERE id = $1`,
+			[flooredAgentId],
+		);
+		const trio = {
+			daily_budget_tokens: Number(agent.rows[0].daily_budget_tokens),
+			weekly_budget_tokens: Number(agent.rows[0].weekly_budget_tokens),
+			monthly_budget_tokens: Number(agent.rows[0].monthly_budget_tokens),
+		};
+		expect(trio).toEqual({
+			daily_budget_tokens: toTokens(1),
+			weekly_budget_tokens: toTokens(1) * 7,
+			monthly_budget_tokens: toTokens(31),
+		});
+		// The budget editor accepts it, so a later edit of any one window is not refused.
+		expect(validateBudgetWindows(trio)).toEqual([]);
 	});
 
 	it('keeps an unlimited budget unlimited', async () => {
@@ -233,6 +312,21 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 			monthly_budget_tokens: toTokens(1200),
 		});
 		expect(approval.rows[0].payload).not.toHaveProperty('monthly_budget_cents');
+	});
+
+	it('leaves a hire budget that is not a dollar amount unlimited, rather than failing', async () => {
+		const approvals = await h.db.query<{ id: string; payload: Record<string, unknown> }>(
+			`SELECT id, payload FROM approvals WHERE id = ANY($1::uuid[])`,
+			[[badApprovalId, resolvedBadApprovalId]],
+		);
+		for (const row of approvals.rows) {
+			expect(row.payload).toMatchObject({
+				daily_budget_tokens: 0,
+				weekly_budget_tokens: 0,
+				monthly_budget_tokens: 0,
+			});
+			expect(Object.keys(row.payload).some((k) => k.endsWith('_cents'))).toBe(false);
+		}
 		const card = await h.db.query<{ content: Record<string, unknown> }>(
 			`SELECT content FROM task_comments WHERE id = $1`,
 			[cardId],
@@ -256,12 +350,17 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 		);
 		// Every run and chat turn that used tokens, the old run and the unpriced one
 		// included: the ledger holds usage, not price.
+		// The running run is left to startup reconciliation.
 		expect(rows.rows.map((r) => [r.input_tokens, r.output_tokens])).toEqual([
 			[50_000_000, 0],
 			[1_000_000, 100_000],
 			[7000, 3000],
 			[400, 100],
 		]);
+		const running = await h.db.query(`SELECT 1 FROM usage_entries WHERE description = $1`, [
+			`Agent run ${runningRunId}`,
+		]);
+		expect(running.rows).toEqual([]);
 		expect(rows.rows.find((r) => r.input_tokens === 1_000_000)?.description).toBe(
 			`Agent run ${runId}`,
 		);
@@ -299,6 +398,19 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 		expect(row.rows[0]).toEqual({ status: 'queued', held_config_id: null });
 	});
 
+	it('records when budgets start counting usage, and adds the card answerer column', async () => {
+		const meta = await h.db.query<{ at: string }>(
+			`SELECT value::timestamptz AS at FROM system_meta WHERE key = $1`,
+			[BUDGET_USAGE_COUNTED_FROM_META_KEY],
+		);
+		expect(Date.now() - new Date(meta.rows[0].at).getTime()).toBeLessThan(60_000);
+		const column = await h.db.query(
+			`SELECT 1 FROM information_schema.columns
+			 WHERE table_name = 'task_comments' AND column_name = 'chosen_by_user_id'`,
+		);
+		expect(column.rows).toHaveLength(1);
+	});
+
 	it('records each conversion, old and new, for the first-boot notice', async () => {
 		const meta = await h.db.query<{ value: string }>(
 			`SELECT value FROM system_meta WHERE key = $1`,
@@ -308,13 +420,29 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 		expect(record.basis).toBe('history');
 		expect(record.tokens_per_cent).toBeCloseTo(TOKENS_PER_CENT, 6);
 		expect(
-			record.conversions.map((c) => [c.scope, c.name, c.window, c.cents, c.tokens]).sort(),
+			record.conversions
+				.map((c) => [c.scope, c.name, c.context, c.window, c.cents, c.tokens])
+				.sort(),
 		).toEqual(
 			[
-				['agent', 'Engineer', 'daily', 100, toTokens(100)],
-				['agent', 'Engineer', 'monthly', 3000, toTokens(3000)],
-				['agent_type', 'Custom analyst', 'monthly', 5000, toTokens(5000)],
-				['project', 'acme', 'monthly', 10000, toTokens(10000)],
+				['agent', 'Engineer', 'acme', 'daily', 100, toTokens(100)],
+				['agent', 'Engineer', 'acme', 'monthly', 3000, engineerMonthly],
+				['agent', 'Writer', 'acme', 'daily', 1, toTokens(1)],
+				['agent', 'Writer', 'acme', 'weekly', 7, toTokens(1) * 7],
+				['agent', 'Writer', 'acme', 'monthly', 31, toTokens(31)],
+				['agent_type', 'Custom analyst', null, 'monthly', 5000, toTokens(5000)],
+				['team_type', 'Custom analyst', 'Custom team', 'monthly', 2000, toTokens(2000)],
+				['hire_proposal', 'Analyst', 'acme', 'monthly', 1200, toTokens(1200)],
+				['project', 'acme', null, 'monthly', 10000, toTokens(10000)],
+			].sort(),
+		);
+		// Only the pending proposal's bad values are listed: a resolved one will
+		// never become an agent.
+		expect(record.invalid.map((b) => [b.id, b.name, b.window, b.value]).sort()).toEqual(
+			[
+				[badApprovalId, 'Scout', 'daily', '"NaN"'],
+				[badApprovalId, 'Scout', 'weekly', 'true'],
+				[badApprovalId, 'Scout', 'monthly', '1e+30'],
 			].sort(),
 		);
 	});
@@ -370,7 +498,9 @@ describe('081_token_budgets migration, on an instance with no priced history', (
 		);
 		expect(notices.rows).toHaveLength(1);
 		expect(notices.rows[0].assignee_id).toBeNull();
-		expect(notices.rows[0].content.text).toContain('$7.00 became 7,000,000 tokens');
+		expect(notices.rows[0].content.text).toContain(
+			'The Engineer agent in hq, weekly: $7.00 became 7,000,000 tokens',
+		);
 		const mentions = await h.db.query<{ n: number }>(
 			`SELECT count(*)::int AS n FROM admin_mentions WHERE comment_id = $1`,
 			[notices.rows[0].id],
@@ -403,5 +533,47 @@ describe('081_token_budgets migration, on an instance with every budget unlimite
 			BUDGET_CONVERSION_META_KEY,
 		]);
 		expect(meta.rows).toEqual([]);
+	});
+});
+
+describe('081_token_budgets migration, on an instance whose models priced by prefix', () => {
+	let h: DataPreservationHarness;
+
+	beforeAll(async () => {
+		h = await createDataPreservationHarness();
+		await h.applyUpToExclusive(TARGET);
+		const team = await seedTeam(h.db, { slug: 'prefix' });
+		await h.db.query(
+			`INSERT INTO member_agents (id, title, slug, monthly_budget_cents)
+			 VALUES ($1, 'Engineer', 'engineer', 100)`,
+			[team.memberId],
+		);
+		// The catalog lists the model only undated; the run names a dated variant,
+		// which the price service priced by its segment-aligned prefix.
+		await h.db.query(
+			`INSERT INTO model_pricing (model_id, input_per_token, output_per_token, source)
+			 VALUES ('acme-pro', 0.000002, 0.000002, 'manual')`,
+		);
+		await h.db.query(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, status, started_at, finished_at, model, input_tokens, output_tokens)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now() - interval '1 day',
+			         now() - interval '1 day', 'acme-pro-0606', 500000, 500000)`,
+			[team.teamId, team.memberId],
+		);
+		await h.applyTarget(TARGET);
+	});
+
+	afterAll(() => h.close());
+
+	it('prices the run by prefix, as the price service did, rather than falling back', async () => {
+		const meta = await h.db.query<{ value: string }>(
+			`SELECT value FROM system_meta WHERE key = $1`,
+			[BUDGET_CONVERSION_META_KEY],
+		);
+		const record = JSON.parse(meta.rows[0].value) as BudgetConversionRecord;
+		// 1,000,000 tokens at $2 per million is $2.00: 5,000 tokens per cent.
+		expect(record.basis).toBe('history');
+		expect(record.tokens_per_cent).toBeCloseTo(5_000, 6);
 	});
 });

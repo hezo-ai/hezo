@@ -2,6 +2,7 @@ import { DEFAULT_TEAM_ID, TaskPriority, TaskStatus, wsRoom } from '@hezo/shared'
 import type { Db } from '../db/database';
 import {
 	BUDGET_CONVERSION_META_KEY,
+	type BudgetConversion,
 	type BudgetConversionRecord,
 } from '../db/migrations/code/081_token_budgets';
 import { broadcastRowChange } from '../lib/broadcast';
@@ -15,6 +16,23 @@ const log = logger.child('budget-conversion-notice');
 
 /** The system comment kind that lists the budgets the upgrade converted. */
 export const BUDGET_CONVERSION_COMMENT_KIND = 'budget_conversion';
+
+/** How a conversion line names its budget in the notice's plain text. */
+const SUBJECT_TEXT: Record<BudgetConversion['scope'], (name: string, context: string) => string> = {
+	agent: (name, context) => `The ${name} agent in ${context}`,
+	project: (name) => `The ${name} project`,
+	agent_type: (name) => `The ${name} role`,
+	team_type: (name, context) => `The ${name} role in ${context}`,
+	hire_proposal: (name, context) => `The proposed ${name} hire in ${context}`,
+};
+
+/** How the task explains the rate, by where it came from. */
+const RATE_BASIS_TEXT: Record<BudgetConversionRecord['basis'], string> = {
+	history:
+		"Each dollar budget this instance had was converted at the instance's own rate over its last 30 days of runs.",
+	fallback:
+		'This instance had no priced runs in the last 30 days, so each dollar budget it had was converted at one million tokens per dollar.',
+};
 
 /**
  * Tell the admin which dollar budgets became token budgets, once.
@@ -35,6 +53,7 @@ export async function postBudgetConversionNotice(
 	const raw = meta.rows[0]?.value;
 	if (!raw) return;
 	const record = JSON.parse(raw) as BudgetConversionRecord;
+	const invalid = record.invalid ?? [];
 
 	const hq = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
@@ -63,16 +82,24 @@ export async function postBudgetConversionNotice(
 				number,
 				identifier,
 				'Budgets now count tokens',
-				'Budgets used to count dollars. This release counts every token a run sends and receives instead, input (cached input included) plus output, for every run whatever its credential. Each dollar budget this instance had was converted at its own recent rate; the notice below lists them. Adjust any of them on the Budget page, then close this task.',
+				`Budgets used to count dollars. This release counts every token a run sends and receives instead, input (cached input included) plus output, for every run whatever its credential, and only usage from this upgrade on. ${RATE_BASIS_TEXT[record.basis] ?? RATE_BASIS_TEXT.fallback} The notice below lists each budget. Adjust any of them on the Budget page, then close this task.`,
 				TaskStatus.Backlog,
 				TaskPriority.Medium,
 			],
 		);
 		const row = inserted.rows[0];
-		const lines = record.conversions.map(
-			(c) =>
-				`${c.name} (${c.window}): $${(c.cents / 100).toFixed(2)} became ${c.tokens.toLocaleString('en-US')} tokens`,
-		);
+		const subject = (scope: BudgetConversion['scope'], name: string, context: string | null) =>
+			(SUBJECT_TEXT[scope] ?? SUBJECT_TEXT.agent)(name, context ?? '');
+		const lines = [
+			...record.conversions.map(
+				(c) =>
+					`${subject(c.scope, c.name, c.context)}, ${c.window}: $${(c.cents / 100).toFixed(2)} became ${c.tokens.toLocaleString('en-US')} tokens`,
+			),
+			...invalid.map(
+				(b) =>
+					`${subject('hire_proposal', b.name, b.context)}, ${b.window}: ${b.value} was not a dollar amount, so it is now unlimited`,
+			),
+		];
 		await postAdminNotice({
 			db,
 			teamId: DEFAULT_TEAM_ID,
@@ -82,7 +109,8 @@ export async function postBudgetConversionNotice(
 				tokens_per_cent: record.tokens_per_cent,
 				basis: record.basis,
 				conversions: record.conversions,
-				text: `Budgets now count tokens. ${record.conversions.length} dollar budget(s) were converted at ${Math.round(record.tokens_per_cent * 100).toLocaleString('en-US')} tokens per dollar:\n${lines.join('\n')}`,
+				invalid,
+				text: `Budgets now count tokens, starting from this upgrade. ${record.conversions.length} dollar budget(s) were converted at ${Math.round(record.tokens_per_cent * 100).toLocaleString('en-US')} tokens per dollar:\n${lines.join('\n')}`,
 			},
 			wsManager,
 		});

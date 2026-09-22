@@ -119,6 +119,23 @@ export function formatCompactNumber(value: number, language: string): string {
 	);
 }
 
+/**
+ * USD cents as a dollar amount, punctuated by the operator's number format. The
+ * only dollars left are the budgets an upgrade converted to tokens, stated old
+ * and new. `currencyDisplay: 'narrowSymbol'` pins the symbol to "$" so the format
+ * governs punctuation only: without it, `fr-FR` renders "$US" and `sv-SE` "US$".
+ */
+export function formatMoneyUsd(cents: number, numberFormat: NumberFormat): string {
+	const { representativeLocale } = NUMBER_FORMAT_DESCRIPTORS[numberFormat];
+	return new Intl.NumberFormat(representativeLocale, {
+		style: 'currency',
+		currency: 'USD',
+		currencyDisplay: 'narrowSymbol',
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	}).format((Number.isFinite(cents) ? cents : 0) / 100);
+}
+
 /** Plain localized number - used for token counts and the like. */
 export function formatNumber(value: number, numberFormat: NumberFormat): string {
 	const { representativeLocale } = NUMBER_FORMAT_DESCRIPTORS[numberFormat];

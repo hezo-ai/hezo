@@ -1788,8 +1788,16 @@ export async function runAgent(
 	const finalizeRequeue = async (
 		reason: string,
 		requeueReason: WakeupSkipReason,
-		requeueNotBefore?: Date,
-		requeueHeldConfigId?: string,
+		opts: {
+			notBefore?: Date;
+			heldConfigId?: string;
+			/**
+			 * What the run used before it was handed back. The work goes back to the
+			 * queue, but the tokens were spent, so a run drained at shutdown still
+			 * reaches the ledger. Always partial: the run did not finish.
+			 */
+			usage?: AgentRunUsage | null;
+		} = {},
 	): Promise<RunResult> => {
 		releaseCredentialLock?.();
 		const message = `${reason} - returning this run to the queue.`;
@@ -1804,6 +1812,7 @@ export async function runAgent(
 				exitCode: -1,
 				durationMs,
 				error: message,
+				...(opts.usage ? { usage: opts.usage, usagePartial: true } : {}),
 				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
 				// actually carried is not known until the caller settles the wakeup,
 				// and the guard there can bite. Writing `handed_back` at this point
@@ -1822,8 +1831,8 @@ export async function runAgent(
 			heartbeatRunId,
 			requeued: true,
 			requeueReason,
-			requeueNotBefore,
-			requeueHeldConfigId,
+			requeueNotBefore: opts.notBefore,
+			requeueHeldConfigId: opts.heldConfigId,
 		};
 	};
 
@@ -2220,8 +2229,7 @@ export async function runAgent(
 				return finalizeRequeue(
 					`${describeUsageHold(holdAfterWait)}, so this run did not start`,
 					WakeupSkipReason.ProviderUsageLimit,
-					holdAfterWait,
-					credential.configId,
+					{ notBefore: holdAfterWait, heldConfigId: credential.configId },
 				);
 			}
 		}
@@ -3334,12 +3342,10 @@ export async function runAgent(
 					// this run's per-run secrets off a pooled container, and the row
 					// should not read terminal until that has happened.
 					await cleanupRunArtifacts();
-					return finalizeRequeue(
-						handback.message,
-						handback.reason,
-						handback.notBefore,
-						handback.heldConfigId,
-					);
+					return finalizeRequeue(handback.message, handback.reason, {
+						notBefore: handback.notBefore,
+						heldConfigId: handback.heldConfigId,
+					});
 				}
 			}
 
@@ -3508,8 +3514,13 @@ export async function runAgent(
 			// row has always promised. The kill above has already torn the tree down,
 			// and no lost-run strike is spent: a shutdown is not the run failing.
 			if (reason === 'server_shutdown') {
+				// Recovered before the cleanup, which removes the usage file with the
+				// run's home: a Codex, Grok or Kimi run has nothing on its stream.
+				const drainedUsage = (await recoverUsageOnce()) ?? parser.getUsage();
 				await cleanupRunArtifacts();
-				return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+				return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown, {
+					usage: drainedUsage,
+				});
 			}
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);

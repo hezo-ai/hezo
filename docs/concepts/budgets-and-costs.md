@@ -41,9 +41,8 @@ The budget editors take millions of tokens, so `20` means 20,000,000. Limits app
 both **agents** and **projects**, independently. A limit of zero means **unlimited** for
 that window.
 
-**New agents ship with no limit.** Set one where you want a ceiling. The built-in roles
-start with one: a Captain with 20 million tokens a month, and the Coach and the CEO with
-30 million.
+**Every agent starts with no limit**, the built-in roles included. Set one where you want
+a ceiling. The per-run and per-task limits below still apply to every agent.
 
 ## Enforcement
 
@@ -78,11 +77,17 @@ Budgets counted dollars before this release, and skipped runs on a subscription.
 instance upgrades, every non-zero dollar budget becomes a token budget at that
 instance's own rate: the list price of its runs over the previous 30 days. An instance
 with no priced runs in that window converts at one million tokens per dollar. A limit of
-zero stays unlimited.
+zero stays unlimited. Where a daily, weekly and monthly limit are all set, a longer one
+is raised if it would fall below what the shorter ones allow.
 
-A notice on an HQ task in your inbox lists each converted budget, old and new, so you
-can adjust any of them. A request that still sends a dollar budget field, such as
-`monthly_budget_cents`, is refused with an error naming the field that replaced it.
+Budgets count usage from the upgrade on. Earlier usage stays in the charts but counts
+against no budget, because many of those runs were never counted before. A pending hire
+proposal whose budget was not a dollar amount becomes unlimited.
+
+A notice on an HQ task in your inbox lists each converted budget, old and new, and any
+proposal budget that became unlimited, so you can adjust them. A request that still
+sends a dollar budget field, such as `monthly_budget_cents`, is refused with an error
+naming the field that replaced it.
 
 ## Container hours
 

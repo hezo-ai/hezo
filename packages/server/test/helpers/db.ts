@@ -5,6 +5,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PgliteDb } from '../../src/db/drivers/pglite';
 import { type Migration, runMigrations } from '../../src/db/migrate';
 import { codeMigrations } from '../../src/db/migrations/code';
+import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../../src/db/migrations/code/081_token_budgets';
 import { BASE_SCHEMA } from '../../src/db/schema';
 
 /** Creates a fresh in-memory PGlite-backed Db with base tables for testing. */
@@ -58,6 +59,11 @@ async function buildMigratedDb(): Promise<PgliteDb> {
 	Object.assign(migrations, codeMigrations);
 
 	await runMigrations(db, migrations);
+	// The snapshot is migrated once per worker, so the instant budgets count
+	// usage from would be the run's start, and a test seeding usage earlier in
+	// today's window would find it ignored. Tests see an instance whose budgets
+	// always counted tokens; the bound itself is covered where it is set.
+	await db.query('DELETE FROM system_meta WHERE key = $1', [BUDGET_USAGE_COUNTED_FROM_META_KEY]);
 	return db;
 }
 
