@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "Run for {agent} timed out.",
 	"comment.runTimedOutWithError": "Run for {agent} timed out: {error}",
 	"comment.statusChanged": "{actor} changed status from {from} to {to}",
-	"comment.taskTokenCeiling": "Agents have used {tokens} tokens on this task since a person last replied, past its limit of {ceiling}. No agent will run on it until you reply.",
+	"comment.taskTokenCeiling": "Agents have used {tokens} tokens on this task since you last replied, past its limit of {ceiling}. No agent will run on it until you reply.",
 	"comment.tooLong": "This comment is {count} characters. The limit is {max}. Attach long content as a file instead.",
 	"common.actionFailed": "Something went wrong. Please try again.",
 	"common.back": "Back",

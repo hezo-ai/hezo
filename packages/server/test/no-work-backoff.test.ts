@@ -19,6 +19,7 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
 	taskTokenCeilingNotice,
@@ -119,14 +120,14 @@ async function insertRun(opts: {
 }
 
 /**
- * Whether a wakeup from `source` on the shared task skips every suppression. The
- * wakeup is raised by an agent run unless `byAgent` is false.
+ * Which suppressions a wakeup from `source` on the shared task skips. The wakeup
+ * is raised by an agent run unless `byAgent` is false.
  */
-async function exemptFor(
+async function exemptionFor(
 	source: WakeupSource,
 	payload: Record<string, unknown> = {},
 	byAgent = true,
-): Promise<boolean> {
+): Promise<SuppressionExemption> {
 	const cause = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at, finished_at)
 		 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now() - interval '1 day', now() - interval '1 day')
@@ -148,8 +149,56 @@ async function exemptFor(
 	return dispatchSuppressionExempt(db, agentId, taskId, source, payload, w.rows[0].id);
 }
 
+/** Whether a wakeup from `source` skips the holds a person's input answers. */
+async function exemptFor(
+	source: WakeupSource,
+	payload: Record<string, unknown> = {},
+	byAgent = true,
+): Promise<boolean> {
+	return (await exemptionFor(source, payload, byAgent)).byPerson;
+}
+
+/** Remove a teammate {@link insertTeammateReply} added, with their comments. */
+async function removeTeammate(memberId: string): Promise<void> {
+	const user = await db.query<{ user_id: string }>(
+		'SELECT user_id FROM member_users WHERE id = $1',
+		[memberId],
+	);
+	const userId = user.rows[0]?.user_id;
+	await db.query('DELETE FROM members WHERE id = $1', [memberId]);
+	if (userId) {
+		await db.query('DELETE FROM task_comments WHERE author_user_id = $1', [userId]);
+		await db.query('DELETE FROM users WHERE id = $1', [userId]);
+	}
+}
+
+/** A human on the team who is not an admin, and their comment on the shared task. */
+async function insertTeammateReply(minutesAgo: number): Promise<{ memberId: string }> {
+	const user = await db.query<{ id: string }>(
+		`INSERT INTO users (display_name, is_superuser) VALUES ('Teammate', false) RETURNING id`,
+	);
+	const member = await db.query<{ id: string }>(
+		`INSERT INTO members (team_id, member_type, display_name)
+		 VALUES ($1, 'user', 'Teammate') RETURNING id`,
+		[teamId],
+	);
+	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'member')`, [
+		member.rows[0].id,
+		user.rows[0].id,
+	]);
+	await db.query(
+		`INSERT INTO task_comments (task_id, author_user_id, content_type, content, created_at)
+		 VALUES ($1, $2, 'text'::comment_content_type, '{"text":"keep going"}'::jsonb,
+		         now() - ($3 || ' minutes')::interval)`,
+		[taskId, user.rows[0].id, String(minutesAgo)],
+	);
+	return { memberId: member.rows[0].id };
+}
+
 async function insertHumanReply(minutesAgo: number): Promise<void> {
-	const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+	const user = await db.query<{ id: string }>(
+		'SELECT id FROM users WHERE is_superuser ORDER BY created_at LIMIT 1',
+	);
 	await db.query(
 		`INSERT INTO task_comments (task_id, author_user_id, content_type, content, created_at)
 		 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb,
@@ -342,7 +391,9 @@ async function insertAgentComment(opts: {
 	);
 	const commentId = c.rows[0].id;
 	if (opts.raisesAdminMention) {
-		const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+		const user = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser ORDER BY created_at LIMIT 1',
+		);
 		await db.query(
 			`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
 			 VALUES ($1, $2, $3, $4)`,
@@ -724,6 +775,45 @@ describe('dispatchSuppressionExempt', () => {
 		await insertHumanReply(60);
 		expect(await exemptFor(WakeupSource.Mention)).toBe(true);
 	});
+
+	it('lets only the admin past the two hard stops', async () => {
+		await clearRuns();
+		await insertRun({ reportedNoWork: false, minutesAgo: 30 });
+
+		// A teammate who is not an admin answers the soft holds, never the hard stops.
+		const teammate = await insertTeammateReply(10);
+		expect(await exemptionFor(WakeupSource.Mention)).toEqual({ byPerson: true, byAdmin: false });
+		// Nor does their mention, or their "Run now".
+		expect(await exemptionFor(WakeupSource.Mention, {}, false)).toEqual({
+			byPerson: true,
+			byAdmin: false,
+		});
+		const teammateRunNow = { triggered_by: { member_id: teammate.memberId, name: 'Teammate' } };
+		expect(await exemptionFor(WakeupSource.Heartbeat, teammateRunNow)).toEqual({
+			byPerson: true,
+			byAdmin: false,
+		});
+
+		// The admin's "Run now" or reply answers both.
+		const adminRunNow = { triggered_by: { member_id: null, name: 'Admin' } };
+		expect(await exemptionFor(WakeupSource.Heartbeat, adminRunNow)).toEqual({
+			byPerson: true,
+			byAdmin: true,
+		});
+		await insertHumanReply(5);
+		expect(await exemptionFor(WakeupSource.Mention)).toEqual({ byPerson: true, byAdmin: true });
+
+		await removeTeammate(teammate.memberId);
+	});
+
+	it('exempts a system decision from both kinds of hold, and a system source from neither', async () => {
+		await clearRuns();
+		expect(await exemptionFor(WakeupSource.ApprovalResolved)).toEqual({
+			byPerson: true,
+			byAdmin: true,
+		});
+		expect(await exemptionFor(WakeupSource.Heartbeat)).toEqual({ byPerson: false, byAdmin: false });
+	});
 });
 
 describe('handoffRoundsExhausted', () => {
@@ -803,6 +893,14 @@ describe('handoffRoundsExhausted', () => {
 		expect(held?.tokens).toBe(HANDOFF_ROUND_LIMIT * 1_001_000);
 		expect(held?.agentSlugs).toHaveLength(2);
 		expect(held?.notified).toBe(false);
+	});
+
+	it('stays held when a teammate who is not an admin replies', async () => {
+		await clearRuns();
+		await alternate(HANDOFF_ROUND_LIMIT);
+		const teammate = await insertTeammateReply(0);
+		expect(await handoffRoundsExhausted(db, taskId, false)).not.toBeNull();
+		await removeTeammate(teammate.memberId);
 	});
 
 	it('lifts when a person speaks, and an agent reply does not lift it', async () => {
@@ -961,6 +1059,14 @@ describe('taskTokenCeilingReached', () => {
 			tokens: TASK_TOKEN_CEILING,
 			notified: false,
 		});
+	});
+
+	it('grants no fresh ceiling on a reply from a teammate who is not an admin', async () => {
+		await clearRuns();
+		await insertRunUsing(TASK_TOKEN_CEILING, 30);
+		const teammate = await insertTeammateReply(15);
+		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
+		await removeTeammate(teammate.memberId);
 	});
 
 	it('grants a fresh ceiling when a person speaks, and an agent reply grants none', async () => {

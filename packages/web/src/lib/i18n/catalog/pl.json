@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "Uruchomienie dla {agent} przekroczyło limit czasu.",
 	"comment.runTimedOutWithError": "Uruchomienie dla {agent} przekroczyło limit czasu: {error}",
 	"comment.statusChanged": "{actor} zmienił status z {from} na {to}",
-	"comment.taskTokenCeiling": "Od ostatniej odpowiedzi człowieka agenci zużyli na to zadanie {tokens} tokenów, ponad limit {ceiling}. Żaden agent nie zajmie się nim, dopóki nie odpowiesz.",
+	"comment.taskTokenCeiling": "Od twojej ostatniej odpowiedzi agenci zużyli na to zadanie {tokens} tokenów, ponad limit {ceiling}. Żaden agent nie zajmie się nim, dopóki nie odpowiesz.",
 	"comment.tooLong": "Ten komentarz ma {count} znaków. Limit to {max}. Długą treść załącz jako plik.",
 	"common.actionFailed": "Coś poszło nie tak. Spróbuj ponownie.",
 	"common.back": "Wstecz",

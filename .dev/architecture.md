@@ -788,8 +788,9 @@ MCP tool call cannot be refused that way, since the SDK strips unknown keys befo
 stops a run from `onChunk` the way the tool-call ceiling does, off the usage the runtime
 reports as it goes; a runtime that reports only at the end (Codex, and the file-recovered ones)
 is bounded by the task ceiling instead. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
-dispatch suppression: the tokens of every run on the task since a person last spoke, held for
-every agent until a person speaks, with one `task_token_ceiling` notice per hold.
+dispatch suppression: the tokens of every run on the task since the admin last spoke
+(`adminSpokeAtSql`), held for every agent until the admin speaks, with one `task_token_ceiling`
+notice per hold.
 
 **What else bounds a single run is `runs.maxToolCalls` (default 600), plus wall-clock
 `run_timeout_min`.** Tool calls because they are what grows the tokens: every tool result stays in the conversation and is re-sent on the next call, so a run's
@@ -2881,7 +2882,12 @@ spoken on the task since this agent last ran there (an `author_user_id` comment,
 `chosen_at`). A coalesce keeps the first agent's attribution through later triggers, so an
 attributed row may still carry a person's words and the thread settles it. Before this rule an
 agent's mention skipped every hold, which is how two agents kept one task going for a day
-under a retrospective hold. A suppressed wakeup is marked `completed` with
+under a retrospective hold. The exemption has two halves (`SuppressionExemption`): `byPerson`,
+above, skips the soft holds; `byAdmin` skips the two hard stops (the handoff limit and the task
+token ceiling) and holds only for the admin's own input - their Run now or Retry
+(`adminTriggeredSql`: a null actor member, meaning a superuser or an API key, or a team admin's
+membership), or a comment or card answer by the admin since this agent last ran. A teammate who
+is not an admin answers the soft holds, never the hard stops, because the notice asked the admin. A suppressed wakeup is marked `completed` with
 `last_skipped_reason = no_work_cooldown` - answered, not re-queued to ask again, and not left
 dangling in `claimed`. The skip is logged at `warn` for every source but `heartbeat` and
 `timer`: on those two it is the backoff working, on anything else it means something asked
@@ -2942,11 +2948,11 @@ person's mention or reply, or "Run now", always does. A teammate's mention does 
 *successful* runs, which every other bound misses because each keys on a failure signal.
 `handoffRoundsExhausted` (`services/no-work-backoff.ts`) reads the task's newest runs through
 `idx_runs_task_started` and counts, by distinct wakeup, the consecutive ones whose wakeup is
-conversational, has `created_by_run_id` set and carries no `triggered_by`. A handed-back run is
-skipped; the count restarts at a run anything else started and whenever a person speaks. At
-`HANDOFF_ROUND_LIMIT` (8) the task is held for every agent and every non-exempt source until a
-person speaks - the lifting rule of the retrospective hold, since `parkedOnAdminAsk` lifts on the
-other agent's reply. The first held dispatch posts a `handoff_limit` system comment through
+conversational, has `created_by_run_id` set and carries no admin `triggered_by`. A handed-back
+run is skipped; the count restarts at a run anything else started and whenever the admin speaks
+(`adminSpokeAtSql`). At `HANDOFF_ROUND_LIMIT` (8) the task is held for every agent and every
+source the admin has not answered until the admin speaks, since `parkedOnAdminAsk` lifts on the
+other agent's reply and a teammate who is not an admin was not the one asked. The first held dispatch posts a `handoff_limit` system comment through
 `postAdminNotice`, naming the agents, the rounds and their tokens, which raises the admin's
 inbox row; later held dispatches see it and post nothing. Never logged quietly. Marked with
 `last_skipped_reason = handoff_rounds_exhausted`.

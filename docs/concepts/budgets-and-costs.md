@@ -61,11 +61,11 @@ agent, whether or not it has a budget:
 
 - **A single run stops at 30 million tokens.** A run that long spends most of its tokens
   re-reading its own context.
-- **A task stops at 100 million tokens** used since a person last replied on it. Hezo
+- **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
-  allows another 100 million.
-- **Agents cannot pass a task back and forth forever.** After 8 rounds in a row with no
-  person commenting, the task waits for you. See
+  allows another 100 million. A teammate who is not an admin cannot release it.
+- **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
+  a reply from you, the task waits for you. See
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).
 - **Each run has a time limit and a tool-call ceiling.** See
   [Configuration](/docs/deployment/configuration).

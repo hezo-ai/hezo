@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "Körningen för {agent} tog för lång tid.",
 	"comment.runTimedOutWithError": "Körningen för {agent} tog för lång tid: {error}",
 	"comment.statusChanged": "{actor} ändrade status från {from} till {to}",
-	"comment.taskTokenCeiling": "Agenter har använt {tokens} tokens på den här uppgiften sedan en person senast svarade, över gränsen på {ceiling}. Ingen agent arbetar med den förrän du svarar.",
+	"comment.taskTokenCeiling": "Agenter har använt {tokens} tokens på den här uppgiften sedan du senast svarade, över gränsen på {ceiling}. Ingen agent arbetar med den förrän du svarar.",
 	"comment.tooLong": "Den här kommentaren har {count} tecken. Gränsen är {max}. Bifoga långt innehåll som en fil i stället.",
 	"common.actionFailed": "Något gick fel. Försök igen.",
 	"common.back": "Tillbaka",

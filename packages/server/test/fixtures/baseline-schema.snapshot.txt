@@ -13,7 +13,7 @@ ceo_messages
 ceo_sessions
 comment_attachments
 comment_reactions
-usage_entries
+cost_entries
 document_revisions
 documents
 execution_locks
@@ -78,7 +78,7 @@ agent_types.description | text | text | nullable=NO | default=''::text
 agent_types.heartbeat_interval_min | integer | int4 | nullable=NO | default=60
 agent_types.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 agent_types.is_builtin | boolean | bool | nullable=NO | default=false
-agent_types.monthly_budget_tokens | integer | int4 | nullable=NO | default=3000
+agent_types.monthly_budget_cents | integer | int4 | nullable=NO | default=3000
 agent_types.name | text | text | nullable=NO | default=
 agent_types.role_description | text | text | nullable=NO | default=''::text
 agent_types.run_timeout_min | integer | int4 | nullable=NO | default=60
@@ -194,15 +194,15 @@ comment_reactions.created_at | timestamp with time zone | timestamptz | nullable
 comment_reactions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 comment_reactions.kind | text | text | nullable=NO | default=
 comment_reactions.member_id | uuid | uuid | nullable=NO | default=
-usage_entries.ai_provider_config_id | uuid | uuid | nullable=YES | default=
-usage_entries.input_tokens | integer | int4 | nullable=NO | default=
-usage_entries.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-usage_entries.description | text | text | nullable=NO | default=''::text
-usage_entries.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
-usage_entries.member_id | uuid | uuid | nullable=NO | default=
-usage_entries.project_id | uuid | uuid | nullable=YES | default=
-usage_entries.provider | USER-DEFINED | ai_provider | nullable=YES | default=
-usage_entries.task_id | uuid | uuid | nullable=YES | default=
+cost_entries.ai_provider_config_id | uuid | uuid | nullable=YES | default=
+cost_entries.amount_cents | integer | int4 | nullable=NO | default=
+cost_entries.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+cost_entries.description | text | text | nullable=NO | default=''::text
+cost_entries.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+cost_entries.member_id | uuid | uuid | nullable=NO | default=
+cost_entries.project_id | uuid | uuid | nullable=YES | default=
+cost_entries.provider | USER-DEFINED | ai_provider | nullable=YES | default=
+cost_entries.task_id | uuid | uuid | nullable=YES | default=
 document_revisions.author_api_key_id | uuid | uuid | nullable=YES | default=
 document_revisions.author_member_id | uuid | uuid | nullable=YES | default=
 document_revisions.change_summary | text | text | nullable=NO | default=''::text
@@ -289,7 +289,7 @@ mcp_connections.skill_id | uuid | uuid | nullable=YES | default=
 mcp_connections.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 member_agents.admin_status | USER-DEFINED | agent_admin_status | nullable=NO | default='enabled'::agent_admin_status
 member_agents.agent_type_id | uuid | uuid | nullable=YES | default=
-member_agents.daily_budget_tokens | integer | int4 | nullable=NO | default=0
+member_agents.daily_budget_cents | integer | int4 | nullable=NO | default=0
 member_agents.default_effort | USER-DEFINED | agent_effort | nullable=NO | default='medium'::agent_effort
 member_agents.heartbeat_interval_min | integer | int4 | nullable=NO | default=60
 member_agents.id | uuid | uuid | nullable=NO | default=
@@ -297,7 +297,7 @@ member_agents.last_heartbeat_at | timestamp with time zone | timestamptz | nulla
 member_agents.mcp_servers | jsonb | jsonb | nullable=NO | default='[]'::jsonb
 member_agents.model_override_model | text | text | nullable=YES | default=
 member_agents.model_override_provider | USER-DEFINED | ai_provider | nullable=YES | default=
-member_agents.monthly_budget_tokens | integer | int4 | nullable=NO | default=3000
+member_agents.monthly_budget_cents | integer | int4 | nullable=NO | default=3000
 member_agents.reports_to | uuid | uuid | nullable=YES | default=
 member_agents.role_description | text | text | nullable=NO | default=''::text
 member_agents.run_timeout_min | integer | int4 | nullable=NO | default=60
@@ -308,7 +308,7 @@ member_agents.team_context | text | text | nullable=NO | default=''::text
 member_agents.title | text | text | nullable=NO | default=
 member_agents.touches_code | boolean | bool | nullable=NO | default=false
 member_agents.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-member_agents.weekly_budget_tokens | integer | int4 | nullable=NO | default=0
+member_agents.weekly_budget_cents | integer | int4 | nullable=NO | default=0
 member_users.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 member_users.id | uuid | uuid | nullable=NO | default=
 member_users.permissions_text | text | text | nullable=NO | default=''::text
@@ -382,7 +382,7 @@ projects.container_id | text | text | nullable=YES | default=
 projects.container_last_logs | text | text | nullable=YES | default=
 projects.container_status | USER-DEFINED | container_status | nullable=YES | default=
 projects.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-projects.daily_budget_tokens | integer | int4 | nullable=NO | default=0
+projects.daily_budget_cents | integer | int4 | nullable=NO | default=0
 projects.description | text | text | nullable=NO | default=''::text
 projects.designated_repo_id | uuid | uuid | nullable=YES | default=
 projects.dev_ports | jsonb | jsonb | nullable=NO | default='[]'::jsonb
@@ -392,13 +392,13 @@ projects.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 projects.is_internal | boolean | bool | nullable=NO | default=false
 projects.max_concurrent_runs | integer | int4 | nullable=NO | default=3
 projects.memory_limit_gib | integer | int4 | nullable=NO | default=16
-projects.monthly_budget_tokens | integer | int4 | nullable=NO | default=0
+projects.monthly_budget_cents | integer | int4 | nullable=NO | default=0
 projects.name | text | text | nullable=NO | default=
 projects.slug | text | text | nullable=NO | default=
 projects.task_prefix | text | text | nullable=NO | default=
 projects.team_id | uuid | uuid | nullable=NO | default=
 projects.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-projects.weekly_budget_tokens | integer | int4 | nullable=NO | default=0
+projects.weekly_budget_cents | integer | int4 | nullable=NO | default=0
 repos.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 repos.host_type | USER-DEFINED | repo_host_type | nullable=NO | default=
 repos.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
@@ -597,7 +597,7 @@ CREATE UNIQUE INDEX comment_attachments_comment_id_asset_id_key ON public.commen
 CREATE UNIQUE INDEX comment_attachments_pkey ON public.comment_attachments USING btree (id)
 CREATE UNIQUE INDEX comment_reactions_comment_id_member_id_kind_key ON public.comment_reactions USING btree (comment_id, member_id, kind)
 CREATE UNIQUE INDEX comment_reactions_pkey ON public.comment_reactions USING btree (id)
-CREATE UNIQUE INDEX cost_entries_pkey ON public.usage_entries USING btree (id)
+CREATE UNIQUE INDEX cost_entries_pkey ON public.cost_entries USING btree (id)
 CREATE UNIQUE INDEX document_revisions_document_id_revision_number_key ON public.document_revisions USING btree (document_id, revision_number)
 CREATE UNIQUE INDEX document_revisions_pkey ON public.document_revisions USING btree (id)
 CREATE UNIQUE INDEX documents_pkey ON public.documents USING btree (id)
@@ -627,13 +627,13 @@ CREATE INDEX idx_comments_parent ON public.task_comments USING btree (parent_com
 CREATE UNIQUE INDEX idx_comments_public_id ON public.task_comments USING btree (task_id, public_id)
 CREATE INDEX idx_comments_search_tsv ON public.task_comments USING gin (search_tsv) WHERE (content_type = 'text'::comment_content_type)
 CREATE INDEX idx_comments_task ON public.task_comments USING btree (task_id)
-CREATE INDEX idx_costs_created ON public.usage_entries USING btree (created_at)
-CREATE INDEX idx_costs_member ON public.usage_entries USING btree (member_id)
-CREATE INDEX idx_costs_member_created ON public.usage_entries USING btree (member_id, created_at)
-CREATE INDEX idx_costs_project ON public.usage_entries USING btree (project_id)
-CREATE INDEX idx_costs_project_created ON public.usage_entries USING btree (project_id, created_at)
-CREATE INDEX idx_costs_provider_config ON public.usage_entries USING btree (ai_provider_config_id)
-CREATE INDEX idx_costs_task ON public.usage_entries USING btree (task_id)
+CREATE INDEX idx_costs_created ON public.cost_entries USING btree (created_at)
+CREATE INDEX idx_costs_member ON public.cost_entries USING btree (member_id)
+CREATE INDEX idx_costs_member_created ON public.cost_entries USING btree (member_id, created_at)
+CREATE INDEX idx_costs_project ON public.cost_entries USING btree (project_id)
+CREATE INDEX idx_costs_project_created ON public.cost_entries USING btree (project_id, created_at)
+CREATE INDEX idx_costs_provider_config ON public.cost_entries USING btree (ai_provider_config_id)
+CREATE INDEX idx_costs_task ON public.cost_entries USING btree (task_id)
 CREATE INDEX idx_document_revisions_document ON public.document_revisions USING btree (document_id)
 CREATE UNIQUE INDEX idx_documents_agent_system_prompt ON public.documents USING btree (member_agent_id) WHERE (type = 'agent_system_prompt'::document_type)
 CREATE INDEX idx_documents_member_agent ON public.documents USING btree (member_agent_id) WHERE (member_agent_id IS NOT NULL)
@@ -797,11 +797,11 @@ comment_reactions | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON
 comment_reactions | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 comment_reactions | p | PRIMARY KEY (id)
 comment_reactions | u | UNIQUE (comment_id, member_id, kind)
-usage_entries | f | FOREIGN KEY (ai_provider_config_id) REFERENCES ai_provider_configs(id) ON DELETE SET NULL
-usage_entries | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
-usage_entries | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
-usage_entries | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
-usage_entries | p | PRIMARY KEY (id)
+cost_entries | f | FOREIGN KEY (ai_provider_config_id) REFERENCES ai_provider_configs(id) ON DELETE SET NULL
+cost_entries | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+cost_entries | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+cost_entries | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+cost_entries | p | PRIMARY KEY (id)
 document_revisions | f | FOREIGN KEY (author_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL
 document_revisions | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
 document_revisions | f | FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE

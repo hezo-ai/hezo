@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "Uitvoering voor {agent} is verlopen.",
 	"comment.runTimedOutWithError": "Uitvoering voor {agent} is verlopen: {error}",
 	"comment.statusChanged": "{actor} heeft de status gewijzigd van {from} naar {to}",
-	"comment.taskTokenCeiling": "Agents hebben sinds de laatste reactie van een persoon {tokens} tokens aan deze taak gebruikt, boven de limiet van {ceiling}. Geen agent werkt er verder aan tot je reageert.",
+	"comment.taskTokenCeiling": "Agents hebben sinds je laatste reactie {tokens} tokens aan deze taak gebruikt, boven de limiet van {ceiling}. Geen agent werkt er verder aan tot je reageert.",
 	"comment.tooLong": "Deze reactie is {count} tekens lang. De limiet is {max}. Voeg lange inhoud liever als bestand toe.",
 	"common.actionFailed": "Er is iets misgegaan. Probeer het opnieuw.",
 	"common.back": "Terug",

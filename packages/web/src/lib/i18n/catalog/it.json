@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "Esecuzione per {agent} scaduta.",
 	"comment.runTimedOutWithError": "Esecuzione per {agent} scaduta: {error}",
 	"comment.statusChanged": "{actor} ha cambiato lo stato da {from} a {to}",
-	"comment.taskTokenCeiling": "Gli agenti hanno usato {tokens} token su questa attività dall'ultima risposta di una persona, oltre il suo limite di {ceiling}. Nessun agente ci lavorerà finché non rispondi.",
+	"comment.taskTokenCeiling": "Gli agenti hanno usato {tokens} token su questa attività dalla tua ultima risposta, oltre il suo limite di {ceiling}. Nessun agente ci lavorerà finché non rispondi.",
 	"comment.tooLong": "Questo commento ha {count} caratteri. Il limite è {max}. Allega i contenuti lunghi come file.",
 	"common.actionFailed": "Qualcosa è andato storto. Riprova.",
 	"common.back": "Indietro",

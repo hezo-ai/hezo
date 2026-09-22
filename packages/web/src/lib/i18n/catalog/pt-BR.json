@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "A execução de {agent} expirou.",
 	"comment.runTimedOutWithError": "A execução de {agent} expirou: {error}",
 	"comment.statusChanged": "{actor} alterou o status de {from} para {to}",
-	"comment.taskTokenCeiling": "Os agentes usaram {tokens} tokens nesta tarefa desde a última resposta de uma pessoa, acima do limite de {ceiling}. Nenhum agente vai trabalhar nela até você responder.",
+	"comment.taskTokenCeiling": "Os agentes usaram {tokens} tokens nesta tarefa desde a sua última resposta, acima do limite de {ceiling}. Nenhum agente vai trabalhar nela até você responder.",
 	"comment.tooLong": "Este comentário tem {count} caracteres. O limite é {max}. Anexe conteúdo longo como arquivo.",
 	"common.actionFailed": "Algo deu errado. Tente novamente.",
 	"common.back": "Voltar",

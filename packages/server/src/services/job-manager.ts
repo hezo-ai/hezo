@@ -96,6 +96,7 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
 	taskTokenCeilingNotice,
@@ -1868,12 +1869,13 @@ export class JobManager {
 
 	/**
 	 * The first dispatch suppression that holds this agent off this task, or null.
-	 * Each predicate returns false for an exempt wakeup.
+	 * Each predicate returns false for a wakeup exempt from it: a person's input
+	 * answers the soft holds, and only the admin's answers the two hard stops.
 	 */
 	private async dispatchSuppression(
 		memberId: string,
 		task: { id: string; identifier: string },
-		exempt: boolean,
+		exemption: SuppressionExemption,
 	): Promise<{
 		reason: WakeupSkipReason;
 		detail: string;
@@ -1882,6 +1884,7 @@ export class JobManager {
 	} | null> {
 		const { db } = this.deps;
 		const at = ref(task.identifier, task.id);
+		const exempt = exemption.byPerson;
 		if (await noWorkCooldownActive(db, memberId, task.id, exempt)) {
 			return {
 				reason: WakeupSkipReason.NoWorkCooldown,
@@ -1906,19 +1909,19 @@ export class JobManager {
 				detail: `is held on ${at} while a retrospective finding waits on the admin`,
 			};
 		}
-		const handoff = await handoffRoundsExhausted(db, task.id, exempt);
+		const handoff = await handoffRoundsExhausted(db, task.id, exemption.byAdmin);
 		if (handoff) {
 			return {
 				reason: WakeupSkipReason.HandoffRoundsExhausted,
-				detail: `is held on ${at} after ${handoff.rounds} agent-to-agent handoffs with no person speaking`,
+				detail: `is held on ${at} after ${handoff.rounds} agent-to-agent handoffs with no admin reply`,
 				notice: handoff.notified ? undefined : handoffLimitNotice(handoff),
 			};
 		}
-		const usage = await taskTokenCeilingReached(db, task.id, exempt);
+		const usage = await taskTokenCeilingReached(db, task.id, exemption.byAdmin);
 		if (usage) {
 			return {
 				reason: WakeupSkipReason.TaskTokenCeiling,
-				detail: `is held on ${at} after ${usage.tokens} tokens since a person last spoke (ceiling ${TASK_TOKEN_CEILING})`,
+				detail: `is held on ${at} after ${usage.tokens} tokens since the admin last replied (ceiling ${TASK_TOKEN_CEILING})`,
 				notice: usage.notified ? undefined : taskTokenCeilingNotice(usage),
 			};
 		}
@@ -2560,7 +2563,7 @@ export class JobManager {
 		// a person answers or acts. Each is skipped rather than re-queued: there is
 		// nothing to retry, and `dispatchSuppressionExempt` lets a person's new input
 		// and an operator's override dispatch immediately.
-		const exempt = await dispatchSuppressionExempt(
+		const exemption = await dispatchSuppressionExempt(
 			db,
 			memberId,
 			task.id,
@@ -2568,7 +2571,7 @@ export class JobManager {
 			wakeupPayload,
 			wakeupId,
 		);
-		const suppression = await this.dispatchSuppression(memberId, task, exempt);
+		const suppression = await this.dispatchSuppression(memberId, task, exemption);
 		if (suppression) {
 			// Warned, not debugged, for every source but the two the system raises on a
 			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its

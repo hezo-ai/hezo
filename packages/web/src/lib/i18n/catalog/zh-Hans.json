@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "{agent} 的运行超时。",
 	"comment.runTimedOutWithError": "{agent} 的运行超时：{error}",
 	"comment.statusChanged": "{actor} 将状态从 {from} 更改为 {to}",
-	"comment.taskTokenCeiling": "自最后一次有人回复以来，智能体已在此任务上使用了 {tokens} 个 token，超出了 {ceiling} 的上限。在您回复之前，任何智能体都不会处理此任务。",
+	"comment.taskTokenCeiling": "自您上次回复以来，智能体已在此任务上使用了 {tokens} 个 token，超出了 {ceiling} 的上限。在您回复之前，任何智能体都不会处理此任务。",
 	"comment.tooLong": "此评论有 {count} 个字符，上限为 {max} 个。较长的内容请作为附件添加。",
 	"common.actionFailed": "出了点问题，请重试。",
 	"common.back": "返回",

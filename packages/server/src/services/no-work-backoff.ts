@@ -81,6 +81,33 @@ export function adminSpokeAtSql(taskParam: string): string {
 }
 
 /**
+ * SQL: whether the wakeup payload at `payloadExpr` carries an admin's "Run now" or
+ * Retry. The route stamps the actor's member id, which is null for a superuser or
+ * an API key; either of those, or a team admin's membership, counts as the admin.
+ */
+export function adminTriggeredSql(payloadExpr: string): string {
+	return `(${payloadExpr}->'triggered_by' IS NOT NULL AND (
+	           NULLIF(${payloadExpr}->'triggered_by'->>'member_id', '') IS NULL
+	           OR EXISTS (
+	             SELECT 1 FROM member_users mu
+	              WHERE mu.id = (${payloadExpr}->'triggered_by'->>'member_id')::uuid
+	                AND mu.role = 'admin')))`;
+}
+
+/**
+ * Which dispatch suppressions a wakeup skips.
+ *
+ * `byPerson` skips the holds any person's input answers: the no-work backoff,
+ * the parked ask, the attempts give-up and the retrospective hold. `byAdmin`
+ * skips the two hard stops the admin is asked to lift, the handoff limit and the
+ * task token ceiling, which a teammate who is not an admin cannot release.
+ */
+export interface SuppressionExemption {
+	byPerson: boolean;
+	byAdmin: boolean;
+}
+
+/**
  * Does this wakeup skip every dispatch suppression in this module?
  *
  * Yes for an operator override ("Run now", Retry), which stamps `triggered_by`
@@ -103,24 +130,45 @@ export async function dispatchSuppressionExempt(
 	source: string,
 	payload: Record<string, unknown> | undefined,
 	wakeupId: string | null | undefined,
-): Promise<boolean> {
-	if (payload?.triggered_by) return true;
-	if (!DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
-	if (!CONVERSATIONAL_SOURCES.has(source) || !taskId) return true;
+): Promise<SuppressionExemption> {
+	const conversational = CONVERSATIONAL_SOURCES.has(source) && !!taskId;
+	if (!payload?.triggered_by) {
+		if (!DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source))
+			return { byPerson: false, byAdmin: false };
+		if (!conversational) return { byPerson: true, byAdmin: true };
+	}
 
-	const r = await db.query<{ exempt: boolean }>(
-		`SELECT (
-		   NOT EXISTS (
+	const r = await db.query<{ by_person: boolean; by_admin: boolean }>(
+		`WITH last_run AS (
+		   SELECT COALESCE(max(started_at), '-infinity') AS at
+		     FROM heartbeat_runs WHERE task_id = $2 AND member_id = $1
+		 ),
+		 wake AS (SELECT $4::jsonb AS payload)
+		 SELECT (
+		   $5::boolean
+		   OR NOT EXISTS (
 		     SELECT 1 FROM agent_wakeup_requests w
 		      WHERE w.id = $3 AND w.created_by_run_id IS NOT NULL
 		   )
-		   OR ${personSpokeAtSql('$2')} > COALESCE(
-		        (SELECT max(started_at) FROM heartbeat_runs WHERE task_id = $2 AND member_id = $1),
-		        '-infinity')
-		 ) AS exempt`,
-		[memberId, taskId, wakeupId ?? null],
+		   OR ${personSpokeAtSql('$2')} > (SELECT at FROM last_run)
+		 ) AS by_person,
+		 (
+		   (SELECT ${adminTriggeredSql('payload')} FROM wake)
+		   OR ($6::boolean AND ${adminSpokeAtSql('$2')} > (SELECT at FROM last_run))
+		 ) AS by_admin`,
+		[
+			memberId,
+			taskId ?? null,
+			wakeupId ?? null,
+			JSON.stringify(payload ?? {}),
+			!!payload?.triggered_by,
+			conversational,
+		],
 	);
-	return r.rows[0]?.exempt === true;
+	return {
+		byPerson: r.rows[0]?.by_person === true,
+		byAdmin: r.rows[0]?.by_admin === true,
+	};
 }
 
 /**
@@ -470,20 +518,21 @@ export interface HandoffRounds {
 
 /**
  * SQL: CTEs ending in `chain`, the runs of the current agent-to-agent handoff
- * chain on task `$1`. Binds `$2` the conversational sources, `$3` the handed-back
- * cancel reason and `$4` the scan limit, in {@link handoffChainParams} order.
+ * chain on task `$1`, and `admin`, when the admin last spoke on it. Binds `$2` the
+ * conversational sources, `$3` the handed-back cancel reason and `$4` the scan
+ * limit, in {@link handoffChainParams} order.
  */
-const HANDOFF_CHAIN_CTES = `person AS (SELECT ${personSpokeAtSql('$1')} AS at),
+const HANDOFF_CHAIN_CTES = `admin AS (SELECT ${adminSpokeAtSql('$1')} AS at),
 		 recent AS (
 		   SELECT r.wakeup_id, r.member_id, r.started_at,
 		          r.input_tokens + r.output_tokens AS tokens,
 		          COALESCE(
 		            w.source::text = ANY($2::text[])
 		            AND w.created_by_run_id IS NOT NULL
-		            AND w.payload->'triggered_by' IS NULL,
+		            AND NOT ${adminTriggeredSql('w.payload')},
 		            false) AS handoff
 		     FROM heartbeat_runs r
-		     CROSS JOIN person p
+		     CROSS JOIN admin p
 		     LEFT JOIN agent_wakeup_requests w ON w.id = r.wakeup_id
 		    WHERE r.task_id = $1
 		      AND r.started_at IS NOT NULL
@@ -533,8 +582,7 @@ export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUs
 		since_tokens: number;
 		rounds: number;
 	}>(
-		`WITH ${HANDOFF_CHAIN_CTES},
-		 admin AS (SELECT ${adminSpokeAtSql('$1')} AS at)
+		`WITH ${HANDOFF_CHAIN_CTES}
 		 SELECT count(r.id)::int AS runs,
 		        COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
 		        (a.at IS NOT NULL) AS replied,
@@ -557,21 +605,22 @@ export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUs
 }
 
 /**
- * Have agents handed this task back and forth too many times without a person?
+ * Have agents handed this task back and forth too many times without the admin?
  *
  * A round is a run whose wakeup an agent's comment, mention or reply raised - a
- * conversational source with `created_by_run_id` set and no operator
- * `triggered_by`. Rounds are read newest first and counted by distinct wakeup;
- * a handed-back run did no work and is skipped. The count restarts at the first
- * run anything else started (an assignment, a heartbeat, a timer, "Run now"),
- * and whenever a person speaks on the task: a comment they wrote, or a choice
- * they made on a card.
+ * conversational source with `created_by_run_id` set and no admin "Run now" or
+ * Retry. Rounds are read newest first and counted by distinct wakeup; a
+ * handed-back run did no work and is skipped. The count restarts at the first
+ * run anything else started (an assignment, a heartbeat, a timer, an admin's
+ * "Run now"), and whenever the admin speaks on the task: a comment they wrote,
+ * or a choice they made on a card.
  *
- * At the limit the whole task is held, for every agent and every non-exempt
- * source, until a person speaks - the rule {@link retrospectiveHoldActive}
- * uses. {@link parkedOnAdminAsk} would lift the moment the other agent replied,
- * which in a two-agent loop is at once, and every other bound here keys on a
- * failure signal that a loop of successful runs never raises.
+ * At the limit the whole task is held, for every agent and every source the
+ * admin has not answered, until the admin speaks. A teammate who is not an admin
+ * does not release it: the notice asks the admin. {@link parkedOnAdminAsk} would
+ * lift the moment the other agent replied, which in a two-agent loop is at once,
+ * and every other bound here keys on a failure signal that a loop of successful
+ * runs never raises.
  *
  * Returns the rounds when the task is held, and null otherwise. One round trip,
  * reading runs through `idx_runs_task_started`.
@@ -629,13 +678,13 @@ export function handoffLimitNotice(
 		rounds: h.rounds,
 		tokens: h.tokens,
 		agent_slugs: h.agentSlugs,
-		text: `${agents} handed this task to each other ${h.rounds} times in a row, using ${h.tokens.toLocaleString('en-US')} tokens. No agent will run on it until a person replies.`,
+		text: `${agents} handed this task to each other ${h.rounds} times in a row, using ${h.tokens.toLocaleString('en-US')} tokens. No agent will run on it until the admin replies.`,
 	};
 }
 
 /**
  * The most tokens agents may spend on one task - input with cached input, plus
- * output, across every run - before a person must say to carry on.
+ * output, across every run - before the admin must say to carry on.
  *
  * 100 million, from eleven days of production runs: it would have held the
  * two-agent loop at its eleventh run instead of its forty-sixth. Finished tasks
@@ -649,7 +698,7 @@ export const TASK_TOKEN_CEILING_COMMENT_KIND = 'task_token_ceiling';
 
 /** A task held by {@link taskTokenCeilingReached}, as the notice to the admin states it. */
 export interface TaskTokenUsage {
-	/** Tokens its runs used since a person last spoke on it. */
+	/** Tokens its runs used since the admin last spoke on it. */
 	tokens: number;
 	/** Whether the task already carries a notice for this hold. */
 	notified: boolean;
@@ -658,10 +707,10 @@ export interface TaskTokenUsage {
 /**
  * Have agents spent more on this task than anyone agreed to, with nobody asked?
  *
- * Sums the tokens of every run on the task that started after a person last
+ * Sums the tokens of every run on the task that started after the admin last
  * spoke on it. At {@link TASK_TOKEN_CEILING} the task is held for every agent
- * and every non-exempt source until a person speaks, and that reply grants a
- * fresh ceiling - the count starts again from it. A bound on total work rather
+ * and every source the admin has not answered until the admin speaks, and that
+ * reply grants a fresh ceiling - the count starts again from it. A bound on total work rather
  * than on a shape of it, so it holds whatever the loop looks like: a handoff
  * chain broken by a heartbeat, one agent re-running itself, a review that never
  * converges.
@@ -676,10 +725,10 @@ export async function taskTokenCeilingReached(
 ): Promise<TaskTokenUsage | null> {
 	if (!taskId || exempt) return null;
 	const r = await db.query<{ tokens: number; notified: boolean }>(
-		`WITH person AS (SELECT ${personSpokeAtSql('$1')} AS at)
+		`WITH admin AS (SELECT ${adminSpokeAtSql('$1')} AS at)
 		 SELECT COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
-		        ${noticePostedSinceSql('$1', '$2', "COALESCE((SELECT at FROM person), '-infinity')")} AS notified
-		   FROM heartbeat_runs r CROSS JOIN person p
+		        ${noticePostedSinceSql('$1', '$2', "COALESCE((SELECT at FROM admin), '-infinity')")} AS notified
+		   FROM heartbeat_runs r CROSS JOIN admin p
 		  WHERE r.task_id = $1
 		    AND r.started_at IS NOT NULL
 		    AND (p.at IS NULL OR r.started_at > p.at)`,
@@ -698,6 +747,6 @@ export function taskTokenCeilingNotice(
 		kind: TASK_TOKEN_CEILING_COMMENT_KIND,
 		tokens: u.tokens,
 		ceiling: TASK_TOKEN_CEILING,
-		text: `Agents have used ${u.tokens.toLocaleString('en-US')} tokens on this task since a person last replied, past its ceiling of ${TASK_TOKEN_CEILING.toLocaleString('en-US')}. No agent will run on it until a person replies.`,
+		text: `Agents have used ${u.tokens.toLocaleString('en-US')} tokens on this task since the admin last replied, past its ceiling of ${TASK_TOKEN_CEILING.toLocaleString('en-US')}. No agent will run on it until the admin replies.`,
 	};
 }

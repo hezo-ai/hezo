@@ -55,10 +55,11 @@ waiting for a human reply. The task stays in progress until you answer
 with a comment on the task itself. You can always close a task yourself, answered or not.
 
 Agents can pass a task back and forth between them, but only so many times in a row. After
-8 rounds with no person commenting, Hezo stops running any agent on the task and puts a
+8 rounds without a reply from you, Hezo stops running any agent on the task and puts a
 notice in your inbox. The notice names the agents, the number of rounds and the tokens they
 used. Reply on the task to let the agents continue, or use **Run now** to start one agent
-yourself.
+yourself. Only an admin can release the task: a reply or **Run now** from a teammate who is
+not an admin leaves it waiting.
 
 Each run shows the agent how many runs, tokens and handoff rounds the task has used so far.
 When that grows past what the task is worth, the agent stops and asks you in a comment

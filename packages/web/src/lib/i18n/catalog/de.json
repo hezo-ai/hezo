@@ -353,7 +353,7 @@
 	"comment.runTimedOut": "Zeitüberschreitung beim Lauf für {agent}.",
 	"comment.runTimedOutWithError": "Zeitüberschreitung beim Lauf für {agent}: {error}",
 	"comment.statusChanged": "{actor} hat den Status von {from} zu {to} geändert",
-	"comment.taskTokenCeiling": "Agents haben für diese Aufgabe seit der letzten Antwort einer Person {tokens} Token verbraucht und damit das Limit von {ceiling} überschritten. Kein Agent arbeitet daran weiter, bis Sie antworten.",
+	"comment.taskTokenCeiling": "Agents haben für diese Aufgabe seit Ihrer letzten Antwort {tokens} Token verbraucht und damit das Limit von {ceiling} überschritten. Kein Agent arbeitet daran weiter, bis Sie antworten.",
 	"comment.tooLong": "Dieser Kommentar hat {count} Zeichen. Das Limit liegt bei {max}. Hängen Sie lange Inhalte stattdessen als Datei an.",
 	"common.actionFailed": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.",
 	"common.back": "Zurück",
