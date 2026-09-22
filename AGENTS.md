@@ -183,6 +183,7 @@ Before writing a helper, check whether it has a home. **Extend the seam; never a
 | A complete test double | `createStubDocker()` |
 | A test context | `createTestContext()` (server), `renderApp()` + `seed*()` (web) |
 | A runtime's or provider's own quirk | that entity's adapter or table row |
+| Anything a person must act on | `postAdminNotice` - an inbox row via `fireAdminMention`; a comment that only says so reaches nobody |
 
 ## One mechanism, no silent fallbacks
 
@@ -225,6 +226,7 @@ The reference workload is **~10 concurrent agent runs on an instance holding 1GB
 - **Share resources; do not multiply them per unit of work**, and find out why something was scoped narrowly before you widen it.
 - **A new mutex is a throughput ceiling.** Say in a comment what it protects and why a narrower scope is insufficient; never hold one across IO.
 - **Stream; do not copy.** Data that can exceed a few MB is streamed end to end - never collected, joined or buffered before being sent. **Coalesce on the wire and respect backpressure**: an ignored send result is unbounded server-side buffering.
+- **A wakeup an agent run creates is bounded like a recurring job.** Agent handoffs on one task are capped, and the hold lifts only when a person speaks.
 - **Every recurring job is bounded, observable, and paced to what it watches.** **A cache needs an invalidation story and a bound**, stated where you declare it.
 - **Deleting the user's data is the operator's decision, never a default.** A table that only grows is a query-design problem. Only internal bookkeeping with no user-facing surface may be swept automatically, and the comment must say why it qualifies.
 - **Measure the claim.** A performance change states what it improved and how that was observed.
