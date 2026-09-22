@@ -28,7 +28,7 @@ function bigLog(): string {
 		x = (x * 1103515245 + 12345) & 0x7fffffff;
 		s += `${x.toString(36)} agent streaming output line with some varied entropy\n`;
 	}
-	return `${s}\nSUMMARY: did the thing.\n[done] succeeded turns=5 duration=1000ms tokens=100/200 cost=$0.01`;
+	return `${s}\nSUMMARY: did the thing.\n[done] succeeded turns=5 duration=1000ms tokens=100/200`;
 }
 
 describe('computeCompactedLog', () => {

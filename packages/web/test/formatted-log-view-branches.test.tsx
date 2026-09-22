@@ -193,8 +193,8 @@ test('result block (no matching pending tool): success result renders neutral, e
 	expect(badPre.className).toContain('bg-danger-soft');
 });
 
-test('done block: success status renders a green badge with turns/duration/tokens/cost', async () => {
-	const { getByText } = await renderLog({
+test('done block: success status renders a green badge with turns/duration/tokens, never a cost', async () => {
+	const { getByText, queryByText } = await renderLog({
 		lines: lines('[done] success turns=5 duration=2500ms tokens=1200/3400 cost=$0.1234'),
 	});
 	expect(getByText('success')).toBeTruthy();
@@ -204,8 +204,8 @@ test('done block: success status renders a green badge with turns/duration/token
 	// tokens localized with separators.
 	expect(getByText(/1,200 in/)).toBeTruthy();
 	expect(getByText(/3,400 out/)).toBeTruthy();
-	// cost toFixed(2).
-	expect(getByText('$0.12')).toBeTruthy();
+	// A runtime's own dollar figure, left in a log from before token budgets, is not shown.
+	expect(queryByText(/\$0\.12/)).toBeNull();
 });
 
 test('done block: an error status renders the red badge and omits the optional metrics', async () => {

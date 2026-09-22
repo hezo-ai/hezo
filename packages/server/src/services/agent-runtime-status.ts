@@ -1,13 +1,20 @@
 import {
 	AgentRuntimeStatus,
 	BUDGET_PAUSE_STATUSES,
+	englishCount,
 	HeartbeatRunStatus,
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
+import { utcWindowStartSql } from '../lib/sql';
+import { logger } from '../logger';
 import { checkOverBudget, type OverBudgetBlock } from './budget';
+import { postAdminNotice } from './comment-wakeups';
+import { PLANNING_TASK_LABEL } from './project-create';
 import type { WebSocketManager } from './ws';
+
+const log = logger.child('agent-runtime-status');
 
 /** Postgres array literal of the budget-pause states, for `= ANY($n::…[])`. */
 const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
@@ -70,13 +77,34 @@ export function budgetPauseStatus(block: OverBudgetBlock): AgentRuntimeStatus {
 		: AgentRuntimeStatus.OutOfAgentBudget;
 }
 
+/** The calendar unit each budget window starts on, for `date_trunc`. */
+const BUDGET_WINDOW_UNIT: Record<OverBudgetBlock['period'], string> = {
+	daily: 'day',
+	weekly: 'week',
+	monthly: 'month',
+};
+
+/** When each window frees the agent again, as the notice says it in English. */
+const BUDGET_WINDOW_END: Record<OverBudgetBlock['period'], string> = {
+	daily: 'before the day ends',
+	weekly: 'before the week ends',
+	monthly: 'before the month ends',
+};
+
 /**
- * Reactively pause an agent for a budget trip — the single entry point shared by
- * the pre-run gate, post-run cost enforcement, and the manual cost-insert route,
- * so every window (daily/weekly/monthly) and scope (agent/project) pauses
- * identically. Sets the scoped `out_of_*_budget` status, writing only when the
- * status actually changes (so we don't churn broadcasts re-pausing an
- * already-paused agent).
+ * Reactively pause an agent for a budget trip - the single entry point shared by
+ * the pre-run gate and post-run usage enforcement, so every window
+ * (daily/weekly/monthly) and scope (agent/project) pauses identically. Sets the
+ * scoped `out_of_*_budget` status, writing only when the status actually changes
+ * (so we don't churn broadcasts re-pausing an already-paused agent).
+ *
+ * The pause is also a notice to the admin: the budget, what was used and the
+ * window, in their inbox, on the task the agent was working or, for a run with no
+ * task, on its project's planning task. It is posted once per agent, scope and
+ * window: `budget_notice_keys` records the window each one covered. The CEO
+ * and the Coach have no project of their own, so the resume sweep lifts a
+ * project-scoped pause of theirs and the next dispatch sets it again; without the
+ * key each round would post another notice.
  */
 export async function pauseAgentForBudget(
 	db: Db,
@@ -84,14 +112,15 @@ export async function pauseAgentForBudget(
 	teamId: string,
 	block: OverBudgetBlock,
 	wsManager: WebSocketManager | undefined,
+	context: { taskId: string | null; projectId: string | null },
 ): Promise<void> {
 	const status = budgetPauseStatus(block);
-	const res = await db.query<{ id: string }>(
+	const res = await db.query<{ id: string; slug: string }>(
 		`UPDATE member_agents
 		 SET runtime_status = $1::agent_runtime_status
 		 WHERE id = $2
 		   AND runtime_status IS DISTINCT FROM $1::agent_runtime_status
-		 RETURNING id`,
+		 RETURNING id, slug`,
 		[status, memberId],
 	);
 	if (res.rows.length === 0) return;
@@ -99,7 +128,84 @@ export async function pauseAgentForBudget(
 		id: memberId,
 		runtime_status: status,
 	});
+
+	const target = await budgetNoticeTask(db, context);
+	if (!target) {
+		log.warn(`Budget pause for agent ${memberId} has no task to post its notice on`);
+		return;
+	}
+	// One entry per scope and window, not one slot: an agent that trips its own
+	// budget between two project pauses would otherwise overwrite the record of
+	// the first and tell the admin about it twice.
+	const scopeKey = `${block.scope === 'project' ? `project:${context.projectId ?? ''}` : 'agent'}:${block.period}`;
+	const claimed = await db.query<{ key: string }>(
+		`UPDATE member_agents
+		    SET budget_notice_keys =
+		          jsonb_set(budget_notice_keys, ARRAY[$2], to_jsonb(${utcWindowStartSql('$3')}::text))
+		  WHERE id = $1
+		    AND budget_notice_keys->>$2 IS DISTINCT FROM ${utcWindowStartSql('$3')}::text
+		  RETURNING budget_notice_keys->>$2 AS key`,
+		[memberId, scopeKey, BUDGET_WINDOW_UNIT[block.period]],
+	);
+	const key = claimed.rows[0]?.key;
+	if (!key) return;
+
+	const slug = res.rows[0].slug;
+	const whose = block.scope === 'project' ? "the project's" : `@${slug}'s`;
+	await postAdminNotice({
+		db,
+		teamId: target.team_id,
+		taskId: target.id,
+		content: {
+			kind: BUDGET_PAUSED_COMMENT_KIND,
+			agent_slug: slug,
+			scope: block.scope,
+			period: block.period,
+			used_tokens: block.usedTokens,
+			limit_tokens: block.limitTokens,
+			text: `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limitTokens)} tokens is used up (${englishCount(block.usedTokens)} used). Raise the budget to let it run again ${BUDGET_WINDOW_END[block.period]}.`,
+		},
+		wsManager,
+	}).catch(async (e) => {
+		log.error(`Failed to post the budget pause notice for ${slug}:`, e);
+		// Released, so the next pause in this window tries again.
+		await db
+			.query(
+				`UPDATE member_agents SET budget_notice_keys = budget_notice_keys - $2
+				  WHERE id = $1 AND budget_notice_keys->>$2 = $3`,
+				[memberId, scopeKey, key],
+			)
+			.catch(() => {});
+	});
 }
+
+/**
+ * The task a budget-pause notice goes on, with its team: the run's task, or the
+ * planning task of the run's project for a run with no task.
+ */
+async function budgetNoticeTask(
+	db: Db,
+	context: { taskId: string | null; projectId: string | null },
+): Promise<{ id: string; team_id: string } | null> {
+	if (context.taskId) {
+		const r = await db.query<{ id: string; team_id: string }>(
+			'SELECT id, team_id FROM tasks WHERE id = $1',
+			[context.taskId],
+		);
+		return r.rows[0] ?? null;
+	}
+	if (!context.projectId) return null;
+	const r = await db.query<{ id: string; team_id: string }>(
+		`SELECT id, team_id FROM tasks
+		  WHERE project_id = $1 AND labels ? $2
+		  ORDER BY created_at LIMIT 1`,
+		[context.projectId, PLANNING_TASK_LABEL],
+	);
+	return r.rows[0] ?? null;
+}
+
+/** The system comment kind that tells the admin an agent was paused by a budget. */
+export const BUDGET_PAUSED_COMMENT_KIND = 'budget_paused';
 
 /**
  * Re-evaluate a budget-paused agent against its current (rolling) spend and

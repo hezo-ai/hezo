@@ -1,36 +1,78 @@
+import { englishCount } from './i18n/format.js';
 /**
- * Budget window math — the single source of truth for the daily/weekly/monthly
- * rolling spend caps on agents and projects. Imported by the web forms, every
+ * Budget window math - the single source of truth for the daily/weekly/monthly
+ * rolling token caps on agents and projects. Imported by the web forms, every
  * backend write path, and the tests so the rules live in exactly one place.
  *
- * 0 = unlimited/disabled for a window and is skipped by every check. Longer
- * windows must be consistent with shorter ones: a longer window can't be set
- * below what the shorter window's rate implies over the same span —
+ * A budget counts every token a run sent and received: input, cached input
+ * included, plus output. 0 = unlimited/disabled for a window and is skipped by
+ * every check. Longer windows must be consistent with shorter ones: a longer
+ * window can't be set below what the shorter window's rate implies over the
+ * same span -
  *   weekly  >= daily  * 7
  *   monthly >= daily  * 365/12
  *   monthly >= weekly * 52/12
  */
 
 /**
- * The monthly cap a newly hired agent starts with, in cents. **0 is unlimited**,
- * and that is the default.
+ * The monthly cap a newly hired agent starts with, in tokens. **0 is unlimited**,
+ * and that is the default: an operator who wants a cap sets one.
  *
- * It used to be 3000. Nothing chose that figure, and until cache traffic was
- * priced at real rates it bit several times sooner than its face value read - so
- * a team could stop working for a reason its operator never set and could not
- * see. Projects have defaulted to unlimited since the baseline schema; agents now
- * match, and an operator who wants a cap sets one.
- *
- * Stated once here because four call sites had the old figure written out
- * separately - the hire proposal, both agent-create paths, and the hire form -
- * and a default spelled four times is a default that changes in three places.
+ * Stated once here because four call sites need it - the hire proposal, both
+ * agent-create paths, and the hire form - and a default spelled four times is a
+ * default that changes in three places.
  */
-export const DEFAULT_MONTHLY_BUDGET_CENTS = 0;
+export const DEFAULT_MONTHLY_BUDGET_TOKENS = 0;
 
-export interface BudgetWindowsCents {
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
-	monthly_budget_cents: number;
+export interface BudgetWindowsTokens {
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	monthly_budget_tokens: number;
+}
+
+/** The three window fields, in the order a person reads them. */
+export const BUDGET_WINDOW_FIELDS = [
+	'daily_budget_tokens',
+	'weekly_budget_tokens',
+	'monthly_budget_tokens',
+] as const satisfies readonly (keyof BudgetWindowsTokens)[];
+
+/**
+ * The dollar fields budgets used before they counted tokens, each mapped to the
+ * field that replaced it. A request still sending one is refused with the
+ * replacement's name rather than having the field ignored in silence.
+ */
+export const RETIRED_BUDGET_FIELDS: Readonly<Record<string, keyof BudgetWindowsTokens>> = {
+	daily_budget_cents: 'daily_budget_tokens',
+	weekly_budget_cents: 'weekly_budget_tokens',
+	monthly_budget_cents: 'monthly_budget_tokens',
+};
+
+/**
+ * How a retired dollar field is refused, in one sentence - the one wording, for a
+ * body checked field by field and for a schema that refuses one field at a time.
+ */
+export function retiredBudgetFieldMessage(
+	fields: readonly (keyof typeof RETIRED_BUDGET_FIELDS)[],
+): string {
+	const pairs = fields.map((field) => `${field} -> ${RETIRED_BUDGET_FIELDS[field]}`).join(', ');
+	return `Budgets are counted in tokens, not dollars. Send ${pairs} instead.`;
+}
+
+/**
+ * The refusal for a body carrying a retired dollar budget field, or null when it
+ * carries none. Checked by every route and tool that writes a budget.
+ */
+export function retiredBudgetFieldError(body: unknown): string | null {
+	if (!body || typeof body !== 'object') return null;
+	const found = Object.keys(RETIRED_BUDGET_FIELDS).filter((field) => field in body);
+	if (found.length === 0) return null;
+	return retiredBudgetFieldMessage(found);
+}
+
+/** A token budget as an English sentence names it: "unlimited" for 0, else the count. */
+export function describeTokenBudget(tokens: number): string {
+	return tokens > 0 ? `${englishCount(tokens)} tokens` : 'unlimited';
 }
 
 const DAYS_PER_WEEK = 7;
@@ -38,78 +80,66 @@ const DAYS_PER_MONTH = 365 / 12; // average calendar month
 const WEEKS_PER_MONTH = 52 / 12;
 
 /** A window with a 0 limit is unlimited/disabled and never constrains anything. */
-function isEnabled(cents: number): boolean {
-	return cents > 0;
+function isEnabled(tokens: number): boolean {
+	return tokens > 0;
 }
 
-/** Cents → fixed-2 dollar string, e.g. 2000 → "20.00". */
-export function centsToDollars(cents: number): string {
-	return (cents / 100).toFixed(2);
-}
-
-/** Parse a dollar input string → non-negative integer cents. Empty/NaN → 0. */
-export function dollarsToCents(input: string): number {
-	const parsed = Number.parseFloat(input || '0');
-	if (!Number.isFinite(parsed)) return 0;
-	return Math.max(0, Math.round(parsed * 100));
-}
-
-/** Minimum weekly cents implied by the daily cap (daily × 7). 0 when daily is unlimited. */
-export function minWeeklyCents(dailyCents: number): number {
-	return isEnabled(dailyCents) ? dailyCents * DAYS_PER_WEEK : 0;
+/** Minimum weekly tokens implied by the daily cap (daily × 7). 0 when daily is unlimited. */
+export function minWeeklyTokens(dailyTokens: number): number {
+	return isEnabled(dailyTokens) ? dailyTokens * DAYS_PER_WEEK : 0;
 }
 
 /**
- * Minimum monthly cents implied by the daily and/or weekly caps — the larger of
+ * Minimum monthly tokens implied by the daily and/or weekly caps - the larger of
  * daily × 365/12 and weekly × 52/12, over whichever are enabled. 0 when neither is.
  */
-export function minMonthlyCents(dailyCents: number, weeklyCents: number): number {
+export function minMonthlyTokens(dailyTokens: number, weeklyTokens: number): number {
 	let min = 0;
-	if (isEnabled(dailyCents)) min = Math.max(min, Math.ceil(dailyCents * DAYS_PER_MONTH));
-	if (isEnabled(weeklyCents)) min = Math.max(min, Math.ceil(weeklyCents * WEEKS_PER_MONTH));
+	if (isEnabled(dailyTokens)) min = Math.max(min, Math.ceil(dailyTokens * DAYS_PER_MONTH));
+	if (isEnabled(weeklyTokens)) min = Math.max(min, Math.ceil(weeklyTokens * WEEKS_PER_MONTH));
 	return min;
 }
 
 export interface BudgetViolation {
-	field: 'weekly_budget_cents' | 'monthly_budget_cents';
-	minCents: number;
+	field: 'weekly_budget_tokens' | 'monthly_budget_tokens';
+	minTokens: number;
 	message: string;
 }
 
 /**
  * All cross-window violations for a trio. Empty array means coherent. Disabled
  * (0) windows are skipped. Comparisons use the same ceil-based floors as
- * `minWeeklyCents`/`minMonthlyCents`, so client and server agree to the cent.
+ * `minWeeklyTokens`/`minMonthlyTokens`, so client and server agree to the token.
  */
-export function validateBudgetWindows(w: BudgetWindowsCents): BudgetViolation[] {
+export function validateBudgetWindows(w: BudgetWindowsTokens): BudgetViolation[] {
 	const violations: BudgetViolation[] = [];
 
-	const weeklyFloor = minWeeklyCents(w.daily_budget_cents);
-	if (isEnabled(w.weekly_budget_cents) && w.weekly_budget_cents < weeklyFloor) {
+	const weeklyFloor = minWeeklyTokens(w.daily_budget_tokens);
+	if (isEnabled(w.weekly_budget_tokens) && w.weekly_budget_tokens < weeklyFloor) {
 		violations.push({
-			field: 'weekly_budget_cents',
-			minCents: weeklyFloor,
-			message: `Weekly budget must be at least $${centsToDollars(weeklyFloor)} to cover the daily budget (daily × 7).`,
+			field: 'weekly_budget_tokens',
+			minTokens: weeklyFloor,
+			message: `Weekly budget must be at least ${englishCount(weeklyFloor)} tokens to cover the daily budget (daily × 7).`,
 		});
 	}
 
-	const monthlyFloor = minMonthlyCents(w.daily_budget_cents, w.weekly_budget_cents);
-	if (isEnabled(w.monthly_budget_cents) && w.monthly_budget_cents < monthlyFloor) {
+	const monthlyFloor = minMonthlyTokens(w.daily_budget_tokens, w.weekly_budget_tokens);
+	if (isEnabled(w.monthly_budget_tokens) && w.monthly_budget_tokens < monthlyFloor) {
 		// Name whichever shorter window binds the floor, for a clearer message.
-		const dailyImplied = isEnabled(w.daily_budget_cents)
-			? Math.ceil(w.daily_budget_cents * DAYS_PER_MONTH)
+		const dailyImplied = isEnabled(w.daily_budget_tokens)
+			? Math.ceil(w.daily_budget_tokens * DAYS_PER_MONTH)
 			: 0;
-		const weeklyImplied = isEnabled(w.weekly_budget_cents)
-			? Math.ceil(w.weekly_budget_cents * WEEKS_PER_MONTH)
+		const weeklyImplied = isEnabled(w.weekly_budget_tokens)
+			? Math.ceil(w.weekly_budget_tokens * WEEKS_PER_MONTH)
 			: 0;
 		const basis =
 			dailyImplied >= weeklyImplied
 				? 'daily budget (daily × 365/12)'
 				: 'weekly budget (weekly × 52/12)';
 		violations.push({
-			field: 'monthly_budget_cents',
-			minCents: monthlyFloor,
-			message: `Monthly budget must be at least $${centsToDollars(monthlyFloor)} to cover the ${basis}.`,
+			field: 'monthly_budget_tokens',
+			minTokens: monthlyFloor,
+			message: `Monthly budget must be at least ${englishCount(monthlyFloor)} tokens to cover the ${basis}.`,
 		});
 	}
 
@@ -121,17 +151,17 @@ export function validateBudgetWindows(w: BudgetWindowsCents): BudgetViolation[] 
  * coherent. Processes daily → weekly → monthly so the raised weekly feeds the
  * monthly floor. Used by the web editor for live auto-raise as the user types.
  */
-export function normalizeBudgetWindowsUp(w: BudgetWindowsCents): BudgetWindowsCents {
-	const weekly = isEnabled(w.weekly_budget_cents)
-		? Math.max(w.weekly_budget_cents, minWeeklyCents(w.daily_budget_cents))
-		: w.weekly_budget_cents;
-	const monthly = isEnabled(w.monthly_budget_cents)
-		? Math.max(w.monthly_budget_cents, minMonthlyCents(w.daily_budget_cents, weekly))
-		: w.monthly_budget_cents;
+export function normalizeBudgetWindowsUp(w: BudgetWindowsTokens): BudgetWindowsTokens {
+	const weekly = isEnabled(w.weekly_budget_tokens)
+		? Math.max(w.weekly_budget_tokens, minWeeklyTokens(w.daily_budget_tokens))
+		: w.weekly_budget_tokens;
+	const monthly = isEnabled(w.monthly_budget_tokens)
+		? Math.max(w.monthly_budget_tokens, minMonthlyTokens(w.daily_budget_tokens, weekly))
+		: w.monthly_budget_tokens;
 	return {
-		daily_budget_cents: w.daily_budget_cents,
-		weekly_budget_cents: weekly,
-		monthly_budget_cents: monthly,
+		daily_budget_tokens: w.daily_budget_tokens,
+		weekly_budget_tokens: weekly,
+		monthly_budget_tokens: monthly,
 	};
 }
 
@@ -235,4 +265,41 @@ export function containerHoursWindow(
 export function previousContainerHoursWindowStart(anchorDay: number | undefined, now: Date): Date {
 	const start = containerHoursWindowStart(anchorDay, now);
 	return containerHoursWindowStart(anchorDay, new Date(start.getTime() - 1));
+}
+
+/**
+ * The shapes a usage read answers with, on both sides of the wire: the server
+ * selects them, the web renders them, and a rename is a compile error in both
+ * rather than a blank column in one.
+ */
+
+/** A token sum as every usage read reports it: input (cache included), output, total. */
+export interface UsageTotals {
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+}
+
+/** One agent's usage, as a read grouped by agent returns it. */
+export interface AgentUsageRow extends UsageTotals {
+	agent_id: string;
+	agent_title: string | null;
+	/** The agent's own name, when it has one. Null means it goes by its role. */
+	agent_name: string | null;
+}
+
+/** Usage against a limit for one window. `overBudget` requires a positive limit. */
+export interface WindowStatus {
+	usedTokens: number;
+	limitTokens: number;
+	overBudget: boolean;
+}
+
+/** Per-window status for one entity (an agent or a project) plus an aggregate flag. */
+export interface EntityBudgetStatus {
+	daily: WindowStatus;
+	weekly: WindowStatus;
+	monthly: WindowStatus;
+	/** True when any window is over budget. */
+	overBudget: boolean;
 }

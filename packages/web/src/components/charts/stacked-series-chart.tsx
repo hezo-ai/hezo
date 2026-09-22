@@ -37,7 +37,7 @@ export interface ChartSeries {
 
 /**
  * Ordered palette for stacked series; cycles if there are more series than
- * colors. Danger-red sits last deliberately: on a spend or hours chart no series
+ * colors. Danger-red sits last deliberately: on a usage or hours chart no series
  * is a failure, so a red segment among four calm ones reads as a problem the
  * chart is not reporting. Six calm hues run out later than the original five did
  * - a roster larger than that still repeats, which the legend disambiguates.
@@ -127,7 +127,7 @@ interface StackedSeriesChartProps {
 	cells: SeriesCell[] | undefined;
 	isLoading: boolean;
 	/**
-	 * Base units -> the number plotted (cents -> dollars, seconds -> hours). Do
+	 * Base units -> the number plotted (seconds -> hours, tokens as they are). Do
 	 * not round here: `formatValue` reads the plotted number back, so a rounded
 	 * plot value is a rounded tooltip.
 	 */
@@ -136,7 +136,7 @@ interface StackedSeriesChartProps {
 	 * The **plotted** number -> the tooltip string, so it takes whatever unit
 	 * `toDisplay` produced. Deliberately not the base unit: recovering that would
 	 * mean reading recharts' own tooltip payload shape, which is not ours to
-	 * depend on. Callers invert exactly (`Math.round(dollars * 100)`).
+	 * depend on. Callers invert exactly (`Math.round(hours * 3600)`).
 	 */
 	formatValue: (value: number) => string;
 	/** Bucket key -> x-axis label. Defaults to the key itself. */

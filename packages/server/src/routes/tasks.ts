@@ -7,10 +7,8 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
-import type { Db } from '../db/database';
 import { readRunLogTail } from '../db/run-log-chunks';
 import { agentDisplayNameSql } from '../lib/agent-identity';
-import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import {
@@ -28,11 +26,9 @@ import {
 	resolveTaskId,
 } from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import { assertRunTaskScope } from '../lib/run-scope';
 import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
-	assertNoUnansweredAdminMentions,
 	MAX_SUB_TASK_DEPTH,
 	resolveParentAssignment,
 } from '../lib/task-relationships';
@@ -67,7 +63,7 @@ import {
 	createTask,
 	createTaskBatch,
 } from '../services/tasks';
-import { createWakeup, wakeAgentIfAssigned } from '../services/wakeup';
+import { wakeAgentIfAssigned } from '../services/wakeup';
 
 const log = logger.child('routes');
 
@@ -94,16 +90,11 @@ export async function buildCreateTaskCaller(
 ): Promise<CreateTaskCaller> {
 	const auth = c.get('auth');
 	const actorMemberId = await resolveAuthActorMemberId(c.get('db'), auth, teamId);
-	const caller: CreateTaskCaller = {
+	return {
 		actorType: actorTypeFromAuth(auth),
 		actorMemberId,
 		actorApiKeyId: apiKeyIdFromAuth(auth),
 	};
-	if (auth.type === AuthType.Agent) {
-		caller.agentMemberId = auth.memberId;
-		caller.runId = auth.runId ?? undefined;
-	}
-	return caller;
 }
 
 async function resolveActorMemberId(c: Context<Env>, teamId: string): Promise<string | null> {
@@ -338,7 +329,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             m.member_type AS assignee_type,
             ${agentDisplayNameSql('ma_ps', 'm_ps')} AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM task_comments ic WHERE ic.task_id = i.id) AS comment_count,
-            ra.run_count, ra.total_duration_seconds, ca.total_cost_cents, ca.notional_cost_cents,
+            ra.run_count, ra.total_duration_seconds, ua.total_tokens,
             (ar.status IS NOT NULL) AS has_active_run,
             CASE WHEN ar.status IS NOT NULL THEN json_build_object(
               'id', ar.id,
@@ -415,12 +406,10 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        WHERE hr.task_id = i.id
      ) ra ON true
      LEFT JOIN LATERAL (
-       SELECT COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cost_cents,
-              COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int
-                AS notional_cost_cents
-       FROM cost_entries ce
-       WHERE ce.task_id = i.id
-     ) ca ON true
+       SELECT COALESCE(sum(ue.input_tokens + ue.output_tokens), 0)::float8 AS total_tokens
+       FROM usage_entries ue
+       WHERE ue.task_id = i.id
+     ) ua ON true
      WHERE i.id = $1 AND i.team_id = $2`,
 		[taskId, teamId],
 	);
@@ -522,16 +511,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
 	}
 
-	const auth = c.get('auth');
-
-	const scopeDenied = assertRunTaskScope(auth, taskId, body.status);
-	if (scopeDenied) return err(c, 'FORBIDDEN', scopeDenied, 403);
-
 	// The progress summary is the agent's own running checkpoint, written from
 	// inside a run via `update_task` and handed back to the next run in full. A
 	// human rewriting it silently changes what that run believes about its own
-	// work, so it is agent-only here; humans say what they want in a comment.
-	if (body.progress_summary !== undefined && auth.type !== AuthType.Agent) {
+	// work, and agents write it through MCP, so this route never writes it.
+	if (body.progress_summary !== undefined) {
 		return err(
 			c,
 			'FORBIDDEN',
@@ -557,17 +541,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			return err(c, 'NOT_FOUND', 'Task not found', 404);
 		}
 
-		// `done` and `cancelled` are now the only terminal states; once a task is
-		// terminal only the admin can move it back to an active status (re-open).
-		if (
-			body.status !== undefined &&
-			body.status !== existing.rows[0].status &&
-			auth.type === AuthType.Agent &&
-			(TERMINAL_TASK_STATUSES as readonly string[]).includes(existing.rows[0].status)
-		) {
-			return err(c, 'FORBIDDEN', 'Only the admin can re-open a completed task', 403);
-		}
-
 		if (body.status === TaskStatus.Done && body.status !== existing.rows[0].status) {
 			const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 			if (!childrenCheck.ok) {
@@ -575,18 +548,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			}
 		}
 		if (body.status === TaskStatus.Done && body.status !== existing.rows[0].status) {
-			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
+			// A person closing the task is their own decision, so an unanswered
+			// @admin ask does not hold it here; agents close through MCP, which does.
+			const activityCheck = await assertNoOutstandingActivity(db, taskId, null);
 			if (!activityCheck.ok) {
 				return err(c, 'INVALID_REQUEST', activityCheck.message, 400);
-			}
-			// Agents cannot close over an unanswered @admin ask; a human closing
-			// the task is itself the human's decision, so humans bypass this.
-			if (callerMemberId !== null) {
-				const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
-				if (!adminAskCheck.ok) {
-					return err(c, 'INVALID_REQUEST', adminAskCheck.message, 400);
-				}
 			}
 		}
 
@@ -665,22 +631,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			}
 			if (body.assignee_id !== existing.rows[0].assignee_id) {
 				const blocking = await assertNoBlockingRun(db, taskId, {
-					callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+					callerMemberId: null,
 					incomingAssigneeId: body.assignee_id,
 				});
 				if (!blocking.ok) {
 					return err(c, 'CONFLICT', blocking.message, 409);
-				}
-				// The MCP twin has always enforced this (`update_task` in mcp/tools.ts);
-				// REST never did, because the unconditional run guard above incidentally
-				// 409'd any agent reaching here from inside its own run. Exempting the
-				// caller's own run opens that path, so the rule has to be stated here too
-				// or an agent could dump its live task on a peer or its manager.
-				if (auth.type === AuthType.Agent) {
-					const hierarchy = await assertSubordinateAssignee(db, auth.memberId, body.assignee_id);
-					if (!hierarchy.ok) {
-						return err(c, 'FORBIDDEN', hierarchy.message, 403);
-					}
 				}
 			}
 			if (taskUpdateValueChanged(existing.rows[0], 'assignee_id', body.assignee_id)) {
@@ -697,19 +652,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		if (body.labels !== undefined) {
 			sets.push(`labels = $${idx}::jsonb`);
 			params.push(JSON.stringify(body.labels));
-			idx++;
-		}
-		if (
-			body.progress_summary !== undefined &&
-			taskUpdateValueChanged(existing.rows[0], 'progress_summary', body.progress_summary)
-		) {
-			sets.push(`progress_summary = $${idx}`);
-			params.push(body.progress_summary);
-			idx++;
-			sets.push('progress_summary_updated_at = now()');
-			// Only an agent reaches here — the guard above rejects every other caller.
-			sets.push(`progress_summary_updated_by = $${idx}`);
-			params.push(auth.type === AuthType.Agent ? auth.memberId : null);
 			idx++;
 		}
 		if (body.rules !== undefined && taskUpdateValueChanged(existing.rows[0], 'rules', body.rules)) {
@@ -750,10 +692,8 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	if ('unchanged' in mutation) return ok(c, mutation.unchanged);
 	const { mutationBefore, updatedRow, projectId } = mutation;
 
-	// Every wakeup this write causes carries the run behind it, so that run's own
-	// no-wake exit check can see whom it notified. An agent run reaches this route
-	// with a run-scoped JWT, so this is not a human-only path.
-	const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
+	// A person's edit has no run behind it, so the wakeups it causes carry none.
+	const callerRunId = null;
 
 	if (updatedRow.assignee_id && updatedRow.assignee_id !== mutationBefore.assignee_id) {
 		// Awaited: the run's exit check reads this back at the end of the run.
@@ -1139,7 +1079,6 @@ tasksRoutes.delete('/projects/:projectId/tasks/:taskId/dependencies/:depId', asy
 	await db.query('DELETE FROM task_dependencies WHERE id = $1', [depId]);
 	const actorMemberId = await resolveActorMemberId(c, teamId);
 	await reconcileBlockedStatus(db, teamId, taskId, actorMemberId, c.get('wsManager'));
-	const depAuth = c.get('auth');
-	await wakeIfReady(db, taskId, depAuth.type === AuthType.Agent ? (depAuth.runId ?? null) : null);
+	await wakeIfReady(db, taskId, null);
 	return c.json({ data: null }, 200);
 });

@@ -33,12 +33,12 @@ project and rewrites the summary; the **Updated** time shows when that last happ
 Reading down the page:
 
 - a **metric strip** - what needs you, how many agents are working, open tasks, goal progress and
-  month-to-date spend. Each tile is a link to the page that owns its number: the inbox, the team,
+  month-to-date tokens. Each tile is a link to the page that owns its number: the inbox, the team,
   the task list, your goals and the budget,
 - the **progress summary** above,
 - a strip naming the agents **working right now** and the task each is on,
 - **action items** waiting on you, and the tasks **in progress**,
-- your [**goals**](/docs/concepts/goals) and your **spend**,
+- your [**goals**](/docs/concepts/goals) and your **token usage**,
 - the **progress update runs** that produced the summary.
 
 The goals card shows the four goals most worth a decision - off track first, then at risk - with a

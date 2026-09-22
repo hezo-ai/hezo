@@ -13,6 +13,7 @@ import {
 	mintAgentToken,
 	projectSlugForTeamSlug,
 } from './helpers/app';
+import { callMcpTool, callMcpToolRaw } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -144,7 +145,7 @@ describe('Agent token cross-team isolation', () => {
 				headers: authHeader(agentAToken),
 			},
 		);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('agent A cannot access Team B tasks', async () => {
@@ -154,14 +155,14 @@ describe('Agent token cross-team isolation', () => {
 				headers: authHeader(agentAToken),
 			},
 		);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('agent A cannot access Team B projects', async () => {
 		const res = await app.request(`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}`, {
 			headers: authHeader(agentAToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('agent B cannot access Team A agents', async () => {
@@ -171,7 +172,7 @@ describe('Agent token cross-team isolation', () => {
 				headers: authHeader(agentBToken),
 			},
 		);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('agent B cannot create tasks in Team A', async () => {
@@ -180,7 +181,7 @@ describe('Agent token cross-team isolation', () => {
 			headers: { ...authHeader(agentBToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectAId, title: 'Unauthorized Task' }),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 });
 
@@ -286,19 +287,15 @@ describe('API key is instance-wide (MCP surface)', () => {
 	let apiKey: string;
 
 	async function listAgentsViaMcp(authToken: string, projectSlug: string): Promise<unknown> {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name: 'list_agents', arguments: { project: projectSlug } },
-				id: 1,
-			}),
-		});
-		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		const { body } = await callMcpToolRaw(
+			app,
+			'',
+			'list_agents',
+			{ project: projectSlug },
+			`Bearer ${authToken}`,
+		);
 		// list_agents pages: the roster rows live under `items`.
-		const page = JSON.parse(body.result.content[0].text) as { items?: unknown };
+		const page = JSON.parse(body.result?.content?.[0]?.text ?? '{}') as { items?: unknown };
 		return page.items ?? page;
 	}
 
@@ -336,7 +333,7 @@ describe('Resource ownership isolation', () => {
 		const res = await app.request(`/api/projects/${projectASlug}/tasks/${taskAId}`, {
 			headers: authHeader(agentBToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('Team A task not found under Team B routes', async () => {
@@ -351,10 +348,12 @@ describe('Resource ownership isolation', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('Agent A accessing own team task succeeds', async () => {
-		const res = await app.request(`/api/projects/${projectASlug}/tasks/${taskAId}`, {
-			headers: authHeader(agentAToken),
+	it('Agent A reads its own team task through MCP, the surface agents use', async () => {
+		const res = await callMcpTool(app, agentAToken, 'get_task', {
+			project: projectASlug,
+			task_id: taskAId,
 		});
-		expect(res.status).toBe(200);
+		expect(res.error).toBeUndefined();
+		expect(res.id).toBe(taskAId);
 	});
 });

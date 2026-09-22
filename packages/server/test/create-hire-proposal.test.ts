@@ -13,6 +13,7 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool, callMcpToolRaw } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -29,20 +30,7 @@ async function callTool(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, name, args);
 }
 
 /**
@@ -55,17 +43,7 @@ async function callToolRaw(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<string> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	return JSON.stringify(await res.json());
+	return JSON.stringify((await callMcpToolRaw(app, agentToken, name, args)).body);
 }
 
 async function captainToken(): Promise<string> {
@@ -122,7 +100,7 @@ describe('MCP tool create_hire_proposal', () => {
 			title: 'Data Scientist',
 			role_description: 'Owns the analytics models',
 			system_prompt: 'You are the Data Scientist. Build and maintain the models.',
-			monthly_budget_cents: 5000,
+			monthly_budget_tokens: 5000,
 		});
 
 		expect(result.error).toBeUndefined();
@@ -130,7 +108,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const payload = result.payload as Record<string, unknown>;
 		expect(payload.title).toBe('Data Scientist');
 		expect(payload.slug).toBe('data-scientist');
-		expect(payload.monthly_budget_cents).toBe(5000);
+		expect(payload.monthly_budget_tokens).toBe(5000);
 
 		// It is a real pending hire approval on the team.
 		const row = await db.query<{ type: string; status: string; team_id: string }>(
@@ -361,5 +339,28 @@ describe('MCP tool create_hire_proposal', () => {
 		// run, and an approved hire then sat with nobody acting on it until the next
 		// scheduled heartbeat. `approval_resolved` is exempt from both suppressions.
 		expect(wakeup.rows[0].source).toBe(WakeupSource.ApprovalResolved);
+
+		// Who decided travels with it: the approval, its card and the wakeup name the
+		// admin, which is what lets the decision lift a hold that waits on a person.
+		const superuser = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser ORDER BY created_at LIMIT 1',
+		);
+		const approval = await db.query<{ resolved_by_user_id: string | null }>(
+			'SELECT resolved_by_user_id FROM approvals WHERE id = $1',
+			[proposal.approval_id as string],
+		);
+		expect(approval.rows[0].resolved_by_user_id).toBe(superuser.rows[0].id);
+		const card = await db.query<{ chosen_by_user_id: string | null }>(
+			`SELECT chosen_by_user_id FROM task_comments
+			  WHERE content->>'approval_id' = $1 AND chosen_option IS NOT NULL`,
+			[proposal.approval_id as string],
+		);
+		expect(card.rows.map((r) => r.chosen_by_user_id)).toEqual([superuser.rows[0].id]);
+		const decided = await db.query<{ decided_by: Record<string, unknown> }>(
+			`SELECT payload->'decided_by' AS decided_by FROM agent_wakeup_requests
+			  WHERE payload->>'approval_id' = $1`,
+			[proposal.approval_id as string],
+		);
+		expect(decided.rows[0].decided_by).toEqual({ user_id: superuser.rows[0].id, api_key_id: null });
 	});
 });

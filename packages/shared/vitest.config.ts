@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
 // Unit-tier config for the pure-logic shared package (crypto, mentions, budget,
-// pricing, task-progress, enums/constants). No DOM, no backend — plain Node.
+// task-progress, enums/constants). No DOM, no backend — plain Node.
 // scripts/test.ts runs this package alongside server/web; CI's merge job combines
 // its coverage-final.json into the repo-root-relative total so Coveralls counts
 // packages/shared/src/** too.

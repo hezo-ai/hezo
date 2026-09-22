@@ -4,13 +4,13 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import {
-	buildHirePayloadPatch,
 	insertHireApproval,
+	prepareHirePayloadPatch,
 	prepareHireProposal,
 } from '../src/services/hire-proposal';
 import { safeClose } from './helpers';
@@ -21,7 +21,7 @@ import { createTestApp, createTestTeam } from './helpers/app';
  * rejection arm of `prepareHireProposal` (missing title, bad effort, budget
  * violation, prompt-vars violation, reserved slug, slug-already-exists, pending
  * duplicate, self-report, unknown manager), the optional-field defaulting on
- * the happy path, and every `buildHirePayloadPatch` field branch. Calls the
+ * the happy path, and every `prepareHirePayloadPatch` field branch. Calls the
  * services directly against a seeded HQ team (which has a Captain) so the
  * slug-exists and reports_to-resolves arms have a real roster to hit.
  */
@@ -63,8 +63,8 @@ describe('prepareHireProposal — rejection branches', () => {
 	it('rejects an incoherent budget trio', async () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Budget Bot',
-			daily_budget_cents: 10_000,
-			weekly_budget_cents: 1, // below the daily×7 floor
+			daily_budget_tokens: 10_000,
+			weekly_budget_tokens: 1, // below the daily×7 floor
 		});
 		expect(isError(r) && r.error).toMatch(/Weekly budget must be at least/);
 	});
@@ -72,9 +72,9 @@ describe('prepareHireProposal — rejection branches', () => {
 	it('rejects a negative budget value', async () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Negative Bot',
-			daily_budget_cents: -5,
+			daily_budget_tokens: -5,
 		});
-		expect(isError(r) && r.error).toMatch(/must be an integer ≥ 0/);
+		expect(isError(r) && r.error).toMatch(/must be a whole number of tokens ≥ 0/);
 	});
 
 	it('accepts a non-empty system_prompt with no substitution variables', async () => {
@@ -142,13 +142,13 @@ describe('prepareHireProposal — success branches', () => {
 		expect(p.reports_to).toBeNull();
 		expect(p.default_effort).toBe(DEFAULT_EFFORT);
 		expect(p.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
-		expect(p.daily_budget_cents).toBe(0);
-		expect(p.weekly_budget_cents).toBe(0);
-		expect(p.monthly_budget_cents).toBe(DEFAULT_MONTHLY_BUDGET_CENTS);
+		expect(p.daily_budget_tokens).toBe(0);
+		expect(p.weekly_budget_tokens).toBe(0);
+		expect(p.monthly_budget_tokens).toBe(DEFAULT_MONTHLY_BUDGET_TOKENS);
 		// And that default is unlimited. Asserted as a literal, unlike the line
 		// above: this one pins a product decision rather than the wiring, so a
 		// change back to an arbitrary figure should have to come through here.
-		expect(DEFAULT_MONTHLY_BUDGET_CENTS).toBe(0);
+		expect(DEFAULT_MONTHLY_BUDGET_TOKENS).toBe(0);
 		expect(p.touches_code).toBe(false);
 	});
 
@@ -162,9 +162,9 @@ describe('prepareHireProposal — success branches', () => {
 			// honoured, which a value equal to DEFAULT_EFFORT could not.
 			default_effort: 'low',
 			heartbeat_interval_min: 60,
-			daily_budget_cents: 100,
-			weekly_budget_cents: 1000,
-			monthly_budget_cents: 5000,
+			daily_budget_tokens: 100,
+			weekly_budget_tokens: 1000,
+			monthly_budget_tokens: 5000,
 			touches_code: true,
 		});
 		expect(isError(r)).toBe(false);
@@ -198,22 +198,37 @@ describe('insertHireApproval', () => {
 	});
 });
 
-describe('buildHirePayloadPatch', () => {
-	it('returns an empty patch when nothing is supplied', () => {
-		expect(buildHirePayloadPatch({})).toEqual({});
+describe('prepareHirePayloadPatch', () => {
+	/** A pending proposal's current payload: every window unlimited. */
+	const current = {
+		slug: 'patched-role',
+		daily_budget_tokens: 0,
+		weekly_budget_tokens: 0,
+		monthly_budget_tokens: 0,
+	};
+	const patchOf = async (input: Parameters<typeof prepareHirePayloadPatch>[3]) => {
+		const r = await prepareHirePayloadPatch(db, teamId, current, input);
+		if ('error' in r) throw new Error(r.error);
+		return r.patch;
+	};
+
+	it('refuses a revision that changes nothing', async () => {
+		expect(await prepareHirePayloadPatch(db, teamId, current, {})).toEqual({
+			error: 'No fields to update',
+		});
 	});
 
-	it('includes every supplied field, trimming title, and clears reports_to on empty', () => {
-		const patch = buildHirePayloadPatch({
+	it('includes every supplied field, trimming title, and clears reports_to on empty', async () => {
+		const patch = await patchOf({
 			title: '  Trimmed  ',
 			role_description: 'desc',
 			system_prompt: 'prompt',
 			reports_to: '   ', // whitespace-only → cleared to null
 			default_effort: 'low',
-			heartbeat_interval_min: 30,
-			daily_budget_cents: 1,
-			weekly_budget_cents: 2,
-			monthly_budget_cents: 3,
+			heartbeat_interval_min: 120,
+			daily_budget_tokens: 1,
+			weekly_budget_tokens: 7,
+			monthly_budget_tokens: 31,
 			touches_code: true,
 		});
 		expect(patch).toEqual({
@@ -222,20 +237,31 @@ describe('buildHirePayloadPatch', () => {
 			system_prompt: 'prompt',
 			reports_to: null,
 			default_effort: 'low',
-			heartbeat_interval_min: 30,
-			daily_budget_cents: 1,
-			weekly_budget_cents: 2,
-			monthly_budget_cents: 3,
+			heartbeat_interval_min: 120,
+			daily_budget_tokens: 1,
+			weekly_budget_tokens: 7,
+			monthly_budget_tokens: 31,
 			touches_code: true,
 		});
 	});
 
-	it('keeps a non-empty reports_to (trimmed) and a false touches_code', () => {
-		const patch = buildHirePayloadPatch({ reports_to: '  captain  ', touches_code: false });
-		expect(patch).toEqual({ reports_to: 'captain', touches_code: false });
+	it('keeps a non-empty reports_to (trimmed) and a false touches_code', async () => {
+		const patch = await patchOf({ reports_to: `  ${CAPTAIN_AGENT_SLUG}  `, touches_code: false });
+		expect(patch).toEqual({ reports_to: CAPTAIN_AGENT_SLUG, touches_code: false });
 	});
 
-	it('passes null reports_to straight through as a cleared line', () => {
-		expect(buildHirePayloadPatch({ reports_to: null })).toEqual({ reports_to: null });
+	it('passes null reports_to straight through as a cleared line', async () => {
+		expect(await patchOf({ reports_to: null })).toEqual({ reports_to: null });
+	});
+
+	it('refuses a manager off the team, the proposal itself, and an unknown effort', async () => {
+		for (const input of [
+			{ reports_to: 'nobody-here' },
+			{ reports_to: 'patched-role' },
+			{ default_effort: 'turbo' },
+		]) {
+			const r = await prepareHirePayloadPatch(db, teamId, current, input);
+			expect('error' in r, JSON.stringify(input)).toBe(true);
+		}
 	});
 });

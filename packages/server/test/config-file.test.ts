@@ -122,6 +122,17 @@ describe('loadConfigFile', () => {
 			expect(() => loadConfigFile(path)).toThrow(/HEZO_MASTER_KEY/);
 		});
 
+		it('refuses the removed price refresh schedule, naming why rather than ignoring it', () => {
+			const path = write("module.exports = { jobs: { pricingRefreshCron: '0 0 3 * * *' } };");
+			expect(() => loadConfigFile(path)).toThrow(/jobs\.pricingRefreshCron/);
+			expect(() => loadConfigFile(path)).toThrow(/budgets count tokens/);
+		});
+
+		it('still accepts the jobs block without the removed key', () => {
+			const path = write("module.exports = { jobs: { heartbeatCron: '0 */5 * * * *' } };");
+			expect(() => loadConfigFile(path)).not.toThrow();
+		});
+
 		it('refuses a reset key, which would wipe the database on every restart', () => {
 			const path = write('module.exports = { reset: true };');
 			expect(() => loadConfigFile(path)).toThrow(/wipe on every[\s\S]*restart/);

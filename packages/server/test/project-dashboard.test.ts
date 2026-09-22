@@ -69,7 +69,7 @@ beforeAll(async () => {
 	);
 
 	await db.query(
-		`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)`,
+		`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 500)`,
 		[agentId, projectId],
 	);
 });
@@ -204,9 +204,9 @@ it('GET /inbox/needs-you includes pending hire approvals with no project_id or t
 				reports_to: null,
 				default_effort: 'medium',
 				heartbeat_interval_min: 30,
-				daily_budget_cents: 0,
-				weekly_budget_cents: 0,
-				monthly_budget_cents: 3000,
+				daily_budget_tokens: 0,
+				weekly_budget_tokens: 0,
+				monthly_budget_tokens: 3000,
 				touches_code: false,
 			}),
 			ApprovalStatus.Pending,

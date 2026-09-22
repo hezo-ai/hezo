@@ -8,6 +8,8 @@
 
 import { createHash } from 'node:crypto';
 import {
+	LEGACY_ROSTER_BUDGET_CENTS,
+	type LegacyRosterBudgetField,
 	MARKETPLACE_SCHEMA_VERSION,
 	type MarketplaceCaptainOverride,
 	type MarketplaceChangelogEntry,
@@ -41,7 +43,7 @@ export interface TeamManifest {
 	keywords: string[];
 	changelog: MarketplaceChangelogEntry[];
 	captain: { team_context: string };
-	roster: Array<Omit<MarketplaceRosterAgent, 'system_prompt'>>;
+	roster: Array<Omit<MarketplaceRosterAgent, 'system_prompt' | LegacyRosterBudgetField>>;
 }
 
 /** The content fields that feed the content hash (everything but version/changelog/hash). */
@@ -154,7 +156,11 @@ export function buildTeamDef(
 					`Team "${manifest.slug}": roster may not contain reserved slug "${entry.slug}" (captain/coach/ceo are provisioned separately)`,
 				);
 			}
-			return { ...entry, system_prompt: validatePrompt(entry.slug, promptFor(entry.slug)) };
+			return {
+				...entry,
+				...LEGACY_ROSTER_BUDGET_CENTS,
+				system_prompt: validatePrompt(entry.slug, promptFor(entry.slug)),
+			};
 		});
 
 	const content: TeamContent = {

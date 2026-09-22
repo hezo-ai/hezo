@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { getToolDefs } from '../src/mcp/server';
 import {
@@ -11,6 +12,7 @@ import {
 	COACH_REVIEW_COMMENTS_LIMIT,
 	type TaskInfo,
 } from '../src/services/agent-runner';
+import { COHERENCE_LABEL } from '../src/services/description-tasks';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -189,6 +191,38 @@ describe('Coach wakeup on task done', () => {
 		expect(wakeups.rows[0].payload.task_id).toBe(taskId);
 		expect(wakeups.rows[0].payload.trigger).toBe('task_done');
 	});
+
+	it('does not wake the Coach for a finished team coherence review', async () => {
+		const created = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Team coherence review',
+				assignee_id: engineerId,
+			}),
+		});
+		const reviewId = (await created.json()).data.id as string;
+		await db.query(`UPDATE tasks SET labels = $2::jsonb WHERE id = $1`, [
+			reviewId,
+			JSON.stringify([COHERENCE_LABEL]),
+		]);
+
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${reviewId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'done' }),
+		});
+		expect(res.status).toBe(200);
+		await waitForBackground();
+
+		const wakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'task_id' = $2`,
+			[coachId, reviewId],
+		);
+		expect(wakeups.rows).toEqual([]);
+	});
 });
 
 describe('Coach review prompt builder', () => {
@@ -216,6 +250,13 @@ describe('Coach review prompt builder', () => {
 		expect(prompt).toMatch(/### Final Step/);
 		expect(prompt).toMatch(/review summary comment/i);
 		expect(prompt).toMatch(/following the format defined in your system prompt/i);
+		// The per-task prompt defers to the role's workflow rather than restating
+		// it, so the two can never disagree about adding or removing rules.
+		expect(prompt).toContain(
+			'Review this completed task by the review workflow in your system prompt',
+		);
+		expect(prompt).not.toContain('no changes are needed');
+		expect(prompt).not.toContain('to add a specific rule');
 	});
 
 	it('includes the task rules and progress summary when present', async () => {
@@ -365,6 +406,24 @@ describe('Coach review prompt builder', () => {
 		// The carve-out is bounded: it may compact what it wrote, never the role.
 		expect(template).toContain("Never rewrite or remove the role's own instructions");
 		expect(template).toContain('Consolidate only `## Learned Rules`');
+	});
+
+	it('lets the coach remove a rule that twice cost more than it caught, within a cap', async () => {
+		const res = await db.query<{ system_prompt_template: string }>(
+			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
+		);
+		const template = res.rows[0].system_prompt_template;
+		expect(template).toContain('where you add, merge and remove entries');
+		// One clean task cannot condemn a preventive rule: the first miss marks it,
+		// a second miss on a different task removes it, and a catch clears the mark.
+		expect(template).toContain('Remove a rule already marked from a different task');
+		expect(template).toContain('Mark the rest with this task');
+		expect(template).toContain('Clear the mark from any rule that caught a defect on this task');
+		expect(template).toContain('the task or tasks that showed its cost');
+		expect(template).toContain('A rule that adds a check names what the check costs');
+		expect(template).toContain('Keep `## Learned Rules` to 20 entries at most');
+		// Only additions wait on a struggle; a removal can follow a smooth task.
+		expect(template).toContain('Add no rule when the task completed smoothly');
 	});
 
 	it('points the coach at the span-edit tool for an existing Custom Prompt', async () => {

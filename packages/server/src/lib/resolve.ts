@@ -76,6 +76,21 @@ export function apiKeyIdFromAuth(auth: AuthInfo): string | null {
 }
 
 /**
+ * The person behind a request, as a wakeup payload records who acted: the user,
+ * or the API key acting for the admin who approved it. Both null for an agent,
+ * whose act a hold that waits on a person must not count.
+ */
+export function actingPersonFromAuth(auth: AuthInfo): {
+	user_id: string | null;
+	api_key_id: string | null;
+} {
+	return {
+		user_id: auth.type === AuthType.Admin ? auth.userId : null,
+		api_key_id: apiKeyIdFromAuth(auth),
+	};
+}
+
+/**
  * Resolve the audit actor type, the acting member id, and the API-key id for a
  * request. `teamId` may be null for instance-level actions; the member id only
  * resolves within a team, so it is null at instance scope. An API key has no

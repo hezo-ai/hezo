@@ -12,13 +12,13 @@ import {
 	mintAgentToken,
 	settleTeamSetupReview,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -33,7 +33,6 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Task Test Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main Project',
@@ -128,39 +127,6 @@ describe('tasks CRUD', () => {
 		});
 		expect(patchRes.status).toBe(200);
 		expect((await patchRes.json()).data.runtime_type).toBe('gemini');
-	});
-
-	it('PATCH blocks an agent run from starting a different task (run-task scope)', async () => {
-		const runTask = await insertTaskDirect(agentId, 'REST scope run task');
-		const otherTask = await insertTaskDirect(agentId, 'REST scope other task');
-		const { token: agentToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			runTask.id,
-		);
-
-		// Blocked: a DIFFERENT ticket moved to in_progress inside this run.
-		const blocked = await app.request(`/api/projects/${projectSlug}/tasks/${otherTask.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'in_progress' }),
-		});
-		expect(blocked.status).toBe(403);
-		const otherRow = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
-			otherTask.id,
-		]);
-		expect(otherRow.rows[0].status).toBe('backlog');
-
-		// Allowed: the run's OWN ticket moved to in_progress.
-		const allowed = await app.request(`/api/projects/${projectSlug}/tasks/${runTask.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'in_progress' }),
-		});
-		expect(allowed.status).toBe(200);
-		expect((await allowed.json()).data.status).toBe('in_progress');
 	});
 
 	it('creates sequential task numbers', async () => {
@@ -362,7 +328,7 @@ describe('tasks CRUD', () => {
 
 		const summary =
 			'## Requirements\n- Build auth module\n\n## Done\n- Set up project\n\n## Next\n- Implement login';
-		// Agent-only field, so the write goes through a run-scoped token.
+		// Agent-only field, written from inside a run through `update_task`.
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -370,15 +336,12 @@ describe('tasks CRUD', () => {
 			teamId,
 			task.id,
 		);
-		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: summary }),
+		const patched = await callMcpTool(app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: task.id,
+			progress_summary: summary,
 		});
-		expect(patchRes.status).toBe(200);
-		const patched = (await patchRes.json()).data;
-		expect(patched.progress_summary).toBe(summary);
-		expect(patched.progress_summary_updated_at).toBeTruthy();
+		expect(patched.error).toBeUndefined();
 
 		// GET detail includes progress_summary and updater name
 		const detailRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
@@ -388,37 +351,6 @@ describe('tasks CRUD', () => {
 		const detail = (await detailRes.json()).data;
 		expect(detail.progress_summary).toBe(summary);
 		expect(detail.progress_summary_updated_at).toBeTruthy();
-	});
-
-	it('clears progress_summary with null', async () => {
-		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			headers: authHeader(token),
-		});
-		const task = (await listRes.json()).data[0];
-
-		const { token: agentToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			task.id,
-		);
-
-		// Set it first
-		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: 'Some summary' }),
-		});
-
-		// Clear it
-		const clearRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: null }),
-		});
-		expect(clearRes.status).toBe(200);
-		expect((await clearRes.json()).data.progress_summary).toBeNull();
 	});
 
 	it('does not include progress_summary in list view', async () => {
@@ -605,51 +537,6 @@ describe('tasks CRUD', () => {
 		await db.query(`DELETE FROM heartbeat_runs WHERE task_id = $1`, [oldTask.id]);
 	});
 
-	it('rejects an agent trying to re-open a terminal task via PATCH', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Agent-reopen target',
-				assignee_id: agentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		// Admin marks it cancelled (a terminal state).
-		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'cancelled' }),
-		});
-
-		const { token: agentToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			null,
-			{ projectId },
-		);
-
-		const reopenRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'backlog' }),
-		});
-		expect(reopenRes.status).toBe(403);
-		const body = await reopenRes.json();
-		expect(body.error.message).toMatch(/admin/i);
-
-		const bypassRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'in_progress' }),
-		});
-		expect(bypassRes.status).toBe(403);
-	});
-
 	it('marks a task cancelled when the admin closes it, then re-opens to backlog', async () => {
 		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
@@ -677,36 +564,6 @@ describe('tasks CRUD', () => {
 		});
 		expect(reopenRes.status).toBe(200);
 		expect((await reopenRes.json()).data.status).toBe('backlog');
-	});
-
-	it('allows agents to set non-terminal statuses via PATCH', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Agent progress target',
-				assignee_id: agentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		const { token: agentToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			null,
-			{ projectId },
-		);
-
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'in_progress' }),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.status).toBe('in_progress');
 	});
 
 	it('does not create an assignment wakeup when PATCH leaves assignee unchanged', async () => {

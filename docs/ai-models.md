@@ -106,9 +106,9 @@ Hezo warns you in the connect form if you enter a `localhost` address.
 
 ### Cost and model choice
 
-Local runs record **$0**, because nothing is billed per token. That is a real zero, not a
-missing price - but it does mean [budgets](/docs/concepts/budgets-and-costs) do not
-constrain local agents, since there is no spend to cap.
+Local runs cost nothing per token, but they still count their tokens, so
+[budgets](/docs/concepts/budgets-and-costs) apply to local agents exactly as they do to
+any other.
 
 Pick a model with strong **tool-calling** ability. Agents work by calling tools in a loop,
 and smaller local models are noticeably weaker at it than the hosted frontier models. Some

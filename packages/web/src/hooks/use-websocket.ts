@@ -109,9 +109,9 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	// New spend moves both the cost charts and the spend-vs-cap status.
-	cost_entries: (cid) => [
-		['projects', cid, 'costs'],
+	// New usage moves both the usage charts and the usage-vs-cap status.
+	usage_entries: (cid) => [
+		['projects', cid, 'usage'],
 		queryKeys.projects.budgetStatus(cid),
 		queryKeys.projects.all(),
 	],

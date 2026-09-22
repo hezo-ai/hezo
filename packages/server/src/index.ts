@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { AuthType, WsClientAction } from '@hezo/shared';
+import { WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
 import {
@@ -27,7 +27,7 @@ import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { setupWorkerUnlockHandoff } from './lib/unlock-handoff';
 import { logger, setLogLevel } from './logger';
-import { canAuthAccessTeam, verifyToken } from './middleware/auth';
+import { canAuthAccessTeam, humanSurfaceRefusal, verifyToken } from './middleware/auth';
 import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
@@ -251,9 +251,7 @@ let containerLogStreamerRef: ContainerLogStreamer | null = null;
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	if (!mkmRef || !dbRef) return null;
 	const auth = await verifyToken(token, dbRef, mkmRef);
-	// API keys authenticate the MCP endpoint only — not the realtime WebSocket.
-	// The browser uses a user JWT here; external callers use MCP request/response.
-	if (auth?.type === AuthType.ApiKey) return null;
+	if (!auth || humanSurfaceRefusal(auth)) return null;
 	return auth;
 }
 
@@ -262,7 +260,7 @@ async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<bool
 	// By the time a socket subscribes, `open` has replaced the placeholder with a
 	// validated AuthInfo; WsData widens it to a loose bag, so re-narrow here. The
 	// team rule itself lives in one place — auth.ts:canAuthAccessTeam — shared with
-	// REST, so connected agents (and cross-team CEO sessions) reach realtime rooms too.
+	// REST and MCP.
 	return canAuthAccessTeam(dbRef, auth as AuthInfo, teamId);
 }
 

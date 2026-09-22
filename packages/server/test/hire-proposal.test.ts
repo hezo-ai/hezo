@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -28,20 +29,7 @@ async function callTool(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, name, args);
 }
 
 beforeAll(async () => {
@@ -99,14 +87,14 @@ describe('MCP tool update_hire_proposal', () => {
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'You are the Support Lead. Own all customer support channels.',
-			monthly_budget_cents: 4200,
+			monthly_budget_tokens: 4200,
 		})) as { payload: Record<string, unknown> } | { error: string };
 
 		expect('error' in result).toBe(false);
 		expect((result as { payload: Record<string, unknown> }).payload.system_prompt).toContain(
 			'Own all customer support channels',
 		);
-		expect((result as { payload: Record<string, unknown> }).payload.monthly_budget_cents).toBe(
+		expect((result as { payload: Record<string, unknown> }).payload.monthly_budget_tokens).toBe(
 			4200,
 		);
 

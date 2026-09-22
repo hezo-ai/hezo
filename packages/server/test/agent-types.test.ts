@@ -149,7 +149,7 @@ describe('agent types CRUD', () => {
 				description: 'ML and data analysis',
 				role_description: 'Builds models and analyzes data',
 				system_prompt_template: 'You are a data scientist for {{team_name}}.',
-				monthly_budget_cents: 5000,
+				monthly_budget_tokens: 5000,
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -158,7 +158,7 @@ describe('agent types CRUD', () => {
 		expect(body.data.slug).toBe('data-scientist');
 		expect(body.data.is_builtin).toBe(false);
 		expect(body.data.source).toBe('custom');
-		expect(body.data.monthly_budget_cents).toBe(5000);
+		expect(body.data.monthly_budget_tokens).toBe(5000);
 		// No heartbeat supplied → falls back to the 12-hour default.
 		expect(body.data.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
 	});
@@ -225,12 +225,12 @@ describe('agent types CRUD', () => {
 		const res = await app.request(`/api/agent-types/${created.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ description: 'Updated desc', monthly_budget_cents: 9999 }),
+			body: JSON.stringify({ description: 'Updated desc', monthly_budget_tokens: 9999 }),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.description).toBe('Updated desc');
-		expect(body.data.monthly_budget_cents).toBe(9999);
+		expect(body.data.monthly_budget_tokens).toBe(9999);
 	});
 
 	it('prevents deleting built-in agent types', async () => {

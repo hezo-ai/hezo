@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { fireCommentWakeups } from '../src/services/comment-wakeups';
+import { fireCommentWakeups, resumeHeldTaskOnAdminReply } from '../src/services/comment-wakeups';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -733,5 +733,48 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		const afterAgent = await queuedMentionsFor(taskId, architectId);
 		expect(afterAgent).toHaveLength(1);
 		expect(afterAgent[0].id).toBe(afterSecondAdmin[0].id);
+	});
+});
+
+describe('resumeHeldTaskOnAdminReply', () => {
+	it('wakes the held task assignee when the admin answers a card on it', async () => {
+		const taskId = await insertTask(architectId, 'Held by the handoff limit');
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content)
+			 VALUES ($1, $2::comment_content_type, $3::jsonb)`,
+			[taskId, CommentContentType.System, JSON.stringify({ kind: 'handoff_limit', rounds: 8 })],
+		);
+		// The admin answers a card the agent filed - not a comment of their own - so
+		// the hold's own notice is the newest thing on the task before the answer.
+		const user = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser = true LIMIT 1',
+		);
+		const card = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content,
+			                            chosen_option, chosen_at, chosen_by_user_id)
+			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb, $5::jsonb, now(), $6)
+			 RETURNING id`,
+			[
+				taskId,
+				architectId,
+				CommentContentType.Action,
+				JSON.stringify({ kind: 'hire_proposal' }),
+				JSON.stringify({ status: 'approved' }),
+				user.rows[0].id,
+			],
+		);
+
+		const woke = await resumeHeldTaskOnAdminReply({
+			db,
+			taskId,
+			teamId,
+			commentId: card.rows[0].id,
+		});
+		expect(woke).toBe('architect');
+		const wakeups = await db.query(
+			"SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND payload->>'task_id' = $2",
+			[architectId, taskId],
+		);
+		expect(wakeups.rows.length).toBe(1);
 	});
 });

@@ -13,7 +13,7 @@ in `AGENTS.md`; this is the how.
 | Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms | API handlers, DB queries, services, MCP tools, agent run plumbing. Fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
 | Web component | `packages/web/test/**/*.test.{ts,tsx}` | ~100-700ms | React tree in happy-dom against an in-process Hono + PGlite backend via `renderApp()`. DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket and `IntersectionObserver`. | Anything render-driven not needing a real layout engine or WebSocket stream. ~80% of what would otherwise be a browser test. |
 | Shared primitives | `packages/ui/test/**/*.test.{ts,tsx}` | ~ms | Every `@hezo/ui` component rendered in happy-dom with **no provider of any kind** — no catalog, no router, no server. That is the property the package exists to have, and the one the web tier is structurally unable to check, since it always supplies both. | Anything in `packages/ui`. A spec needing an app around it belongs in the web tier instead. |
-| Shared pure-logic | `packages/shared/test/**/*.test.ts` | ~ms | Pure functions in `@hezo/shared` — crypto/auth, mnemonic, mention parsing, budget/pricing math, task-progress, type guards. | The shared package's logic. |
+| Shared pure-logic | `packages/shared/test/**/*.test.ts` | ~ms | Pure functions in `@hezo/shared` — crypto/auth, mnemonic, mention parsing, budget math, task-progress, type guards. | The shared package's logic. |
 | Playwright browser | `test/browser/**/*.spec.ts` | ~10-30s | Real Chromium. | The thin slice that genuinely needs a browser (see the decision tree). |
 | Bun-native runtime | `packages/server/test/bun/**/*.bun.test.ts` | ~ms | Code diverging between Node and Bun, on the production Bun runtime. Today: egress proxy TLS MITM + streaming, docker exec/log frame transport + process sweep, node-postgres driver, S3 asset client, updater / shutdown-deadline / unlock-handoff. | Anything relying on runtime-specific `node:` behaviour (TLS, `net`, `crypto`, `child_process`). |
 | Live / paid | `packages/server/test/live/**/*.live.test.ts` | real money | What only the real thing can answer: a container backend against a live account, or a prompt against a live model. Today: the Daytona conformance fixture, and the group-room convergence eval. | A behaviour no fake can observe, and you mean to spend on it. Never for anything a cheaper tier can see. |
@@ -99,7 +99,7 @@ Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). `bun run
 
 **Any test that starts the server via the CLI (`src/index.ts`) MUST pass `--no-open`** (or `HEZO_OPEN=0`) so the desktop browser auto-open never fires.
 
-**Keep the e2e server hermetic — every outbound call is a third party voting on your test run.** `HEZO_SKIP_PRICING_REFRESH` and `HEZO_SKIP_UPDATE_CHECK=1` are in the webServer env for this. **Gate any new feature that calls out from the server in that env block, in the same change** — and if it can render shell chrome, assume it will re-measure the whole suite's geometry.
+**Keep the e2e server hermetic — every outbound call is a third party voting on your test run.** `HEZO_SKIP_UPDATE_CHECK=1` is in the webServer env for this. **Gate any new feature that calls out from the server in that env block, in the same change** — and if it can render shell chrome, assume it will re-measure the whole suite's geometry.
 
 ### No spurious `[error]`/`[warn]` in test output
 

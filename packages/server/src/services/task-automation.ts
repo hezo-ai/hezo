@@ -16,6 +16,7 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { postTaskStatusBreadcrumb } from './chat-breadcrumbs';
+import { COHERENCE_LABEL_JSON, coachReviewsTaskSql } from './description-tasks';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { removeTaskWorktrees } from './repo-sync';
 import { recordStatusChange } from './task-events';
@@ -268,8 +269,9 @@ export async function triggerStatusAutomations(
 		const coach = await db.query<{ id: string }>(
 			`SELECT id FROM member_agents
 			 WHERE slug = $2 AND admin_status = $1::agent_admin_status
+			   AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = $3 AND ${coachReviewsTaskSql('t', '$4')})
 			 LIMIT 1`,
-			[AgentAdminStatus.Enabled, COACH_AGENT_SLUG],
+			[AgentAdminStatus.Enabled, COACH_AGENT_SLUG, taskId, COHERENCE_LABEL_JSON],
 		);
 		if (coach.rows.length > 0) {
 			trackBackground(

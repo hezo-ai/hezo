@@ -98,8 +98,7 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		// On a third-party Anthropic-compatible provider the subagent default should
 		// follow the run's own model rather than a pinned constant, so a provider
 		// model upgrade or a retired id needs no code change. The constant stays the
-		// fallback when the run pins nothing. (A newly selected model still needs a
-		// `model_pricing` row, or its runs price to $0.)
+		// fallback when the run pins nothing.
 		if (key !== 'CLAUDE_CODE_SUBAGENT_MODEL' || !ctx.runModel) return value;
 		if (!claudeCodeProviderUsesCustomEndpoint(ctx.provider, AgentRuntime.ClaudeCode)) return value;
 		return claudeCodeModelArg(ctx.provider, ctx.runModel);

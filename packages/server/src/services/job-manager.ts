@@ -9,7 +9,6 @@ import {
 	COACH_REVIEW_TRIGGER,
 	CONTAINER_DORMANT_RETIRE_MIN,
 	CONTAINER_IDLE_TIMEOUT_MIN,
-	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
 	HeartbeatRunKind,
@@ -43,7 +42,7 @@ import {
 	type ProgressUpdateContext,
 	type RunnerDeps,
 	type RunResult,
-	recordRunCostAndEnforce,
+	recordRunUsageAndEnforce,
 	runAgent,
 	type TaskLessRunContext,
 } from './agent-runner';
@@ -53,6 +52,7 @@ import {
 	setAgentIdleIfNoActiveRuns,
 } from './agent-runtime-status';
 import { checkOverBudget } from './budget';
+import { postAdminNotice } from './comment-wakeups';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	budgetAllowsContainerStart,
@@ -72,13 +72,13 @@ import {
 	provisionContainer,
 	reconcilePoolMembers,
 	type StaleIdleMember,
-	stopContainerGracefully,
 	syncAllContainerStatuses,
 	teardownContainer,
 	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
 	withContainerLifecycleLock,
 } from './containers';
+import { COHERENCE_LABEL_JSON, coachReviewsTaskSql } from './description-tasks';
 import type { ContainerEngine, ContainerProcessInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
@@ -87,11 +87,20 @@ import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
 import {
 	attemptsExhaustedOnTask,
+	dispatchSuppressionExempt,
+	FULL_EXEMPTION,
+	handoffHold,
+	handoffLimitNotice,
+	loadTaskSpend,
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
+	TASK_TOKEN_CEILING,
+	taskTokenCeilingNotice,
+	tokenCeilingHold,
 } from './no-work-backoff';
 import {
 	detectOrphans,
@@ -99,7 +108,6 @@ import {
 	healStaleRunState,
 	STALE_STATE_GRACE_SECONDS,
 } from './orphan-detector';
-import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { buildProgressActivityCandidates } from './project-activity';
 import { buildRetrospectiveSignals } from './project-retrospective';
@@ -120,6 +128,7 @@ import {
 	releaseClaimIfRunGone,
 } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
+import { insertSystemComment } from './task-events';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
 import {
@@ -127,9 +136,11 @@ import {
 	assignmentWakeupAlreadyServed,
 	createProgressUpdateWakeup,
 	createWakeup,
+	type HandbackCause,
 	type SettlementIntent,
 	settleWakeupForRun,
 	WAKEUP_HOLD_ELAPSED_SQL,
+	type WakeupTriggeredBy,
 } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -249,11 +260,39 @@ export interface LiveRun {
 	containerId: string | null;
 }
 
+/**
+ * What an activation decided when it did not launch a run: the hold that kept
+ * the agent off the task. Nothing when it launched, or had nothing to do.
+ */
+type ActivationOutcome = { held: WakeupSkipReason } | undefined;
+
+/**
+ * The holds that stand until a person acts, which are never logged quietly: the
+ * no-work backoff and the parked ask lift on their own or on any reply, while
+ * these mean nothing will dispatch onto the task until someone answers.
+ */
+const HOLDS_WAITING_ON_A_PERSON: ReadonlySet<WakeupSkipReason> = new Set([
+	WakeupSkipReason.AttemptsExhausted,
+	WakeupSkipReason.RetrospectiveHold,
+	WakeupSkipReason.HandoffRoundsExhausted,
+	WakeupSkipReason.TaskTokenCeiling,
+]);
+
+/**
+ * How many of an agent's own tasks a heartbeat considers, in priority order,
+ * before concluding every one is held. Each costs the suppression checks, so
+ * the bound keeps a heartbeat's cost fixed; three lets an agent past a held
+ * task or two onto work it can do.
+ */
+const HEARTBEAT_TASK_CANDIDATES = 3;
+
 export type DispatchNowResult =
 	| { dispatched: true }
 	| {
 			dispatched: false;
 			reason:
+				| 'held'
+				| 'over_budget'
 				| 'task_busy'
 				| 'instance_at_capacity'
 				| 'hours_exhausted'
@@ -333,7 +372,6 @@ export interface JobManagerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
-	pricing?: PricingService;
 	/**
 	 * Storage backend, so the log-compaction drain knows whether it may VACUUM
 	 * FULL to reclaim disk (embedded only). Defaults to 'embedded' when omitted.
@@ -365,11 +403,8 @@ export interface JobManagerDeps {
  * statement. Comfortably above what a single repo setup can strand.
  */
 const DEFERRAL_RELEASE_LIMIT = 20;
-// Daily model-pricing refresh from the pricepertoken.com catalog. Failures
-// log and leave the existing rows — the boot-time refresh / next tick retries.
 // Daily re-read of each configured provider's model catalog, moving the pinned
-// default a NEW credential starts on. Existing configs are never touched. An
-// hour after the pricing refresh so a newly pinned model already has a rate row.
+// default a NEW credential starts on. Existing configs are never touched.
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
 // Frequent because it is cheap (reads the local state file; no network) — it exists so a
@@ -600,7 +635,6 @@ export class JobManager {
 					wakeup.id,
 					WakeupSkipReason.TaskBusy,
 					wakeupTaskId,
-					wakeup.team_id,
 					wakeupTaskId,
 				);
 				return { dispatched: false, reason: 'task_busy' };
@@ -614,7 +648,6 @@ export class JobManager {
 						? WakeupSkipReason.HoursExhausted
 						: WakeupSkipReason.InstanceAtCapacity,
 					wakeupTaskId,
-					wakeup.team_id,
 					null,
 				);
 				return {
@@ -623,13 +656,7 @@ export class JobManager {
 				};
 			}
 			if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
-				await this.markWakeupSkipped(
-					wakeup.id,
-					WakeupSkipReason.AgentRunning,
-					wakeupTaskId,
-					wakeup.team_id,
-					null,
-				);
+				await this.markWakeupSkipped(wakeup.id, WakeupSkipReason.AgentRunning, wakeupTaskId, null);
 				return { dispatched: false, reason: 'agent_busy' };
 			}
 			if (await shouldDeferWakeupForBlockers(db, wakeup.source, wakeupTaskId)) {
@@ -652,7 +679,8 @@ export class JobManager {
 			     last_skipped_at = NULL,
 			     last_skipped_reason = NULL,
 			     last_skipped_blocker_task_id = NULL,
-			     not_before = NULL
+			     not_before = NULL,
+			     held_config_id = NULL
 			 WHERE id = $2 AND status = $3::wakeup_status
 			 RETURNING id`,
 			[WakeupStatus.Claimed, wakeup.id, WakeupStatus.Queued],
@@ -675,8 +703,9 @@ export class JobManager {
 			}
 		}
 
+		let outcome: ActivationOutcome;
 		try {
-			await this.activateAgent(
+			outcome = await this.activateAgent(
 				wakeup.member_id,
 				wakeup.team_id,
 				wakeup.id,
@@ -694,6 +723,12 @@ export class JobManager {
 			throw error;
 		}
 
+		// A hold the person pressing Run now cannot lift (a hard stop that only the
+		// admin releases, or a budget) is reported, not presented as a run.
+		if (outcome?.held === WakeupSkipReason.OverBudget) {
+			return { dispatched: false, reason: 'over_budget' };
+		}
+		if (outcome?.held) return { dispatched: false, reason: 'held' };
 		return { dispatched: true };
 	}
 
@@ -784,13 +819,6 @@ export class JobManager {
 				cron: jobs.autoInstallCron,
 				log: cronLog,
 				onTick: () => this.guarded('auto-install-update', () => this.autoInstallStagedUpdate()),
-			});
-		}
-		if (this.deps.pricing) {
-			this.cron.createJob('pricing-refresh', {
-				cron: jobs.pricingRefreshCron,
-				log: cronLog,
-				onTick: () => this.guarded('pricing-refresh', () => this.refreshPricing()),
 			});
 		}
 		this.cron.createJob('model-pin-refresh', {
@@ -1038,9 +1066,9 @@ export class JobManager {
 			team_id: string;
 			task_id: string | null;
 			project_id: string | null;
-			cost_cents: number;
 			input_tokens: number;
 			output_tokens: number;
+			started_at: string | null;
 		}>(
 			`UPDATE heartbeat_runs hr
 			 SET status = $1::heartbeat_run_status,
@@ -1048,7 +1076,8 @@ export class JobManager {
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens,
+			 RETURNING id, member_id, team_id, task_id, started_at,
+			           input_tokens::float8 AS input_tokens, output_tokens::float8 AS output_tokens,
 			           (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id`,
 			[
 				HeartbeatRunStatus.Failed,
@@ -1121,30 +1150,27 @@ export class JobManager {
 		}
 
 		// A run the server killed mid-flight still burned tokens; its surviving
-		// usage snapshot (flushed during the run, preserved by the UPDATE above) is
-		// real spend that never reached cost_entries. Charge it to the provider
-		// budget now so an interrupted run isn't free. recordRunCostAndEnforce is
-		// guarded on cost_cents > 0 and these runs never completed, so it can't
-		// double-insert. task_id-less runs (rare, non-task coordination) are skipped
-		// since cost attribution is task/project-scoped.
+		// usage snapshot (flushed during the run, preserved by the UPDATE above)
+		// never reached usage_entries. Count it now so an interrupted run isn't
+		// free. These runs never completed, so no usage row exists for them yet.
+		// task_id-less runs (rare, non-task coordination) are skipped since usage
+		// attribution is task/project-scoped.
 		for (const run of stranded.rows) {
-			if (!run.task_id || run.cost_cents <= 0) continue;
+			if (!run.task_id || run.input_tokens + run.output_tokens <= 0) continue;
 			const projectRow = await db.query<{ project_id: string | null }>(
 				`SELECT project_id FROM tasks WHERE id = $1`,
 				[run.task_id],
 			);
 			const projectId = projectRow.rows[0]?.project_id ?? undefined;
-			await recordRunCostAndEnforce(
+			await recordRunUsageAndEnforce(
 				db,
 				run.id,
 				{
 					inputTokens: run.input_tokens,
 					outputTokens: run.output_tokens,
-					costCents: run.cost_cents,
 					// No split to report: this is a snapshot read back off the row, and
-					// only the cost is used from here anyway. Reconstructing buckets that
-					// were never flushed would be inventing them. Same for the model -
-					// the row already carries whatever was known.
+					// reconstructing buckets that were never flushed would be inventing
+					// them. Same for the model - the row already carries whatever was known.
 					buckets: null,
 					model: null,
 				},
@@ -1154,6 +1180,9 @@ export class JobManager {
 					projectId,
 					taskId: run.task_id,
 					memberId: run.member_id,
+					// The tokens were spent when the run ran, which may be before an
+					// upgrade that changed what budgets count.
+					occurredAt: run.started_at,
 				},
 			);
 		}
@@ -1845,31 +1874,106 @@ export class JobManager {
 		else this.activeProjectRuns.delete(projectId);
 	}
 
+	/**
+	 * Record why a wakeup was not dispatched, and refresh its task for the team
+	 * that owns it (not the agent's: the CEO and the Coach wake in HQ).
+	 *
+	 * A wakeup still held for a provider usage limit keeps that reason: the paced
+	 * release finds its rows by it, and a "Run now" that met a busy task must not
+	 * take the row out of the release it is waiting on.
+	 */
 	private async markWakeupSkipped(
 		wakeupId: string,
 		reason: WakeupSkipReason,
 		taskId: string | null,
-		teamId: string,
 		blockerTaskId: string | null,
 	): Promise<void> {
 		const { db, wsManager } = this.deps;
 		await db.query(
 			`UPDATE agent_wakeup_requests
 			 SET last_skipped_at = now(),
-			     last_skipped_reason = $2,
+			     last_skipped_reason = CASE
+			       WHEN last_skipped_reason = $4 AND not_before > now() THEN last_skipped_reason
+			       ELSE $2 END,
 			     last_skipped_blocker_task_id = $3
 			 WHERE id = $1`,
-			[wakeupId, reason, blockerTaskId],
+			[wakeupId, reason, blockerTaskId, WakeupSkipReason.ProviderUsageLimit],
 		);
 		if (taskId) {
-			const refreshed = await db.query<Record<string, unknown>>(
+			const refreshed = await db.query<Record<string, unknown> & { team_id: string }>(
 				'SELECT * FROM tasks WHERE id = $1',
 				[taskId],
 			);
-			if (refreshed.rows[0]) {
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'UPDATE', refreshed.rows[0]);
-			}
+			const row = refreshed.rows[0];
+			if (row) broadcastRowChange(wsManager, wsRoom.team(row.team_id), 'tasks', 'UPDATE', row);
 		}
+	}
+
+	/**
+	 * The first dispatch suppression that holds this agent off this task, or null.
+	 * Each predicate returns false for a wakeup exempt from it: a person's input
+	 * answers the soft holds, and only the admin's answers the two hard stops.
+	 */
+	private async dispatchSuppression(
+		memberId: string,
+		task: { id: string; identifier: string },
+		exemption: SuppressionExemption,
+	): Promise<{
+		reason: WakeupSkipReason;
+		detail: string;
+		/** The notice this hold asks the admin with, unless one already stands. */
+		notice?: {
+			content: { kind: string; text: string } & Record<string, unknown>;
+			unlessPostedSince: Date | null;
+		};
+	} | null> {
+		const { db } = this.deps;
+		const at = ref(task.identifier, task.id);
+		const exempt = exemption.byPerson;
+		if (await noWorkCooldownActive(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.NoWorkCooldown,
+				detail: `reported no work on ${at} within its heartbeat interval and nothing has changed since`,
+			};
+		}
+		if (await parkedOnAdminAsk(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.ParkedOnAdmin,
+				detail: `is waiting on an unanswered ask on ${at} and nobody has replied since`,
+			};
+		}
+		if (await attemptsExhaustedOnTask(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.AttemptsExhausted,
+				detail: `has given up on ${at} ${MAX_TASK_ATTEMPT_GIVEUPS} times in the last ${TASK_ATTEMPT_WINDOW_HOURS}h without finishing it`,
+			};
+		}
+		if (await retrospectiveHoldActive(db, memberId, task.id, exempt)) {
+			return {
+				reason: WakeupSkipReason.RetrospectiveHold,
+				detail: `is held on ${at} while a retrospective finding waits on the admin`,
+			};
+		}
+		// The two hard stops weigh one read of the task's spend.
+		if (exemption.byAdmin) return null;
+		const spend = await loadTaskSpend(db, task.id);
+		const handoff = handoffHold(spend);
+		if (handoff) {
+			return {
+				reason: WakeupSkipReason.HandoffRoundsExhausted,
+				detail: `is held on ${at} after ${handoff.rounds} agent-to-agent handoffs with no admin reply`,
+				notice: { content: handoffLimitNotice(handoff), unlessPostedSince: handoff.noticeSince },
+			};
+		}
+		const usage = tokenCeilingHold(spend);
+		if (usage) {
+			return {
+				reason: WakeupSkipReason.TaskTokenCeiling,
+				detail: `is held on ${at} after ${usage.tokens} tokens since the admin last replied (ceiling ${TASK_TOKEN_CEILING})`,
+				notice: { content: taskTokenCeilingNotice(usage), unlessPostedSince: usage.noticeSince },
+			};
+		}
+		return null;
 	}
 
 	private async resolveProjectForTask(
@@ -2013,7 +2117,6 @@ export class JobManager {
 						wakeup.id,
 						WakeupSkipReason.TaskBusy,
 						wakeupTaskId,
-						wakeup.team_id,
 						wakeupTaskId,
 					);
 					continue;
@@ -2025,7 +2128,6 @@ export class JobManager {
 						wakeup.id,
 						WakeupSkipReason.InstanceAtCapacity,
 						wakeupTaskId,
-						wakeup.team_id,
 						null,
 					);
 					continue;
@@ -2038,7 +2140,6 @@ export class JobManager {
 						wakeup.id,
 						WakeupSkipReason.AgentRunning,
 						wakeupTaskId,
-						wakeup.team_id,
 						null,
 					);
 					continue;
@@ -2050,13 +2151,7 @@ export class JobManager {
 				// task is chosen). Fall back to per-agent dedup to avoid stacking
 				// idle pings.
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
-				await this.markWakeupSkipped(
-					wakeup.id,
-					WakeupSkipReason.AgentRunning,
-					null,
-					wakeup.team_id,
-					null,
-				);
+				await this.markWakeupSkipped(wakeup.id, WakeupSkipReason.AgentRunning, null, null);
 				continue;
 			}
 
@@ -2115,7 +2210,8 @@ export class JobManager {
 				     last_skipped_at = NULL,
 				     last_skipped_reason = NULL,
 				     last_skipped_blocker_task_id = NULL,
-				     not_before = NULL
+				     not_before = NULL,
+				     held_config_id = NULL
 				 WHERE id = $2`,
 				[WakeupStatus.Claimed, wakeup.id],
 			);
@@ -2176,12 +2272,25 @@ export class JobManager {
 			          AND hr.finished_at IS NOT NULL
 			          AND hr.finished_at > now() - ($4::int || ' seconds')::interval
 			   )
+			   -- An agent whose queued wakeup is waiting out a hold is left to the
+			   -- release that owns it. Selecting it here would coalesce onto the held
+			   -- row on every tick, writing a version that changes nothing.
+			   AND NOT EXISTS (
+			        SELECT 1 FROM agent_wakeup_requests w
+			        WHERE w.member_id = ma.id
+			          AND w.status = $5::wakeup_status
+			          AND w.not_before > now()
+			   )
+			 -- Longest-waiting first, so a slow agent cannot be crowded out of the
+			 -- window by whatever order the planner returns.
+			 ORDER BY ma.last_heartbeat_at NULLS FIRST
 			 LIMIT 5`,
 			[
 				AgentAdminStatus.Enabled,
 				BUDGET_PAUSE_STATUSES_PG,
 				heartbeatIntervalFloorMin(),
 				runtimeConfig().jobs.heartbeatCooldownSec,
+				WakeupStatus.Queued,
 			],
 		);
 
@@ -2201,10 +2310,28 @@ export class JobManager {
 				WakeupSource.Heartbeat,
 				payload,
 			);
-			await this.deps.db.query(
-				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
-				[WakeupStatus.Claimed, wakeupId],
+			// The heartbeat may have coalesced onto a queued wakeup that is waiting out
+			// a provider usage hold; that one is released on its own schedule, so it
+			// is left alone here rather than claimed ahead of its slot.
+			const claimed = await this.deps.db.query(
+				`UPDATE agent_wakeup_requests
+				    SET status = $1::wakeup_status, claimed_at = now(), not_before = NULL,
+				        held_config_id = NULL
+				  WHERE id = $2 AND status = $3::wakeup_status
+				    AND (not_before IS NULL OR not_before <= now())
+				  RETURNING id`,
+				[WakeupStatus.Claimed, wakeupId, WakeupStatus.Queued],
 			);
+			if (claimed.rows.length === 0) {
+				// The wakeup this heartbeat merged into is held. Advance the clock so the
+				// sweep leaves this agent alone until its next interval rather than
+				// re-merging every tick and filling the window.
+				await this.deps.db.query(
+					'UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1',
+					[agent.id],
+				);
+				continue;
+			}
 			await this.activateAgent(agent.id, agent.team_id, wakeupId, payload, WakeupSource.Heartbeat);
 		}
 	}
@@ -2255,7 +2382,7 @@ export class JobManager {
 		wakeupId: string,
 		wakeupPayload: Record<string, unknown>,
 		wakeupSource: string,
-	): Promise<void> {
+	): Promise<ActivationOutcome> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
 		const agent = await db.query<{
@@ -2303,6 +2430,7 @@ export class JobManager {
 			status: string;
 			priority: string;
 			project_id: string;
+			team_id: string;
 			rules: string | null;
 			progress_summary: string | null;
 			assignee_id: string | null;
@@ -2312,6 +2440,8 @@ export class JobManager {
 		};
 
 		let task: TaskRow | undefined;
+		// The tasks a heartbeat may run, in the order it prefers them.
+		let candidates: TaskRow[] = [];
 		// What the run is told it was woken for. The selected task and the payload
 		// describing it travel together, so a task found by a sweep produces the same
 		// run as the wakeup that should have delivered it.
@@ -2326,7 +2456,7 @@ export class JobManager {
 			// discovered further down: an archived project has no container and may
 			// not be given one, so a wakeup naming a task inside it can only fail.
 			const payloadTask = await db.query<TaskRow>(
-				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.team_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
 				 JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
 				 WHERE i.id = $1${isInstanceAgent ? '' : ' AND i.team_id = $2'}`,
@@ -2452,7 +2582,7 @@ export class JobManager {
 			const tasks = task
 				? { rows: [task] }
 				: await db.query<TaskRow>(
-						`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+						`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.team_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
 				 -- An archived project's tasks are not actionable: it has no container
 				 -- and may not be given one. Filtered in the selection rather than
@@ -2470,7 +2600,7 @@ export class JobManager {
 				 ORDER BY
 				   CASE i.priority WHEN $${prStart} THEN 0 WHEN $${prStart + 1} THEN 1 WHEN $${prStart + 2} THEN 2 WHEN $${prStart + 3} THEN 3 END,
 				   i.created_at ASC
-				 LIMIT 1`,
+				 LIMIT ${HEARTBEAT_TASK_CANDIDATES}`,
 						params,
 					);
 			if (tasks.rows.length === 0) {
@@ -2493,8 +2623,9 @@ export class JobManager {
 				}
 				return;
 			}
-			task = tasks.rows[0];
+			candidates = tasks.rows;
 		}
+		if (task) candidates = [task];
 
 		// Dispatch suppressions. Placed here, after task resolution, because it is the
 		// one point every wakeup source passes through holding a concrete task - both
@@ -2502,52 +2633,71 @@ export class JobManager {
 		// per source would have to be re-added to each new source; this cannot be
 		// missed.
 		//
-		// Both ask the same question - would this run reach a conclusion the last one
-		// already reached? - and differ only in what makes it stale. The no-work
-		// backoff expires at the agent's own cadence; the parked-on-admin one expires
-		// when a person answers. Each is skipped rather than re-queued: there is
-		// nothing to retry, and the exempt sources in `no-work-backoff.ts` mean any
-		// real new input dispatches immediately.
-		const suppression = (await noWorkCooldownActive(db, memberId, task.id, wakeupSource))
-			? {
-					reason: WakeupSkipReason.NoWorkCooldown,
-					detail: `reported no work on ${ref(task.identifier, task.id)} within its heartbeat interval and nothing has changed since`,
-				}
-			: (await parkedOnAdminAsk(db, memberId, task.id, wakeupSource))
-				? {
-						reason: WakeupSkipReason.ParkedOnAdmin,
-						detail: `is waiting on an unanswered ask on ${ref(task.identifier, task.id)} and nobody has replied since`,
-					}
-				: (await attemptsExhaustedOnTask(db, memberId, task.id, wakeupSource))
-					? {
-							reason: WakeupSkipReason.AttemptsExhausted,
-							detail: `has given up on ${ref(task.identifier, task.id)} ${MAX_TASK_ATTEMPT_GIVEUPS} times in the last ${TASK_ATTEMPT_WINDOW_HOURS}h without finishing it`,
-						}
-					: (await retrospectiveHoldActive(db, memberId, task.id, wakeupSource))
-						? {
-								reason: WakeupSkipReason.RetrospectiveHold,
-								detail: `is held on ${ref(task.identifier, task.id)} while a retrospective finding waits on the admin`,
-							}
-						: null;
-		if (suppression) {
+		// The no-work backoff expires at the agent's own cadence; the others lift when
+		// a person answers or acts. Each is skipped rather than re-queued: there is
+		// nothing to retry, and `dispatchSuppressionExempt` lets a person's new input
+		// and an operator's override dispatch immediately. A selected task that is
+		// held gives way to the agent's next one, so one held task does not stall the
+		// agent's heartbeat on everything else it owns.
+		//
+		// The Coach's review of a finished task skips them all: it reads the task and
+		// writes lessons, and a held task is exactly the one worth reviewing.
+		const coachReview =
+			agent.rows[0].slug === COACH_AGENT_SLUG && runPayload?.trigger === COACH_REVIEW_TRIGGER;
+		let suppression: Awaited<ReturnType<JobManager['dispatchSuppression']>> = null;
+		task = undefined;
+		for (const candidate of candidates) {
+			const exemption = coachReview
+				? FULL_EXEMPTION
+				: await dispatchSuppressionExempt(
+						db,
+						memberId,
+						teamId,
+						candidate.id,
+						wakeupSource,
+						wakeupPayload,
+						wakeupId,
+					);
+			const held = await this.dispatchSuppression(memberId, candidate, exemption);
+			if (!held) {
+				task = candidate;
+				break;
+			}
+			suppression ??= held;
+			if (held.notice) {
+				// On the task's own team: the CEO and the Coach wake in HQ, but the
+				// admin who must reply is the one the task belongs to.
+				await postAdminNotice({
+					db,
+					teamId: candidate.team_id,
+					taskId: candidate.id,
+					content: held.notice.content,
+					unlessPostedSince: held.notice.unlessPostedSince,
+					wsManager: this.deps.wsManager,
+				}).catch((e) =>
+					log.error(
+						`Failed to post the hold notice on ${ref(candidate.identifier, candidate.id)}:`,
+						e,
+					),
+				);
+			}
+		}
+		if (!task && suppression) {
+			const heldTask = candidates[0];
 			// Warned, not debugged, for every source but the two the system raises on a
 			// clock. A discarded `heartbeat` or `timer` wakeup is the backoff doing its
 			// job and would drown the log; a discarded wakeup from anything else means
 			// something asked for this agent and got nothing, with the row flipped to
 			// `completed` below and gone from the queued list - which is exactly how an
 			// approved hire came to sit with nobody acting on it and no line saying so.
-			// An exhausted task is never quiet, whatever woke it: the other two
-			// suppressions are a backoff that lifts on its own, while this one means
-			// the agent has stopped making progress and nothing will dispatch onto the
-			// task until a person acts.
+			// A hold that waits on a person is never quiet, whatever woke it.
 			const quiet =
-				suppression.reason !== WakeupSkipReason.AttemptsExhausted &&
-				suppression.reason !== WakeupSkipReason.RetrospectiveHold &&
+				!HOLDS_WAITING_ON_A_PERSON.has(suppression.reason) &&
 				(wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer);
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
 			else log.warn(line);
-			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
+			await this.markWakeupSkipped(wakeupId, suppression.reason, heldTask.id, null);
 			// Stamp the check for the same reason the "no actionable tasks" branch
 			// above does: a pass that concluded there is nothing to do must advance the
 			// clock, or the scheduler re-selects this agent every cron tick. Without it
@@ -2568,8 +2718,9 @@ export class JobManager {
 					[WakeupStatus.Completed, wakeupId],
 				);
 			}
-			return;
+			return { held: suppression.reason };
 		}
+		if (!task) return;
 
 		// Per-task serialisation plus the per-project concurrency ceiling: only one
 		// agent runs on a given task at a time, and no more than the project's
@@ -2648,9 +2799,12 @@ export class JobManager {
 			log.debug(
 				`Agent ${ref(agent.rows[0].slug, memberId)} over ${budgetBlock.scope} ${budgetBlock.period} budget — pausing and skipping wakeup`,
 			);
-			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager);
-			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, teamId, null);
-			return;
+			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager, {
+				taskId: task.id,
+				projectId: projectRow.id,
+			});
+			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, null);
+			return { held: WakeupSkipReason.OverBudget };
 		}
 
 		const agentSlug = agent.rows[0].slug;
@@ -2777,7 +2931,6 @@ export class JobManager {
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 			containerLogStreamer: this.deps.containerLogStreamer,
-			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
 
@@ -3044,7 +3197,7 @@ export class JobManager {
 		teamId: string,
 	): Promise<'queued' | 'exhausted' | 'failed'> {
 		const { db } = this.deps;
-		if (await attemptsExhaustedOnTask(db, memberId, taskId, WakeupSource.Timer)) {
+		if (await attemptsExhaustedOnTask(db, memberId, taskId, false)) {
 			log.warn(
 				`Not queuing timeout continuation for member ${memberId} on task ${taskId}: ${MAX_TASK_ATTEMPT_GIVEUPS} unproductive attempts in the last ${TASK_ATTEMPT_WINDOW_HOURS}h`,
 			);
@@ -3086,7 +3239,7 @@ export class JobManager {
 	 */
 	private async selectMissedReviewTask<T>(memberId: string): Promise<T | undefined> {
 		const r = await this.deps.db.query<T>(
-			`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+			`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.team_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 			   FROM tasks i
 			   JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
 			  WHERE i.status = $1::task_status
@@ -3095,9 +3248,11 @@ export class JobManager {
 			      SELECT 1 FROM heartbeat_runs hr
 			       WHERE hr.task_id = i.id AND hr.member_id = $3
 			    )
+			    -- Never woken for a coherence review, so never recovered for one either.
+			    AND ${coachReviewsTaskSql('i', '$4')}
 			  ORDER BY i.updated_at ASC
 			  LIMIT 1`,
-			[TaskStatus.Done, String(COACH_SWEEP_WINDOW_HOURS), memberId],
+			[TaskStatus.Done, String(COACH_SWEEP_WINDOW_HOURS), memberId, COHERENCE_LABEL_JSON],
 		);
 		return r.rows[0];
 	}
@@ -3433,7 +3588,6 @@ export class JobManager {
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 			containerLogStreamer: this.deps.containerLogStreamer,
-			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agentRow.run_timeout_min * 60 * 1000;
 		const key = `${memberId}:${projectRow.id}:${opts.keySuffix}`;
@@ -3563,22 +3717,14 @@ export class JobManager {
 		wakeupId: string | undefined,
 		result: {
 			success: boolean;
-			requeued?: boolean;
-			requeueReason?: WakeupSkipReason;
-			requeueNotBefore?: Date;
+			requeue?: HandbackCause;
 			heartbeatRunId?: string;
 		},
 		/** Where to record the outcome. Omitted only where there is no run row to write. */
 		run?: { taskId: string | null; teamId: string; agentSlug: string | null },
 	): Promise<boolean> {
-		const intent: SettlementIntent = result.requeued
-			? // The runner names the wait it gave up on; capacity is only the default
-				// for a caller that predates the distinction.
-				{
-					kind: 'handback',
-					reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity,
-					notBefore: result.requeueNotBefore,
-				}
+		const intent: SettlementIntent = result.requeue
+			? { kind: 'handback', ...result.requeue }
 			: result.success
 				? { kind: 'complete' }
 				: { kind: 'fail' };
@@ -3663,7 +3809,7 @@ export class JobManager {
 
 	async dispatchProgressUpdateNow(
 		projectId: string,
-		triggeredBy?: { member_id: string; name: string } | null,
+		triggeredBy?: WakeupTriggeredBy | null,
 	): Promise<ProgressUpdateDispatchResult> {
 		const { db } = this.deps;
 
@@ -3827,32 +3973,20 @@ export class JobManager {
 				: rawError
 			: null;
 
-		const inserted = await db.query<Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
-			 RETURNING *`,
-			[
+		await insertSystemComment(
+			db,
+			{
 				taskId,
-				CommentContentType.System,
-				JSON.stringify({
+				content: {
 					kind: 'run_failed',
 					run_id: runId,
 					status,
 					error: truncatedError,
 					member_id: memberId,
 					agent_slug: agentSlug,
-				}),
-			],
-		);
-		const commentRow = inserted.rows[0];
-		if (!commentRow) return;
-
-		broadcastRowChange(
-			this.deps.wsManager,
-			wsRoom.team(teamId),
-			'task_comments',
-			'INSERT',
-			commentRow,
+				},
+			},
+			{ wsManager: this.deps.wsManager, teamId },
 		);
 	}
 
@@ -4508,12 +4642,6 @@ export class JobManager {
 		}
 		log.info(`Auto-installing staged update ${state.targetVersion}; restarting`);
 		await (this.deps.requestUpdateRestart ?? exitToApplyUpdate)();
-	}
-
-	private async refreshPricing(): Promise<void> {
-		if (!this.deps.pricing) return;
-		const count = await this.deps.pricing.refresh();
-		log.info(`Model pricing refreshed from pricepertoken.com (${count} models)`);
 	}
 
 	/**

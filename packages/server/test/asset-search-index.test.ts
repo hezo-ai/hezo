@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Every path that creates an `assets` row must populate `search_text`, or the
 // asset's contents are silently unfindable. The bytes only exist in the caller's
@@ -34,18 +35,7 @@ async function mcp(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text ?? '{}');
+	return await callMcpTool(app, authToken, toolName, args);
 }
 
 async function agentToken(): Promise<string> {

@@ -1,19 +1,20 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { basename, join, relative } from 'node:path';
 import {
 	AGENT_RUNTIME_LABELS,
 	type AgentEffort,
 	type AgentRuntime,
 	AI_PROVIDER_INFO,
-	AiAuthMethod,
 	type AiProvider,
 	COACH_REVIEW_TRIGGER,
+	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
 	ContainerStatus,
-	type CostTokens,
 	credentialSerializesRuns,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
+	englishCount,
+	formatCompactNumber,
 	formatContainerMetaLogLine,
 	formatRunLink,
 	HeartbeatRunKind,
@@ -74,8 +75,6 @@ import { pauseAgentForBudget } from './agent-runtime-status';
 import {
 	type AgentRunUsage,
 	createAgentStreamParser,
-	extractGrokUsageFromDebugLog,
-	extractKimiUsageFromSessionLog,
 	type RuntimeErrorVerdict,
 } from './agent-stream-parser';
 import {
@@ -84,14 +83,14 @@ import {
 	readActiveUsageHold,
 	readAiProviderCredentialValue,
 	resolveRunCredential,
-	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
-import { checkOverBudget, recordRunCost } from './budget';
+import { checkOverBudget, recordUsage } from './budget';
 import {
 	detectNoWakeExits,
+	fitCommentForDelivery,
 	formatNoWakeExitWarning,
-	postAgentComment,
+	postComment,
 	resolveWarnableSlugs,
 } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
@@ -148,7 +147,11 @@ import {
 	MCP_CLI_WRAPPER_SOURCE,
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
-import { PROVIDER_CAPACITY_COOLDOWN_MIN } from './no-work-backoff';
+import {
+	loadTaskUsageSoFar,
+	PROVIDER_CAPACITY_COOLDOWN_MIN,
+	type TaskUsageSoFar,
+} from './no-work-backoff';
 import {
 	clearAgentErrorApprovalsOnRecovery,
 	fileProviderCredentialRejectedApproval,
@@ -158,7 +161,6 @@ import {
 	retryOrEscalateLostRun,
 	STALE_STATE_GRACE_SECONDS,
 } from './orphan-detector';
-import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
 import type { RetrospectiveSignals } from './project-retrospective';
 import {
@@ -200,7 +202,6 @@ import {
 	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
 	persistRotatedSubscriptionAuth,
-	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
 	type SubscriptionMount as SubscriptionMountImpl,
@@ -220,9 +221,9 @@ import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import { collectFinishedWorktrees } from './sandbox/worktree-gc';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
-import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
+import type { HandbackCause } from './wakeup';
 import {
 	CONTAINER_WORKSPACE_ROOT,
 	CONTAINER_WORKTREES_ROOT,
@@ -235,7 +236,7 @@ import type { WebSocketManager } from './ws';
 /**
  * Flatten a parser usage record for the log-chunk writer.
  *
- * The DB layer takes flat columns and has no business learning `CostTokens`;
+ * The DB layer takes flat columns and has no business learning `TokenBuckets`;
  * the runner owns both shapes, so the adapter lives on this side of the seam.
  * A runtime that reports no split writes NULLs, which the COALESCE in the
  * statement leaves alone - so a later flush that does have them still lands.
@@ -245,13 +246,23 @@ function toUsageSnapshot(usage: AgentRunUsage | null): RunUsageSnapshot | null {
 	return {
 		inputTokens: usage.inputTokens,
 		outputTokens: usage.outputTokens,
-		costCents: usage.costCents,
 		cacheReadTokens: usage.buckets?.cacheReadTokens ?? null,
 		cacheCreationTokens: usage.buckets?.cacheCreationTokens ?? null,
 	};
 }
 
 const log = logger.child('agent-runner');
+
+/**
+ * The most tokens one run may use - input with cached input, plus output - before
+ * the runner stops it.
+ *
+ * 30 million, from three days of production runs: it cut five runs, all of them
+ * the two-agent loop that spent most of a week's allowance, and none on a task
+ * that went on to finish. 10 million would have cut 53, seven of them on
+ * finished work.
+ */
+export const RUN_TOKEN_CEILING = 30_000_000;
 
 export interface AgentInfo {
 	id: string;
@@ -320,11 +331,7 @@ export interface RunResult {
 	 * a turn, which the runner accepts as a handback only once the run has also
 	 * proved it spent nothing and wrote nothing.
 	 */
-	requeued?: boolean;
-	/** Which cause gave up, so the queued wakeup reports the real reason it is waiting. */
-	requeueReason?: WakeupSkipReason;
-	/** The earliest the dispatcher may claim the handed-back wakeup again, when the cause has a clock. */
-	requeueNotBefore?: Date;
+	requeue?: HandbackCause;
 }
 
 export interface RunnerDeps {
@@ -341,8 +348,11 @@ export interface RunnerDeps {
 	egressCAPath?: string | null;
 	/** When present, a container the runner lazy-starts resubscribes its log stream. */
 	containerLogStreamer?: ContainerLogStreamer;
-	/** Runtime model pricing; when present, the parser computes run cost from it. */
-	pricing?: PricingService;
+	/**
+	 * How often a run's usage file is read while its CLI runs. Defaults to
+	 * {@link OFF_STREAM_USAGE_POLL_MS}; overridden only by tests.
+	 */
+	usagePollMs?: number;
 	/**
 	 * How long a run blocked on container capacity waits, and how often it
 	 * re-tries. Defaults to {@link CAPACITY_PARK_POLL_MS} /
@@ -586,47 +596,79 @@ export function assertPromptAcceptable(runtime: AgentRuntime, prompt: string): v
 	}
 }
 
-// Basename of Kimi Code's per-session wire log, written under
-// `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
-// `stream-json` stdout carries no token usage at all, so — as with Grok — cost is
-// recovered from this file. The path depth is an upstream implementation detail,
-// so the runner searches the per-run home rather than reconstructing it.
-const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
-
-// Depth cap for the wire-log search. The real path sits 5 levels below the home
-// dir; 8 leaves room for an upstream layout change without ever letting a
-// symlink loop or a surprise `node_modules` turn run teardown into a full-disk
-// walk.
-const KIMI_SESSION_LOG_MAX_DEPTH = 8;
-
 /**
- * Recover a run's token usage for the runtimes that report none on stdout.
- *
- * Two runtimes need this and they need it for the same structural reason — their
- * stream carries no usage — so the dispatch lives here rather than being copied
- * per runtime:
- *
- *   - **Grok** — the per-run `--debug-file`.
- *   - **Kimi Code** — the per-session `wire.jsonl` under the per-run home.
- *
- * Both files are scrubbed after parsing: Grok's holds the XAI_API_KEY in
- * plaintext, and a "wire" log plausibly captures request headers (i.e. the
- * Moonshot bearer token), so neither should outlive the run on the host.
+ * Recover a run's token usage from the file its CLI writes into the per-run home,
+ * for the runtimes whose stream reports none, or none until its end (Codex, Grok,
+ * Kimi Code), then scrub that file. Each file can carry the provider credential,
+ * and a Codex rollout is the whole transcript, so none outlives the run.
  *
  * Returns null for every other runtime, so the caller keeps the parser's stream
- * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
- * rather than a failed run), and the home mount is removed at cleanup regardless.
+ * usage. Best-effort throughout: a missing or unreadable file yields null (no
+ * usage rather than a failed run), and the home mount is removed at cleanup
+ * regardless.
  */
 export async function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
 	files: SandboxFiles | null,
-	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
 	onError: (msg: string) => void,
 ): Promise<AgentRunUsage | null> {
-	if (!files) return null;
-	const recover = RUNTIME_ADAPTERS[runtimeType].recoverUsage;
-	if (!recover) return null;
-	return recover({ files, price: priceFn, onError });
+	const usage = RUNTIME_ADAPTERS[runtimeType].offStreamUsage;
+	if (!files || !usage) return null;
+	try {
+		return await usage.read({ files, onError });
+	} finally {
+		await usage.scrub(files);
+	}
+}
+
+/** How often a run's usage file is read while its CLI runs. */
+export const OFF_STREAM_USAGE_POLL_MS = 60_000;
+
+/**
+ * Read a run's usage file on an interval while its CLI runs, so the per-run token
+ * ceiling applies to a runtime that reports no usage on its stream.
+ *
+ * Reads never overlap: a tick that finds the previous read still going skips.
+ * `stop` clears the interval, drops what a read in flight finds, and waits for
+ * it, so the caller can scrub the file afterwards without racing it.
+ *
+ * Each read costs what the end-of-run recovery costs once: a bounded tail and
+ * head of a Codex rollout, or the whole Grok or Kimi log (counted by request id,
+ * so a tail would undercount). Polling multiplies that IO by the run's minutes;
+ * it does not raise the peak a single read holds in memory.
+ */
+function pollOffStreamUsage(
+	runtimeType: AgentRuntime,
+	files: SandboxFiles | null,
+	intervalMs: number,
+	onUsage: (usage: AgentRunUsage) => void,
+	onError: (msg: string) => void,
+): { stop(): Promise<void> } {
+	const usage = RUNTIME_ADAPTERS[runtimeType].offStreamUsage;
+	if (!files || !usage) return { stop: async () => {} };
+	let inFlight: Promise<void> | null = null;
+	let stopped = false;
+	const timer = setInterval(() => {
+		if (inFlight) return;
+		inFlight = usage
+			.read({ files, onError })
+			.then((read) => {
+				// A read that lands after the exec ended reports nothing: the run is
+				// over, and the end-of-run recovery owns its usage from here.
+				if (read && !stopped) onUsage(read);
+			})
+			.catch((e) => onError(`usage poll failed: ${(e as Error).message}`))
+			.finally(() => {
+				inFlight = null;
+			});
+	}, intervalMs);
+	return {
+		async stop() {
+			stopped = true;
+			clearInterval(timer);
+			await inFlight;
+		},
+	};
 }
 
 // Deliver the prompt one of three ways, selected per runtime via the
@@ -925,6 +967,10 @@ export async function buildRuntimeInvocation(
 
 	const env: string[] = [
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
+		// Where the agent's own bearer token is accepted outside MCP: the multipart
+		// upload at `/mcp/assets`, which is how a file reaches a comment attachment
+		// without passing through the model.
+		`HEZO_API_URL=${endpoints.hezoBaseUrl}`,
 		`HEZO_AGENT_ID=${agentId}`,
 		`HEZO_HEARTBEAT_RUN_ID=${resourceId}`,
 		`HEZO_TEAM_ID=${runTeamId}`,
@@ -1123,7 +1169,7 @@ async function buildRunContext(
 		project.id,
 		project.is_internal,
 	);
-	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
+	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
 	const isCoachReview = wakeupPayload?.trigger === COACH_REVIEW_TRIGGER;
@@ -1174,12 +1220,25 @@ async function buildRunContext(
 			endpoints.hezoBaseUrl,
 			{ limit: RECENT_COMMENTS_LIMIT, categories: DEFAULT_THREAD_ROW_CATEGORIES },
 		);
-		const catchUp = await loadCatchUpSinceLastRun(
-			deps.db,
-			agent.id,
-			(task as TaskInfo).id,
-			heartbeatRunId,
-		);
+		const [catchUp, usageSoFar] = await Promise.all([
+			loadCatchUpSinceLastRun(deps.db, agent.id, (task as TaskInfo).id, heartbeatRunId),
+			loadTaskUsageSoFar(deps.db, (task as TaskInfo).id),
+		]);
+		const quotedCommentIds = [
+			mentionContext?.triggeringCommentId,
+			replyContext?.replyCommentId,
+			replyContext?.originalCommentId,
+			commentWakeContext?.commentId,
+		].filter((id): id is string => typeof id === 'string');
+		const handoffAttachments =
+			quotedCommentIds.length > 0
+				? await loadAgentAttachmentsForComments(
+						deps.db,
+						quotedCommentIds,
+						deps.masterKeyManager,
+						endpoints.hezoBaseUrl,
+					)
+				: undefined;
 		basePrompt = buildTaskPrompt(inlineSystemPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
 			replyContext,
@@ -1189,6 +1248,8 @@ async function buildRunContext(
 			recentComments,
 			wakingCommentId,
 			catchUp,
+			handoffAttachments,
+			usageSoFar,
 		});
 	}
 	// Appended the same way as the effort directive: a runtime note is guidance the
@@ -1262,6 +1323,7 @@ export type RunAbortReason =
 	| ContainerExitAbortReason
 	| 'run_timeout'
 	| 'tool_call_ceiling'
+	| 'token_ceiling'
 	| 'tunnel_lost'
 	| 'server_shutdown';
 
@@ -1270,6 +1332,7 @@ const RUN_ABORT_REASONS: readonly string[] = [
 	'container_stopped',
 	'run_timeout',
 	'tool_call_ceiling',
+	'token_ceiling',
 	'tunnel_lost',
 	'server_shutdown',
 ];
@@ -1429,6 +1492,11 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 			'every tool result stays in the conversation and is re-sent on the next call, so a run ' +
 			'this long is spending most of its allowance re-reading its own context'
 		);
+	if (reason === 'token_ceiling')
+		return (
+			`run used more than ${englishCount(RUN_TOKEN_CEILING)} tokens - ` +
+			'a single run that long is spending most of its allowance re-reading its own context'
+		);
 	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
 	if (reason === 'tunnel_lost')
 		return (
@@ -1535,8 +1603,7 @@ export async function runAgent(
 		return preRunReason === 'server_shutdown'
 			? {
 					...abortedResult(startTime),
-					requeued: true,
-					requeueReason: WakeupSkipReason.ServerShutdown,
+					requeue: { reason: WakeupSkipReason.ServerShutdown },
 				}
 			: abortedResult(startTime);
 	}
@@ -1561,9 +1628,11 @@ export async function runAgent(
 		if (heldUntil) {
 			return {
 				...failedResult(describeUsageHold(heldUntil), startTime),
-				requeued: true,
-				requeueReason: WakeupSkipReason.ProviderUsageLimit,
-				requeueNotBefore: heldUntil,
+				requeue: {
+					reason: WakeupSkipReason.ProviderUsageLimit,
+					notBefore: heldUntil,
+					heldConfigId: selection.config.configId,
+				},
 			};
 		}
 	}
@@ -1601,6 +1670,8 @@ export async function runAgent(
 	// so far survives a crash — reconcileOnStartup never overwrites these
 	// columns, so the last snapshot is what a restart-failed run reports.
 	let currentUsage: AgentRunUsage | null = null;
+	/** The usage snapshot last written to the run row, so a flush never rewrites it unchanged. */
+	let lastPersistedUsage: string | null = null;
 
 	deps.logs.begin({
 		streamId,
@@ -1627,13 +1698,21 @@ export async function runAgent(
 			// Append only the new log text as chunk rows (never rewrite the whole
 			// log — the old full-blob UPDATE pattern left a dead TOAST copy per
 			// flush). The running usage persists alongside so a crash mid-run still
-			// leaves a non-zero token/cost snapshot, flagged partial until a clean
+			// leaves a non-zero token snapshot, flagged partial until a clean
 			// completion. One statement, so it is atomic without a transaction:
 			// the broker re-sends the same delta after a failed flush, so chunk +
 			// usage must land all-or-nothing to stay exactly-once, and every
 			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await appendRunLogChunks(deps.db, heartbeatRunId, delta, toUsageSnapshot(currentUsage));
+			// A polled figure changes once a minute while the log flushes every half
+			// second, so the snapshot is sent only when it moved: the column update
+			// has no change guard, and a row rewritten for nothing is a dead tuple on
+			// a database that does not vacuum.
+			const snapshot = toUsageSnapshot(currentUsage);
+			const moved = JSON.stringify(snapshot) !== lastPersistedUsage;
+			if (delta.length === 0 && !moved) return;
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, moved ? snapshot : null);
+			if (moved) lastPersistedUsage = JSON.stringify(snapshot);
 		},
 	});
 
@@ -1714,8 +1793,15 @@ export async function runAgent(
 	 */
 	const finalizeRequeue = async (
 		reason: string,
-		requeueReason: WakeupSkipReason,
-		requeueNotBefore?: Date,
+		cause: HandbackCause,
+		opts: {
+			/**
+			 * What the run used before it was handed back. The work goes back to the
+			 * queue, but the tokens were spent, so a run drained at shutdown still
+			 * reaches the ledger. Always partial: the run did not finish.
+			 */
+			usage?: AgentRunUsage | null;
+		} = {},
 	): Promise<RunResult> => {
 		releaseCredentialLock?.();
 		const message = `${reason} - returning this run to the queue.`;
@@ -1730,6 +1816,7 @@ export async function runAgent(
 				exitCode: -1,
 				durationMs,
 				error: message,
+				...(opts.usage ? { usage: opts.usage, usagePartial: true } : {}),
 				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
 				// actually carried is not known until the caller settles the wakeup,
 				// and the guard there can bite. Writing `handed_back` at this point
@@ -1746,9 +1833,7 @@ export async function runAgent(
 			stderr: reason,
 			durationMs,
 			heartbeatRunId,
-			requeued: true,
-			requeueReason,
-			requeueNotBefore,
+			requeue: cause,
 		};
 	};
 
@@ -1778,7 +1863,7 @@ export async function runAgent(
 	const providerRefusalHandback = async (
 		verdict: RuntimeErrorVerdict,
 		refused: { configId: string; provider: AiProvider },
-	): Promise<{ message: string; reason: WakeupSkipReason; notBefore: Date } | null> => {
+	): Promise<{ message: string; cause: HandbackCause } | null> => {
 		if (verdict.family === 'usage_limit') {
 			const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
 			const heldUntil = formatUsageHold(hold.until);
@@ -1801,8 +1886,11 @@ export async function runAgent(
 			}
 			return {
 				message: `${verdict.message} Every run on this credential waits until ${heldUntil}`,
-				reason: WakeupSkipReason.ProviderUsageLimit,
-				notBefore: hold.until,
+				cause: {
+					reason: WakeupSkipReason.ProviderUsageLimit,
+					notBefore: hold.until,
+					heldConfigId: refused.configId,
+				},
 			};
 		}
 
@@ -1825,8 +1913,10 @@ export async function runAgent(
 		}
 		return {
 			message: verdict.message,
-			reason: WakeupSkipReason.ProviderAtCapacity,
-			notBefore: new Date(Date.now() + PROVIDER_CAPACITY_COOLDOWN_MIN * 60_000),
+			cause: {
+				reason: WakeupSkipReason.ProviderAtCapacity,
+				notBefore: new Date(Date.now() + PROVIDER_CAPACITY_COOLDOWN_MIN * 60_000),
+			},
 		};
 	};
 
@@ -1839,7 +1929,9 @@ export async function runAgent(
 		// before exiting. The better the shutdown behaved, the more certainly the
 		// work was dropped.
 		if (abortReason === 'server_shutdown') {
-			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, {
+				reason: WakeupSkipReason.ServerShutdown,
+			});
 		}
 		releaseCredentialLock?.();
 		const durationMs = Date.now() - startTime;
@@ -2111,7 +2203,7 @@ export async function runAgent(
 				const stillHeldBy = credentialLockHolder(credential.configId);
 				return finalizeRequeue(
 					`${stillHeldBy?.label ?? 'Another run'} still holds this provider credential`,
-					WakeupSkipReason.CredentialBusy,
+					{ reason: WakeupSkipReason.CredentialBusy },
 				);
 			}
 			// Finalized rather than rethrown: nothing above this catches, and a
@@ -2136,11 +2228,11 @@ export async function runAgent(
 		if (checkHoldAfterWait) {
 			const holdAfterWait = await readActiveUsageHold(deps.db, credential.configId);
 			if (holdAfterWait && holdAfterWait.getTime() !== holdBeforeWait?.getTime()) {
-				return finalizeRequeue(
-					`${describeUsageHold(holdAfterWait)}, so this run did not start`,
-					WakeupSkipReason.ProviderUsageLimit,
-					holdAfterWait,
-				);
+				return finalizeRequeue(`${describeUsageHold(holdAfterWait)}, so this run did not start`, {
+					reason: WakeupSkipReason.ProviderUsageLimit,
+					notBefore: holdAfterWait,
+					heldConfigId: credential.configId,
+				});
 			}
 		}
 	}
@@ -2204,7 +2296,7 @@ export async function runAgent(
 			} catch (e) {
 				if (!(e instanceof PoolCapacityError)) throw e;
 				if (Date.now() >= parkDeadline) {
-					return finalizeRequeue(e.message, WakeupSkipReason.InstanceAtCapacity);
+					return finalizeRequeue(e.message, { reason: WakeupSkipReason.InstanceAtCapacity });
 				}
 				if (!parked) {
 					// Once, not per poll: a line every 5s would make the run log the
@@ -2289,7 +2381,6 @@ export async function runAgent(
 			{
 				aiProviderConfigId: credential.configId,
 				provider,
-				costBilled: credential.authMethod !== AiAuthMethod.Subscription,
 			},
 			// Recorded here rather than at insert because the container is acquired
 			// after the row exists. It is what lets a container's death fail exactly
@@ -2506,11 +2597,7 @@ export async function runAgent(
 		const workspaceFiles = deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT);
 		const promptRelPath = getPromptRelPath(heartbeatRunId);
 
-		const pricing = deps.pricing;
-		const priceFn = pricing
-			? (model: string | undefined, tokens: CostTokens) => pricing.costCents(model, tokens)
-			: undefined;
-		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride, provider);
+		const parser = createAgentStreamParser(runtimeType, modelOverride, provider);
 
 		const persistRotatedAuth = async (): Promise<void> => {
 			await persistRotatedSubscriptionAuth({
@@ -2531,7 +2618,7 @@ export async function runAgent(
 		// a wedge here previously left agents stuck "running" forever.
 		// Memoised because both the clean-exit path and the abort/throw finalizer
 		// need it, and it scrubs the file it reads - a second call would find
-		// nothing and report $0 over the top of a real figure.
+		// nothing and report no usage over the top of a real figure.
 		//
 		// Reached from the failure path too, which is the whole point: Codex, Grok
 		// and Kimi all report no usage on their streams, so a run of any of them
@@ -2543,33 +2630,9 @@ export async function runAgent(
 			recoveredUsage = await recoverOffStreamRunUsage(
 				runtimeType,
 				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
-				priceFn,
 				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
 			return recoveredUsage;
-		};
-
-		/**
-		 * Say so in the run log when a run burned tokens and still priced at $0.
-		 *
-		 * The server log already warns once per unknown model, but an operator does
-		 * not read the server log - they read the run. Without this the two cases
-		 * that matter are indistinguishable from a genuinely free run: a runtime
-		 * that named no model, and a model the pricing table has never heard of
-		 * (a provider alias, or one released since the catalog last refreshed).
-		 * Both leave the spend page empty while the allowance drains.
-		 */
-		const warnIfUnpriced = (usage: AgentRunUsage | null): void => {
-			if (!usage || usage.costCents > 0) return;
-			if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
-			emit(
-				'stderr',
-				`[runner] This run used ${usage.inputTokens} input / ${usage.outputTokens} output tokens but priced at $0, ` +
-					(usage.model
-						? `because no pricing row matches the model "${usage.model}". Add one in Settings > Model pricing.`
-						: 'because its runtime reported no model. Cost cannot be attributed without one.') +
-					'\n',
-			);
 		};
 
 		const cleanupRunArtifacts = async () => {
@@ -2725,14 +2788,37 @@ export async function runAgent(
 			const maxToolCalls = runtimeConfig().runs.maxToolCalls;
 			let ceilingHit = false;
 
+			// The usage the runtime streams, or else the usage its file held at the
+			// last poll, for a runtime that streams none until its end.
+			let polledUsage: AgentRunUsage | null = null;
+			const refreshUsage = () => {
+				// Surfaced to the log flush so it's persisted crash-safely (see
+				// currentUsage / onFlush above).
+				currentUsage = parser.getUsage() ?? polledUsage;
+			};
+
+			// The same stop as the tool-call ceiling, measured in what the run has used
+			// rather than what it has called. Never once the stream has stated the
+			// run's end: that is where a runtime reporting only at the end first
+			// reports anything, and the work it reports on is already done.
+			const enforceTokenCeiling = () => {
+				if (ceilingHit || parser.hasEnded()) return;
+				const used = currentUsage ? currentUsage.inputTokens + currentUsage.outputTokens : 0;
+				if (used < RUN_TOKEN_CEILING) return;
+				ceilingHit = true;
+				emit(
+					'stderr',
+					`[runner] Run stopped at its token ceiling (${englishCount(RUN_TOKEN_CEILING)}). A single run this long is spending most of its allowance re-reading its own context.\n`,
+				);
+				runAbort.abort('token_ceiling');
+			};
+
 			const onChunk = async (chunk: ExecLogChunk) => {
 				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
-				// Surface the latest running usage to the log flush so it's persisted
-				// crash-safely (see currentUsage / onFlush above).
-				currentUsage = parser.getUsage();
+				refreshUsage();
 				await persistMcpToolCounts();
 
 				if (!ceilingHit && maxToolCalls > 0 && parser.getToolCallTotal() >= maxToolCalls) {
@@ -2743,19 +2829,35 @@ export async function runAgent(
 					);
 					runAbort.abort('tool_call_ceiling');
 				}
+				enforceTokenCeiling();
 			};
 
+			const usagePoll = pollOffStreamUsage(
+				runtimeType,
+				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
+				deps.usagePollMs ?? OFF_STREAM_USAGE_POLL_MS,
+				(usage) => {
+					polledUsage = usage;
+					refreshUsage();
+					enforceTokenCeiling();
+				},
+				(msg) => log.warn(`Run ${heartbeatRunId}: ${msg}`),
+			);
+
 			// Unelevated: the agent writes into the bind-mounted worktree, and those
-			// files must stay owned by the run user rather than root.
-			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser).exec({
-				cmd: context.execCmd,
-				env: context.env,
-				workingDir: prep.workingDir,
-				// The derived signal, so a tunnel that dies mid-run tears the exec down
-				// instead of leaving it to burn the rest of the budget toolless.
-				signal: runAbort.signal,
-				onChunk,
-			});
+			// files must stay owned by the run user rather than root. The poll stops
+			// however the exec ends, before anything reads and scrubs the usage file.
+			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser)
+				.exec({
+					cmd: context.execCmd,
+					env: context.env,
+					workingDir: prep.workingDir,
+					// The derived signal, so a tunnel that dies mid-run tears the exec down
+					// instead of leaving it to burn the rest of the budget toolless.
+					signal: runAbort.signal,
+					onChunk,
+				})
+				.finally(() => usagePoll.stop());
 			const tail = parser.flush();
 			if (tail) emit('stdout', tail);
 			const durationMs = Date.now() - startTime;
@@ -2819,11 +2921,11 @@ export async function runAgent(
 			const unpushedError =
 				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
 
-			// Codex, Grok and Kimi Code emit no usage on their streams; recover it
-			// from the file each writes into the per-run home mount, then scrub that
-			// file (they can carry the provider credential, and a Codex rollout is the
-			// whole transcript). Falls back to null (⇒ $0) if the file is
-			// missing/unparseable; the home mount is removed at cleanup anyway.
+			// Codex, Grok and Kimi Code stream no usage, or none until their end;
+			// recover it from the file each writes into the per-run home mount, then
+			// scrub that file (they can carry the provider credential, and a Codex
+			// rollout is the whole transcript). Null, recording no tokens, if the file
+			// is missing or unparseable; the home mount is removed at cleanup anyway.
 			const runUsage = await recoverUsageOnce();
 
 			// A clean exit is only a real success if the run produced persisted
@@ -2874,7 +2976,7 @@ export async function runAgent(
 			// Three stranded forms are handled here, differently:
 			//   (1) an active `@`-mention the run never posted as a comment — the agent
 			//       wrote an explicit, unambiguous wake, so deliver the message verbatim
-			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
+			//       via postComment (admin inbox / agent wakeup), flipping the run
 			//       to a success. This is the deterministic backstop to the completeness
 			//       stop-hook judge (best-effort, model-dependent).
 			//   (2) a NAME-ONLY address that reads like an ask — the unlinked bold/
@@ -2949,15 +3051,14 @@ export async function runAgent(
 								// (1) Deliver stranded active mentions verbatim.
 								const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
 								if (undeliveredActive.length > 0) {
-									await postAgentComment({
+									await postComment({
 										db: deps.db,
 										wsManager: deps.wsManager,
 										teamId: runTeamId,
 										projectId: project.id,
 										taskId: task.id,
-										authorMemberId: agent.id,
-										createdByRunId: heartbeatRunId,
-										text: finalMessage,
+										author: { memberId: agent.id, runId: heartbeatRunId },
+										content: { text: fitCommentForDelivery(finalMessage, undeliveredActive) },
 									});
 									// The run delivered a real comment, so it is no longer a no-op:
 									// flip the local flag (drives `success` below) and the row column
@@ -3019,16 +3120,15 @@ export async function runAgent(
 									askerRow !== undefined &&
 									(askerRow.from_agent === false || wakeupPayload?.source === WakeupSource.Mention);
 								if (askIsDeliverable) {
-									await postAgentComment({
+									await postComment({
 										db: deps.db,
 										wsManager: deps.wsManager,
 										teamId: runTeamId,
 										projectId: project.id,
 										taskId: task.id,
-										authorMemberId: agent.id,
-										createdByRunId: heartbeatRunId,
+										author: { memberId: agent.id, runId: heartbeatRunId },
 										parentCommentId: wakingCommentId ?? undefined,
-										text: finalMessage,
+										content: { text: fitCommentForDelivery(finalMessage) },
 									});
 									await deps.db.query(
 										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
@@ -3242,7 +3342,7 @@ export async function runAgent(
 					// this run's per-run secrets off a pooled container, and the row
 					// should not read terminal until that has happened.
 					await cleanupRunArtifacts();
-					return finalizeRequeue(handback.message, handback.reason, handback.notBefore);
+					return finalizeRequeue(handback.message, handback.cause);
 				}
 			}
 
@@ -3278,10 +3378,10 @@ export async function runAgent(
 
 			// Codex, Grok and Kimi report usage in a file (runUsage); every other
 			// runtime reports it on the stream. The file wins where both exist: for
-			// Codex it is the only source that also names the model, and a run priced
-			// against no model prices to $0.
-			const finalUsage = runUsage ?? parser.getUsage();
-			warnIfUnpriced(finalUsage);
+			// Codex it is the only source that also names the model. A failed read
+			// falls back to the last figure a poll held, so a run that used tokens is
+			// never recorded as free.
+			const finalUsage = runUsage ?? parser.getUsage() ?? currentUsage;
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -3413,14 +3513,22 @@ export async function runAgent(
 			// row has always promised. The kill above has already torn the tree down,
 			// and no lost-run strike is spent: a shutdown is not the run failing.
 			if (reason === 'server_shutdown') {
+				// Recovered before the cleanup, which removes the usage file with the
+				// run's home: a Codex, Grok or Kimi run has nothing on its stream.
+				const drainedUsage = (await recoverUsageOnce()) ?? parser.getUsage();
 				await cleanupRunArtifacts();
-				return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+				return finalizeRequeue(
+					RUN_LOST_TO_SHUTDOWN_ERROR,
+					{ reason: WakeupSkipReason.ServerShutdown },
+					{
+						usage: drainedUsage,
+					},
+				);
 			}
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
-			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage();
-			warnIfUnpriced(abortUsage);
+			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage() ?? currentUsage;
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
 				deps.db,
@@ -3495,7 +3603,9 @@ export async function runAgent(
 		// A shutdown landing inside the setup window strands the same work as one
 		// landing mid-exec, and has the same answer.
 		if (runAbortReason(runAbort.signal) === 'server_shutdown') {
-			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, {
+				reason: WakeupSkipReason.ServerShutdown,
+			});
 		}
 		const verdict = throwVerdict(error);
 		const durationMs = Date.now() - startTime;
@@ -4239,7 +4349,7 @@ export async function loadAgentAttachmentsForComments(
 		 ) ranked
 		 WHERE rn <= $2
 		 ORDER BY comment_id, rn`,
-		[commentIds, PROMPT_ATTACHMENTS_PER_COMMENT_LIMIT],
+		[commentIds, COMMENT_ATTACHMENTS_MAX],
 	);
 	const out = new Map<string, AgentAttachment[]>();
 	for (const row of rows.rows) {
@@ -4453,14 +4563,16 @@ export function renderCommentHistory(
 				: '';
 			const base = `${head}: ${text}${tag}${overflow}`;
 			const reactionLine = formatReactionLine(c.reactions);
-			const attachmentLines = c.attachments.map(
-				(a) =>
-					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`,
-			);
+			const attachmentLines = c.attachments.map(formatAttachmentLine);
 			const extra = [reactionLine, ...attachmentLines].filter((l): l is string => l !== null);
 			return extra.length > 0 ? `${base}\n${extra.join('\n')}` : base;
 		})
 		.join('\n');
+}
+
+/** One prompt line naming an attachment and where to download it. */
+function formatAttachmentLine(a: AgentAttachment): string {
+	return `  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`;
 }
 
 export interface CommentWakeContext {
@@ -4507,7 +4619,14 @@ export interface BuildTaskPromptContext {
 	recentComments?: RenderableComment[];
 	wakingCommentId?: string;
 	catchUp?: CatchUpContext | null;
+	/** Attachments on the comments a handoff section quotes, keyed by comment id. */
+	handoffAttachments?: HandoffFiles;
+	/** What the task has used so far, stated under its status. */
+	usageSoFar?: TaskUsageSoFar;
 }
+
+/** Attachments on the comments a handoff quotes, keyed by comment id. */
+type HandoffFiles = ReadonlyMap<string, AgentAttachment[]> | undefined;
 
 /** How many of a task's most recent comments to inline in every run prompt as a head-start. */
 export const RECENT_COMMENTS_LIMIT = 3;
@@ -4525,12 +4644,6 @@ export const COACH_REVIEW_COMMENTS_LIMIT = 20;
 
 /** Runs listed in the Coach's Agent Runs block; `list_task_runs` serves the rest. */
 export const COACH_REVIEW_RUNS_LIMIT = 20;
-
-/**
- * Attachments rendered per comment. A prompt line each, and a signed URL each,
- * so this bounds both the text and the signing work.
- */
-export const PROMPT_ATTACHMENTS_PER_COMMENT_LIMIT = 10;
 
 /** One due goal handed to the Captain in a progress-update run. */
 export interface ProgressUpdateGoal {
@@ -4897,6 +5010,19 @@ export function buildProgressUpdatePrompt(
 	return parts.join('\n');
 }
 
+/**
+ * The Current Task line stating what the task has used so far, so an agent can
+ * weigh further rounds against what the deliverable is worth.
+ */
+export function taskUsageLine(u: TaskUsageSoFar): string {
+	const used = (runs: number, tokens: number) =>
+		`${runs} ${runs === 1 ? 'run' : 'runs'}, ${formatCompactNumber(tokens, 'en')} tokens`;
+	const rounds = `${u.handoffRounds} consecutive agent-to-agent ${u.handoffRounds === 1 ? 'handoff' : 'handoffs'}`;
+	const since = u.sinceAdminReply;
+	if (!since) return `**This task so far:** ${used(u.runs, u.tokens)}, ${rounds}.`;
+	return `**This task so far:** ${used(u.runs, u.tokens)}. **Since the admin last replied:** ${used(since.runs, since.tokens)}, ${rounds}.`;
+}
+
 export function buildTaskPrompt(
 	systemPrompt: string,
 	task: TaskInfo,
@@ -4917,21 +5043,23 @@ export function buildTaskPrompt(
 	// here: the reply and the comment it answers.
 	const quotedAbove = new Set<string>();
 
+	const files = ctx.handoffAttachments;
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
-		parts.push(...renderReplyHandoff(task, replyContext, budget));
+		parts.push(...renderReplyHandoff(task, replyContext, budget, files));
 		quotedAbove.add(replyContext.replyCommentId);
 		quotedAbove.add(replyContext.originalCommentId);
 	} else if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
-		parts.push(...renderMentionHandoff(task, mentionContext, budget));
+		parts.push(...renderMentionHandoff(task, mentionContext, budget, files));
 		quotedAbove.add(mentionContext.triggeringCommentId);
 	} else if (commentWakeContext && wakeupPayload?.source === WakeupSource.Comment) {
-		parts.push(...renderCommentWakeHandoff(task, commentWakeContext, budget));
+		parts.push(...renderCommentWakeHandoff(task, commentWakeContext, budget, files));
 		quotedAbove.add(commentWakeContext.commentId);
 	}
 
 	parts.push(`## Current Task: ${task.identifier} — ${budget.take('taskTitle', task.title).text}`);
 	parts.push(`**Priority:** ${task.priority}`);
 	parts.push(`**Status:** ${task.status}`);
+	if (ctx.usageSoFar) parts.push(taskUsageLine(ctx.usageSoFar));
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
 	if (openSubTasks.length > 0) {
@@ -5039,8 +5167,12 @@ function quoteCommentForHandoff(
 	section: PromptSection,
 	text: string,
 	commentId: string,
+	files: HandoffFiles,
 ): string[] {
 	const cut = budget.take(section, text);
+	// The thread block below only back-references a quoted comment, so its files
+	// are listed here or not at all.
+	const attached = (files?.get(commentId) ?? []).map(formatAttachmentLine);
 	const block =
 		cut.text.length > 0
 			? cut.text
@@ -5049,21 +5181,25 @@ function quoteCommentForHandoff(
 					.join('\n')
 			: '> (empty)';
 	const call = `get_comment(comment_id: "${commentId}")`;
-	return cut.truncated
-		? [block, '', overflowNote(cut.text.length, cut.length, call)]
-		: [block, '', `_(comment id \`${commentId}\`)_`];
+	const idLine = cut.truncated
+		? overflowNote(cut.text.length, cut.length, call)
+		: `_(comment id \`${commentId}\`)_`;
+	return attached.length > 0
+		? [block, '', idLine, 'Files attached to it:', ...attached]
+		: [block, '', idLine];
 }
 
 function renderCommentWakeHandoff(
 	task: TaskInfo,
 	ctx: CommentWakeContext,
 	budget: PromptBudget,
+	files: HandoffFiles,
 ): string[] {
 	return [
 		'## New Comment on Your Task',
 		`${ctx.authorName} commented on ${task.identifier}, which woke this run — what they wrote:`,
 		'',
-		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.commentId),
+		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.commentId, files),
 		'',
 		'Read it carefully: it may add or change the instructions for this task. Then review the rest of the thread (see Recent Comments below, and `list_comments` for the full history) before you act.',
 		'',
@@ -5072,7 +5208,12 @@ function renderCommentWakeHandoff(
 	];
 }
 
-function renderMentionHandoff(task: TaskInfo, ctx: MentionContext, budget: PromptBudget): string[] {
+function renderMentionHandoff(
+	task: TaskInfo,
+	ctx: MentionContext,
+	budget: PromptBudget,
+	files: HandoffFiles,
+): string[] {
 	const ticketList =
 		ctx.openTickets.length === 0
 			? 'none'
@@ -5083,7 +5224,7 @@ function renderMentionHandoff(task: TaskInfo, ctx: MentionContext, budget: Promp
 		'## Mention Handoff',
 		`You were mentioned by ${ctx.authorName} in ${task.identifier} — what they wrote:`,
 		'',
-		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.triggeringCommentId),
+		...quoteCommentForHandoff(budget, 'wakingComment', ctx.excerpt, ctx.triggeringCommentId, files),
 		'',
 		'### Your open tasks',
 		ticketList,
@@ -5177,7 +5318,12 @@ export async function loadReplyContext(
 	};
 }
 
-function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext, budget: PromptBudget): string[] {
+function renderReplyHandoff(
+	task: TaskInfo,
+	ctx: ReplyContext,
+	budget: PromptBudget,
+	files: HandoffFiles,
+): string[] {
 	const referenced =
 		ctx.referencedTasks.length === 0
 			? 'none'
@@ -5194,12 +5340,14 @@ function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext, budget: PromptBud
 		'wakingComment',
 		ctx.replyExcerpt,
 		ctx.replyCommentId,
+		files,
 	);
 	const originalLines = quoteCommentForHandoff(
 		budget,
 		'replyOriginal',
 		ctx.originalExcerpt,
 		ctx.originalCommentId,
+		files,
 	);
 	return [
 		'## Reply Received',
@@ -5434,19 +5582,8 @@ export async function buildCoachReviewPrompt(
 		'',
 		...(runLog ? ['### Agent Runs', runLog, ''] : []),
 		'### Your Task',
-		'Review this completed task. Analyze the comment history for patterns where agents struggled,',
-		'received feedback, had work rejected, or needed multiple attempts. When the comments do not fully',
-		'explain what happened — a silent plan-vs-outcome gap, an unclear failure, an approach abandoned',
-		'without explanation — call `get_run_log(run_id)` on a run listed under Agent Runs to inspect what',
-		'the agent actually did in its container, not just what it reported. For each improvement opportunity,',
-		"use `get_agent_system_prompt` with `placeholders: false` to read the affected agent's raw prompt",
-		'(you need the `{{…}}` placeholders intact for a safe round-trip), then use `update_agent_system_prompt`',
-		'to add a specific rule to their `## Learned Rules` section. When a lesson applies to EVERY agent on the',
-		'team (a shared convention, standard, or fact), put it in the project Custom Prompt with',
-		'`update_project_custom_prompt` instead of editing each prompt one by one. Updates apply immediately and a',
-		'revision snapshot is recorded so the admin can roll back if needed.',
-		'',
-		'If the task completed smoothly without significant rework or feedback, no changes are needed.',
+		'Review this completed task by the review workflow in your system prompt. Call `get_run_log(run_id)`',
+		'on a run listed under Agent Runs when the comments do not explain what happened.',
 		'',
 		'### Final Step',
 		`Post the review summary comment on ${task.identifier} now, following the format defined in your system prompt.`,
@@ -5463,6 +5600,11 @@ export interface HeartbeatRunBroadcast {
 	/** Null for progress-update runs, which are not tied to a task. */
 	taskId: string | null;
 	memberId: string;
+	/**
+	 * When the work happened, for usage recorded after the fact: a run reconciled
+	 * on startup counts at its own start, not at the reboot.
+	 */
+	occurredAt?: string | null;
 }
 
 function broadcastHeartbeatRunChange(
@@ -5627,13 +5769,11 @@ async function markHeartbeatRunRunning(
 	adapter: {
 		aiProviderConfigId: string | null;
 		provider: AiProvider | null;
-		/** False on a subscription, where nobody is billed per token. */
-		costBilled: boolean;
 	},
 	containerId: string | null,
 ): Promise<boolean> {
-	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
-	// can attribute the run's cost to it without re-resolving, and the container
+	// Stamp the resolved AI adapter config on the run so recordRunUsageAndEnforce
+	// can attribute the run's usage to it without re-resolving, and the container
 	// so a container's death can fail only the runs it was actually carrying.
 	//
 	// `queued_reason` is cleared on the way past: it describes what the run was
@@ -5643,7 +5783,7 @@ async function markHeartbeatRunRunning(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
 		        ai_provider_config_id = $4, provider = $5::ai_provider,
-		        container_id = $6, cost_billed = $7, queued_reason = NULL
+		        container_id = $6, queued_reason = NULL
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -5653,7 +5793,6 @@ async function markHeartbeatRunRunning(
 			adapter.aiProviderConfigId,
 			adapter.provider,
 			containerId,
-			adapter.costBilled,
 		],
 	);
 	// Guarded on the row still being `queued`, so whoever declared an outcome
@@ -5705,12 +5844,11 @@ async function updateHeartbeatRun(
 		     error = COALESCE($3, error),
 		     input_tokens = COALESCE($4, input_tokens),
 		     output_tokens = COALESCE($5, output_tokens),
-		     cost_cents = COALESCE($6, cost_cents),
-		     cache_read_tokens = COALESCE($11, cache_read_tokens),
-		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
-		     usage_partial = COALESCE($7, usage_partial),
-		     tool_call_counts = COALESCE($13::jsonb, tool_call_counts),
-		     model = COALESCE($14, model)
+		     usage_partial = COALESCE($6, usage_partial),
+		     cache_read_tokens = COALESCE($10, cache_read_tokens),
+		     cache_creation_tokens = COALESCE($11, cache_creation_tokens),
+		     tool_call_counts = COALESCE($12::jsonb, tool_call_counts),
+		     model = COALESCE($13, model)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
 		     -- party: terminateHeartbeatRun backfills operator_terminated while the
@@ -5718,30 +5856,23 @@ async function updateHeartbeatRun(
 		     -- through recordHandbackOutcome. Leaving the column out entirely is what
 		     -- makes their writes survive, rather than a COALESCE direction a later
 		     -- simplification could quietly reverse.
-		 WHERE id = $8
-		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
+		 WHERE id = $7
+		   AND status IN ($8::heartbeat_run_status, $9::heartbeat_run_status)
 		 RETURNING id`,
 		[
-			update.status,
-			update.exitCode,
-			update.error ?? null,
-			update.usage?.inputTokens ?? null,
-			update.usage?.outputTokens ?? null,
-			update.usage?.costCents ?? null,
-			update.usagePartial ?? null,
-			runId,
-			HeartbeatRunStatus.Queued,
-			HeartbeatRunStatus.Running,
-			// $11/$12. Appended rather than slotted in beside the other usage binds
-			// so every existing placeholder keeps its number - renumbering a
-			// ten-parameter statement to insert two in the middle is how the wrong
-			// value lands in the wrong column.
-			update.usage?.buckets?.cacheReadTokens ?? null,
-			update.usage?.buckets?.cacheCreationTokens ?? null,
-			// $13, appended for the same reason as $11/$12 above.
-			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null,
-			// $14. What the cost was priced from, so a $0 figure stays auditable.
-			update.usage?.model ?? null,
+			update.status, // $1
+			update.exitCode, // $2
+			update.error ?? null, // $3
+			update.usage?.inputTokens ?? null, // $4
+			update.usage?.outputTokens ?? null, // $5
+			update.usagePartial ?? null, // $6
+			runId, // $7
+			HeartbeatRunStatus.Queued, // $8
+			HeartbeatRunStatus.Running, // $9
+			update.usage?.buckets?.cacheReadTokens ?? null, // $10
+			update.usage?.buckets?.cacheCreationTokens ?? null, // $11
+			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null, // $12
+			update.usage?.model ?? null, // $13
 		],
 	);
 	if (applied.rows.length > 0) {
@@ -5773,69 +5904,53 @@ async function updateHeartbeatRun(
 	}
 
 	// Outside the guard: tokens burned are burned whoever declared the outcome.
-	// Run completion is the canonical cost event: record the run's total spend as a
-	// single cost_entries row (guarded on positive usage so failure/abort paths and
-	// retries — which carry no usage — never double-insert), then reactively pause
+	// Run completion is the canonical usage event: record the run's tokens as a
+	// single usage_entries row (guarded on positive usage so failure/abort paths and
+	// retries - which carry no usage - never double-insert), then reactively pause
 	// the agent if this pushed it (or its project) over any budget window.
-	await recordRunCostAndEnforce(db, runId, update.usage ?? null, broadcast);
+	await recordRunUsageAndEnforce(db, runId, update.usage ?? null, broadcast);
 }
 
 /**
- * Insert the run's cost into `cost_entries` and pause the agent if now over
- * budget. Best-effort: a failure here logs and continues — it must not turn a
- * completed run into a failed one. Exported so startup reconciliation can charge
- * the surviving cost of a run the server killed mid-flight (see
- * `JobManager.reconcileOnStartup`).
+ * Insert the run's tokens into `usage_entries` and pause the agent if now over
+ * budget. Every run counts, whatever its credential: a subscription spends an
+ * allowance as surely as an API key spends money. Best-effort: a failure here
+ * logs and continues - it must not turn a completed run into a failed one.
+ * Exported so startup reconciliation can count the surviving usage of a run the
+ * server killed mid-flight (see `JobManager.reconcileOnStartup`).
  */
-export async function recordRunCostAndEnforce(
+export async function recordRunUsageAndEnforce(
 	db: Db,
 	runId: string,
 	usage: AgentRunUsage | null,
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
-	if (!usage || usage.costCents <= 0) return;
+	if (!usage || usage.inputTokens + usage.outputTokens <= 0) return;
 	try {
 		// The resolved AI adapter config was stamped on the run at start
-		// (markHeartbeatRunRunning); read it back to attribute this cost to it.
-		// `cost_billed` was stamped alongside it, from the credential's auth method
-		// at the time - not joined now, because a config can be deleted or flipped
-		// and either would re-label a run that finished months ago.
+		// (markHeartbeatRunRunning); read it back to attribute this usage to it.
 		const runRow = await db.query<{
 			ai_provider_config_id: string | null;
 			provider: AiProvider | null;
-			cost_billed: boolean;
-		}>(`SELECT ai_provider_config_id, provider, cost_billed FROM heartbeat_runs WHERE id = $1`, [
-			runId,
-		]);
-		const adapter = runRow.rows[0] ?? {
-			ai_provider_config_id: null,
-			provider: null,
-			cost_billed: true,
-		};
+		}>(`SELECT ai_provider_config_id, provider FROM heartbeat_runs WHERE id = $1`, [runId]);
+		const adapter = runRow.rows[0];
 
-		const entry = await recordRunCost(db, {
-			memberId: broadcast.memberId,
-			taskId: broadcast.taskId ?? null,
-			projectId: broadcast.projectId ?? null,
-			amountCents: usage.costCents,
-			description: `Agent run ${runId}`,
-			aiProviderConfigId: adapter.ai_provider_config_id,
-			provider: adapter.provider,
-			billed: adapter.cost_billed,
-		});
-		if (entry && broadcast.wsManager) {
-			broadcastRowChange(
-				broadcast.wsManager,
-				wsRoom.team(broadcast.teamId),
-				'cost_entries',
-				'INSERT',
-				entry,
-			);
-		}
+		await recordUsage(
+			db,
+			{ wsManager: broadcast.wsManager, teamId: broadcast.teamId },
+			{
+				memberId: broadcast.memberId,
+				taskId: broadcast.taskId ?? null,
+				projectId: broadcast.projectId ?? null,
+				inputTokens: usage.inputTokens,
+				outputTokens: usage.outputTokens,
+				description: `Agent run ${runId}`,
+				aiProviderConfigId: adapter?.ai_provider_config_id ?? null,
+				provider: adapter?.provider ?? null,
+				occurredAt: broadcast.occurredAt ?? null,
+			},
+		);
 
-		// Notional spend moves no budget, so the gate would be a guaranteed no-op
-		// read on the run-completion path.
-		if (!adapter.cost_billed) return;
 		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
 		if (block) {
 			await pauseAgentForBudget(
@@ -5844,10 +5959,11 @@ export async function recordRunCostAndEnforce(
 				broadcast.teamId,
 				block,
 				broadcast.wsManager,
+				{ taskId: broadcast.taskId ?? null, projectId: broadcast.projectId ?? null },
 			);
 		}
 	} catch (e) {
-		log.error({ err: e, runId }, 'failed to record run cost / enforce budget');
+		log.error({ err: e, runId }, 'failed to record run usage / enforce budget');
 	}
 }
 

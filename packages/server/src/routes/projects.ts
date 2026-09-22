@@ -1,6 +1,7 @@
 import {
 	ArchiveFilter,
 	AuthType,
+	BUDGET_WINDOW_FIELDS,
 	CONTAINER_DISK_GB_MAX,
 	CONTAINER_DISK_GB_MIN,
 	ContainerStatus,
@@ -23,14 +24,14 @@ import {
 	broadcastProjectsChanged,
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
-import { budgetWindowsError } from '../lib/budget-validation';
+import { budgetWriteError } from '../lib/budget-validation';
 import { buildContainerDeps } from '../lib/container-deps';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
-import { terminalStatusParams } from '../lib/sql';
+import { terminalStatusParams, utcWindowStartSql } from '../lib/sql';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -131,11 +132,10 @@ projectsRoutes.get('/projects', async (c) => {
        (SELECT count(*) FROM member_agents ma2 JOIN members mm2 ON mm2.id = ma2.id
           WHERE mm2.team_id = p.team_id AND ma2.touches_code)::int
           AS code_agent_count,
-       -- Real spend only, so "today" on the project rail keeps meaning money.
-       (SELECT COALESCE(sum(ce.amount_cents), 0) FROM cost_entries ce
-          WHERE ce.project_id = p.id AND ce.billed
-            AND ce.created_at >= date_trunc('day', now()))::int
-          AS today_spend_cents,
+       (SELECT COALESCE(sum(ue.input_tokens + ue.output_tokens), 0) FROM usage_entries ue
+          WHERE ue.project_id = p.id
+            AND ue.created_at >= ${utcWindowStartSql("'day'")})::float8
+          AS today_tokens,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
@@ -571,11 +571,11 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await db.query<{
-		daily_budget_cents: number;
-		weekly_budget_cents: number;
-		monthly_budget_cents: number;
+		daily_budget_tokens: number;
+		weekly_budget_tokens: number;
+		monthly_budget_tokens: number;
 	}>(
-		`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
+		`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
 		 FROM projects WHERE id = $1 AND team_id = $2`,
 		[projectId, teamId],
 	);
@@ -588,9 +588,9 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		description?: string;
 		memory_limit_gib?: number | null;
 		container_disk_gb?: number | null;
-		daily_budget_cents?: number;
-		weekly_budget_cents?: number;
-		monthly_budget_cents?: number;
+		daily_budget_tokens?: number;
+		weekly_budget_tokens?: number;
+		monthly_budget_tokens?: number;
 	}>();
 
 	const sets: string[] = [];
@@ -682,26 +682,12 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		params.push(body.container_disk_gb);
 		idx++;
 	}
-	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)
-	// since a PATCH may touch only one window — enforces both per-field integer ≥ 0
-	// and the cross-window consistency rules (shared with the web forms).
-	const budgetColumns = [
-		'daily_budget_cents',
-		'weekly_budget_cents',
-		'monthly_budget_cents',
-	] as const;
-	if (budgetColumns.some((column) => body[column] !== undefined)) {
-		const current = existing.rows[0];
-		const merged = {
-			daily_budget_cents: body.daily_budget_cents ?? current.daily_budget_cents,
-			weekly_budget_cents: body.weekly_budget_cents ?? current.weekly_budget_cents,
-			monthly_budget_cents: body.monthly_budget_cents ?? current.monthly_budget_cents,
-		};
-		const budgetError = budgetWindowsError(merged);
-		if (budgetError) {
-			return err(c, 'INVALID_REQUEST', budgetError, 400);
-		}
-		for (const column of budgetColumns) {
+	// Budget limits: 0 = unlimited. One check for the whole write - a retired dollar
+	// field by name, and the trio a partial PATCH leaves, merged over the stored one.
+	const budgetError = budgetWriteError(body, existing.rows[0]);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
+	if (BUDGET_WINDOW_FIELDS.some((column) => body[column] !== undefined)) {
+		for (const column of BUDGET_WINDOW_FIELDS) {
 			if (body[column] === undefined) continue;
 			sets.push(`${column} = $${idx}`);
 			params.push(body[column]);

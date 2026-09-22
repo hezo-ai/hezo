@@ -21,7 +21,7 @@ one to read: where it says *nothing*, no test will catch you.
 | A new surface that accepts an authored prompt | its `checkPromptStyle` call | **nothing - on you** |
 | A new server-wired wakeup path reachable from an agent run | `created_by_run_id` on the wakeup it creates | **nothing - on you** |
 | A new `ApprovalType` value | the `approval_type` Postgres enum (a migration), `APPROVAL_TYPE_COLORS` (web), and a case in `approval-card.tsx` - without the case the card renders the raw slug with underscores | the colour table is an exhaustive `Record` and fails `typecheck`; **nothing for the card arm** |
-| A new `WakeupSource` value | the `wakeup_source` Postgres enum (a migration), `DISPATCH_SUPPRESSION_EXEMPT_SOURCES` if it carries an answer rather than a system ping, and a `runTrigger.*` label in all twelve catalogs - without the label the run list calls it "Unknown trigger" | `run-trigger.test.ts` covers the label; **nothing for the other two** |
+| A new `WakeupSource` value | the `wakeup_source` Postgres enum (a migration), `DISPATCH_SUPPRESSION_EXEMPT_SOURCES` if it carries an answer rather than a system ping, `CONVERSATIONAL_SOURCES` if an agent can raise it to hand work to another, and a `runTrigger.*` label in all twelve catalogs - without the label the run list calls it "Unknown trigger" | `run-trigger.test.ts` covers the label; **nothing for the others** |
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
 | A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
@@ -43,7 +43,7 @@ one to read: where it says *nothing*, no test will catch you.
 | A new operator setting | its `config/types.ts` field + `DEFAULT_CONFIG` default, its `config/schema.ts` entry, and its row in `docs/deployment/configuration.md` | a missing type field is a compile error; **an unvalidated or undocumented key is on you** |
 | A sharded, renamed or newly-required CI job | its `*-complete` rollup, a shard-unique matrix artifact name, the `main` ruleset's required checks | **nothing - on you** |
 | A tool added to the container image | the toolset paragraph in `SHARED_INSTRUCTIONS` | **nothing - on you** |
-| A new AI provider (`AiProvider` + `PROVIDER_RUNTIME_ADAPTERS`) | `.dev/architecture.md`, the provider docs, `model_pricing` rows, and a decision on `claudeCodeProviderUsesCustomEndpoint` | **nothing** - an unpriced model silently records $0 |
+| A new AI provider (`AiProvider` + `PROVIDER_RUNTIME_ADAPTERS`) | `.dev/architecture.md`, the provider docs, and a decision on `claudeCodeProviderUsesCustomEndpoint` | **nothing - on you** |
 | A provider gaining a second CLI (`alternateRuntimes`) | a `ProviderRuntimeBinding` for the new pairing, declared once as a constant if two providers share it | compile error for a missing binding, **nothing for a duplicated one** |
 | User-visible behaviour, a feature, the setup/onboarding flow | the relevant `docs/` page(s) | **nothing - on you** |
 | **Removing** a feature | every stale reference repo-wide (`docs/**`, `.dev/`, READMEs, comments) - grep for it | **nothing - on you** |

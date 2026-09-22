@@ -14,7 +14,7 @@ const LOG_TEXT = [
 		diskCeilingBytes: 4 * 1024 ** 3,
 	})}`,
 	'Refactored the parser.',
-	'[done] success turns=1 duration=500ms tokens=10/20 cost=$0.0001',
+	'[done] success turns=1 duration=500ms tokens=10/20',
 ].join('\n');
 
 test('a run log links its container to that container’s page and states what it was built with', async () => {
@@ -28,8 +28,8 @@ test('a run log links its container to that container’s page and states what i
 			const project = await seedProject(ws, { name: 'Container Meta Project' });
 			const task = await seedTask(ws, project, { title: 'Ship it', assignee_id: captain.id });
 			const run = await ctx.db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at, input_tokens, output_tokens, cost_cents)
-				 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now(), 10, 20, 1)
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at, input_tokens, output_tokens)
+				 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now(), 10, 20)
 				 RETURNING id`,
 				[captain.id, ws.team.id, task.id],
 			);

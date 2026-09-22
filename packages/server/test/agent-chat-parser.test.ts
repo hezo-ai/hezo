@@ -4,7 +4,6 @@ import {
 	type AgentChatTurnEvent,
 	createAgentChatParser,
 	createAgentStreamParser,
-	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
 
 /**
@@ -16,12 +15,6 @@ import {
  */
 
 const line = (event: unknown) => `${JSON.stringify(event)}\n`;
-
-/** Prices `codex-x` only; every other model is unknown and costs nothing. */
-const price: PriceModelFn = (model, tokens) =>
-	model === 'codex-x'
-		? Math.round(((tokens.inputTokens ?? 0) * 0.00001 + (tokens.outputTokens ?? 0) * 0.00003) * 100)
-		: 0;
 
 /** Collect both onStdout + flush output for an array of event objects. */
 function feed(parser: ReturnType<typeof createAgentChatParser>, events: unknown[]) {
@@ -59,14 +52,9 @@ describe('agent-chat-parser — Claude Code', () => {
 	});
 
 	it('captures usage from the terminal result, summing cache buckets into input', () => {
-		// The price fn receives the model from the init event and the separated
-		// token buckets; the reported total_cost_usd is ignored (same policy as
-		// the run parser — cost always comes from the pricing table).
-		const seen: Array<{ model: string | undefined; tokens: unknown }> = [];
-		const parser = createAgentChatParser(AgentRuntime.ClaudeCode, (model, tokens) => {
-			seen.push({ model, tokens });
-			return 24;
-		});
+		// The model comes from the init event and the buckets stay separated; the
+		// reported total_cost_usd is ignored (same policy as the run parser).
+		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
 		feed(parser, [
 			{ type: 'system', subtype: 'init', model: 'claude-x', tools: [] },
 			{
@@ -83,7 +71,6 @@ describe('agent-chat-parser — Claude Code', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 150,
 			outputTokens: 50,
-			costCents: 24,
 			model: 'claude-x',
 			buckets: {
 				inputTokens: 100,
@@ -92,20 +79,9 @@ describe('agent-chat-parser — Claude Code', () => {
 				outputTokens: 50,
 			},
 		});
-		expect(seen).toEqual([
-			{
-				model: 'claude-x',
-				tokens: {
-					inputTokens: 100,
-					cacheCreationTokens: 20,
-					cacheReadTokens: 30,
-					outputTokens: 50,
-				},
-			},
-		]);
 	});
 
-	it('records zero cost when no pricing is wired, ignoring the reported figure', () => {
+	it('records the tokens and ignores the reported dollar figure', () => {
 		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
 		feed(parser, [
 			{ type: 'result', total_cost_usd: 0.25, usage: { input_tokens: 100, output_tokens: 50 } },
@@ -113,7 +89,6 @@ describe('agent-chat-parser — Claude Code', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 100,
 			outputTokens: 50,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 100,
@@ -130,7 +105,6 @@ describe('agent-chat-parser — Claude Code', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -195,14 +169,14 @@ describe('agent-chat-parser — Codex', () => {
 		]);
 	});
 
-	it('prices a chat turn from the run model when the stream names none', () => {
-		const parser = createAgentChatParser(AgentRuntime.Codex, price, 'codex-x');
+	it('records the run model on a chat turn when the stream names none', () => {
+		const parser = createAgentChatParser(AgentRuntime.Codex, 'codex-x');
 		feed(parser, [
 			{ type: 'thread.started', thread_id: 't1' },
 			{ type: 'turn.completed', usage: { input_tokens: 1000, output_tokens: 100 } },
 		]);
-		// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
-		expect(parser.getUsage()?.costCents).toBe(1);
+		expect(parser.getUsage()?.model).toBe('codex-x');
+		expect(parser.getUsage()?.inputTokens).toBe(1000);
 	});
 
 	it('captures usage from turn.completed, without double-counting reasoning', () => {
@@ -215,8 +189,8 @@ describe('agent-chat-parser — Codex', () => {
 					output_tokens: 40,
 					reasoning_output_tokens: 10,
 					// Codex's own total settles it: 500 + 40. Reasoning is already inside
-					// `output_tokens`, so adding it inflated the bucket that prices
-					// highest - by 42% on a real session.
+					// `output_tokens`, so adding it inflated the output bucket - by 42%
+					// on a real session.
 					total_tokens: 540,
 				},
 			},
@@ -225,7 +199,6 @@ describe('agent-chat-parser — Codex', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 500,
 			outputTokens: 40,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 500,
@@ -242,7 +215,6 @@ describe('agent-chat-parser — Codex', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 7,
 			outputTokens: 3,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 7,
@@ -306,7 +278,6 @@ describe('agent-chat-parser — Antigravity', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 1000,
 			outputTokens: 120,
-			costCents: 0,
 			model: 'gemini-2.5-pro',
 			buckets: {
 				inputTokens: 1000,
@@ -337,7 +308,6 @@ describe('agent-chat-parser — generic (OpenCode)', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 300,
 			outputTokens: 60,
-			costCents: 0,
 			model: 'opencode-model',
 			buckets: {
 				inputTokens: 300,

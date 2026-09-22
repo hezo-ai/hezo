@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { dollars, formatBucketLabel, formatDay } from '../src/components/charts/chart-format';
+import { formatBucketLabel, formatDay } from '../src/components/charts/chart-format';
 import { hoursSpent, secondsToHours } from '../src/lib/format-duration';
 
 describe('formatDay', () => {
@@ -22,14 +22,6 @@ describe('formatDay', () => {
 	test('never returns the literal "Invalid Date" for empty or junk input', () => {
 		expect(formatDay('')).toBe('');
 		expect(formatDay('not-a-date')).toBe('not-a-date');
-	});
-});
-
-describe('dollars', () => {
-	test('renders cents as a 2-decimal dollar string', () => {
-		expect(dollars(898)).toBe('$8.98');
-		expect(dollars(0)).toBe('$0.00');
-		expect(dollars(100000)).toBe('$1000.00');
 	});
 });
 
@@ -63,12 +55,5 @@ describe('plotted-value round trips', () => {
 		expect(hoursSpent(secondsToHours(2700))).toBe('45m');
 		expect(hoursSpent(secondsToHours(194_400))).toBe('54h');
 		expect(hoursSpent(secondsToHours(195_840))).toBe('54h 24m');
-	});
-
-	test('cents survive the dollars conversion the chart plots', () => {
-		for (const cents of [0, 1, 99, 100, 898, 100_000]) {
-			expect(Math.round((cents / 100) * 100)).toBe(cents);
-		}
-		expect(dollars(Math.round((898 / 100) * 100))).toBe('$8.98');
 	});
 });

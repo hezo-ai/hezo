@@ -1,4 +1,4 @@
-import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { ATTACHMENT_MAX_BYTES, COMMENT_ATTACHMENTS_MAX } from '@hezo/shared';
 import type { ReactNode } from 'react';
 import { useFileAttachments } from '../hooks/use-file-attachments';
 import { useUploadAttachment } from '../hooks/use-upload-attachment';
@@ -57,6 +57,10 @@ export function CommentAttachmentsDrop({
 		value,
 		onChange,
 		uploadFile: (file) => upload.mutateAsync(file),
+		limit: {
+			max: COMMENT_ATTACHMENTS_MAX,
+			message: t('attachments.tooMany', { max: COMMENT_ATTACHMENTS_MAX }),
+		},
 	});
 
 	return (

@@ -567,10 +567,10 @@ describe('JobManager — extended coverage', () => {
 				[projectId, repo.rows[0].id],
 			);
 			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			await db.query(
 				`UPDATE member_agents
-				 SET daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0,
+				 SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0,
 				     touches_code = false, runtime_status = $1, admin_status = 'enabled'
 				 WHERE id = $2`,
 				[AgentRuntimeStatus.Idle, agentId],
@@ -656,13 +656,13 @@ describe('JobManager — extended coverage', () => {
 
 		it('pauses the agent and marks the wakeup over_budget when the agent is over its daily budget', async () => {
 			const manager = createJobManager();
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			await db.query(
-				'UPDATE member_agents SET daily_budget_cents = 100, runtime_status = $1 WHERE id = $2',
+				'UPDATE member_agents SET daily_budget_tokens = 100, runtime_status = $1 WHERE id = $2',
 				[AgentRuntimeStatus.Idle, agentId],
 			);
 			await db.query(
-				`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)`,
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 500)`,
 				[agentId, projectId],
 			);
 			const wakeupId = await insertQueuedWakeup(agentId, 'mention');
@@ -700,9 +700,9 @@ describe('JobManager — extended coverage', () => {
 			);
 			expect(runs.rows[0].c).toBe('0');
 
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			await db.query(
-				'UPDATE member_agents SET daily_budget_cents = 0, runtime_status = $1 WHERE id = $2',
+				'UPDATE member_agents SET daily_budget_tokens = 0, runtime_status = $1 WHERE id = $2',
 				[AgentRuntimeStatus.Idle, agentId],
 			);
 			manager.shutdown();

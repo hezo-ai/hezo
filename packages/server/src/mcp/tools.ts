@@ -19,6 +19,8 @@ import {
 	CAPTAIN_SETTABLE_GOAL_HEALTH,
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
+	COMMENT_ATTACHMENTS_MAX,
+	COMMENT_TEXT_MAX_CHARS,
 	CommentContentType,
 	ConnectorAccess,
 	ConnectorStatus,
@@ -26,11 +28,14 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	checkInjectedTextCap,
+	commentHasContent,
+	commentTextFits,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	DocumentType,
+	englishCount,
 	extensionOf,
 	extractBacktickedLooseAssetPaths,
 	extractBacktickedMentionCandidates,
@@ -47,6 +52,7 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
+	RETIRED_BUDGET_FIELDS,
 	ReactionKind,
 	SEARCH_SCOPES,
 	summarizeMethodAccess,
@@ -55,6 +61,7 @@ import {
 	THREAD_ROW_CATEGORIES,
 	type ThreadRowCategory,
 	taskStatusError,
+	type UsageTotals,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -72,7 +79,7 @@ import {
 	checkHumanNameAvailable,
 	isNameOnlyRole,
 } from '../lib/agent-identity';
-import { canCoordinateTeam, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { canCoordinateTeam, isHqInstanceAgent } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
@@ -107,6 +114,7 @@ import {
 } from '../lib/mentions';
 import { assertNoBlockingRun } from '../lib/reassign-guard';
 import {
+	actingPersonFromAuth,
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
 	isUuid,
@@ -138,13 +146,17 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
+import { checkProjectAssetIds } from '../services/asset-ownership';
+import { USAGE_TOKEN_SUMS_SQL } from '../services/budget';
 import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
 import { upsertChatMemory, upsertConversationChatMemory } from '../services/chat-memory';
 import {
 	buildWakeReceiptForTask,
+	commentTooLongError,
+	commentWriteAck,
 	fireAdminMention,
 	fireCommentWakeups,
-	postAgentComment,
+	postComment,
 	resolveWarnableSlugs,
 } from '../services/comment-wakeups';
 import {
@@ -156,7 +168,11 @@ import {
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { writeCustomPrompt } from '../services/custom-prompt';
-import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
+import {
+	COHERENCE_LABEL,
+	enqueueTeamCoherenceReviewTask,
+	findOpenLabeledTask,
+} from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
@@ -172,10 +188,10 @@ import {
 import { listGoals, recordGoalProgress } from '../services/goals';
 import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
 import {
-	buildHirePayloadPatch,
 	type HirePayloadPatchInput,
 	type HireProposalInput,
 	insertHireApproval,
+	prepareHirePayloadPatch,
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
@@ -202,6 +218,7 @@ import {
 	recordParentChange,
 	recordTaskLinks,
 	recordTitleChange,
+	TASK_COMMENT_ROW_COLUMNS,
 	type TaskUpdateMutationRow,
 	type TaskUpdateSnapshot,
 	type TaskUpdateSnapshotKey,
@@ -221,13 +238,19 @@ import {
 	applyMarketplaceTeamToTeam,
 } from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
+import {
+	parseUsageFilters,
+	usageByAgent,
+	usageByDay,
+	usageTotals,
+	usageWhere,
+} from '../services/usage-read';
 import { createWakeup, wakeAgentIfAssigned } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 import {
 	type ContentWindow,
 	DEFAULT_LIST_LIMIT,
 	decodeCursor,
-	type Excerpt,
 	excerpt,
 	fitSerializedWindow,
 	type KeysetRow,
@@ -602,7 +625,7 @@ async function withBacktickWarning<T extends object>(
 }
 
 /** Flag an agent run as having produced output. Idempotent and self-contained. */
-async function markRunProducedOutput(db: Db, runId: string): Promise<void> {
+export async function markRunProducedOutput(db: Db, runId: string): Promise<void> {
 	await db.query(
 		'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1 AND produced_output = false',
 		[runId],
@@ -632,6 +655,49 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
+
+/** What a budget counts, as every budget parameter's description states it. */
+const BUDGET_TOKENS_NOTE =
+	'A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited.';
+
+/**
+ * The three budget windows a hire tool takes, described with `lead` ("Daily
+ * budget", "Updated daily budget"). Whole-number and coherence checks run in the
+ * handler, through the same validation every budget write uses.
+ */
+function budgetWindowArgs(lead: (window: string) => string) {
+	return {
+		daily_budget_tokens: z
+			.number()
+			.optional()
+			.describe(`${lead('daily')}, in tokens. ${BUDGET_TOKENS_NOTE}`),
+		weekly_budget_tokens: z
+			.number()
+			.optional()
+			.describe(`${lead('weekly')}, in tokens. ${BUDGET_TOKENS_NOTE}`),
+		monthly_budget_tokens: z
+			.number()
+			.optional()
+			.describe(`${lead('monthly')}, in tokens. ${BUDGET_TOKENS_NOTE}`),
+	};
+}
+
+/**
+ * The dollar budget fields budgets used before they counted tokens, declared so
+ * a call still sending one reaches the handler and is refused by name: the SDK
+ * strips an undeclared argument, which dropped the budget in silence.
+ */
+function retiredBudgetArgs() {
+	return Object.fromEntries(
+		Object.entries(RETIRED_BUDGET_FIELDS).map(([field, replacement]) => [
+			field,
+			z.number().optional().describe(`Retired. Refused: send ${replacement} instead.`),
+		]),
+	);
+}
+
+/** The comment text cap as the comment tools' descriptions state it. */
+const COMMENT_TEXT_CAP = englishCount(COMMENT_TEXT_MAX_CHARS);
 
 /** APPROVAL_COLUMNS qualified with the `a` alias, for the keyset-paged read. */
 const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'a.$&');
@@ -668,6 +734,100 @@ export const SYSTEM_PROMPT_RESULT_BYTES = 131_072;
  * retry right at the cap and risk a second rejection.
  */
 const BATCH_RETRY_SAFETY = 0.8;
+
+/**
+ * Fields a write result keeps when it is too large to return whole: the ones
+ * a caller needs to find, cite or act on what it just wrote.
+ */
+const WRITE_ACK_FIELDS: ReadonlySet<string> = new Set([
+	'id',
+	'public_id',
+	'task_id',
+	'identifier',
+	'slug',
+	'status',
+	'approval_id',
+	'document_id',
+	'reference',
+	'index',
+	'ok',
+	'error',
+	'written',
+	'applied',
+	'applied_count',
+	'parent_comment_id',
+	'author_member_id',
+	'created_at',
+]);
+
+/** How deep an acknowledgement follows nested objects before dropping them. */
+const WRITE_ACK_MAX_DEPTH = 2;
+
+function writeAckOf(value: unknown, depth: number): unknown {
+	if (Array.isArray(value)) return value.map((v) => writeAckOf(v, depth + 1));
+	if (value === null || typeof value !== 'object') return value;
+	const out: Record<string, unknown> = {};
+	for (const [key, v] of Object.entries(value)) {
+		if (v !== null && typeof v === 'object') {
+			if (depth < WRITE_ACK_MAX_DEPTH) out[key] = writeAckOf(v, depth + 1);
+		} else if (WRITE_ACK_FIELDS.has(key)) {
+			out[key] = v;
+		}
+	}
+	return out;
+}
+
+/**
+ * The reply for a write tool whose result is over the byte cap.
+ *
+ * A write has already happened by the time its result is measured, so the
+ * read-side answer - discard the result and tell the caller to split the work
+ * and retry - is wrong here: a retry repeats the write. A batch created twice,
+ * or an approval "resolved" a second time into an error, is the result. The
+ * write instead answers with the identifiers of what it wrote and says it
+ * succeeded. If even that does not fit, it says so and reports the size.
+ */
+export function oversizedWriteAck(result: unknown, sizeBytes: number, byteLimit: number): unknown {
+	const fits = (value: unknown) =>
+		Buffer.byteLength(JSON.stringify(value, null, 2), 'utf8') <= byteLimit;
+	const failed = failedItemsOf(result, 0);
+	const note =
+		failed.length === 0
+			? 'The write succeeded. Its full result was too large to return, so only identifiers are shown. Do not repeat the call.'
+			: 'Part of the write failed: the failed items are listed. The rest succeeded; its full result was too large to return. Repeat only the failed items.';
+	const ack = writeAckOf(result, 0);
+	const shaped = Array.isArray(ack)
+		? { result_truncated: true, note, items: ack }
+		: { result_truncated: true, note, ...(ack as Record<string, unknown>) };
+	if (fits(shaped)) return shaped;
+	// Identifiers do not fit either. The failures still must: a caller told only
+	// that the write succeeded would never retry the items that did not.
+	const fallback = { result_truncated: true, note, size_bytes: sizeBytes, limit_bytes: byteLimit };
+	const kept: Record<string, unknown>[] = [];
+	for (const item of failed) {
+		if (!fits({ ...fallback, failed: [...kept, item] })) break;
+		kept.push(item);
+	}
+	return kept.length > 0
+		? { ...fallback, failed: kept, failed_count: failed.length }
+		: failed.length > 0
+			? { ...fallback, failed_count: failed.length }
+			: fallback;
+}
+
+/** The items of a batch write that failed, as `{ index?, id?, error }`, in order. */
+function failedItemsOf(value: unknown, depth: number): Record<string, unknown>[] {
+	if (depth > WRITE_ACK_MAX_DEPTH || value === null || typeof value !== 'object') return [];
+	if (Array.isArray(value)) return value.flatMap((v) => failedItemsOf(v, depth + 1));
+	const item = value as Record<string, unknown>;
+	if (item.ok === false || typeof item.error === 'string') {
+		const out: Record<string, unknown> = { error: item.error ?? 'failed' };
+		if (item.index !== undefined) out.index = item.index;
+		if (item.id !== undefined) out.id = item.id;
+		return [out];
+	}
+	return Object.values(item).flatMap((v) => failedItemsOf(v, depth + 1));
+}
 
 /**
  * Remedies for an oversized result, built from what the called tool actually
@@ -959,6 +1119,10 @@ function tool(
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
 		const byteLimit = opts.resultByteLimit ?? MCP_RESULT_BYTE_LIMIT;
+		if (sizeBytes > byteLimit && opts.write && !isErrorResult(result)) {
+			const ack = JSON.stringify(oversizedWriteAck(result, sizeBytes, byteLimit), null, 2);
+			return { content: [{ type: 'text' as const, text: ack }] };
+		}
 		if (sizeBytes > byteLimit) {
 			const guard = JSON.stringify(
 				{
@@ -1166,16 +1330,27 @@ async function resolveTaskScope(
 	if ('error' in scope) return scope;
 	const raw = typeof args.task_id === 'string' ? args.task_id : '';
 	if (!raw) return { error: 'task_id is required' };
+	const task = await findProjectTask(db, scope, raw);
+	if ('error' in task) return task;
+	return { ...scope, taskId: task.id };
+}
+
+/** Resolve a task reference (identifier or UUID) that must belong to the scope's project. */
+export async function findProjectTask(
+	db: Db,
+	scope: ToolScope,
+	raw: string,
+): Promise<{ id: string; identifier: string } | { error: string }> {
 	const taskId = await resolveTaskId(db, scope.teamId, raw);
 	if (!taskId) return { error: `Task not found: ${raw}` };
-	const r = await db.query<{ project_id: string }>(
-		'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
+	const r = await db.query<{ project_id: string; identifier: string }>(
+		'SELECT project_id, identifier FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, scope.teamId],
 	);
 	if (r.rows.length === 0 || r.rows[0].project_id !== scope.projectId) {
 		return { error: `Task not found in project: ${raw}` };
 	}
-	return { ...scope, taskId };
+	return { id: taskId, identifier: r.rows[0].identifier };
 }
 
 /** Standard schema entry for the optional `project` selector shared by project-scoped tools. */
@@ -2359,7 +2534,7 @@ export function registerTools(
 				// address them the way the thread does.
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.human_name, ma.human_name_slug,
-				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+				        ma.daily_budget_tokens, ma.weekly_budget_tokens, ma.monthly_budget_tokens,
 				        ma.runtime_status, ma.admin_status,
 				        ma.reports_to, mgr.slug AS reports_to_slug, mgr.title AS reports_to_title
 				 FROM members m JOIN member_agents ma ON ma.id = m.id
@@ -2409,7 +2584,8 @@ export function registerTools(
 				.min(heartbeatIntervalFloorMin())
 				.optional()
 				.describe(`Updated heartbeat interval. ${heartbeatIntervalArgDescription()}`),
-			monthly_budget_cents: z.number().optional().describe('Updated monthly budget in cents'),
+			...budgetWindowArgs((window) => `Updated ${window} budget`),
+			...retiredBudgetArgs(),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 		},
 		async (args, db, auth) => {
@@ -2446,21 +2622,14 @@ export function registerTools(
 				return { error: 'Hire approval is already resolved' };
 			}
 
-			// A revised manager must resolve to an agent on this team (empty clears it).
-			if (typeof args.reports_to === 'string' && args.reports_to.trim()) {
-				const raw = args.reports_to.trim();
-				if (raw === row.payload.slug) {
-					return { error: 'reports_to: an agent cannot report to itself' };
-				}
-				const managerId = await resolveAgentId(db, row.team_id, raw);
-				if (!managerId) return { error: `reports_to: no agent '${raw}' in this team` };
-			}
-
-			const patch = buildHirePayloadPatch(args as HirePayloadPatchInput);
-
-			if (Object.keys(patch).length === 0) {
-				return { error: 'no fields to update' };
-			}
+			const prepared = await prepareHirePayloadPatch(
+				db,
+				row.team_id,
+				row.payload,
+				args as HirePayloadPatchInput,
+			);
+			if ('error' in prepared) return { error: prepared.error };
+			const { patch } = prepared;
 
 			const updated = await db.query<Record<string, unknown>>(
 				`UPDATE approvals SET payload = payload || $1::jsonb
@@ -2510,9 +2679,8 @@ export function registerTools(
 				.int()
 				.min(heartbeatIntervalFloorMin())
 				.describe(heartbeatIntervalArgDescription()),
-			daily_budget_cents: z.number().optional().describe('Daily budget in cents'),
-			weekly_budget_cents: z.number().optional().describe('Weekly budget in cents'),
-			monthly_budget_cents: z.number().optional().describe('Monthly budget in cents'),
+			...budgetWindowArgs((window) => `${window[0].toUpperCase()}${window.slice(1)} budget`),
+			...retiredBudgetArgs(),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 			task_id: z
 				.string()
@@ -2761,22 +2929,7 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
-			const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 2}::task_status`).join(
-				', ',
-			);
-			const ticket = await db.query<{
-				id: string;
-				identifier: string;
-				assignee_id: string | null;
-			}>(
-				`SELECT id, identifier, assignee_id FROM tasks
-				 WHERE team_id = $1
-				   AND labels @> '["team-coherence-review"]'::jsonb
-				   AND status NOT IN (${placeholders})
-				 LIMIT 1`,
-				[scope.teamId, ...TERMINAL_TASK_STATUSES],
-			);
-			const row = ticket.rows[0];
+			const row = await findOpenLabeledTask(db, scope.teamId, COHERENCE_LABEL);
 			if (!row) return { error: 'No open team-setup task for this project' };
 
 			// Run-concurrency, not a reassignment guard: this claims the ticket for
@@ -3605,11 +3758,21 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID - it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		`Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment's UUID - it wakes the original author with source=reply (so they're notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead. To hand a file to a teammate, upload it (multipart POST to /mcp/assets with a task field) and pass its id in attachment_ids; never paste file contents or encoded bytes into the text. Comment text is limited to ${COMMENT_TEXT_CAP} characters.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
-			content: z.string().describe('Comment text'),
+			content: z
+				.string()
+				.describe(
+					`Comment text, at most ${COMMENT_TEXT_CAP} characters. May be empty when attachment_ids is set.`,
+				),
+			attachment_ids: z
+				.array(z.string())
+				.optional()
+				.describe(
+					`Ids of up to ${COMMENT_ATTACHMENTS_MAX} assets to attach, from uploads to /mcp/assets or write_project_asset in this project. Readers get each file as a signed download link.`,
+				),
 			parent_comment_id: z
 				.string()
 				.optional()
@@ -3618,9 +3781,21 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
+			const text = args.content as string;
+			if (!commentTextFits(text)) return { error: commentTooLongError(text.length) };
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
+			const attachments = await checkProjectAssetIds(
+				db,
+				scope.projectId,
+				args.attachment_ids,
+				COMMENT_ATTACHMENTS_MAX,
+			);
+			if (!attachments.ok) return { error: attachments.message };
+			if (!commentHasContent(text, attachments.ids.length)) {
+				return { error: 'Provide comment text, attachment_ids, or both' };
+			}
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
 				// Accept the parent's id (UUID) or its public_id; store the resolved
@@ -3636,40 +3811,26 @@ export function registerTools(
 				parentCommentId = parentCheck.rows[0].id;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const authorApiKeyId = apiKeyIdFromAuth(auth);
-			// Attribute the comment to the run that wrote it (only on the agent-run path) so the
+			// The run that wrote it is recorded (only on the agent-run path) so the
 			// goal detail page can show "this progress-update run commented on task X".
-			const createdByRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
-			// Insert + realtime broadcast + mention/@admin/reply wakeups, shared with
-			// the runner's handoff-delivery guardrail via postAgentComment so a
-			// comment the agent posts and one auto-delivered from a stranded final
-			// message are byte-identical. RETURNING * includes public_id (the
-			// comment-link slug), so the agent gets it back without a list_comments.
-			const { row, woke } = await postAgentComment({
+			// The reply carries public_id (the comment-link slug), so the agent can cite
+			// it without a list_comments, but never the text the agent just sent.
+			const { row, woke } = await postComment({
 				db,
 				wsManager,
 				teamId,
 				projectId: scope.projectId,
 				taskId,
-				authorMemberId,
-				authorApiKeyId,
-				authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
-				createdByRunId,
+				author: {
+					memberId: authorMemberId,
+					userId: auth.type === AuthType.Admin ? auth.userId : null,
+					apiKeyId: apiKeyIdFromAuth(auth),
+					runId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
+				},
 				parentCommentId,
-				text: args.content as string,
+				content: { text },
+				attachmentIds: attachments.ids,
 			});
-			trackBackground(
-				recordTaskLinks(
-					db,
-					teamId,
-					taskId,
-					args.content as string,
-					authorMemberId,
-					authorApiKeyId,
-					wsManager,
-					{ kind: 'comment', commentPublicId: row.public_id },
-				).catch((e) => log.error('Failed to record task links from comment:', e)),
-			);
 			// An agent that addresses a teammate by bold/bare name (no @ prefix)
 			// notifies no one and the handoff silently stalls. Best-effort warn the
 			// author so they can re-post with the proper mention; never block the
@@ -3723,10 +3884,11 @@ export function registerTools(
 				// right. An agent that meant to ask sees `woke: []` with the teammate it
 				// addressed sitting in `named_not_woken`.
 				const wake = await buildWakeReceiptForTask(db, taskId, commentText, woke, knownSlugs);
-				if (warning) return { ...row, wake, warning };
-				return { ...row, wake };
+				const ack = { ...commentWriteAck(row), attachment_ids: attachments.ids };
+				if (warning) return { ...ack, wake, warning };
+				return { ...ack, wake };
 			}
-			return row;
+			return { ...commentWriteAck(row), attachment_ids: attachments.ids };
 		},
 		db,
 		{ write: true },
@@ -3746,6 +3908,8 @@ export function registerTools(
 			content: z.string().describe('The replacement comment text (overwrites the existing body).'),
 		},
 		async (args, db, auth) => {
+			const text = args.content as string;
+			if (!commentTextFits(text)) return { error: commentTooLongError(text.length) };
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
@@ -3776,7 +3940,7 @@ export function registerTools(
 			}
 			const content = { text: args.content };
 			const r = await db.query<{ id: string; public_id: string }>(
-				`UPDATE task_comments SET content = $1::jsonb WHERE id = $2 RETURNING *`,
+				`UPDATE task_comments SET content = $1::jsonb WHERE id = $2 RETURNING ${TASK_COMMENT_ROW_COLUMNS}`,
 				[JSON.stringify(content), args.comment_id],
 			);
 			broadcastCommentFamilyChange(
@@ -3854,8 +4018,8 @@ export function registerTools(
 			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
-			if (warning) return { ...r.rows[0], wake, warning };
-			return { ...r.rows[0], wake };
+			if (warning) return { ...commentWriteAck(r.rows[0]), wake, warning };
+			return { ...commentWriteAck(r.rows[0]), wake };
 		},
 		db,
 		{ write: true, audience: 'agent_run' },
@@ -4468,6 +4632,7 @@ export function registerTools(
 				resolutionNote: typeof args.resolution_note === 'string' ? args.resolution_note : null,
 				dataDir,
 				actorMemberId,
+				decider: actingPersonFromAuth(auth),
 				wsManager,
 				events,
 			});
@@ -4490,60 +4655,57 @@ export function registerTools(
 		{ write: true },
 	);
 
-	// Costs
+	// Usage
 	tool(
 		server,
-		'get_costs',
-		`Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false. Every shape reports two figures: \`total_cents\` is real money, and \`notional_cents\` is what runs on a subscription would have cost at the provider's published rates. A subscription is not billed per token, so the second counts towards no budget and never pauses anyone - read it as effort, not spend.`,
+		'get_usage',
+		`Get the token usage summary for a project: every token its runs and chat turns sent and received, input (cached input included) and output, which is what budgets count. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false. Every shape reports \`input_tokens\`, \`output_tokens\` and their sum \`total_tokens\`.`,
 		{
 			project: projectArg(),
-			group_by: z.enum(['agent', 'day']).optional().describe('Group costs by'),
+			group_by: z.enum(['agent', 'day']).optional().describe('Group usage by'),
+			agent_id: z.string().optional().describe('Only this agent'),
+			task_id: z.string().optional().describe('Only this task'),
+			from: z.string().optional().describe('Only entries at or after this date or timestamp'),
+			to: z.string().optional().describe('Only entries before this date or timestamp'),
 			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			if (args.group_by === 'agent') {
-				const r = await db.query(
-					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents
-				 FROM cost_entries ce LEFT JOIN members m ON m.id = ce.member_id LEFT JOIN member_agents ma ON ma.id = ce.member_id
-				 WHERE ce.project_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
-					[scope.projectId],
-				);
-				return r.rows;
-			}
+			const parsed = parseUsageFilters(scope.projectId, args);
+			if ('error' in parsed) return parsed;
+			const { filters } = parsed;
+			if (args.group_by === 'agent') return usageByAgent(db, filters);
 			if (args.group_by === 'day') {
-				// Cost rows accumulate for the life of the project, so the day grouping
+				// Usage rows accumulate for the life of the project, so the day grouping
 				// is the one branch here without a natural ceiling. It keys on the day
 				// itself: the grouping makes it unique, so no id tiebreak is needed.
 				const limit = parseListLimit(args.limit);
 				const cursor = decodeCursor(args.cursor as string | undefined);
-				const params: unknown[] = [scope.projectId];
-				let dayFilter = '';
-				if (cursor) {
-					params.push(cursor.value);
-					dayFilter = ` AND date_trunc('day', ce.created_at)::date < $${params.length}::date`;
-				}
-				const r = await db.query<{ day: string; total_cents: number }>(
-					`SELECT date_trunc('day', ce.created_at)::date AS day,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents
-				 FROM cost_entries ce WHERE ce.project_id = $1${dayFilter}
-				 GROUP BY day ORDER BY day DESC LIMIT ${limit + 1}`,
-					params,
+				const page = await usageByDay<Record<string, unknown> & { day: string } & UsageTotals>(
+					db,
+					filters,
+					'none',
+					{
+						limit,
+						beforeDay: cursor?.value ?? null,
+					},
 				);
-				return pagedList(r.rows, limit, 'get_costs', { column: 'day', idKey: 'day' });
+				const newestFirst = [...page.rows].reverse();
+				// pagedList reads one row past the page as the sign that more exist.
+				return pagedList(
+					page.nextBeforeDay ? [...newestFirst, { day: page.nextBeforeDay }] : newestFirst,
+					limit,
+					'get_usage',
+					{ column: 'day', idKey: 'day' },
+				);
 			}
-			const r = await db.query(
-				`SELECT COALESCE(sum(amount_cents) FILTER (WHERE billed), 0)::int AS total_cents,
-				        COALESCE(sum(amount_cents) FILTER (WHERE NOT billed), 0)::int AS notional_cents,
-				        count(*)::int AS entry_count
-				   FROM cost_entries WHERE project_id = $1`,
-				[scope.projectId],
+			const totals = await usageTotals(db, filters);
+			const counted = await db.query<{ entry_count: number }>(
+				`SELECT count(*)::int AS entry_count FROM usage_entries ue WHERE ${usageWhere(filters).where}`,
+				usageWhere(filters).params,
 			);
-			return r.rows[0];
+			return { ...totals, entry_count: counted.rows[0]?.entry_count ?? 0 };
 		},
 		db,
 	);
@@ -4835,6 +4997,7 @@ export function registerTools(
 			trackBackground(
 				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
 					changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
+					byRunId: auth.type === AuthType.Agent ? auth.runId : null,
 				}).catch((e) =>
 					log.error('Failed to enqueue team coherence review after prompt update:', e),
 				),
@@ -4952,6 +5115,7 @@ export function registerTools(
 				trackBackground(
 					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
 						changeSummary: summary,
+						byRunId: auth.type === AuthType.Agent ? auth.runId : null,
 					}).catch((e) =>
 						log.error('Failed to enqueue team coherence review after batch prompt update:', e),
 					),
@@ -6052,7 +6216,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; a .csv renders as a table with the raw file behind the same toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, and optional `task` to file it with that task\'s attachments; same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; a .csv renders as a table with the raw file behind the same toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z

@@ -1,6 +1,6 @@
 // Coverage for the agent Executions *list* page
 // (routes/projects/$projectId/agents/$agentId/executions/index.tsx) — the row
-// renderer, the instance-agent project suffix, cost / exit-code / status
+// renderer, the instance-agent project suffix, tokens / exit-code / status
 // rendering, and the empty + loading states. Render-driven (no real layout,
 // viewport, or WebSocket), so it lives in the component tier. The heartbeat-runs
 // list is fetch-mocked (same pattern as agent-executions-project.test.tsx)
@@ -49,10 +49,8 @@ function makeRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		error: null,
 		input_tokens: 0,
 		output_tokens: 0,
-		cost_cents: 0,
 		usage_partial: false,
 		model: null,
-		cost_billed: true,
 		invocation_command: null,
 		log_text: null,
 		working_dir: null,
@@ -205,35 +203,26 @@ test('renders a succeeded run row with status badge, task identifier+title, and 
 	expect(row.textContent).toContain('Ship it');
 });
 
-test('a non-zero exit code and a non-zero cost are surfaced on the row', async () => {
+test('a non-zero exit code and the run tokens are surfaced on the row', async () => {
 	// Errored, so only the non-default filters show it at all.
-	const { findByText } = await renderExecutions(
+	const { findByText, findByTestId } = await renderExecutions(
 		[
 			makeRun({
 				id: 'run-2',
 				status: 'failed',
 				exit_code: 137,
-				cost_cents: 425,
+				input_tokens: 4_000_000,
+				output_tokens: 200_000,
 				task_identifier: 'DEMO-9',
 			}),
 		],
 		{ filter: RunOutcomeFilter.All },
 	);
 
-	// $4.25 from cost_cents=425, and the exit code suffix.
-	await findByText('$4.25', undefined, { timeout: 20_000 });
+	// Input and output together, shortened for a glance, and the exit code suffix.
+	const tokens = await findByTestId('execution-row-tokens', undefined, { timeout: 20_000 });
+	expect(tokens.textContent).toBe('4.2M tokens');
 	await findByText('exit: 137');
-});
-
-test('a run nobody was billed for says so beside its cost', async () => {
-	// A subscription run is priced from the same table but charges nobody, so the
-	// row has to carry the qualifier - an unqualified $4.25 reads as money spent.
-	const { findByTestId } = await renderExecutions([
-		makeRun({ id: 'run-9', cost_cents: 425, cost_billed: false, task_identifier: 'DEMO-11' }),
-	]);
-
-	const cost = await findByTestId('execution-row-cost', undefined, { timeout: 20_000 });
-	expect(cost.textContent).toBe('$4.25 not billed');
 });
 
 test('a running row shows the pulsing dot via the queued/running status and reads "queued" when not yet started', async () => {
@@ -340,22 +329,21 @@ test('infinite-scroll auto-loads the second page of runs via the sentinel', asyn
 	expect(helpers.getAllByTestId('execution-row').length).toBe(51);
 });
 
-test('a cancelled run renders with the neutral status (no exit/cost suffixes)', async () => {
+test('a cancelled run renders with the neutral status (no exit/token suffixes)', async () => {
 	const { findByRole } = await renderExecutions([
 		makeRun({
 			id: 'run-6',
 			status: 'cancelled',
 			exit_code: null,
-			cost_cents: 0,
 			task_identifier: 'DEMO-6',
 		}),
 	]);
 
 	const row = await findByRole('link', { name: /DEMO-6/ }, { timeout: 20_000 });
 	expect(row.textContent).toContain('cancelled');
-	// exit_code null and cost 0 → neither the exit-code nor the $ suffix renders.
+	// exit_code null and no tokens → neither the exit-code nor the token suffix renders.
 	expect(row.textContent).not.toContain('exit:');
-	expect(row.textContent).not.toContain('$');
+	expect(row.textContent).not.toContain('tokens');
 });
 
 test('the default view shows every run, and the pills narrow to one outcome each', async () => {

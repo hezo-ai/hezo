@@ -142,9 +142,9 @@ export interface HireProposalEdits {
 	system_prompt?: string;
 	reports_to?: string;
 	heartbeat_interval_min?: number;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 	touches_code?: boolean;
 }
 

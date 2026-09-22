@@ -130,7 +130,7 @@ describe('archived docs are read-only until restored', () => {
 });
 
 describe('DELETE /docs/:filename', () => {
-	it('403s an agent (agents archive, only the admin deletes)', async () => {
+	it('refuses an agent run token (agents archive through MCP; only the admin deletes)', async () => {
 		const captain = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
@@ -150,8 +150,8 @@ describe('DELETE /docs/:filename', () => {
 			method: 'DELETE',
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.message).toMatch(/archive instead/);
+		expect(res.status).toBe(401);
+		expect((await res.json()).error.message).toMatch(/MCP/);
 
 		// Still there.
 		const read = await docReq('guide.md');

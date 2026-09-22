@@ -255,6 +255,58 @@ export interface CascadeContext {
 	triggeredByProjectSlug: string;
 }
 
+/**
+ * Every `task_comments` column a caller may need back from a write, leaving out
+ * the generated `search_tsv`. That column is the whole comment re-encoded for
+ * search, so returning or broadcasting it roughly doubles the payload and can
+ * push an ordinary write over the tool result cap.
+ */
+export const TASK_COMMENT_ROW_COLUMNS = `id, task_id, author_member_id, author_api_key_id, author_user_id,
+	parent_comment_id, content_type, content, chosen_option, chosen_at, public_id, created_by_run_id,
+	created_at`;
+
+/**
+ * Write a system comment - the one insert behind every event the thread records
+ * and every notice Hezo posts - and, given `broadcast`, tell the team's open
+ * pages. The row carries its task's `project_id`, which the web client needs to
+ * place it. `actorMemberId`/`actorApiKeyId` name who caused the event, when
+ * someone did.
+ */
+export async function insertSystemComment(
+	db: Db,
+	comment: {
+		taskId: string;
+		content: Record<string, unknown>;
+		actorMemberId?: string | null;
+		actorApiKeyId?: string | null;
+	},
+	broadcast?: { wsManager: WebSocketManager | undefined; teamId: string },
+): Promise<{ id: string } & Record<string, unknown>> {
+	const r = await db.query<{ id: string } & Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING ${TASK_COMMENT_ROW_COLUMNS}, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+		[
+			comment.taskId,
+			comment.actorMemberId ?? null,
+			comment.actorApiKeyId ?? null,
+			CommentContentType.System,
+			JSON.stringify(comment.content),
+		],
+	);
+	const row = r.rows[0];
+	if (broadcast?.wsManager) {
+		broadcastRowChange(
+			broadcast.wsManager,
+			wsRoom.team(broadcast.teamId),
+			'task_comments',
+			'INSERT',
+			row,
+		);
+	}
+	return row;
+}
+
 export async function recordStatusChange(
 	db: Db,
 	teamId: string,
@@ -283,15 +335,11 @@ export async function recordStatusChange(
 		content.triggered_by_project_slug = cascade.triggeredByProjectSlug;
 		content.triggered_by_actor_id = actorMemberId;
 	}
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[taskId, authorId, authorApiKeyId, CommentContentType.System, JSON.stringify(content)],
+	await insertSystemComment(
+		db,
+		{ taskId, actorMemberId: authorId, actorApiKeyId: authorApiKeyId, content },
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 }
 
 export async function recordRunTerminated(
@@ -306,28 +354,23 @@ export async function recordRunTerminated(
 ): Promise<void> {
 	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
 	const text = `${actorName} terminated agent run — ${reason}`;
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
 			actorMemberId,
 			actorApiKeyId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'run_terminated',
 				run_id: runId,
 				reason,
 				actor_id: actorMemberId,
 				actor_name: actorName,
 				text,
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 }
 
 /**
@@ -350,14 +393,11 @@ export async function recordRunAbandoned(
 	agentSlug: string | null,
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-		 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'run_abandoned',
 				run_id: runId,
 				agent_slug: agentSlug,
@@ -365,12 +405,10 @@ export async function recordRunAbandoned(
 				// surface with no dedicated renderer (the MCP thread read, an older
 				// client). The web renders the localized sentence instead.
 				text: 'A run could not be started and will not be retried automatically.',
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 }
 
 export async function recordWakeupCancelled(
@@ -385,28 +423,23 @@ export async function recordWakeupCancelled(
 ): Promise<void> {
 	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
 	const text = `${actorName} cancelled queued run for ${agentName}`;
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
 			actorMemberId,
 			actorApiKeyId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'wakeup_cancelled',
 				wakeup_id: wakeupId,
 				actor_id: actorMemberId,
 				actor_name: actorName,
 				agent_name: agentName,
 				text,
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 }
 
 export async function recordTitleChange(
@@ -422,27 +455,22 @@ export async function recordTitleChange(
 	if (oldTitle === newTitle) return;
 	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
 	const text = `${actorName} renamed from "${oldTitle}" to "${newTitle}"`;
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
 			actorMemberId,
 			actorApiKeyId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'title_change',
 				from: oldTitle,
 				to: newTitle,
 				actor_id: actorMemberId,
 				text,
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 }
 
 /**
@@ -492,16 +520,13 @@ export async function recordDescriptionChange(
 	const fromEnd = descriptionPreview(from);
 	const toEnd = descriptionPreview(to);
 
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
 			actorMemberId,
 			actorApiKeyId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'description_change',
 				from_preview: fromEnd.preview,
 				to_preview: toEnd.preview,
@@ -511,12 +536,10 @@ export async function recordDescriptionChange(
 				to_length: to.length,
 				actor_id: actorMemberId,
 				text,
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 }
 
 export async function recordAssigneeChange(
@@ -536,16 +559,13 @@ export async function recordAssigneeChange(
 		resolveActorName(db, actorMemberId, actorApiKeyId),
 	]);
 	const text = `${actorName} reassigned from ${fromName} to ${toName}`;
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
 			actorMemberId,
 			actorApiKeyId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'assignee_change',
 				from_id: oldAssigneeId,
 				to_id: newAssigneeId,
@@ -553,12 +573,10 @@ export async function recordAssigneeChange(
 				to_name: toName,
 				actor_id: actorMemberId,
 				text,
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 	return { fromName, toName };
 }
 
@@ -608,16 +626,13 @@ export async function recordParentChange(
 					? `${actorName} promoted this task to top level (was under ${fromIdentifier})`
 					: `${actorName} promoted this task to top level`;
 
-	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-		[
+	await insertSystemComment(
+		db,
+		{
 			taskId,
 			actorMemberId,
 			actorApiKeyId,
-			CommentContentType.System,
-			JSON.stringify({
+			content: {
 				kind: 'parent_change',
 				from_id: oldParentId,
 				to_id: newParentId,
@@ -627,12 +642,10 @@ export async function recordParentChange(
 				to_project_slug: to?.project_slug ?? null,
 				actor_id: actorMemberId,
 				text,
-			}),
-		],
+			},
+		},
+		{ wsManager, teamId },
 	);
-	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-	}
 	return { fromIdentifier, toIdentifier };
 }
 
@@ -697,16 +710,13 @@ export async function recordTaskLinks(
 			origin.kind === 'comment'
 				? `Linked from a comment on ${sourceIdentifier} by ${actor.name}`
 				: `Linked from ${sourceIdentifier} by ${actor.name}`;
-		const r = await db.query<Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-			 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
-		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
-			[
-				target.id,
+		await insertSystemComment(
+			db,
+			{
+				taskId: target.id,
 				actorMemberId,
 				actorApiKeyId,
-				CommentContentType.System,
-				JSON.stringify({
+				content: {
 					kind: 'task_link',
 					source_task_id: sourceTaskId,
 					source_identifier: sourceIdentifier,
@@ -719,11 +729,9 @@ export async function recordTaskLinks(
 					actor_kind: actor.kind,
 					actor_slug: actor.slug,
 					text: linkText,
-				}),
-			],
+				},
+			},
+			{ wsManager, teamId },
 		);
-		if (r.rows[0] && wsManager) {
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
-		}
 	}
 }

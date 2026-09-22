@@ -21,6 +21,7 @@ import {
 	instanceCoachId,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // These extend the coverage of packages/server/src/mcp/tools.ts beyond what
 // mcp-tools.test.ts / mcp.test.ts / mcp-project-scope.test.ts already exercise:
@@ -132,31 +133,7 @@ async function callToolAs(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	expect(res.status).toBe(200);
-	const body = (await res.json()) as {
-		result?: { content: Array<{ type: string; text: string }> };
-		error?: { message: string };
-	};
-	// A schema-validation failure comes back as a non-JSON MCP error string
-	// ("MCP error -32602: Input validation error: ...") in the result content (or a
-	// JSON-RPC error). Surface either as { error } so callers assert uniformly.
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	const text = body.result.content[0].text;
-	try {
-		return JSON.parse(text);
-	} catch {
-		return { error: text };
-	}
+	return await callMcpTool(app, tokenStr, toolName, args);
 }
 
 type ToolResult = Record<string, unknown> & { error?: string };
@@ -806,39 +783,51 @@ describe('MCP list_approvals / resolve_approval', () => {
 	});
 });
 
-describe('MCP get_costs grouping', () => {
+describe('MCP get_usage grouping', () => {
 	beforeAll(async () => {
 		await db.query(
-			`INSERT INTO cost_entries (project_id, member_id, amount_cents)
-			 VALUES ($1, $2, 150)`,
+			`INSERT INTO usage_entries (project_id, member_id, input_tokens, output_tokens)
+			 VALUES ($1, $2, 150, 50)`,
 			[projectId, agentId],
 		);
 	});
 
 	it('group_by=agent returns per-agent totals', async () => {
-		const rows = (await callTool('get_costs', {
+		const rows = (await callTool('get_usage', {
 			project: projectId,
 			group_by: 'agent',
-		})) as Array<{ member_id: string; total_cents: number }>;
-		expect(rows.some((r) => r.member_id === agentId && r.total_cents >= 150)).toBe(true);
+		})) as Array<{
+			agent_id: string;
+			agent_name: string | null;
+			total_tokens: number;
+			output_tokens: number;
+		}>;
+		// The REST read's columns: an agent's name travels with its id and title.
+		const mine = rows.find((r) => r.agent_id === agentId);
+		expect(mine).toHaveProperty('agent_name');
+		expect(mine?.total_tokens).toBeGreaterThanOrEqual(200);
+		expect(mine?.output_tokens).toBeGreaterThanOrEqual(50);
 	});
 
 	it('group_by=day returns per-day totals', async () => {
 		const rows = (
-			(await callTool('get_costs', {
+			(await callTool('get_usage', {
 				project: projectId,
 				group_by: 'day',
-			})) as { items: Array<{ day: string; total_cents: number }> }
+			})) as { items: Array<{ day: string; total_tokens: number }> }
 		).items;
 		expect(rows.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('no grouping returns a single summary object', async () => {
-		const summary = (await callTool('get_costs', { project: projectId })) as {
-			total_cents: number;
+		const summary = (await callTool('get_usage', { project: projectId })) as {
+			input_tokens: number;
+			output_tokens: number;
+			total_tokens: number;
 			entry_count: number;
 		};
-		expect(summary.total_cents).toBeGreaterThanOrEqual(150);
+		expect(summary.total_tokens).toBe(summary.input_tokens + summary.output_tokens);
+		expect(summary.total_tokens).toBeGreaterThanOrEqual(200);
 		expect(summary.entry_count).toBeGreaterThanOrEqual(1);
 	});
 });
@@ -1593,7 +1582,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 		const revised = (await callToolAs(captain, 'update_hire_proposal', {
 			approval_id: created.approval_id,
 			role_description: 'Owns analytics and dashboards.',
-			monthly_budget_cents: 5000,
+			monthly_budget_tokens: 5000,
 		})) as { id?: string; payload?: Record<string, unknown>; error?: string };
 		expect(revised.error).toBeUndefined();
 		expect(revised.payload?.role_description).toBe('Owns analytics and dashboards.');
@@ -1686,7 +1675,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 		const result = (await callToolAs(captain, 'update_hire_proposal', {
 			approval_id: created.approval_id,
 		})) as ToolResult;
-		expect(result.error).toContain('no fields to update');
+		expect(result.error).toContain('No fields to update');
 	});
 
 	it('update_hire_proposal rejects a cross-team approval id', async () => {

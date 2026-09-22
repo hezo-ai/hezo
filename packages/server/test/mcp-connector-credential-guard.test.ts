@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 /**
  * Regression guard for the connector-hijack chain.
@@ -27,28 +28,7 @@ let token: string;
 let projectId: string;
 
 async function callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	expect(res.status).toBe(200);
-	const body = (await res.json()) as {
-		result?: { content: Array<{ type: string; text: string }> };
-		error?: { message: string };
-	};
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	const text = body.result.content[0].text;
-	try {
-		return JSON.parse(text);
-	} catch {
-		return { error: text };
-	}
+	return await callMcpTool(app, token, toolName, args);
 }
 
 /** Seed a project-scoped saas connector already carrying an OAuth token. */

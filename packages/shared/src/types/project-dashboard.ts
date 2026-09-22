@@ -14,24 +14,6 @@ export const DASHBOARD_IN_PROGRESS_LIMIT = 7;
  */
 export const DASHBOARD_GOAL_SLOTS = 4;
 
-/** All-time spend for a project (windowed spend lives on `budget.*.spentCents`). */
-export interface ProjectDashboardSpend {
-	all_time_cents: number;
-}
-
-export interface ProjectDashboardWindowStatus {
-	spentCents: number;
-	limitCents: number;
-	overBudget: boolean;
-}
-
-export interface ProjectDashboardBudgetStatus {
-	daily: ProjectDashboardWindowStatus;
-	weekly: ProjectDashboardWindowStatus;
-	monthly: ProjectDashboardWindowStatus;
-	overBudget: boolean;
-}
-
 /** Compact task row for the dashboard in-progress list. */
 export interface ProjectDashboardTask {
 	id: string;
@@ -85,6 +67,11 @@ export interface ProjectDashboardMention {
 	credential_name: string | null;
 	/** One line of the comment body, Markdown stripped - render it as plain text. */
 	snippet: string;
+	/**
+	 * A system notice's own fields, so the row reads in the viewer's language;
+	 * `snippet` is its English fallback. Null on every other kind.
+	 */
+	notice: Record<string, unknown> | null;
 	author_display_name: string;
 	created_at: string;
 }
@@ -119,8 +106,6 @@ export interface ProjectDashboard {
 	running_agents: ProjectDashboardRunningAgent[];
 	last_activity_at: string;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
-	spend: ProjectDashboardSpend;
-	budget: ProjectDashboardBudgetStatus | null;
 	progress: ProjectProgress | null;
 	goals: ProjectDashboardGoal[];
 	in_progress_tasks: ProjectDashboardTask[];

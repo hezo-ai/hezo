@@ -4,7 +4,7 @@ import { useMarkMentionRead } from '../hooks/use-admin-mentions';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { formatDateTime, formatRelativeTime } from '../lib/format-date';
 import { useI18n } from '../lib/i18n';
-import { inboxRowKind, inboxRowLead } from '../lib/inbox-row-kind';
+import { inboxRowKind, inboxRowLead, inboxRowSnippet } from '../lib/inbox-row-kind';
 import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
 
@@ -17,7 +17,9 @@ const baseCardClass = 'block p-4 border border-border rounded-md text-left w-ful
 const linkCardClass = `${baseCardClass} hover:bg-surface-2 transition-colors`;
 
 export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
-	const { t } = useI18n();
+	const i18n = useI18n();
+	const { t } = i18n;
+	const snippet = inboxRowSnippet(mention, i18n);
 	const navigate = useNavigate();
 	const markRead = useMarkMentionRead();
 
@@ -101,9 +103,7 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 					{mention.task_identifier}
 				</Link>
 			</div>
-			{mention.snippet && (
-				<p className="text-sm text-text-3 break-words line-clamp-3">{mention.snippet}</p>
-			)}
+			{snippet && <p className="text-sm text-text-3 break-words line-clamp-3">{snippet}</p>}
 		</button>
 	);
 }

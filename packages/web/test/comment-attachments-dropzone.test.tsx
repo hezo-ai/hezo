@@ -8,7 +8,7 @@
 // failures, and chip removal. Real pixel-perfect DnD affordances stay in
 // Playwright (decision-tree item 3).
 
-import { ATTACHMENT_EXTENSIONS, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { ATTACHMENT_EXTENSIONS, ATTACHMENT_MAX_BYTES, COMMENT_ATTACHMENTS_MAX } from '@hezo/shared';
 import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { ATTACHMENT_CATEGORIES } from '../src/components/file-attachments';
@@ -224,4 +224,27 @@ test('a mixed drop uploads the good file and chips the failed one with the uploa
 	expect(error.textContent).toContain('notes-bad.png');
 	expect(error.textContent).toContain('Unsupported content type: application/x-evil');
 	expect(container.querySelectorAll('[data-testid="comment-attachment-chip"]')).toHaveLength(1);
+});
+
+test('files past the per-comment limit are refused with an error chip, not uploaded', async () => {
+	const { zone, container, findAllByTestId } = await renderTaskPage();
+
+	const files = Array.from(
+		{ length: COMMENT_ATTACHMENTS_MAX + 2 },
+		(_, i) => new File([new Uint8Array([1])], `f${i}.png`, { type: 'image/png' }),
+	);
+	fireEvent.drop(zone, dt(files));
+
+	const errors = await findAllByTestId('comment-attachment-error');
+	expect(errors).toHaveLength(2);
+	for (const e of errors) {
+		expect(e.textContent).toContain(`A comment takes at most ${COMMENT_ATTACHMENTS_MAX} files`);
+	}
+	await waitFor(
+		() =>
+			expect(container.querySelectorAll('[data-testid="comment-attachment-chip"]')).toHaveLength(
+				COMMENT_ATTACHMENTS_MAX,
+			),
+		{ timeout: 15_000 },
+	);
 });

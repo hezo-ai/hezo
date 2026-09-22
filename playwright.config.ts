@@ -177,10 +177,8 @@ export default defineConfig({
 				// agents synthetically (~30-60s per team setup) and no e2e test asserts
 				// on it. Turning it off keeps team-creation under 5s.
 				HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
-				// Pricing still seeds from the bundled snapshot (offline); skip the
-				// boot-time refresh so e2e doesn't make an outbound feed fetch.
-				HEZO_SKIP_PRICING_REFRESH: '1',
-				// Same reason, plus a sharper one: the GitHub release check decides
+				// Skip the GitHub release check so e2e makes no outbound fetch, and
+				// for a sharper reason: the release check decides
 				// whether the UpdateBanner renders, and the banner sits between the app
 				// header and the content row — so on a runner that can reach GitHub,
 				// every element in the shell moves down by 47px (75px at mobile, where

@@ -1,17 +1,12 @@
 import { HoursBucket } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { BarChart3, Info, Pencil, Users } from 'lucide-react';
+import { BarChart3, Pencil, Users } from 'lucide-react';
 import { agentDisplayName } from '../../../../components/agent-identity-tooltip';
 import { agentPageParams } from '../../../../components/agent-link';
 import { AgentRef } from '../../../../components/agent-ref';
 import { BudgetCharts } from '../../../../components/budget/budget-charts';
 import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
-import {
-	centsToPlottedDollars,
-	dollars,
-	formatDay,
-	plottedDollars,
-} from '../../../../components/charts/chart-format';
+import { formatDay } from '../../../../components/charts/chart-format';
 import {
 	type SeriesCell,
 	StackedSeriesChart,
@@ -22,46 +17,47 @@ import { BudgetBar } from '../../../../components/ui/budget-bar';
 import { SectionHeader } from '../../../../components/ui/section-header';
 import { useAgentHours } from '../../../../hooks/use-agent-hours';
 import {
-	type AdapterDailyCostPoint,
-	type AgentDailyCostPoint,
+	type AdapterDailyUsagePoint,
+	type AgentDailyUsagePoint,
 	type EntityBudgetStatus,
-	useAdapterDailyCostSeries,
-	useAgentDailyCostSeries,
+	useAdapterDailyUsageSeries,
+	useAgentDailyUsageSeries,
 	useBudgetStatus,
-	useDailyCostSeries,
 	type WindowStatus,
-} from '../../../../hooks/use-costs';
+} from '../../../../hooks/use-usage';
 import { agentAvatarUrl } from '../../../../lib/agent-avatar';
 import { formatDuration } from '../../../../lib/format-duration';
 import { useI18n } from '../../../../lib/i18n';
 
-/** A single window's spend vs. cap with a fill bar. 0 cap renders "no cap". */
+/** A single window's tokens vs. limit with a fill bar. A 0 limit renders "∞". */
 function WindowRow({ label, status }: { label: string; status: WindowStatus }) {
-	const unlimited = status.limitCents === 0;
+	const { formatCompact } = useI18n();
+	const unlimited = status.limitTokens === 0;
 	return (
 		<div className="flex flex-col gap-1">
 			<div className="flex items-center justify-between text-[13px]">
 				<span className="text-text-2">{label}</span>
 				<span className={`font-mono ${status.overBudget ? 'text-danger' : 'text-text-1'}`}>
-					{dollars(status.spentCents)}
+					{formatCompact(status.usedTokens)}
 					{unlimited ? (
 						<span className="text-text-3"> / ∞</span>
 					) : (
-						<span className="text-text-3"> / {dollars(status.limitCents)}</span>
+						<span className="text-text-3"> / {formatCompact(status.limitTokens)}</span>
 					)}
 				</span>
 			</div>
-			{!unlimited && <BudgetBar used={status.spentCents} total={status.limitCents} />}
+			{!unlimited && <BudgetBar used={status.usedTokens} total={status.limitTokens} />}
 		</div>
 	);
 }
 
 function WindowGrid({ status }: { status: EntityBudgetStatus }) {
+	const { t } = useI18n();
 	return (
 		<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-			<WindowRow label="Today" status={status.daily} />
-			<WindowRow label="This week" status={status.weekly} />
-			<WindowRow label="This month" status={status.monthly} />
+			<WindowRow label={t('budget.usage.today')} status={status.daily} />
+			<WindowRow label={t('budget.usage.thisWeek')} status={status.weekly} />
+			<WindowRow label={t('budget.usage.thisMonth')} status={status.monthly} />
 		</div>
 	);
 }
@@ -69,42 +65,37 @@ function WindowGrid({ status }: { status: EntityBudgetStatus }) {
 /** A NULL adapter config (manual entries, historical rows) groups under one label. */
 const UNATTRIBUTED_KEY = 'unattributed';
 
-/**
- * These two already spend their stack on the breakdown they exist for, so each
- * cell carries the day's whole figure. The note above the charts says how much
- * of it nobody was billed for.
- */
-function toAgentCells(points: AgentDailyCostPoint[] | undefined): SeriesCell[] {
+/** These two spend their stack on the breakdown they exist for, so each cell is the day's total. */
+function toAgentCells(points: AgentDailyUsagePoint[] | undefined): SeriesCell[] {
 	return (points ?? []).map((p) => ({
 		bucket: p.day,
 		seriesKey: p.agent_id,
 		seriesLabel: agentDisplayName({ human_name: p.agent_name, title: p.agent_title }),
-		value: p.total_cents + p.notional_cents,
+		value: p.total_tokens,
 	}));
 }
 
-function toAdapterCells(points: AdapterDailyCostPoint[] | undefined): SeriesCell[] {
+function toAdapterCells(
+	points: AdapterDailyUsagePoint[] | undefined,
+	unattributed: string,
+): SeriesCell[] {
 	return (points ?? []).map((p) => ({
 		bucket: p.day,
 		seriesKey: p.ai_provider_config_id ?? UNATTRIBUTED_KEY,
-		seriesLabel: p.adapter_label ?? p.provider ?? 'Unattributed',
-		value: p.total_cents + p.notional_cents,
+		seriesLabel: p.adapter_label ?? p.provider ?? unattributed,
+		value: p.total_tokens,
 	}));
 }
 
 function BudgetPage() {
-	const { t, formatMoney } = useI18n();
+	const { t, formatCompact } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: status } = useBudgetStatus(projectId);
-	// Shares the per-day query the project chart already issues; read here only
-	// for its all-time unbilled total, which the note below the header reports.
-	const { data: costSeries } = useDailyCostSeries(projectId);
-	const notionalCents = costSeries?.notional_cents ?? 0;
-	const { data: agentSeries, isLoading: agentLoading } = useAgentDailyCostSeries(projectId);
-	const { data: adapterSeries, isLoading: adapterLoading } = useAdapterDailyCostSeries(projectId);
+	const { data: agentSeries, isLoading: agentLoading } = useAgentDailyUsageSeries(projectId);
+	const { data: adapterSeries, isLoading: adapterLoading } = useAdapterDailyUsageSeries(projectId);
 	// Per-agent run time, folded into the cards below rather than given a panel of
 	// its own. It answers "how long was this agent working", which sits naturally
-	// beside its spend - while "hours" on its own tab means container uptime, the
+	// beside its tokens - while "hours" on its own tab means container uptime, the
 	// figure that is actually billed. One word, one meaning per surface.
 	const { data: hours } = useAgentHours(projectId, HoursBucket.Month);
 	const monthSecondsByAgent = new Map(
@@ -119,43 +110,31 @@ function BudgetPage() {
 			<section>
 				<SectionHeader
 					icon={BarChart3}
-					title="Spend over time"
-					description="Daily project spend, and the same totals split by agent and by AI adapter."
+					title={t('budget.page.overTime.title')}
+					description={t('budget.page.overTime.description')}
 				/>
 				<div className="flex flex-col gap-4">
-					{notionalCents > 0 && (
-						<div
-							className="flex items-start gap-2.5 rounded-lg border border-border bg-surface p-4 shadow-xs"
-							data-testid="notional-spend-note"
-						>
-							<Info className="mt-0.5 h-4 w-4 shrink-0 text-text-3" aria-hidden />
-							<p className="text-[13px] text-text-2">
-								{t('cost.notional.included', { amount: formatMoney(notionalCents) })}{' '}
-								{t('cost.notional.explainer')}
-							</p>
-						</div>
-					)}
-					<BudgetCharts projectId={projectId} title="Project spend per day" />
+					<BudgetCharts projectId={projectId} title={t('budget.page.chart.project')} />
 					<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 						<StackedSeriesChart
-							title="Spend per day by agent"
+							title={t('budget.page.chart.byAgent')}
 							cells={toAgentCells(agentSeries?.summary)}
 							isLoading={agentLoading}
-							toDisplay={centsToPlottedDollars}
-							formatValue={plottedDollars}
+							toDisplay={(tokens) => tokens}
+							formatValue={formatCompact}
 							formatBucket={formatDay}
-							emptyText="No spend recorded."
-							testId="stacked-spend-chart"
+							emptyText={t('budget.usage.chart.empty')}
+							testId="stacked-usage-chart"
 						/>
 						<StackedSeriesChart
-							title="Spend per day by AI adapter"
-							cells={toAdapterCells(adapterSeries?.summary)}
+							title={t('budget.page.chart.byAdapter')}
+							cells={toAdapterCells(adapterSeries?.summary, t('budget.page.unattributed'))}
 							isLoading={adapterLoading}
-							toDisplay={centsToPlottedDollars}
-							formatValue={plottedDollars}
+							toDisplay={(tokens) => tokens}
+							formatValue={formatCompact}
 							formatBucket={formatDay}
-							emptyText="No spend recorded."
-							testId="stacked-spend-chart"
+							emptyText={t('budget.usage.chart.empty')}
+							testId="stacked-usage-chart"
 						/>
 					</div>
 				</div>
@@ -165,12 +144,12 @@ function BudgetPage() {
 				<section>
 					<SectionHeader
 						icon={Users}
-						title="Agent budgets"
-						description="Each agent's spend against its own per-window caps."
+						title={t('budget.page.agents.title')}
+						description={t('budget.page.agents.description')}
 					/>
 					{status.agents.length === 0 ? (
 						<div className="rounded-lg border border-border bg-surface p-4 shadow-xs">
-							<p className="text-[13px] text-text-3">No agents yet.</p>
+							<p className="text-[13px] text-text-3">{t('budget.page.agents.empty')}</p>
 						</div>
 					) : (
 						<div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -203,13 +182,15 @@ function BudgetPage() {
 											/>
 										</div>
 										<div className="flex shrink-0 items-center gap-2">
-											{agent.agent_over_budget && <Badge color="danger">Over budget</Badge>}
+											{agent.agent_over_budget && (
+												<Badge color="danger">{t('budget.page.agents.overBudget')}</Badge>
+											)}
 											<Link
 												to="/projects/$projectId/agents/$agentId/settings"
 												params={agentPageParams(projectId, agent.agent_slug)}
 												hash="budget"
-												aria-label={`Edit ${agentLabel(agent)} budget`}
-												title="Edit budget"
+												aria-label={t('budget.page.agents.editFor', { agent: agentLabel(agent) })}
+												title={t('budget.page.agents.edit')}
 												data-testid={`edit-agent-budget-${agent.agent_slug}`}
 												className="rounded-sm p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text-1"
 											>

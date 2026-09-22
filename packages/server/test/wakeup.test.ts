@@ -101,6 +101,38 @@ describe('wakeup service', () => {
 		expect(queued.rows[0].coalesced_count).toBeGreaterThanOrEqual(1);
 	});
 
+	it("drops a person's Run now stamp when an agent run coalesces into the row", async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const id = await createWakeup(db, agentId, teamId, 'mention', { task_id: 'pressed-task' });
+		// The admin presses Run now on the queued row; the dispatch declines (the task
+		// is busy) and the stamp stays on it.
+		await db.query(
+			`UPDATE agent_wakeup_requests SET payload = payload || $2::jsonb WHERE id = $1`,
+			[id, JSON.stringify({ triggered_by: { name: 'Admin', user_id: randomUUID() } })],
+		);
+
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status, now()) RETURNING id`,
+			[teamId, agentId],
+		);
+		await createWakeup(
+			db,
+			agentId,
+			teamId,
+			'mention',
+			{ task_id: 'pressed-task' },
+			undefined,
+			run.rows[0].id,
+		);
+
+		const row = await db.query<{ payload: Record<string, unknown> }>(
+			'SELECT payload FROM agent_wakeup_requests WHERE id = $1',
+			[id],
+		);
+		expect(row.rows[0].payload.triggered_by).toBeUndefined();
+	});
+
 	it('promotes the merged source when an exempt trigger lands on a suppressible wakeup', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 

@@ -62,14 +62,14 @@ tree:
 packages/
 ├── server/   # Hono + PGlite + MCP backend; compiles to the binary (embeds web)
 ├── web/      # React frontend, bundled into the server binary at build time
-├── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+├── shared/   # Shared enums, types, crypto, budget math, mention parsing (@hezo/shared)
 └── ui/       # The primitives more than one app draws with (@hezo/ui)
 agents/       # Agent system-prompt markdown — the source of truth for seeded roles
 ```
 
 - **`packages/shared`** (`@hezo/shared`) is the home of every cross-cutting enum and
   type (`src/types/common.ts`), the provider→runtime maps, BIP39/HKDF crypto helpers,
-  budget/pricing math, and mention parsing. Add new status/type values here first —
+  budget math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
   dialog and confirmation, the button, input, textarea, toggle and password field, the
@@ -500,7 +500,7 @@ not the assignee's own ask, `parkedOnAdminAsk` does not park anything for it —
 `retrospectiveHoldActive` suppression below does.
 
 **The Coach's missed-review sweep.** A task closing wakes the Coach with the task named
-(`COACH_REVIEW_TRIGGER`), and that wakeup can be lost. Nothing else picks the task up afterwards:
+(`COACH_REVIEW_TRIGGER`), except a team coherence review, and that wakeup can be lost. Nothing else picks the task up afterwards:
 the Coach is never an assignee, so the assignment-based selection every other agent uses cannot see
 it. On the Coach's heartbeat, `selectMissedReviewTask` finds a recently closed task with no run by
 the Coach against it and synthesizes the same trigger, so the recovered run is the run the lost
@@ -743,53 +743,89 @@ become separate conversations with no extra handling.
 
 ### Costs, budgets & container hours
 
-**Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
-the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
-per-model token rates from a single source: the pricepertoken.com MCP catalog
-(`get_all_models` over raw JSON-RPC), fetched at boot and daily by the job manager and
-upserted as `source='pricepertoken'`; a migration bakes a catalog snapshot into the
-table so a fresh instance prices runs before its first fetch, and `source='manual'`
-operator overrides win at lookup. The catalog carries no cache rates, so they are
-**derived from each row's own input rate** via `CACHE_RATE_MULTIPLIERS`
-(`services/pricing/pricepertoken.ts`), keyed by the catalog's `author_name`:
-Anthropic reads at 0.1x input and writes at 1.25x (the default 5-minute TTL).
-Deriving rather than baking absolute figures keeps cache rates correct when a base
-price moves and covers models released after the table ships. An author with no
-known multipliers keeps NULL rates and still bills cache traffic at the full input
-rate - a conservative upper bound, and the honest answer until that provider's
-multipliers are verified.
+**Usage & budgets.** `usage_entries` is the immutable per-run and per-chat-turn token ledger:
+`input_tokens` (cache included) and `output_tokens`, attributed to the member, task, project
+and the AI provider config that did the work - **never** team-scoped. Budgets count its sum,
+input plus output, for **every** run whatever its credential; Hezo holds no price list, so
+nothing depends on a rate it would have to guess. The old dollar path is gone with migration
+081: `model_pricing`, the pricing service and refresher, the `billed`/notional split, every
+`*_cents` column, and `jobs.pricingRefreshCron` (a config file still setting it is refused at
+startup by `REJECTED_KEYS`). It had two faults the token path cannot have: a subscription run
+was recorded as notional and reached no budget, and a model missing from the price list
+priced to $0, so an instance could spend a provider allowance with every budget reading zero.
 
-**The split behind a cost is persisted, not just priced.** Every parser normalizes its
-runtime's buckets to `CostTokens` before pricing, and `toRunUsage` (`agent-stream-parser.ts`)
-is the single place that turns those into an `AgentRunUsage`: it carries the buckets
-through on `usage.buckets` and derives `inputTokens` as their sum. Both halves land on
-`heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens` alongside the existing
-`input_tokens` - on the mid-run flush as well as at completion, so a run killed
-mid-flight keeps an auditable cost rather than a bare total. **Watch the two conventions:**
-`heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including cache, while
-`CostTokens.inputTokens` is the UNCACHED remainder, because that is the portion billed at
-the full rate. Deriving the total in one helper is what made Antigravity's reporting
-consistent with the rest: its buckets are disjoint, so reporting its stated `input_tokens`
-had been excluding cache reads from both the column and the log line, alone among the
-runtimes. Budgets are **windowed and computed on
-demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
-`projects` (0 = unlimited; there is **no team budget**), and spend is summed from
-`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
-mid-flight never reaches the run-completion cost record, so `reconcileOnStartup` charges
-its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
-interrupted run still counts against budgets.
+**The split behind a total is persisted.** Every parser normalizes its runtime's buckets to
+`TokenBuckets`, and `toRunUsage` (`agent-stream-parser.ts`) is the single place that turns those
+into an `AgentRunUsage`: it carries the buckets on `usage.buckets` and derives `inputTokens` as
+their sum. Both halves land on `heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens`
+alongside `input_tokens` - on the mid-run flush as well as at completion. **Watch the two
+conventions:** `heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including
+cache, while `TokenBuckets.inputTokens` is the UNCACHED remainder. `heartbeat_runs.model`
+records the model that did the work. Budgets are **windowed and computed on demand**: limits
+live as `daily_/weekly_/monthly_budget_tokens` on `member_agents` and `projects` (0 = unlimited;
+there is **no team budget**), and usage is summed from `usage_entries` over UTC calendar windows
+through `services/budget.ts` - no counter, no reset event (§ 5). The windows truncate with the
+`utcWindowStartSql` (`lib/sql.ts`), which truncates the UTC wall clock and reads it back as
+UTC, so the session time zone never shifts them and no server above the supported PostgreSQL
+floor is required; every
+sum is bounded below by `USAGE_WINDOW_FLOOR_SQL`: the start of the longer window, or the
+`budget_usage_counted_from` instant 081 records, whichever is later. Budgets count usage from the
+upgrade on; earlier usage stays in the ledger for the charts. The dispatch gate
+(`checkOverBudget`) reads an entity's limits first and skips the sums when all three are 0. The REST read is `/usage` and its
+tool twin `get_usage`; the grouped shapes are bounded by the roster or page by day, and the
+ungrouped read returns totals over every entry plus one keyset page of the entries themselves.
+A run killed mid-flight never
+reaches the completion record, so `reconcileOnStartup` counts its surviving token snapshot on
+reboot (shared `recordRunUsageAndEnforce`). A run drained at shutdown is handed back rather than
+failed, and `finalizeRequeue` records what it used, flagged partial, before the work returns
+to the queue. A budget pause posts a `budget_paused` notice through `postAdminNotice` on the
+run's task, or its project's planning task (`PLANNING_TASK_LABEL`) for a task-less run, on the
+task's own team, once per agent, scope and window: `member_agents.budget_notice_keys` records
+the window each scope's last notice covered, claimed by a conditional UPDATE, so the CEO's and
+the Coach's project-scoped pause, which the resume sweep lifts and the next dispatch sets
+again, tells the admin once - and an agent that trips its own budget in between does not erase
+the record of the project's.
 
-**There is no mid-run *cost* ceiling, and that is a known gap.** Budgets are evaluated before
-dispatch and again at run completion, so a single run can overshoot its agent's whole daily
-cap by an unbounded margin; the overshoot is only discovered when its cost row lands, and
-what it clamps is the *next* run. A cost-denominated ceiling still needs a throttled read of
-the remaining window (`cost_entries` is only written at completion) and a token backstop,
-because the local providers price to $0 and a subscription prices to a figure nobody is
-billed for, so a cost-only ceiling would never fire on either.
+**Migration 081 converts, it never resets.** It prices the instance's last 30 days of runs
+from `model_pricing` with a frozen copy of the service's lookup (exact, normalized, then
+segment-aligned prefix), converts every non-zero dollar budget (agents, projects, custom agent
+types, team-type overrides, and the budgets inside hire approvals and their cards) at that
+tokens-per-cent rate, falling back to one million tokens per dollar with no priced history, and
+raises each converted trio to the window floors (a frozen copy of the shared rules), so
+rounding each window alone never leaves one the editor refuses. Hire proposal budgets are
+converted in JS: an agent wrote them, so a string, a boolean or an absurd number becomes
+unlimited and is listed, rather than failing the cast and blocking startup. It rebuilds
+`usage_entries` from finished `heartbeat_runs` (reconciliation records a run left running) and
+from `chat_messages` for the history, records `budget_usage_counted_from`, adds
+`task_comments.chosen_by_user_id`, and records the conversions in `system_meta`, each line with
+its scope and the project or team type that tells two lines with one name apart. The first boot
+posts them as one `budget_conversion` notice on an unassigned HQ task, deleting the record in
+the same transaction. Built-in agent types are re-seeded every boot, so their token defaults
+come from `seed.ts`, not from the conversion: every one is 0, since the per-run and per-task
+ceilings bound runaway work. Every budget write runs `budgetWriteError`
+(`lib/budget-validation.ts`): a `*_budget_cents` field is refused by name
+(`retiredBudgetFieldError`), and the trio a write leaves, merged over the stored one, must be
+whole, non-negative and coherent. The hire paths reach it through `prepareHireProposal` and
+`prepareHirePayloadPatch`, so the admin's REST edit and the Captain's `update_hire_proposal`
+check a revision as the create path checks a proposal. The MCP SDK strips an undeclared
+argument before the handler, so the hire tools declare the retired fields
+(`retiredBudgetArgs`) for the refusal to see them. The marketplace parser accepts a retired
+field only at 0, the value it is still published with.
 
-**What does bound a single run is `runs.maxToolCalls` (default 600), plus wall-clock
-`run_timeout_min`.** Tool calls rather than dollars because that is what actually grows the
-cost: every tool result stays in the conversation and is re-sent on the next call, so a run's
+**A run and a task each have a token ceiling.** `RUN_TOKEN_CEILING` (30M, `agent-runner.ts`)
+stops a run the way the tool-call ceiling does, off the usage the run has reported so far: the
+parser's running usage, checked on every chunk, or for a runtime whose stream carries none until
+its end (Codex, Grok, Kimi Code) its usage file, read through the adapter's
+`offStreamUsage.read` every `OFF_STREAM_USAGE_POLL_MS` (60 s). It never stops a run once the
+parser's `hasEnded()` is true: the terminal event is where an end-reporting runtime first reports
+usage, and the work is done by then. Claude Code's running usage is counted once per message id,
+since the CLI restates a message's usage on every content-block event. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
+dispatch suppression: the tokens of every run on the task since the admin last spoke
+(`adminSpokeAtSql`), held for every agent until the admin speaks, with one `task_token_ceiling`
+notice per hold.
+
+**What else bounds a single run is `runs.maxToolCalls` (default 600), plus wall-clock
+`run_timeout_min`.** Tool calls because they are what grows the tokens: every tool result stays in the conversation and is re-sent on the next call, so a run's
 token spend grows with the square of its length, and past a few hundred calls a run is mostly
 re-reading its own context. Enforced in `onChunk` off `parser.getToolCallTotal()` - the runner,
 not the MCP tool wrapper, because the tally counts *every* tool the runtime reports including
@@ -801,7 +837,7 @@ Every runtime's parser carries a tally, so there is no backend the ceiling silen
 **And what bounds a *task* is the attempt count**, since a ceiling or a timeout on its own just
 produces the next attempt. See the dispatch suppressions.
 
-**Container hours are metered separately from spend, and answer the other bill.**
+**Container hours are metered separately from tokens, and answer the other bill.**
 `container_uptime_entries` (migration 071) records **one row per running stretch**, not
 per container lifetime: a managed backend bills a started sandbox for vCPU + RAM + disk
 and a stopped one for reserved disk only, so a suspend/resume cycle is two rows with a
@@ -953,7 +989,7 @@ rendered like a task comment; `buildDocVersionHistory`
 that *produced* it (a one-step shift, since revisions snapshot prior content), so the current
 head's changelog is the newest revision's `change_summary`. Selecting an older revision renders it
 read-only with the review layer suppressed — review comments exist only for the latest content —
-under a "viewing revision N" banner. Restore stays admin-only (agents 403 on the REST route; no
+under a "viewing revision N" banner. Restore stays admin-only (REST refuses agent run tokens, § 10; no
 MCP restore tool). `skills` is the reusable-know-how reference store
 (manifest-injected into runs, full-text-searchable) with `skill_revisions` history. One skill
 is **virtual**: the read-only `connector-recipes` skill is rendered from the bundled connector
@@ -1094,17 +1130,17 @@ transaction that does the write and return a `status: 'archived'` discriminant i
 writing, so there is no check-then-write race and a new caller inherits the refusal (this
 is what closed the approved-`update_prd` handler and `restoreRevision`, which previously had
 no check at all). Callers map that status to their own surface error — 409 `ASSET_ARCHIVED`
-/ 409 `CONFLICT` on REST, an "unarchive it first" string on MCP — and the write paths keep a
-cheap pre-flight (`archivedAssetHolderId`, `isDocumentArchived`) so a 10 MB blob (possibly an
-S3 PUT) isn't spent on a doomed call. Beyond content writes, `PATCH …/assets/:assetId
+/ 409 `CONFLICT` on REST, an "unarchive it first" string on MCP — and the asset write paths keep a
+cheap pre-flight (`archivedAssetHolderId`) so a 10 MB blob (possibly an S3 PUT) isn't spent
+on a doomed call. Beyond content writes, `PATCH …/assets/:assetId
 { folder }` refuses an archived asset (409 `ASSET_ARCHIVED`, matching `move_project_asset`,
 whose client-side counterpart is the hidden Move action on archived cards),
 `move_project_asset`/`copy_project_asset` refuse an archived source, asset review mutations
 403, and `read_project_asset`'s width/height self-heal reports the parsed dimensions but
-skips the `UPDATE` on an archived row. **Hard deletion is human/admin-only** (agents get 403 on both
-DELETE routes; in the UI Delete only appears on archived items — a deliberate two-step).
+skips the `UPDATE` on an archived row. **Hard deletion is human/admin-only** (both DELETE routes are REST,
+which refuses agent run tokens, § 10; in the UI Delete only appears on archived items — a deliberate two-step).
 The legacy `request_asset_deletion` tool is gone, but its resolve endpoint
-(`POST …/comments/:commentId/resolve-asset-deletion`, agents 403) and comment renderer
+(`POST …/comments/:commentId/resolve-asset-deletion`, REST only) and comment renderer
 remain so pending `asset_deletion_request` cards from older instances stay resolvable —
 approve deletes rows + blobs server-side, deny keeps everything, both wake the requester
 (`asset_deletion_resolved`). `asset.created`, `asset.archived`, `asset.deletion_requested`,
@@ -1382,8 +1418,8 @@ so a manual/already-set title is never clobbered) and broadcasts `ChatConversati
 title run is in flight per thread at a time (`ConversationRuntime.titling`); a new turn or a close
 preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it.
 
-**Chat spend is metered like a run's.** Every chat exec — the reply turn, compaction, the
-auto-title run — bills its parser usage to `cost_entries` via `recordRunCost` (member = the
+**Chat usage is metered like a run's.** Every chat exec — the reply turn, compaction, the
+auto-title run — records its parser usage in `usage_entries` via `recordUsage` (member = the
 session's agent, project = its project, `task_id` NULL, descriptions `Chat turn` /
 `Chat memory compaction` / `Chat auto-title`), broadcast to the team room so the Budget page
 refreshes live. `sendTurn` gates **before** the turn: the operator's message persists first
@@ -2553,8 +2589,8 @@ harmless while a queued chat turn is a person watching a spinner, so however bus
 tasks are, one container's worth of budget is always reachable by chat and never by
 them. Holding the lane back from task admission rather than excluding chat from the
 count keeps task-run capacity a **stable** number (opening the chat never silently
-shrinks the fleet mid-flight) and makes chat spend visible where every other spend is:
-the Hours tab, the memory arithmetic, `cost_entries`.
+shrinks the fleet mid-flight) and makes chat usage visible where every other usage is:
+the Hours tab, the memory arithmetic, `usage_entries`.
 
 **The lane is taken at the point of use, not baked into the default.** Subtracting a
 container's worth inside `computeDefaultMaxContainerMemoryGb` holds a lane only for an
@@ -2582,9 +2618,8 @@ still-held container, and gives everything back.
 **One turn pipeline** (`runChatTurn`): the CEO's turns and a worker DM's share the
 `TurnSession` shape, so `runTurn`, compaction, prompt composition, the credential lock,
 the no-wake check (per acting member) and cost recording never ask which kind they
-serve. What differs rides on `kind`: the CEO resolves the docs-embedded prompt and
-`AgentEffort.Max` with a cross-project/cross-team JWT; a worker gets the chat-slim
-prompt, its configured effort, and a 24h JWT with `cross_project/cross_team` false,
+serve. What differs rides on `kind`: the CEO resolves the docs-embedded prompt with a
+cross-project/cross-team JWT; a worker gets the chat-slim prompt and a 24h JWT with `cross_project/cross_team` false,
 asserted at mint against team membership + `admin_status = 'enabled'`. Between turns
 only the `chat_sessions` row survives (one non-terminal row per member, the singleton
 index). The DM stream is one open web conversation per (member, project), created
@@ -2595,7 +2630,7 @@ resolve on the
 `CHAT_SHARED_INSTRUCTIONS` replaces the ~80 KB task-run block, the run manifest, the
 repository block and the container-environment block are dropped, and Project
 State/Team/Teammates stay; effort is the agent's configured default via `resolveEffort`
-(Captain/CEO stay Max). Boundary events for a project DM fan to `chat:team:<teamUuid>`
+for every agent, the CEO included (seeded at max, like the Captain; no override forces it). Boundary events for a project DM fan to `chat:team:<teamUuid>`
 (gated `canAccessTeam`, resolved through the manager's per-conversation scope map) instead
 of `chat:global`, which stays HQ/CEO-only; deltas stream only on the per-conversation room
 either way. That team copy is list-shaped - `content` sliced to
@@ -2868,9 +2903,22 @@ in-progress flip and would report "changed" on the quietest run. **Answering a c
 writes no row** - it sets `chosen_option` on the card already there - so `chosen_at`
 (stamped by a trigger, migration 074) is read alongside `created_at`; without it the one
 event that most conclusively ends a wait was the one event neither suppression could see.
-Conversational sources (`mention`, `comment`, `reply`, `on_demand`, `credential_provided`,
-`asset_deletion_resolved`, `approval_resolved`) are exempt: each is somebody asking for
-something the last pass could not have served. A suppressed wakeup is marked `completed` with
+**Which wakeups are exempt** is decided once per dispatch by `dispatchSuppressionExempt` and
+passed to every predicate. An operator override (`payload.triggered_by`, stamped by Run now and
+Retry on whatever source the row has) is exempt, and so are `on_demand`, `credential_provided`,
+`asset_deletion_resolved` and `approval_resolved`: each is a person asking for something the
+last pass could not have served. A conversational wakeup (`mention`, `comment`, `reply`) is
+exempt only when no agent run raised it (`created_by_run_id IS NULL`) or when a person has
+spoken on the task since this agent last ran there (an `author_user_id` comment, or a
+`chosen_at`). A coalesce keeps the first agent's attribution through later triggers, so an
+attributed row may still carry a person's words and the thread settles it. Before this rule an
+agent's mention skipped every hold, which is how two agents kept one task going for a day
+under a retrospective hold. The exemption has two halves (`SuppressionExemption`): `byPerson`,
+above, skips the soft holds; `byAdmin` skips the two hard stops (the handoff limit and the task
+token ceiling) and holds only for the admin's own input - their Run now or Retry
+(`adminTriggeredSql`: a null actor member, meaning a superuser or an API key, or a team admin's
+membership), or a comment or card answer by the admin since this agent last ran. A teammate who
+is not an admin answers the soft holds, never the hard stops, because the notice asked the admin. A suppressed wakeup is marked `completed` with
 `last_skipped_reason = no_work_cooldown` - answered, not re-queued to ask again, and not left
 dangling in `claimed`. The skip is logged at `warn` for every source but `heartbeat` and
 `timer`: on those two it is the backoff working, on anything else it means something asked
@@ -2889,8 +2937,8 @@ applies - and nobody but this agent has commented since, `chosen_at` counting as
 speaking whoever authored the card. The agent's own later comments are excluded: chasing its
 own question is not an answer to it. Unlike the no-work backoff it is
 **unbounded in time**, because a question addressed to a person goes stale only when they
-answer; the same exempt sources carry every form that answer can take, and `on_demand` ("Run
-now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
+answer; a person's answer is an exempt wakeup whatever form it takes, a teammate's comment
+lifts the park by itself, and `on_demand` ("Run now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
 parks the task, including one inside a routine status update. It is marked `completed` with
 `last_skipped_reason = parked_on_admin`. Kept a sibling predicate rather than folded into the
 same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
@@ -2923,9 +2971,59 @@ nothing, and watch the loop it named run for another week. `retrospectiveHoldAct
 (`services/no-work-backoff.ts`) holds while a comment authored by a `retrospective` run stands on
 the task with no `author_user_id` comment after it. The author's run kind is the whole condition:
 no label, no column, nothing another path must remember to set. Like the attempts bound it is never
-logged quietly - parking a task is a standing state - and the shared exempt sources lift it, so a
-mention, a reply or "Run now" always gets through. Marked with
+logged quietly - parking a task is a standing state - and an exempt wakeup gets through, so a
+person's mention or reply, or "Run now", always does. A teammate's mention does not. Marked with
 `last_skipped_reason = retrospective_hold`.
+
+**The handoff limit.** The fifth applied after task resolution, and the one that bounds a loop of
+*successful* runs, which every other bound misses because each keys on a failure signal.
+`loadTaskSpend` + `handoffHold` (`services/no-work-backoff.ts`) read the task's newest runs through
+`idx_runs_task_started` and counts, by distinct wakeup, the consecutive ones whose wakeup is
+conversational, has `created_by_run_id` set and carries no admin `triggered_by`. A handed-back
+run is skipped; the count restarts at a run anything else started and whenever the admin speaks
+(`adminSpokeAtSql`). At `HANDOFF_ROUND_LIMIT` (8) the task is held for every agent and every
+source the admin has not answered until the admin speaks, since `parkedOnAdminAsk` lifts on the
+other agent's reply and a teammate who is not an admin was not the one asked. A held dispatch
+posts a `handoff_limit` system comment through `postAdminNotice` with `unlessPostedSince` (the
+newest round's start), naming the agents, the rounds and their tokens: the check and the insert
+run under a transaction lock on the task and kind, and the comment and its inbox rows commit
+together, so concurrent dispatches post one notice and a notice never stands without its inbox
+row. Notices go on the task's team, not the agent's (the CEO and the Coach wake in HQ). Never
+logged quietly. Marked with `last_skipped_reason = handoff_rounds_exhausted`.
+
+**Who the admin is, and who acted.** `isAdminUserSql` (`lib/admin-sql.ts`) is the one
+definition: a superuser, or a member of the team whose role is admin. `fireAdminMention` sends
+to exactly those users, and the holds' speaker predicates (`no-work-backoff.ts`) count a comment
+by one of them or by an API key (admin-equivalent), and a card whose `chosen_by_user_id` is one.
+A card answered before this release carries `chosen_at` and no answerer, and the release that
+wrote it counted every such answer as a person's word, so anything before the
+`choice_attribution_from` instant migration 081 records still reads that way - otherwise an
+upgrade would re-hold a task its admin had already released. The same holds for an operator
+stamp of the old `{member_id, name}` shape, which only a wakeup queued across the upgrade can
+carry. An admin's word - a comment, or a card they answer - also wakes the held task's assignee
+(`resumeHeldTaskOnAdminReply`), because a reply to a system notice addresses nobody.
+Every path that settles a card or an approval records who did: the card-answering routes stamp
+`chosen_by_user_id`, `resolveApproval` stamps `approvals.resolved_by_user_id`/`_api_key_id`, and
+the wakeup it raises carries `decided_by`; operator controls stamp `triggered_by.user_id` or
+`api_key_id` (`actingPersonFromAuth`). An agent or the system acting leaves them null, so an
+approval an agent resolved, or a card the system settled, lifts no hold that waits on a person.
+`dispatchSuppressionExempt` judges an override by `triggered_by`, a decision by `decided_by`,
+and a conversational wakeup, or a decision row an agent's mention was folded into, by whether
+a person (the admin, for the hard stops) spoke since the agent's last run that was not handed
+back. The Coach's review of a finished task (`COACH_REVIEW_TRIGGER`) skips every hold.
+
+**The admin's reply resumes a held task.** A reply to a system notice addresses nobody, so
+`fireCommentWakeups` checks a comment by the admin (or an API key) against the task's hold
+notices (`ADMIN_HOLD_NOTICE_KINDS`): when one is newer than the admin's previous reply, the
+assignee is woken with the reply as a conversational wakeup no agent raised, which that reply
+exempts from both hard stops.
+
+**A heartbeat passes over a held task.** Heartbeat selection considers up to
+`HEARTBEAT_TASK_CANDIDATES` (3) of the agent's tasks in priority order and runs the first that
+is not held, posting each held one's notice on the way, so one held task does not stall the
+agent's other work. A wakeup naming a task still sees only that task. `activateAgent` returns
+the hold it met, so `dispatchWakeupNow` reports a Run now that a hold refused as `held` rather
+than as a run.
 
 **The provider-refusal hold.** The last suppression, and the only one applied *before*
 the claim rather than after task resolution. A handback after a provider refusal writes
@@ -2942,7 +3040,10 @@ keeps its queued badge throughout. A handback with no clock of its own writes `n
 NULL`, so capacity work never inherits an earlier usage hold. Unlike the three above it has
 **no exempt sources** - a human's mention or reply cannot change the provider's clock, so
 dispatching for one would be refused again. `dispatchWakeupNow` selects by id and does not
-apply it, which is the operator's override.
+apply it, which is the operator's override; when such a Run now meets a busy task,
+`markWakeupSkipped` keeps the row's `provider_usage_limit` reason so it stays in the paced
+release. The scheduled heartbeat claims the wakeup it created by id, and leaves alone a queued
+row it coalesced onto that is still waiting out its hold.
 
 **The container-start fan-out.** `provisionContainer` ends by nudging the project's agents
 (`wakeAgentsWithPendingWork`) so work queued while the container was still coming up starts
@@ -3152,11 +3253,16 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   is claimed. Compared against the hold read before the wait, so the probe's own window does
   not hold the probe.
 - **A turn lifts it.** A run that started under a hold (the probe, or one a person asked
-  for) and got a turn calls `liftUsageHold`, which clears the column and releases every
-  wakeup held on `provider_usage_limit` through `releaseUsageHeldWakeups`. A wakeup does not
-  record its credential, so wakeups held on another credential are released too and meet
-  their own hold again at the pre-row check. Replacing the credential through the PATCH route
-  clears the hold in `updateAiProviderConfig` and releases the same way.
+  for) and got a turn calls `liftUsageHold`, which clears the column and releases the
+  wakeups held on that credential through `releaseUsageHeldWakeups`. The handback records the
+  credential (`agent_wakeup_requests.held_config_id`, migration 081, cleared on claim), so a
+  wakeup held on another credential stays held. The release is paced: oldest first,
+  `USAGE_HOLD_RELEASE_SPACING_SEC` (30) apart, so if the allowance is not really back the
+  first refusal renews the hold and the wakeups still waiting meet it before claiming a
+  container. A wakeup handed back before 081 has no credential and is released by any lift.
+  Replacing the credential through the PATCH route clears the hold in
+  `updateAiProviderConfig` and releases the same way. Pacing slows the restart; the handoff
+  limit and the token ceilings bound the total.
 - **A person bypasses it.** A run whose wakeup payload carries `triggered_by` (Run now,
   Retry) or that has no wakeup (a manual run) skips both checks; its outcome lifts or renews
   the hold.
@@ -3344,8 +3450,10 @@ session line carries `tools=N`. Codex's `thread.started` carries only a thread i
 Antigravity's `init` names no count, so their session lines omit the token entirely and the
 viewer hides the count rather than printing a zero nobody measured. Codex names no model
 anywhere in its stream either, so - exactly as for OpenCode - `createAgentStreamParser`
-seeds its parser with the run's own model as a pricing floor, without which every Codex run
-priced at $0. A model named on the stream still wins.
+seeds its parser with the run's own model as a floor, without which no Codex run could say
+which model did its work. A model named on the stream still wins. The file recovery does the
+same for a rollout too large to read whole: its tokens come from the tail, and its model from
+a separate `readHead` of the start, where a single-turn run names it once.
 
 The exec transport itself
 **retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
@@ -3478,7 +3586,10 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 `enqueueTeamCoherenceReviewTask`, passing a `changeSummary` that is recorded on the ticket under a
 "Changes that triggered this review" section (accumulated across coalesced changes), so the reviewer
 knows what changed and why the review was triggered — regardless of who made the change (agent or
-admin).
+admin). The one exception is a change made by a run working that team's coherence review
+(`byRunId` names the calling run): it is part of the review, so it is neither recorded on the
+ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. A finished
+coherence review does not wake the Coach, and the missed-review sweep skips it too.
 
 **Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
 wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
@@ -3489,7 +3600,12 @@ run's log when the comments don't explain a struggle.
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. The block also carries the ticket's **lineage** in both
+`description`, and `progress_summary`. Under the status, `taskUsageLine` states **This task so far**: its started runs, their
+tokens and the current agent-to-agent handoff count (`loadTaskUsageSoFar`, the chain query the
+handoff limit reads), so the `SHARED_INSTRUCTIONS` rule to stop a task that has cost more than it
+is worth has a number to read. Once the admin has replied it also states the part **since the
+admin last replied** (`adminSpokeAtSql`: a comment by an admin or an API key, or a card the
+admin answered), which is the part the rule weighs, so an admin's "carry on" is not asked again next run. The block also carries the ticket's **lineage** in both
 directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
 `**Spawned from:**` provenance line when a run on a different ticket created this one), and
 downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child
@@ -4133,8 +4249,8 @@ signal, and when the parser is built without a provider at all. That is the pred
 consumer, alongside the Stop-hook judge model and the subagent default. Filtering is
 line-oriented, so the wrapper buffers a partial stderr line until its newline, drains it in
 `flush()`, and releases it unfiltered past a 64 KiB ceiling rather than buffering without bound.
-Nothing else rests on the CLI's registry: run cost is priced from `model_pricing` over the
-reported token buckets, never from the CLI's own rate card.
+Nothing else rests on the CLI's registry: a run's usage is the token buckets it reports,
+never the CLI's own dollar estimate.
 
 The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
 for a provider a table row rather than a refactor.
@@ -4182,9 +4298,9 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
   only isolation mechanism available — there is no `--mcp-config`-style flag — and it is also
   what makes the session-log reads below possible.
-- **No token usage on stdout.** Like Grok, the `stream-json` stream carries none, so cost is
-  recovered post-run by `extractKimiUsageFromSessionLog` from the per-session `wire.jsonl`
-  under that home, then priced from `model_pricing` like every other runtime. The runner's
+- **No token usage on stdout.** Like Grok, the `stream-json` stream carries none, so usage
+  is recovered post-run by `extractKimiUsageFromSessionLog` from the per-session `wire.jsonl`
+  under that home. The runner's
   `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
   afterwards (each can carry the provider credential).
 
@@ -4203,8 +4319,8 @@ verification and the live model list (`resolveCatalogEndpoint`, branching on
 operator-supplied token stores the runner's sentinel (`ollama` / `lmstudio`) instead.
 `claudeCodeProviderUsesCustomEndpoint` returns true for them, so the Stop-hook judge and the
 Claude Code subagent default track the run's selected model — the only workable choice, since
-the models an operator has pulled are unknowable here. With no `model_pricing` rows, local
-runs price at `$0`, which for local inference is correct rather than the usual fail-low.
+the models an operator has pulled are unknowable here. Local runs count their tokens like any
+other, so budgets apply to them.
 
 ### Provider config & guided sign-in
 
@@ -4338,8 +4454,8 @@ Add dialog. It owns the lazy catalog fetch (`GET /api/ai-providers/:configId/mod
 on hover intent or on panel open, never on mount - a settings page with several rows would
 otherwise fire a live provider call per row) and builds the option list: the CLI-default
 fallback pinned first, then a stored model the provider no longer lists, then the catalog.
-Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`, so the
-pricing-override suggestions get the same order from the same place. The catalog is only
+Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`. The
+catalog is only
 listable against a stored credential, which is why the Add dialog asks for the model *after*
 the create rather than in the credential form; `POST /api/ai-providers` returns the created
 row (not just its id) so that step has the config without re-reading it.
@@ -4372,8 +4488,7 @@ flow verifies against, normalized by `parseProviderModels` in `@hezo/shared`). N
 is hardcoded. The call is server-initiated and goes **direct** (not through the agent egress
 proxy). Subscription-auth configs short-circuit with `SUBSCRIPTION_UNSUPPORTED` (their blob is
 not an API key the catalog endpoint accepts), and the pickers degrade to the CLI's default
-model; the pricing-override model-id field stays free-text but offers the aggregated live
-catalog as autocomplete suggestions.
+model.
 
 **Pinned starting model.** A newly created config does not start on `NULL`: the create route
 sets `default_model` from that provider's *pin* (`services/model-pins.ts`). A pin names a
@@ -4767,7 +4882,7 @@ only guardrail, on every idle tick.
 
 Three stranded forms are handled, differently:
 (1) an **active `@`-mention** (`extractMentionSlugs`) the run never posted as a comment is
-delivered verbatim via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
+delivered verbatim via `postComment` — the same insert + broadcast + `fireCommentWakeups`
 path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of
 vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
 otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
@@ -4806,7 +4921,7 @@ undelivered.
 where a teammate `@`-mentions a reviewer and the verdict ends up only in the final message. When
 the run was woken by a `WakeupSource.Reply`/`Mention` and posted no comment of its own on the
 task, the final message is delivered verbatim as a reply threaded under the waking comment
-(`postAgentComment` with `parentCommentId`), flipping the no-op run to success. A human/admin
+(`postComment` with `parentCommentId`), flipping the no-op run to success. A human/admin
 author qualifies on either wake source; an **agent** author qualifies only via `Mention`, so
 routine agent-to-agent reply chatter is still excluded. That split is also the loop guard, and it
 is structural rather than heuristic: this branch only runs when the final message carries no
@@ -5927,12 +6042,14 @@ password** while signed in).
   to its own project team, both false, with a 24h TTL re-minted per turn.
 
 By surface: **REST** is the human/browser API (user JWT only). **MCP** accepts the **agent
-JWT** (internal per-run) and the **API key** (external, instance-scoped). The API key is the
-one credential confined to MCP — an external caller can obtain neither a user JWT (needs the
+JWT** (internal per-run, and the chat-session JWT that shares its principal type) and the
+**API key** (external, instance-scoped). The auth middleware refuses both on `/api` from one
+table (`REST_REFUSED_AUTH`), so REST route handlers never see an agent or key principal and
+carry no agent-only branches. An agent run reaches Hezo through `POST /mcp` and the multipart
+upload at `POST /mcp/assets` only. An external caller can obtain neither a user JWT (needs the
 master-key seed) nor an agent JWT (minted only for a server-side run), so an API key is its
-only way in. Although an approved key is admin-equivalent, it never reaches REST: the auth
-middleware rejects `hezo_` tokens on `/api`, so admin-equivalence applies only to its MCP
-surface (and the instance-management MCP tools).
+only way in. Although an approved key is admin-equivalent, admin-equivalence applies only to
+its MCP surface (and the instance-management MCP tools).
 
 **Authorization** (`AGENTS.md` › Route authorization is authoritative). Routes with
 `:projectId` resolve the project → its backing team and verify access **per request** in
@@ -6151,6 +6268,19 @@ derived from the page size, with a shrink loop behind it for the part arithmetic
 `excerpt_chars_applied`. `getCommentsFull` remains the one deliberately unbounded read here -
 no `LIMIT` at all - because the web app needs the whole thread to fold it.
 
+**A write never reports failure after it commits.** The byte cap is a read-side guard: over
+it, a read discards its result and tells the caller to split and retry. Applied to a write,
+the same answer arrives after the row is saved, so the caller repeats a write that already
+happened. That is how one agent posted a 3.9 MB archive as 110 comments, and how an oversized
+`create_tasks` batch was created twice. For a tool registered `write: true` the wrapper
+returns `oversizedWriteAck` instead: `result_truncated: true` and the identifiers of what was
+written. `create_comment` and `update_comment` never return the comment text or `search_tsv`
+(`TASK_COMMENT_ROW_COLUMNS`, `commentWriteAck`), and comment text is capped at
+`COMMENT_TEXT_MAX_CHARS` by one `@hezo/shared` check that the REST route, both tools and the
+web composer call. The runner's handoff-delivery guardrail is the one writer that fits text to
+the cap instead of refusing it (`fitCommentForDelivery`), because the message it delivers would
+otherwise be lost.
+
 **Catch-up has an end.** Each task run's prompt carries the timestamp its previous run on
 that task finished plus how much is new since (one seek on `idx_runs_member_task_finished`,
 added by `061`), and names the exact `list_comments(since: …)` call. Without that an agent was
@@ -6199,9 +6329,8 @@ it needed no migration.
 Three axes rather than one BCP-47 tag: field order and month language are independent (there
 is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
 (`@hezo/shared` › `i18n/format.ts`) builds dates field-by-field from a
-`Record<DateFormat, Descriptor>` table. Money is presentation-only - runs are always priced
-in USD - so `formatMoneyUsd` picks separators via a representative locale with
-`currencyDisplay: 'narrowSymbol'` and never converts.
+`Record<DateFormat, Descriptor>` table. `formatNumber` picks separators via a representative
+locale, and `formatCompactNumber` shortens a token count in the reader's language.
 
 The locale rides on the **public** `/api/status` payload, because every pre-auth screen
 renders in it before a credential exists (the boot-time status handler omits it - no DB is
@@ -6266,9 +6395,9 @@ goals over spend), then the heartbeat history. HQ (`is_internal`) omits the summ
 spend and heartbeat history. Query keys use the route-param slug; WebSocket invalidation
 covers the tables that feed each band.
 
-Spend reads `group_by=day` rather than the ungrouped form: it yields the sparkline series
-*and* `total_cents` in one request, where the ungrouped form returns every `cost_entries`
-row on the project to render one number.
+Usage reads `group_by=day` rather than the ungrouped form: it yields the sparkline series
+*and* `total_tokens` in one request, where the ungrouped form lists usage entries to render
+one number.
 
 The dashboard shows **no per-project container state**. A project does not own a container
 any more (see § Container pool), so `projects.container_status` names only whichever
@@ -6629,8 +6758,8 @@ port immediately, so requests can arrive before the app exists. Until `serverRea
 the entry delegates to `serveStartupRequest` (`startup-serving.ts`): browser navigations and
 static assets are served from the embedded SPA bundle, and `/api/status` answers **200** with
 `{ starting: true, phase, message, detail }` read from a boot-progress singleton
-(`startup-progress.ts`, advanced through `database → migrations → seed → pricing →
-workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
+(`startup-progress.ts`, advanced through `database → migrations → seed → asset-storage →
+sandbox → workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
 current phase and keeps polling, flipping to the master-key gate the moment boot finishes —
 so a browser that connects mid-boot never sees a raw JSON error. Other API/MCP/WebSocket
 surfaces still get a JSON **503 STARTING** so machine clients retry; `/health` always answers 200.
@@ -7031,7 +7160,7 @@ input/output token sums over the last 24h, and the per-provider run mix — plus
 `os`/`arch`. It carries a random per-install id persisted in `system_meta.instance_id`
 (generated lazily via `getOrCreateInstanceId`, `ON CONFLICT DO NOTHING` so it is stable). It
 deliberately excludes every name, prompt/content field, repo detail, user identity, and any
-`cost_cents`/monetary figure. The `JobManager` `telemetry` cron (`jobs.telemetryCron`, default
+usage or monetary figure. The `JobManager` `telemetry` cron (`jobs.telemetryCron`, default
 `0 0 5 * * *`) is registered only when `config.telemetry.enabled` (opt-out — on by default,
 disabled by `--disable-telemetry` / `telemetry.enabled: false`). `reportTelemetry` POSTs the JSON
 to `config.telemetry.endpoint` (default `https://hezo.ai/api/telemetry`) with a direct `fetch` +
@@ -7122,9 +7251,18 @@ project/team; § 10). It also exposes `POST /mcp/assets` (multipart) for binary 
 since JSON-RPC can't carry a file — with optional `project`, `path` (the full destination
 path, folders + basename, up to 2 levels, preserved verbatim — also honoured from the file
 part's `filename=`), `overwrite` (`true` replaces an existing asset at the path in place,
-like `write_project_asset`), and the legacy `folder` field (placing the basename in a
-library folder; ignored when `path` is given). **API keys authenticate the MCP surface only**; REST is
-the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
+like `write_project_asset`), `task` (files the upload under `uploads/<task-identifier>/`, the
+folder a person's comment upload uses, unless `path` is given; a task outside the scope project is
+a `404`), and the legacy `folder` field (placing the basename in a library folder; ignored when
+`path` is given). A successful upload from an agent run marks that run `produced_output`. Agents
+reach it from inside the container through `HEZO_API_URL` with their own `HEZO_AGENT_TOKEN`, and
+hand the result to a teammate by passing its id in `create_comment`'s `attachment_ids`, the same
+field the REST comment route takes. Both check the ids through one ownership check (UUIDs, live
+assets in the task's project, deduplicated, at most `COMMENT_ATTACHMENTS_MAX`), which the chat
+routes share. The run prompt lists the files attached to each comment a handoff quotes, since the
+thread block only back-references a quoted comment. **API keys and agent run tokens authenticate the
+MCP surface only** (an agent run also reaches `/mcp/assets`); REST is the user-JWT (human/browser)
+surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full
 tool-by-tool page with parameters and return shapes — is generated from the same registry

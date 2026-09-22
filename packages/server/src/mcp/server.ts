@@ -1,3 +1,4 @@
+import { AuthType, taskUploadsFolder } from '@hezo/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -23,6 +24,8 @@ import { projectToolsForCaller, type ToolAudience } from './tool-visibility';
 import {
 	authContext,
 	callerOriginContext,
+	findProjectTask,
+	markRunProducedOutput,
 	registerTools,
 	resolveScope,
 	type ToolDef,
@@ -326,17 +329,36 @@ export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 	// instead of being stripped to its basename.
 	const path = pathField ?? (/[/\\]/.test(file.name) ? file.name : undefined);
 	const overwrite = form.overwrite === 'true' || form.overwrite === '1';
+	const taskRef =
+		typeof form.task === 'string' && form.task.trim().length > 0 ? form.task.trim() : undefined;
 
-	const scope = await resolveScope(c.get('db'), auth, { project });
+	const db = c.get('db');
+	const scope = await resolveScope(db, auth, { project });
 	if ('error' in scope) {
 		return c.json({ error: { code: 'FORBIDDEN', message: scope.error } }, 403);
+	}
+	// A `task` files the upload with that task's thread attachments, the same
+	// folder a person's comment upload uses, ready to pass to create_comment.
+	const task = taskRef ? await findProjectTask(db, scope, taskRef) : null;
+	if (task && 'error' in task) {
+		return c.json({ error: { code: 'NOT_FOUND', message: task.error } }, 404);
 	}
 
 	// storeUploadedAsset reads c.get('auth'); /mcp isn't under authMiddleware, so
 	// seed the context from the MCP-authenticated principal.
 	c.set('auth', auth);
-	return storeUploadedAsset(c, scope.teamId, scope.projectId, file as File, null, folder, {
-		path,
-		overwrite,
-	});
+	const res = await storeUploadedAsset(
+		c,
+		scope.teamId,
+		scope.projectId,
+		file as File,
+		task?.id ?? null,
+		task && path === undefined ? taskUploadsFolder(task.identifier) : folder,
+		{ path, overwrite },
+	);
+	// An upload is a write like any other: the run that made it produced output.
+	if (res.status === 201 && auth.type === AuthType.Agent && auth.runId) {
+		await markRunProducedOutput(db, auth.runId);
+	}
+	return res;
 }

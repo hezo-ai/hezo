@@ -151,7 +151,6 @@ only when you have a reason to.
 | `jobs.budgetResumeCron` | `*/30 * * * * *` | Re-evaluation of budget-paused agents, so a rolling window that has rolled over frees them. |
 | `jobs.inboxArchiveCron` | `0 0 3 * * *` | Inbox archiving sweep. |
 | `jobs.inboxRetentionDays` | `30` | How long archived inbox items are kept, in days. |
-| `jobs.pricingRefreshCron` | `0 0 2 * * *` | Daily model-pricing refresh from [pricepertoken.com](https://pricepertoken.com). Pricing also refreshes at startup; a failed refresh keeps the existing rates. |
 | `jobs.modelPinRefreshCron` | `0 0 3 * * *` | Daily re-read of each connected provider's model catalog, which keeps the model a **newly added** connection starts on current. Connections you already have keep the model you chose. A provider Hezo cannot reach keeps its previous default. |
 | `jobs.updateCheckCron` | `0 0 4 * * *` | Daily check that downloads and stages a newer release. A running instance also stages as soon as it detects an update, so the banner's "Install & restart" is instant. |
 | `jobs.autoInstallCron` | `0 */5 * * * *` | Auto-install check that restarts onto a staged update once no agent runs are in flight. Only registered when `updates.autoInstall` is on. |

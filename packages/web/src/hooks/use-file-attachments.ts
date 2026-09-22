@@ -41,6 +41,9 @@ interface UseFileAttachmentsOptions<T extends UploadedAttachment> {
 	/** Uploads one file and resolves to its stored metadata. Injected so this hook
 	 *  stays decoupled from any one endpoint (comments today, chat later). */
 	uploadFile: (file: File) => Promise<T>;
+	/** The most files the consumer's target accepts, counting ones already attached,
+	 *  and the error shown on each file past it. Unlimited when absent. */
+	limit?: { max: number; message: string };
 }
 
 /**
@@ -54,6 +57,7 @@ export function useFileAttachments<T extends UploadedAttachment>({
 	value,
 	onChange,
 	uploadFile,
+	limit,
 }: UseFileAttachmentsOptions<T>) {
 	const [isDragActive, setIsDragActive] = useState(false);
 	const dragDepth = useRef(0);
@@ -90,6 +94,8 @@ export function useFileAttachments<T extends UploadedAttachment>({
 		errorTimers.current.add(timer);
 	}, []);
 
+	const maxFiles = limit?.max ?? Number.POSITIVE_INFINITY;
+	const tooManyMessage = limit?.message ?? '';
 	const handleFiles = useCallback(
 		async (files: File[]) => {
 			const accepted: File[] = [];
@@ -100,6 +106,10 @@ export function useFileAttachments<T extends UploadedAttachment>({
 				}
 				if (file.size > ATTACHMENT_MAX_BYTES) {
 					pushError(file.name, 'File exceeds 10 MB');
+					continue;
+				}
+				if (value.length + uploading.length + accepted.length >= maxFiles) {
+					pushError(file.name, tooManyMessage);
 					continue;
 				}
 				accepted.push(file);
@@ -135,7 +145,7 @@ export function useFileAttachments<T extends UploadedAttachment>({
 				onChange([...value, ...newOnes.map((a) => a.id)]);
 			}
 		},
-		[onChange, pushError, uploadFile, value],
+		[onChange, pushError, uploadFile, value, uploading.length, maxFiles, tooManyMessage],
 	);
 
 	const onDragEnter = useCallback((e: React.DragEvent) => {

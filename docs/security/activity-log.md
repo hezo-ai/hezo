@@ -51,7 +51,7 @@ whole history as far as you need without waiting for it all up front.
 ## How long it took
 
 The log says what happened; the **Team & Budget** page says what it cost, in both senses.
-Each agent's run time for the month sits beside its spend on the **Budget** tab, and the
+Each agent's run time for the month sits beside its tokens on the **Budget** tab, and the
 **Hours** tab reports what the project's containers cost in uptime - a different figure,
 since containers are billed while they build and while they sit warm between runs, and
 concurrent runs share one. See

@@ -11,6 +11,7 @@ import {
 import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
+import { insertSystemComment } from './task-events';
 import { createWakeup } from './wakeup';
 
 const log = logger.child('repo-setup');
@@ -203,22 +204,17 @@ export async function finalizePendingRepoSetup(
 		);
 		if (updated.rows[0]) updatedCommentRows.push(updated.rows[0]);
 
-		const sys = await db.query<Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, content_type, content)
-			 VALUES ($1, $2::comment_content_type, $3::jsonb)
-			 RETURNING *`,
-			[
-				row.task_id,
-				CommentContentType.System,
-				JSON.stringify({
+		systemCommentRows.push(
+			await insertSystemComment(db, {
+				taskId: row.task_id,
+				content: {
 					kind: 'repo_designated',
 					repo_identifier: input.repoIdentifier,
 					host_type: 'github',
 					text: `Repository ${input.repoIdentifier} set as the designated repo.`,
-				}),
-			],
+				},
+			}),
 		);
-		if (sys.rows[0]) systemCommentRows.push(sys.rows[0]);
 		affectedTaskIds.push(row.task_id);
 	}
 
@@ -301,23 +297,18 @@ export async function markRepoSetupFailed(
 
 	const systemCommentRows: Record<string, unknown>[] = [];
 	for (const row of pendingTasks.rows) {
-		const sys = await db.query<Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, content_type, content)
-			 VALUES ($1, $2::comment_content_type, $3::jsonb)
-			 RETURNING *`,
-			[
-				row.task_id,
-				CommentContentType.System,
-				JSON.stringify({
+		systemCommentRows.push(
+			await insertSystemComment(db, {
+				taskId: row.task_id,
+				content: {
 					kind: 'repo_setup_failed',
 					repo_identifier: input.repoIdentifier,
 					host_type: 'github',
 					error: input.error,
 					text: `Could not set up repository ${input.repoIdentifier}: ${input.error}`,
-				}),
-			],
+				},
+			}),
 		);
-		if (sys.rows[0]) systemCommentRows.push(sys.rows[0]);
 	}
 
 	return { approvalId, systemCommentRows };

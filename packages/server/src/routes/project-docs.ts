@@ -1,10 +1,4 @@
-import {
-	ApprovalType,
-	AuthType,
-	DocumentType,
-	isMarkdownDocSlug,
-	repoNameFromIdentifier,
-} from '@hezo/shared';
+import { DocumentType, isMarkdownDocSlug, repoNameFromIdentifier } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveAgentsMdPath } from '../lib/docs';
 import {
@@ -15,12 +9,10 @@ import {
 } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { broadcastApprovalChange } from '../services/approval-broadcast';
 import {
 	type DocumentRowWithAuthor,
 	deleteDocument,
 	getDocument,
-	isDocumentArchived,
 	listDocuments,
 	listRevisions,
 	restoreRevision,
@@ -113,45 +105,6 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	// Archived docs are read-only: restore first, then edit. Creating a new doc
-	// under an archived name would silently resurrect old history otherwise.
-	// Checked here as well as inside upsertDocument because the prd.md branch
-	// below files an approval instead of writing, and never reaches the upsert.
-	if (
-		await isDocumentArchived(db, {
-			type: DocumentType.ProjectDoc,
-			teamId,
-			projectId,
-			slug: filename,
-		})
-	) {
-		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
-	}
-
-	if (filename === 'prd.md' && auth.type === AuthType.Agent) {
-		const approvalResult = await db.query<Record<string, unknown>>(
-			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
-			 VALUES ($1, $2::approval_type, $3, $4::jsonb)
-			 RETURNING *`,
-			[
-				teamId,
-				ApprovalType.Strategy,
-				auth.memberId,
-				JSON.stringify({
-					action: 'update_prd',
-					filename,
-					content: body.content,
-					project_id: projectId,
-				}),
-			],
-		);
-		const row = approvalResult.rows[0];
-		if (row) {
-			broadcastApprovalChange(c.get('wsManager'), teamId, 'INSERT', row);
-		}
-		return c.json({ data: { pending_approval: true, filename } }, 202);
-	}
-
 	const memberId = await resolveActorMemberId(db, auth, teamId);
 
 	const doc = await upsertDocument(db, c.get('wsManager'), {
@@ -173,8 +126,8 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		},
 	});
 
-	// Belt and braces: the pre-check above already refuses an archived doc, but
-	// upsertDocument enforces it transactionally too, so honour its verdict.
+	// Archived docs are read-only: restore first, then edit. Writing under an
+	// archived name would otherwise silently resurrect its old history.
 	if (doc.status === 'archived') {
 		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
 	}
@@ -237,15 +190,6 @@ projectDocsRoutes.patch('/projects/:projectId/docs/:filename', async (c) => {
 
 projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 	const teamId = c.get('teamId') as string;
-	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) {
-		return err(
-			c,
-			'FORBIDDEN',
-			'Only the admin can delete documents — archive instead (archive_project_doc)',
-			403,
-		);
-	}
 	const db = c.get('db');
 	const filename = c.req.param('filename');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
@@ -296,9 +240,6 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
-	}
 
 	const db = c.get('db');
 	const filename = c.req.param('filename');

@@ -14,6 +14,7 @@ import {
 	mintAgentToken,
 	projectSlugFor,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -70,18 +71,7 @@ afterAll(async () => {
 });
 
 async function callRequestCredential(args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: 'request_credential', arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, 'request_credential', args);
 }
 
 describe('request_credential MCP tool', () => {
@@ -330,6 +320,57 @@ describe('fulfill-credential endpoint', () => {
 		expect(last.payload.task_id).toBe(taskId);
 	});
 
+	it('refuses to overwrite a secret that already exists under the requested name', async () => {
+		// The agent picks the name, so a name already in use is a different
+		// credential's row: the write waits for the person to say "replace it".
+		const created = (await callRequestCredential({
+			project: projectId,
+			task_id: taskId,
+			name: 'FULFILL_TEST_KEY',
+			kind: 'api_key',
+			instructions: 'the same name again',
+			allowed_hosts: ['elsewhere.example.com'],
+		})) as { comment_id: string };
+
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${created.comment_id}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: 'sk-other-value' }),
+			},
+		);
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.message).toContain('already exists');
+
+		// The standing secret keeps its value and its hosts.
+		const before = await db.query<{ allowed_hosts: string[]; encrypted_value: string }>(
+			'SELECT allowed_hosts, encrypted_value FROM secrets WHERE name = $1',
+			['FULFILL_TEST_KEY'],
+		);
+		const key = masterKeyManager.getKey();
+		if (!key) throw new Error('no master key');
+		expect(before.rows[0].allowed_hosts).toEqual(['api.example.com']);
+		expect(decrypt(before.rows[0].encrypted_value, key)).toBe('sk-secret-value-123');
+
+		// Replacing on purpose works, and the request card cannot move the hosts.
+		const replaced = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${created.comment_id}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: 'sk-replacement', replace_existing: true }),
+			},
+		);
+		expect(replaced.status).toBe(200);
+		const after = await db.query<{ allowed_hosts: string[]; encrypted_value: string }>(
+			'SELECT allowed_hosts, encrypted_value FROM secrets WHERE name = $1',
+			['FULFILL_TEST_KEY'],
+		);
+		expect(after.rows[0].allowed_hosts).toEqual(['api.example.com']);
+		expect(decrypt(after.rows[0].encrypted_value, key)).toBe('sk-replacement');
+	});
+
 	it('rejects fulfilling the same comment twice', async () => {
 		const res = await app.request(
 			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
@@ -523,18 +564,7 @@ describe('fulfill-credential endpoint', () => {
 });
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, agentToken, name, args);
 }
 
 describe('list_connectors rest_auth', () => {

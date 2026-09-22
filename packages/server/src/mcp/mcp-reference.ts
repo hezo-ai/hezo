@@ -47,7 +47,7 @@ export const MCP_REFERENCE_CATEGORY_ORDER: readonly string[] = [
 	'Credentials & connectors',
 	'MCP connections',
 	'Project docs & assets',
-	'Costs',
+	'Usage',
 	'Onboarding',
 ];
 
@@ -157,7 +157,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.',
-		auth: '`done` is the final completed state; marking a task `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A run on the task blocks a reassignment only when it belongs to some other agent: an agent can always hand off a task it is running, and a task can always move to whichever agent is already running it. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
+		auth: '`done` is the final completed state; marking a task `done` wakes Coach to review it (except a team-coherence review) but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A run on the task blocks a reassignment only when it belongs to some other agent: an agent can always hand off a task it is running, and a task can always move to whichever agent is already running it. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
 	},
 	add_task_blocker: {
 		category: 'Tasks',
@@ -214,12 +214,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_comment: {
 		category: 'Comments & reactions',
 		returns:
-			"The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
+			"An acknowledgement of the created comment (`id`, `public_id`, `task_id`, `parent_comment_id`, `author_member_id`, `created_at`, `content_length`, and the `attachment_ids` it carries) - never the text you sent - always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }`, with nothing posted, if `parent_comment_id` does not belong to the task, the text is over the length cap in the tool description, there are more attachment ids than the cap there allows, or an attachment id is malformed, archived or from another project. Setting `parent_comment_id` wakes the parent comment's author.",
 	},
 	update_comment: {
 		category: 'Comments & reactions',
 		returns:
-			'The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
+			'An acknowledgement of the updated comment (same shape as `create_comment`), always with a `wake` receipt and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run, or the new text is over the `create_comment` length cap. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
 		auth: 'An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.',
 	},
 	add_reaction: {
@@ -236,7 +236,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_agents: {
 		category: 'Agents & hiring',
 		returns:
-			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
+			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_tokens`, `weekly_budget_tokens`, `monthly_budget_tokens`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
 	},
 	create_hire_proposal: {
 		category: 'Agents & hiring',
@@ -285,13 +285,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed.',
+			'`{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	update_agent_system_prompts: {
 		category: 'Agent prompts & context',
 		returns:
-			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
+			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	get_project_custom_prompt: {
@@ -520,11 +520,11 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 
-	// Costs
-	get_costs: {
-		category: 'Costs',
+	// Usage
+	get_usage: {
+		category: 'Usage',
 		returns:
-			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents, notional_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents, notional_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, notional_cents, entry_count }`.',
+			'With `group_by: "agent"`, an array of `{ member_id, agent_title, input_tokens, output_tokens, total_tokens }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, input_tokens, output_tokens, total_tokens }` newest first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false; that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ input_tokens, output_tokens, total_tokens, entry_count }`.',
 	},
 
 	// Onboarding
@@ -651,12 +651,15 @@ export function mcpConventionLines(surface: 'docs' | 'wire'): string[] {
 		'  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus',
 		'    `next_index`; call again with the same `items` and `start_index` set to it.',
 		'- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource',
-		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is',
-		'  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
+		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap a read discards the',
+		'  whole result and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
 		'  `remedies` are built from the parameters that tool actually declares, so follow',
 		'  them rather than guessing - and when the tool takes a batch, they name the exact',
 		'  item count to retry with. Split the work and retry; do not fall back to one call',
 		'  per item, and do not narrow what you cover to whatever fits in one call.',
+		'- **Oversized writes:** a write tool never answers `result_too_large`, because its',
+		'  write has already happened. Over the cap it returns `result_truncated: true` with',
+		'  the ids of what it wrote. The write succeeded, so do not repeat the call.',
 		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
 		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
 		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',
@@ -713,8 +716,9 @@ export function generateMcpReference(
 		'- **Discovery:** call `tools/list` for the live machine-readable schemas, then invoke a',
 		'  tool with `tools/call`.',
 		'- **File uploads:** binary files cannot ride a JSON-RPC call - `POST` them to',
-		'  `/mcp/assets` as `multipart/form-data` (a `file` field, plus an optional `project`',
-		'  field). They then appear in `list_project_assets` / `read_project_asset`.',
+		'  `/mcp/assets` as `multipart/form-data` (a `file` field, plus optional `project` and',
+		'  `task` fields). They then appear in `list_project_assets` / `read_project_asset`, and',
+		'  the returned `id` can be attached to a comment with `create_comment` `attachment_ids`.',
 		'',
 		'## Conventions',
 		'',

@@ -65,17 +65,16 @@ export async function readRunLogText(q: Queryable, runId: string): Promise<strin
 	return r.rows[0]?.log_text ?? '';
 }
 
-/** The running token/cost snapshot a mid-run flush carries alongside its delta. */
+/** The running token snapshot a mid-run flush carries alongside its delta. */
 export interface RunUsageSnapshot {
 	/** Total input, cache included - the same convention as the column. */
 	inputTokens: number | null;
 	outputTokens: number | null;
-	costCents: number | null;
 	/**
 	 * The cache split behind that total, null where the runtime cannot say.
 	 *
-	 * Flushed with the rest so a run killed mid-flight keeps an auditable cost
-	 * rather than a bare sum: the reconciliation path charges the surviving
+	 * Flushed with the rest so a run killed mid-flight keeps its split rather
+	 * than a bare sum: the reconciliation path counts the surviving
 	 * snapshot, and "was that cache reads or fresh input" is exactly the question
 	 * nobody can answer afterwards without these.
 	 */
@@ -128,9 +127,8 @@ export async function appendRunLogChunks(
 	const usageUpdate = `UPDATE heartbeat_runs
 		 SET input_tokens = COALESCE($3, input_tokens),
 		     output_tokens = COALESCE($4, output_tokens),
-		     cost_cents = COALESCE($5, cost_cents),
-		     cache_read_tokens = COALESCE($6, cache_read_tokens),
-		     cache_creation_tokens = COALESCE($7, cache_creation_tokens),
+		     cache_read_tokens = COALESCE($5, cache_read_tokens),
+		     cache_creation_tokens = COALESCE($6, cache_creation_tokens),
 		     usage_partial = true
 		 WHERE id = $1`;
 
@@ -140,7 +138,6 @@ export async function appendRunLogChunks(
 			chunks,
 			usage.inputTokens,
 			usage.outputTokens,
-			usage.costCents,
 			usage.cacheReadTokens ?? null,
 			usage.cacheCreationTokens ?? null,
 		]);
@@ -156,16 +153,14 @@ export async function appendRunLogChunks(
 		`UPDATE heartbeat_runs
 		 SET input_tokens = COALESCE($2, input_tokens),
 		     output_tokens = COALESCE($3, output_tokens),
-		     cost_cents = COALESCE($4, cost_cents),
-		     cache_read_tokens = COALESCE($5, cache_read_tokens),
-		     cache_creation_tokens = COALESCE($6, cache_creation_tokens),
+		     cache_read_tokens = COALESCE($4, cache_read_tokens),
+		     cache_creation_tokens = COALESCE($5, cache_creation_tokens),
 		     usage_partial = true
 		 WHERE id = $1`,
 		[
 			runId,
 			usage?.inputTokens ?? null,
 			usage?.outputTokens ?? null,
-			usage?.costCents ?? null,
 			usage?.cacheReadTokens ?? null,
 			usage?.cacheCreationTokens ?? null,
 		],

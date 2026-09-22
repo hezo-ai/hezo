@@ -34,7 +34,8 @@ and looks for patterns in it.
 1. **A task is completed.** When a task is marked **Done** - in any project, in any
    team - the Coach is woken automatically with that task's full history. If that wake is ever
    missed, the Coach picks the task up on its own heartbeat, so a completed task is not left
-   unreviewed.
+   unreviewed. The one exception is a team coherence review: it checks the Coach's own prompt
+   changes, so the Coach does not review it.
 2. **It reviews the whole thread.** The Coach reads the comments and the agents' work
    end to end, noting where the work went wrong: work that got sent back, an agent that
    received corrective feedback or made a wrong assumption, an approach that was tried and
@@ -86,7 +87,7 @@ A project nobody has worked in is skipped entirely, so a quiet project costs not
 
 ## Learned rules
 
-A **learned rule** is a short, specific instruction the Coach appends to an agent's
+A **learned rule** is a short, specific instruction the Coach adds to an agent's
 system prompt - collected together in a dedicated *Learned Rules* section so they're easy
 to find. A rule is a generalisable lesson ("always confirm the target environment before
 running a migration"), never a one-off fix for a single task.
@@ -94,12 +95,17 @@ running a migration"), never a one-off fix for a single task.
 The Coach is deliberately conservative about what it writes:
 
 - **Only durable, generalisable lessons** - patterns, not isolated incidents.
-- **Additive only** - it appends new rules and never rewrites or removes an agent's
-  existing instructions.
+- **Learned Rules only** - it adds, merges and removes rules in that section, and never
+  rewrites or removes the agent's own instructions.
+- **Rules earn their place** - a rule that adds a check says what the check costs. When a
+  rule adds work to a task without catching a problem, the Coach marks it with that task. It
+  removes the rule when this happens again on a different task, and clears the mark when the
+  rule catches a problem. The Coach keeps each agent to at most 20 learned rules, and merges
+  or removes one before it adds another at the cap.
 - **No duplicates** - it reads an agent's current prompt first and skips anything already
   covered.
 - **When in doubt, it skips** - a false lesson is worse than a missed one, and a task
-  that went cleanly gets no changes at all.
+  that went cleanly gets no new rules.
 
 Because learned rules are additions to the system prompt, they behave exactly like the
 prompts you write by hand: they take effect on the agent's next run, and they are visible and

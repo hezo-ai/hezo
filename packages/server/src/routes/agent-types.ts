@@ -1,9 +1,10 @@
 import {
 	CEO_AGENT_SLUG,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { budgetWriteError } from '../lib/budget-validation';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -31,6 +32,16 @@ agentTypesRoutes.get('/agent-types', async (c) => {
 	return ok(c, result.rows);
 });
 
+/**
+ * The windows an agent type's budget is checked against: it sets the monthly
+ * default only, so the daily and weekly windows are unlimited.
+ */
+const NO_DAILY_OR_WEEKLY_BUDGET = {
+	daily_budget_tokens: 0,
+	weekly_budget_tokens: 0,
+	monthly_budget_tokens: 0,
+};
+
 agentTypesRoutes.post('/agent-types', async (c) => {
 	const body = await c.req.json<{
 		name: string;
@@ -40,13 +51,16 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 		system_prompt_template?: string;
 		heartbeat_interval_min?: number;
 		run_timeout_min?: number;
-		monthly_budget_cents?: number;
+		monthly_budget_tokens?: number;
 		touches_code?: boolean;
 	}>();
 
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
+	// A type carries a monthly default only, which every agent made from it copies.
+	const budgetError = budgetWriteError(body, NO_DAILY_OR_WEEKLY_BUDGET);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 
 	const slug = body.slug?.trim() || toSlug(body.name);
 	if (!slug) {
@@ -56,7 +70,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 	const db = c.get('db');
 	const result = await db.query(
 		`INSERT INTO agent_types (name, slug, description, role_description, system_prompt_template,
-		                          heartbeat_interval_min, run_timeout_min, monthly_budget_cents, touches_code,
+		                          heartbeat_interval_min, run_timeout_min, monthly_budget_tokens, touches_code,
 		                          source)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'custom'::agent_type_source)
 		 RETURNING *`,
@@ -68,7 +82,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 			body.system_prompt_template ?? '',
 			body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			body.run_timeout_min ?? 60,
-			body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+			body.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 			body.touches_code ?? false,
 		],
 	);
@@ -106,9 +120,11 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 		system_prompt_template?: string;
 		heartbeat_interval_min?: number;
 		run_timeout_min?: number;
-		monthly_budget_cents?: number;
+		monthly_budget_tokens?: number;
 	}>();
 
+	const budgetError = budgetWriteError(body, NO_DAILY_OR_WEEKLY_BUDGET);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 	const isBuiltin = existing.rows[0].is_builtin;
 
 	const sets: string[] = [];
@@ -130,7 +146,7 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 	if (!isBuiltin) {
 		addField('heartbeat_interval_min', body.heartbeat_interval_min);
 		addField('run_timeout_min', body.run_timeout_min);
-		addField('monthly_budget_cents', body.monthly_budget_cents);
+		addField('monthly_budget_tokens', body.monthly_budget_tokens);
 	}
 
 	if (sets.length === 0) {

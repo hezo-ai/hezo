@@ -1,4 +1,5 @@
 import { AiProvider } from '@hezo/shared';
+import { Trans } from '../lib/i18n';
 import {
 	InstructionsBox,
 	InstructionsLink,
@@ -225,11 +226,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>,
 		],
 		footer: (
-			<>
-				Ollama serves Anthropic's Messages API, so agents run on the <strong>Claude Code</strong>{' '}
-				CLI. Runs on your own hardware cost nothing per token, so they record <code>$0</code>. Pick
-				a model with strong tool-calling - weaker local models struggle with agentic work.
-			</>
+			<Trans k="settings.localModel.footer.ollama" vars={{ cli: <strong>Claude Code</strong> }} />
 		),
 	},
 	[AiProvider.LmStudio]: {
@@ -250,12 +247,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>,
 		],
 		footer: (
-			<>
-				LM Studio serves Anthropic's Messages API from version 0.4.1, so agents run on the{' '}
-				<strong>Claude Code</strong> CLI. Runs on your own hardware cost nothing per token, so they
-				record <code>$0</code>. Pick a model with strong tool-calling - weaker local models struggle
-				with agentic work.
-			</>
+			<Trans k="settings.localModel.footer.lmStudio" vars={{ cli: <strong>Claude Code</strong> }} />
 		),
 	},
 };

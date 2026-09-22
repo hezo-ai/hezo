@@ -14,6 +14,7 @@ import {
 	finalizeAgentRun,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Line-coverage tests for packages/server/src/routes/comments.ts over real
 // HTTP: the comment list with reactions + attachments, reaction round-trips
@@ -236,18 +237,25 @@ describe('reactions — identity and validation branches', () => {
 			teamId,
 			taskId,
 		);
-		const put = await app.request(
-			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${commentId}/reactions/ack`,
-			{ method: 'PUT', headers: authHeader(agentToken) },
-		);
-		expect(put.status).toBe(200);
-		expect((await put.json()).data.reactions).toHaveLength(1);
-		const del = await app.request(
-			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${commentId}/reactions/ack`,
-			{ method: 'DELETE', headers: authHeader(agentToken) },
-		);
-		expect(del.status).toBe(200);
-		expect((await del.json()).data.reactions).toHaveLength(0);
+		const reactionsOf = async () =>
+			(await db.query('SELECT kind FROM comment_reactions WHERE comment_id = $1', [commentId]))
+				.rows;
+		const put = await callMcpTool(app, agentToken, 'add_reaction', {
+			project: projectSlug,
+			task_id: taskId,
+			comment_id: commentId,
+			kind: 'ack',
+		});
+		expect(put.error).toBeUndefined();
+		expect(await reactionsOf()).toHaveLength(1);
+		const del = await callMcpTool(app, agentToken, 'remove_reaction', {
+			project: projectSlug,
+			task_id: taskId,
+			comment_id: commentId,
+			kind: 'ack',
+		});
+		expect(del.error).toBeUndefined();
+		expect(await reactionsOf()).toHaveLength(0);
 		await finalizeAgentRun(db, runId);
 	});
 });
@@ -333,13 +341,13 @@ describe('POST comment — creation branches', () => {
 			teamId,
 			taskId,
 		);
-		const res = await postComment(
-			{ content_type: 'text', content: { text: 'from the agent' } },
-			agentToken,
-		);
-		expect(res.status).toBe(201);
-		const data = (await res.json()).data;
-		expect(data.author_member_id).toBe(agentId);
+		const res = await callMcpTool(app, agentToken, 'create_comment', {
+			project: projectSlug,
+			task_id: taskId,
+			content: 'from the agent',
+		});
+		expect(res.error).toBeUndefined();
+		expect(res.author_member_id).toBe(agentId);
 		await finalizeAgentRun(db, runId);
 	});
 
@@ -585,7 +593,7 @@ describe('resolve-asset-deletion', () => {
 			teamId,
 			taskId,
 		);
-		expect((await resolve(commentId, { approve: true }, agentToken)).status).toBe(403);
+		expect((await resolve(commentId, { approve: true }, agentToken)).status).toBe(401);
 		await finalizeAgentRun(db, runId);
 
 		expect((await resolve(commentId, { approve: true }, token, 'QQ-55555')).status).toBe(404);

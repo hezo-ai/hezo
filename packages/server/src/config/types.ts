@@ -203,7 +203,6 @@ export interface JobsConfig {
 	wakeupCron: string;
 	heartbeatCron: string;
 	inboxArchiveCron: string;
-	pricingRefreshCron: string;
 	modelPinRefreshCron: string;
 	updateCheckCron: string;
 	autoInstallCron: string;
@@ -236,7 +235,7 @@ export interface LogCompactionConfig {
 	maxPerTick: number;
 	/**
 	 * Bytes of each old run's log kept when it is compacted - the trailing slice
-	 * holding the agent's end-of-run summary and its `[done] … tokens=… cost=…` line.
+	 * holding the agent's end-of-run summary and its `[done] … tokens=…` line.
 	 */
 	preservedBytes: number;
 }
@@ -496,7 +495,6 @@ export const DEFAULT_CONFIG: HezoConfig = {
 		wakeupCron: '*/5 * * * * *',
 		heartbeatCron: '*/5 * * * * *',
 		inboxArchiveCron: '0 0 3 * * *',
-		pricingRefreshCron: '0 0 2 * * *',
 		modelPinRefreshCron: '0 0 3 * * *',
 		updateCheckCron: '0 0 4 * * *',
 		autoInstallCron: '0 */5 * * * *',

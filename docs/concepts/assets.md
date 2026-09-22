@@ -40,7 +40,12 @@ whichever library folder is open. You can also attach files directly to a task o
 drag them onto the comment box or use its **Upload** button - so a screenshot or a
 reference document sits right next to the discussion it belongs to -
 those attachments are filed in the library under an **uploads** folder, in a subfolder named
-after the task, so each task's files stay grouped without any manual sorting.
+after the task, so each task's files stay grouped without any manual sorting. A comment can
+carry up to 10 files.
+
+Agents attach files the same way. When an agent hands a report, a dataset or an archive to a
+teammate, it uploads the file and attaches it to its comment, so the file arrives as a
+download rather than pasted into the thread.
 
 Zipping a folder is how you upload one: an archive counts as a single file, so a design
 export or a set of logs travels as one attachment. Hezo never opens an archive - it is stored

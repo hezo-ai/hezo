@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import {
-	AgentEffort,
+	type AgentEffort,
 	type AgentRuntime,
-	AiAuthMethod,
 	type AiProvider,
 	CEO_AGENT_SLUG,
 	CHAT_MESSAGE_PREVIEW_CHARS,
@@ -24,10 +23,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { runtimeConfig } from '../config/runtime';
-import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
-import { broadcastRowChange } from '../lib/broadcast';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
 import { KeyedLockTimeoutError } from '../lib/keyed-lock';
 import { isUuid } from '../lib/resolve';
@@ -62,16 +58,14 @@ import {
 	getProviderCredentialAndModel,
 	resolveRunCredential,
 } from './ai-provider-keys';
-import { checkOverBudget, type OverBudgetBlock, recordRunCost } from './budget';
+import { checkOverBudget, type OverBudgetBlock, recordUsage } from './budget';
 import {
-	buildConversationTaskDescription,
 	chatTranscriptLine,
 	getChatMemory,
 	getConversationChatMemory,
 	loadActiveWindow,
 	markCompacted,
 	selectFlush,
-	type WindowMessage,
 } from './chat-memory';
 import { detectNoWakeExits, formatNoWakeExitWarning } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
@@ -98,7 +92,6 @@ import { dockerSandboxHandle } from './sandbox/handle';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import type { BridgeRunnerArgs } from './ssh-agent';
-import { type CreateTaskCaller, createTask, type TaskRow } from './tasks';
 import { resolveSystemPrompt } from './template-resolver';
 import { CONTAINER_WORKSPACE_ROOT, getRunSocketPath } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -138,12 +131,12 @@ const CHAT_CAPACITY_POLL_MS = 5_000;
 export function chatBudgetExceededNotice(block: OverBudgetBlock): string {
 	const scope = block.scope === 'agent' ? 'This agent has' : 'This project has';
 	return (
-		`${scope} spent its ${block.period} budget, so chat is paused. ` +
+		`${scope} used up its ${block.period} token budget, so chat is paused. ` +
 		'It resumes when the window rolls over, or when the budget is raised on the Budget page.'
 	);
 }
 
-/** The hours half of the same refusal - decision-level twin of the spend notice. */
+/** The hours half of the same refusal - decision-level twin of the budget notice. */
 export const CHAT_HOURS_EXHAUSTED_NOTICE =
 	'This chat cannot start a container: the instance has spent its monthly container-hours ' +
 	'allowance. It resumes when the month turns, or when the allowance is raised on the Budget page.';
@@ -840,7 +833,7 @@ export class ChatSessionManager {
 		const userMessageId = userMessageIds[userMessageIds.length - 1];
 		await this.touchConversation(conversationId);
 
-		// Pre-turn spend gate: chat is metered like any run, so an exhausted agent
+		// Pre-turn budget gate: chat is metered like any run, so an exhausted agent
 		// or project budget refuses the turn up front rather than billing past it.
 		const gate = await this.checkChatBudget();
 		if (gate) {
@@ -984,41 +977,50 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * One chat exec's spend, recorded exactly as a run's is - a `cost_entries`
-	 * row under the session's member and project, broadcast so the Budget page
-	 * refreshes. Best-effort: a bookkeeping failure must not fail the reply the
-	 * operator already has.
+	 * Usage a CLI left in the session's home rather than on its stream, plus the
+	 * scrub that follows. Grok and Kimi Code report nothing on stdout, so an exec
+	 * that skips this records zero for work that happened - and leaves its records
+	 * for the next exec's read to bill twice. Null for every other runtime.
 	 */
-	private async recordChatSpend(
+	private async recoverSessionUsage(session: TurnSession): Promise<AgentRunUsage | null> {
+		if (!session.homeMount) return null;
+		return recoverOffStreamRunUsage(
+			session.runtimeType,
+			this.deps.docker.files(session.containerId, session.homeMount.containerDir),
+			(msg) => log.error(`chat exec usage recovery: ${msg}`),
+		).catch(() => null);
+	}
+
+	/**
+	 * One chat exec's tokens, recorded in the ledger as a run's are - a
+	 * `usage_entries` row under the session's member and project, broadcast to the
+	 * session's own team. A turn's budget is enforced before it starts
+	 * (`checkChatBudget`), not after. Best-effort: a bookkeeping failure must not
+	 * fail the reply the operator already has.
+	 */
+	private async recordChatUsage(
 		session: TurnSession,
 		usage: AgentRunUsage | null,
 		description: string,
 	): Promise<void> {
-		if (!usage || usage.costCents <= 0) return;
+		if (!usage || usage.inputTokens + usage.outputTokens <= 0) return;
 		try {
-			const entry = await recordRunCost(this.deps.db, {
-				memberId: session.memberId,
-				taskId: null,
-				projectId: session.projectId,
-				amountCents: usage.costCents,
-				description,
-				aiProviderConfigId: session.invocationInputs.credential.configId,
-				provider: session.invocationInputs.provider,
-				// A subscription is not billed per token, so this turn's figure is
-				// notional - recorded to be shown, never to charge a budget.
-				billed: session.invocationInputs.credential.authMethod !== AiAuthMethod.Subscription,
-			});
-			if (entry) {
-				broadcastRowChange(
-					this.deps.wsManager,
-					wsRoom.team(DEFAULT_TEAM_ID),
-					'cost_entries',
-					'INSERT',
-					entry,
-				);
-			}
+			await recordUsage(
+				this.deps.db,
+				{ wsManager: this.deps.wsManager, teamId: session.teamId },
+				{
+					memberId: session.memberId,
+					taskId: null,
+					projectId: session.projectId,
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					description,
+					aiProviderConfigId: session.invocationInputs.credential.configId,
+					provider: session.invocationInputs.provider,
+				},
+			);
 		} catch (e) {
-			log.error('failed to record chat spend', e);
+			log.error('failed to record chat usage', e);
 		}
 	}
 
@@ -1647,7 +1649,7 @@ export class ChatSessionManager {
 
 	/**
 	 * Everything one chat exec runs on, built fresh: the resolved provider and
-	 * credential, the acting agent's effort (the CEO always at Max), the
+	 * credential, the acting agent's configured effort, the
 	 * session row the JWT validates against, and the host-side half (ssh,
 	 * egress, tunnel) scoped to the acting team. `teardownTurn` gives the
 	 * host-side half back; the container goes back separately, through the
@@ -1666,16 +1668,12 @@ export class ChatSessionManager {
 			selection.requiredRuntime,
 		);
 		if (!credential) throw new Error(`No ${selection.provider} credential configured`);
-		const agent = await db.query<{ slug: string; default_effort: string | null }>(
-			`SELECT slug, default_effort FROM member_agents WHERE id = $1`,
+		const agent = await db.query<{ default_effort: string | null }>(
+			`SELECT default_effort FROM member_agents WHERE id = $1`,
 			[args.memberId],
 		);
-		// Max thinking for the CEO - its chat runs at the highest reasoning
-		// effort; a worker gets its own configured default.
-		const effort =
-			args.kind === 'ceo'
-				? AgentEffort.Max
-				: resolveEffort(null, agent.rows[0]?.default_effort ?? null, agent.rows[0]?.slug ?? null);
+		// Every chat turn runs at the agent's configured effort; the CEO is seeded at max.
+		const effort = resolveEffort(null, agent.rows[0]?.default_effort ?? null);
 		const sessionId = await this.ensureTurnSessionRow(args, selection.runtimeType, containerId);
 		// The turn's own allocation key - see allocateHostSide for why the shared
 		// session id cannot key host-side resources.
@@ -2459,16 +2457,7 @@ export class ChatSessionManager {
 		// including interrupted and failed ones, where the usage is discarded but
 		// the scrub still matters. Scrubbing per turn also keeps the next turn's
 		// parse from re-billing this one's records. Null for every other runtime.
-		const recoverUsage = async (): Promise<AgentRunUsage | null> => {
-			if (!session.homeMount) return null;
-			const pricingSvc = this.deps.pricing;
-			return recoverOffStreamRunUsage(
-				session.runtimeType,
-				this.deps.docker.files(session.containerId, session.homeMount.containerDir),
-				pricingSvc ? (model, tokens) => pricingSvc.costCents(model, tokens) : undefined,
-				(msg) => log.error(`CEO chat turn usage recovery: ${msg}`),
-			).catch(() => null);
-		};
+		const recoverUsage = (): Promise<AgentRunUsage | null> => this.recoverSessionUsage(session);
 		let finalized = false;
 		const finalize = async (
 			status: ChatMessageStatus,
@@ -2507,11 +2496,7 @@ export class ChatSessionManager {
 			assertPromptAcceptable(session.runtimeType, prompt);
 			await writePrompt(prompt);
 
-			const pricing = this.deps.pricing;
-			const parser = createAgentChatParser(
-				session.runtimeType,
-				pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
-			);
+			const parser = createAgentChatParser(session.runtimeType);
 			const handle = (events: ReturnType<AgentChatParser['onStdout']>) => {
 				for (const ev of events) {
 					if (ev.text) {
@@ -2552,9 +2537,9 @@ export class ChatSessionManager {
 			handle(parser.flush());
 			const usage = parser.getUsage() ?? (await recoverUsage());
 			await finalize(ChatMessageStatus.Complete, usage);
-			// Chat is metered: the turn's spend lands in cost_entries like a run's,
+			// Chat is metered: the turn's tokens land in usage_entries like a run's,
 			// after the reply has settled so the operator is never kept waiting on it.
-			await this.recordChatSpend(session, usage, 'Chat turn');
+			await this.recordChatUsage(session, usage, 'Chat turn');
 			await this.checkNoWakeExit(session, ctx, assistantMessageId);
 			return ChatMessageStatus.Complete;
 		} catch (err) {
@@ -2986,11 +2971,7 @@ export class ChatSessionManager {
 		// The reply text is irrelevant - the memory write is the real product,
 		// landed via the update_chat_memory MCP tool - but the exec still bills:
 		// the parser is here for its usage, and chat is metered.
-		const pricing = this.deps.pricing;
-		const parser = createAgentChatParser(
-			session.runtimeType,
-			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
-		);
+		const parser = createAgentChatParser(session.runtimeType);
 		try {
 			await this.withCredentialLock(session, abort.signal, () =>
 				dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
@@ -3004,7 +2985,11 @@ export class ChatSessionManager {
 				}),
 			);
 			parser.flush();
-			await this.recordChatSpend(session, parser.getUsage(), 'Chat memory compaction');
+			await this.recordChatUsage(
+				session,
+				parser.getUsage() ?? (await this.recoverSessionUsage(session)),
+				'Chat memory compaction',
+			);
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
@@ -3085,7 +3070,7 @@ export class ChatSessionManager {
 	 * short title, then persist it (only while the thread is still untitled) and tell
 	 * the open chatbox(es) to refetch the thread list. No `chat_message`, no
 	 * broadcast of a reply — the operator sees only the switcher label update. The
-	 * exec's tokens bill to cost_entries like every chat exec (matches `runCompaction`).
+	 * exec's tokens count in usage_entries like every chat exec (matches `runCompaction`).
 	 */
 	private async runTitleGeneration(
 		session: TurnSession,
@@ -3114,11 +3099,7 @@ export class ChatSessionManager {
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		await writePrompt(prompt);
 
-		const pricing = this.deps.pricing;
-		const parser = createAgentChatParser(
-			session.runtimeType,
-			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
-		);
+		const parser = createAgentChatParser(session.runtimeType);
 		let text = '';
 		try {
 			await this.withCredentialLock(session, abort.signal, () =>
@@ -3135,7 +3116,11 @@ export class ChatSessionManager {
 				}),
 			);
 			for (const ev of parser.flush()) if (ev.text) text += ev.text;
-			await this.recordChatSpend(session, parser.getUsage(), 'Chat auto-title');
+			await this.recordChatUsage(
+				session,
+				parser.getUsage() ?? (await this.recoverSessionUsage(session)),
+				'Chat auto-title',
+			);
 		} catch (e) {
 			// A new user turn preempts title generation — a clean stop, retried later.
 			if (abort.signal.aborted) {
@@ -3398,8 +3383,8 @@ export class ChatSessionManager {
 		const updated = await this.deps.db.query(
 			`UPDATE chat_messages
 			 SET status = $2::chat_message_status, content = $3, input_tokens = $4, output_tokens = $5,
-			     cost_cents = $6, error = $7, suggested_replies = $8::jsonb, completed_at = now()
-			 WHERE id = $1 AND status IN ($9::chat_message_status, $10::chat_message_status)
+			     error = $6, suggested_replies = $7::jsonb, completed_at = now()
+			 WHERE id = $1 AND status IN ($8::chat_message_status, $9::chat_message_status)
 			 RETURNING id`,
 			[
 				messageId,
@@ -3407,7 +3392,6 @@ export class ChatSessionManager {
 				content,
 				usage?.inputTokens ?? 0,
 				usage?.outputTokens ?? 0,
-				usage?.costCents ?? 0,
 				error ?? null,
 				parsed.replies ? JSON.stringify(parsed.replies) : null,
 				ChatMessageStatus.Streaming,
@@ -3424,7 +3408,6 @@ export class ChatSessionManager {
 			content,
 			inputTokens: usage?.inputTokens ?? 0,
 			outputTokens: usage?.outputTokens ?? 0,
-			costCents: usage?.costCents ?? 0,
 			error: error ?? null,
 			...(parsed.replies ? { suggestedReplies: parsed.replies } : {}),
 		});

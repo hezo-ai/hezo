@@ -23,8 +23,9 @@ connect, authenticate, and register for access, see
 - **Discovery:** call `tools/list` for the live machine-readable schemas, then invoke a
   tool with `tools/call`.
 - **File uploads:** binary files cannot ride a JSON-RPC call - `POST` them to
-  `/mcp/assets` as `multipart/form-data` (a `file` field, plus an optional `project`
-  field). They then appear in `list_project_assets` / `read_project_asset`.
+  `/mcp/assets` as `multipart/form-data` (a `file` field, plus optional `project` and
+  `task` fields). They then appear in `list_project_assets` / `read_project_asset`, and
+  the returned `id` can be attached to a comment with `create_comment` `attachment_ids`.
 
 ## Conventions
 
@@ -53,12 +54,15 @@ connect, authenticate, and register for access, see
   - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus
     `next_index`; call again with the same `items` and `start_index` set to it.
 - **Result size:** a tool result is capped at 64 KB (higher for a few full-resource
-  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is
-  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The
+  inspection tools, e.g. `get_agent_system_prompt`). Over the cap a read discards the
+  whole result and you get `{ "error": "result_too_large", "remedies": [...] }`. The
   `remedies` are built from the parameters that tool actually declares, so follow
   them rather than guessing - and when the tool takes a batch, they name the exact
   item count to retry with. Split the work and retry; do not fall back to one call
   per item, and do not narrow what you cover to whatever fits in one call.
+- **Oversized writes:** a write tool never answers `result_too_large`, because its
+  write has already happened. Over the cap it returns `result_truncated: true` with
+  the ids of what it wrote. The write succeeded, so do not repeat the call.
 - **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts
   with `_truncated`/`_length` companions, so one page cannot be dominated by a few
   large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops
@@ -385,7 +389,7 @@ Update a task. Agents can use this to change status, update progress, set rules,
 
 **Returns:** The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.
 
-**Authorization:** `done` is the final completed state; marking a task `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A run on the task blocks a reassignment only when it belongs to some other agent: an agent can always hand off a task it is running, and a task can always move to whichever agent is already running it. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
+**Authorization:** `done` is the final completed state; marking a task `done` wakes Coach to review it (except a team-coherence review) but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A run on the task blocks a reassignment only when it belongs to some other agent: an agent can always hand off a task it is running, and a task can always move to whichever agent is already running it. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
 
 ### `add_task_blocker`
 
@@ -595,7 +599,7 @@ Remove your own reaction from a comment. Removing a reaction does not wake the c
 
 _Write tool._
 
-Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment's UUID - it wakes the original author with source=reply (so they're notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.
+Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment's UUID - it wakes the original author with source=reply (so they're notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead. To hand a file to a teammate, upload it (multipart POST to /mcp/assets with a task field) and pass its id in attachment_ids; never paste file contents or encoded bytes into the text. Comment text is limited to 16,000 characters.
 
 **Parameters:**
 
@@ -603,10 +607,11 @@ Add a comment to a task. In content, reference teammates with @<agent-slug>. Ref
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
-| `content` | `string` | Yes | Comment text |
+| `content` | `string` | Yes | Comment text, at most 16,000 characters. May be empty when attachment_ids is set. |
+| `attachment_ids` | `string[]` | No | Ids of up to 10 assets to attach, from uploads to /mcp/assets or write_project_asset in this project. Readers get each file as a signed download link. |
 | `parent_comment_id` | `string` | No | The comment you are replying to - its id (UUID) or its public_id. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
 
-**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
+**Returns:** An acknowledgement of the created comment (`id`, `public_id`, `task_id`, `parent_comment_id`, `author_member_id`, `created_at`, `content_length`, and the `attachment_ids` it carries) - never the text you sent - always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }`, with nothing posted, if `parent_comment_id` does not belong to the task, the text is over the length cap in the tool description, there are more attachment ids than the cap there allows, or an attachment id is malformed, archived or from another project. Setting `parent_comment_id` wakes the parent comment's author.
 
 ### `update_comment`
 
@@ -623,7 +628,7 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 | `comment_id` | `string (uuid)` | Yes | UUID of the comment to edit, as returned by create_comment or list_comments. |
 | `content` | `string` | Yes | The replacement comment text (overwrites the existing body). |
 
-**Returns:** The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
+**Returns:** An acknowledgement of the updated comment (same shape as `create_comment`), always with a `wake` receipt and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run, or the new text is over the `create_comment` length cap. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
 
 **Authorization:** An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.
 
@@ -643,7 +648,7 @@ List the agents on a project's team, by title. Each row carries `reports_to` (th
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
+**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_tokens`, `weekly_budget_tokens`, `monthly_budget_tokens`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
 
 ### `update_hire_proposal`
 
@@ -663,7 +668,12 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | No | Updated heartbeat interval. How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
-| `monthly_budget_cents` | `number` | No | Updated monthly budget in cents |
+| `daily_budget_tokens` | `number` | No | Updated daily budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `weekly_budget_tokens` | `number` | No | Updated weekly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `monthly_budget_tokens` | `number` | No | Updated monthly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `daily_budget_cents` | `number` | No | Retired. Refused: send daily_budget_tokens instead. |
+| `weekly_budget_cents` | `number` | No | Retired. Refused: send weekly_budget_tokens instead. |
+| `monthly_budget_cents` | `number` | No | Retired. Refused: send monthly_budget_tokens instead. |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 
 **Returns:** The updated approval row, or `{ error }` if no field changed or the approval is invalid.
@@ -688,9 +698,12 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
 | `default_effort` | `string` | No | Default reasoning effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | Yes | How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
-| `daily_budget_cents` | `number` | No | Daily budget in cents |
-| `weekly_budget_cents` | `number` | No | Weekly budget in cents |
-| `monthly_budget_cents` | `number` | No | Monthly budget in cents |
+| `daily_budget_tokens` | `number` | No | Daily budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `weekly_budget_tokens` | `number` | No | Weekly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `monthly_budget_tokens` | `number` | No | Monthly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `daily_budget_cents` | `number` | No | Retired. Refused: send daily_budget_tokens instead. |
+| `weekly_budget_cents` | `number` | No | Retired. Refused: send weekly_budget_tokens instead. |
+| `monthly_budget_cents` | `number` | No | Retired. Refused: send monthly_budget_tokens instead. |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 | `task_id` | `string` | No | Optional originating task to link the proposal to - a task identifier (e.g. "HM-1") or UUID |
 
@@ -805,7 +818,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | `new_system_prompt` | `string` | Yes | The full updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Read the current prompt with get_agent_system_prompt(placeholders=false) first so the round-trip is safe. |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
-**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed.
+**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -822,7 +835,7 @@ Apply system prompt changes to MULTIPLE agents in one call - the preferred way w
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `updates` | `object[]` | Yes | Up to 50 prompt updates. |
 
-**Returns:** Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
+**Returns:** Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -1356,7 +1369,7 @@ List the project's assets - files in the assets library (UI mockups, wireframes,
 
 _Write tool._
 
-Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file's bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime's argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file's exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin's feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; a .csv renders as a table with the raw file behind the same toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
+Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file's bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, and optional `task` to file it with that task's attachments; same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime's argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file's exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin's feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; a .csv renders as a table with the raw file behind the same toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
 
 **Parameters:**
 
@@ -1560,24 +1573,28 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 
 **Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.
 
-## Costs
+## Usage
 
-### `get_costs`
+### `get_usage`
 
 _Read-only._
 
-Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false. Every shape reports two figures: `total_cents` is real money, and `notional_cents` is what runs on a subscription would have cost at the provider's published rates. A subscription is not billed per token, so the second counts towards no budget and never pauses anyone - read it as effort, not spend.
+Get the token usage summary for a project: every token its runs and chat turns sent and received, input (cached input included) and output, which is what budgets count. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false. Every shape reports `input_tokens`, `output_tokens` and their sum `total_tokens`.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `group_by` | `agent` \| `day` | No | Group costs by |
+| `group_by` | `agent` \| `day` | No | Group usage by |
+| `agent_id` | `string` | No | Only this agent |
+| `task_id` | `string` | No | Only this task |
+| `from` | `string` | No | Only entries at or after this date or timestamp |
+| `to` | `string` | No | Only entries before this date or timestamp |
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents, notional_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents, notional_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, notional_cents, entry_count }`.
+**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, input_tokens, output_tokens, total_tokens }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, input_tokens, output_tokens, total_tokens }` newest first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false; that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ input_tokens, output_tokens, total_tokens, entry_count }`.
 
 ## Onboarding
 

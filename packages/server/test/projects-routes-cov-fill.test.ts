@@ -74,7 +74,7 @@ describe('GET /api/projects (index)', () => {
 		expect(row?.open_task_count).toBeGreaterThanOrEqual(1);
 		expect(row?.open_goal_count).toBe(0);
 		expect(row?.running_agents_count).toBe(0);
-		expect(row?.today_spend_cents).toBe(0);
+		expect(row?.today_tokens).toBe(0);
 		expect(row?.last_activity_at).toBeTruthy();
 		// No icon uploaded yet: both icon fields are nulled by withIconUrl.
 		expect(row?.icon_url).toBeNull();
@@ -422,7 +422,7 @@ describe('PATCH /api/projects/:projectId', () => {
 		const res = await ctx.app.request(`/api/projects/${projectSlug}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ daily_budget_cents: 10_000, weekly_budget_cents: 500 }),
+			body: JSON.stringify({ daily_budget_tokens: 10_000, weekly_budget_tokens: 500 }),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -432,29 +432,29 @@ describe('PATCH /api/projects/:projectId', () => {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				daily_budget_cents: 100,
-				weekly_budget_cents: 700,
-				monthly_budget_cents: 5000,
+				daily_budget_tokens: 100,
+				weekly_budget_tokens: 700,
+				monthly_budget_tokens: 5000,
 			}),
 		});
 		expect(res.status).toBe(200);
 		const data = (await res.json()).data;
-		expect(data.daily_budget_cents).toBe(100);
-		expect(data.weekly_budget_cents).toBe(700);
-		expect(data.monthly_budget_cents).toBe(5000);
+		expect(data.daily_budget_tokens).toBe(100);
+		expect(data.weekly_budget_tokens).toBe(700);
+		expect(data.monthly_budget_tokens).toBe(5000);
 
-		const stored = await ctx.db.query<{ daily_budget_cents: number }>(
-			'SELECT daily_budget_cents FROM projects WHERE id = $1',
+		const stored = await ctx.db.query<{ daily_budget_tokens: number }>(
+			'SELECT daily_budget_tokens FROM projects WHERE id = $1',
 			[projectId],
 		);
-		expect(stored.rows[0].daily_budget_cents).toBe(100);
+		expect(stored.rows[0].daily_budget_tokens).toBe(100);
 	});
 
 	it('rejects a negative budget value on the per-field integer rule', async () => {
 		const res = await ctx.app.request(`/api/projects/${projectSlug}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ monthly_budget_cents: -1 }),
+			body: JSON.stringify({ monthly_budget_tokens: -1 }),
 		});
 		expect(res.status).toBe(400);
 	});

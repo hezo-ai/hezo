@@ -1,34 +1,41 @@
-import { type AiProvider, BudgetPeriod } from '@hezo/shared';
+import { type AiProvider, BudgetPeriod, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../db/migrations/code/081_token_budgets';
+import { broadcastRowChange } from '../lib/broadcast';
+import { utcWindowStartSql } from '../lib/sql';
+import type { WebSocketManager } from './ws';
 
 /**
- * Budget enforcement — the single source of truth for agent/project spend.
+ * Budget enforcement - the single source of truth for agent and project usage.
  *
- * Spend is computed on demand by summing `cost_entries.amount_cents` over rolling
- * UTC windows (start-of-day / start-of-week (ISO Monday) / start-of-month), so
- * there is no running counter to reset. Limits live on `member_agents` and
- * `projects` as `daily_/weekly_/monthly_budget_cents`; a limit of 0 means
- * unlimited for that window. A run is blocked when the agent OR its project
- * breaches ANY window.
+ * Usage is computed on demand by summing `usage_entries` tokens over UTC calendar
+ * windows (start-of-day / start-of-week (ISO Monday) / start-of-month), so there
+ * is no running counter to reset. Only usage from the upgrade that made budgets
+ * count tokens counts: before it, a subscription run counted against no budget,
+ * and counting it now would pause agents for spend no budget ever measured. A budget counts everything a run sent and
+ * received: input, cached input included, plus output. Limits live on
+ * `member_agents` and `projects` as `daily_/weekly_/monthly_budget_tokens`; a
+ * limit of 0 means unlimited for that window. A run is blocked when the agent OR
+ * its project breaches ANY window.
  *
- * The canonical cost event is run completion (`agent-runner.ts:updateHeartbeatRun`),
- * which inserts one `cost_entries` row per run via `recordRunCost`. Reads here
- * back the pre-run gate (`job-manager.ts`), the reactive pause, and the
- * budget-status API (`routes/costs.ts`).
+ * Every run and chat turn records its tokens through {@link recordUsage}, however
+ * its credential is billed: a subscription spends an allowance as surely as an
+ * API key spends money, and a budget that skipped it measured nothing on an
+ * instance running on one. Reads here back the pre-run gate (`job-manager.ts`),
+ * the reactive pause, and the budget-status API (`routes/usage.ts`).
  */
 
-/** Cents spent within each UTC calendar window, plus all-time. */
-export interface WindowSpend {
+/** Tokens counted within each UTC calendar window. */
+export interface WindowUsage {
 	daily: number;
 	weekly: number;
 	monthly: number;
-	allTime: number;
 }
 
-/** Spend vs. limit for a single window. `overBudget` requires a positive limit. */
+/** Usage vs. limit for a single window. `overBudget` requires a positive limit. */
 export interface WindowStatus {
-	spentCents: number;
-	limitCents: number;
+	usedTokens: number;
+	limitTokens: number;
 	overBudget: boolean;
 }
 
@@ -43,67 +50,79 @@ export interface EntityBudgetStatus {
 
 /** The window limits configured on an agent or project. */
 export interface BudgetLimits {
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
-	monthly_budget_cents: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	monthly_budget_tokens: number;
 }
 
-const ZERO_SPEND: WindowSpend = { daily: 0, weekly: 0, monthly: 0, allTime: 0 };
+const ZERO_USAGE: WindowUsage = { daily: 0, weekly: 0, monthly: 0 };
+
+/** No limit in any window: what an entity with nothing configured is checked against. */
+export const NO_LIMITS: BudgetLimits = {
+	daily_budget_tokens: 0,
+	weekly_budget_tokens: 0,
+	monthly_budget_tokens: 0,
+};
 
 /**
- * Sum spend over the three UTC windows (and all-time) for a single entity column.
- * `column` is the trusted `cost_entries` filter column (`member_id` or `project_id`);
- * it is never derived from user input.
+ * SQL for the three UTC window sums over `usage_entries`, aliased `ue`, which the
+ * caller must bound with {@link USAGE_WINDOW_FLOOR_SQL}. {@link utcWindowStartSql}
+ * truncates in UTC whatever the session time zone. `::float8` keeps
+ * each a JSON number: a sum of int8 is numeric, which comes back as a string,
+ * and a double holds every whole token count below 2^53 exactly.
  */
-async function getSpendByColumn(
+export const USAGE_WINDOW_SUMS_SQL = `
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= ${utcWindowStartSql("'day'")}), 0)::float8 AS daily,
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= ${utcWindowStartSql("'week'")}), 0)::float8 AS weekly,
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= ${utcWindowStartSql("'month'")}), 0)::float8 AS monthly`;
+
+/**
+ * The earliest `usage_entries.created_at` any window sum reads: the start of the
+ * longer window (an ISO week can start in the previous month), or the instant
+ * budgets began counting tokens if that is later. A lower bound on the scan, so
+ * the `(member_id, created_at)` and `(project_id, created_at)` indexes range-scan
+ * this month instead of an entity's whole history.
+ */
+export const USAGE_WINDOW_FLOOR_SQL = `GREATEST(
+	LEAST(${utcWindowStartSql("'week'")}, ${utcWindowStartSql("'month'")}),
+	COALESCE((SELECT value::timestamptz FROM system_meta WHERE key = '${BUDGET_USAGE_COUNTED_FROM_META_KEY}'), '-infinity'))`;
+
+/** Input, output and total token sums over `usage_entries`, aliased `ue`, as JSON numbers. */
+export const USAGE_TOKEN_SUMS_SQL = `COALESCE(SUM(ue.input_tokens), 0)::float8 AS input_tokens,
+	COALESCE(SUM(ue.output_tokens), 0)::float8 AS output_tokens,
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens), 0)::float8 AS total_tokens`;
+
+/**
+ * Sum usage over the three UTC windows for a single entity column. `column` is
+ * the trusted `usage_entries` filter column (`member_id` or `project_id`); it is
+ * never derived from user input.
+ */
+async function getUsageByColumn(
 	db: Db,
 	column: 'member_id' | 'project_id',
 	id: string,
-): Promise<WindowSpend> {
-	const res = await db.query<WindowSpend>(
-		`SELECT
-		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('day',   now() AT TIME ZONE 'UTC')), 0)::int AS daily,
-		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('week',  now() AT TIME ZONE 'UTC')), 0)::int AS weekly,
-		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly,
-		   COALESCE(SUM(amount_cents), 0)::int AS "allTime"
-		 FROM cost_entries
-		 -- Billed rows only. A notional figure is shown, never enforced: an operator
-		 -- on a subscription is not billed per token, so charging a dollar budget
-		 -- against imputed spend would pause agents over money nobody spent.
-		 WHERE ${column} = $1 AND billed`,
+): Promise<WindowUsage> {
+	const res = await db.query<WindowUsage>(
+		`SELECT ${USAGE_WINDOW_SUMS_SQL} FROM usage_entries ue
+		  WHERE ue.${column} = $1 AND ue.created_at >= ${USAGE_WINDOW_FLOOR_SQL}`,
 		[id],
 	);
-	return res.rows[0] ?? ZERO_SPEND;
-}
-
-export function getAgentSpend(db: Db, memberId: string): Promise<WindowSpend> {
-	return getSpendByColumn(db, 'member_id', memberId);
-}
-
-export function getProjectSpend(db: Db, projectId: string): Promise<WindowSpend> {
-	return getSpendByColumn(db, 'project_id', projectId);
+	return res.rows[0] ?? ZERO_USAGE;
 }
 
 /** A window is over budget only when a positive limit is met or exceeded. */
-function windowStatus(spentCents: number, limitCents: number): WindowStatus {
-	return { spentCents, limitCents, overBudget: limitCents > 0 && spentCents >= limitCents };
+function windowStatus(usedTokens: number, limitTokens: number): WindowStatus {
+	return { usedTokens, limitTokens, overBudget: limitTokens > 0 && usedTokens >= limitTokens };
 }
 
-/** Build per-window status from already-fetched spend + limits (no DB access). */
+/** Build per-window status from already-fetched usage + limits (no DB access). */
 export function toEntityBudgetStatus(
-	spend: Pick<WindowSpend, 'daily' | 'weekly' | 'monthly'>,
+	usage: Pick<WindowUsage, 'daily' | 'weekly' | 'monthly'>,
 	limits: BudgetLimits,
 ): EntityBudgetStatus {
-	return buildStatus(spend, limits);
-}
-
-function buildStatus(
-	spend: Pick<WindowSpend, 'daily' | 'weekly' | 'monthly'>,
-	limits: BudgetLimits,
-): EntityBudgetStatus {
-	const daily = windowStatus(spend.daily, limits.daily_budget_cents);
-	const weekly = windowStatus(spend.weekly, limits.weekly_budget_cents);
-	const monthly = windowStatus(spend.monthly, limits.monthly_budget_cents);
+	const daily = windowStatus(usage.daily, limits.daily_budget_tokens);
+	const weekly = windowStatus(usage.weekly, limits.weekly_budget_tokens);
+	const monthly = windowStatus(usage.monthly, limits.monthly_budget_tokens);
 	return {
 		daily,
 		weekly,
@@ -112,54 +131,75 @@ function buildStatus(
 	};
 }
 
-export async function getAgentBudgetStatus(db: Db, memberId: string): Promise<EntityBudgetStatus> {
-	const [spend, limitsRes] = await Promise.all([
-		getAgentSpend(db, memberId),
-		db.query<BudgetLimits>(
-			`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
-			 FROM member_agents WHERE id = $1`,
-			[memberId],
-		),
-	]);
-	const limits = limitsRes.rows[0] ?? {
-		daily_budget_cents: 0,
-		weekly_budget_cents: 0,
-		monthly_budget_cents: 0,
-	};
-	return buildStatus(spend, limits);
+/** The budget limit columns of `member_agents` and `projects`. */
+const BUDGET_LIMIT_COLUMNS = 'daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens';
+
+/** Where each entity keeps its limits, and which ledger column is its usage. */
+const BUDGET_ENTITIES = {
+	agent: { table: 'member_agents', usageColumn: 'member_id' },
+	project: { table: 'projects', usageColumn: 'project_id' },
+} as const;
+
+type BudgetEntity = keyof typeof BUDGET_ENTITIES;
+
+async function readLimits(db: Db, entity: BudgetEntity, id: string): Promise<BudgetLimits> {
+	const res = await db.query<BudgetLimits>(
+		`SELECT ${BUDGET_LIMIT_COLUMNS} FROM ${BUDGET_ENTITIES[entity].table} WHERE id = $1`,
+		[id],
+	);
+	return res.rows[0] ?? NO_LIMITS;
 }
 
-export async function getProjectBudgetStatus(
+/** An entity's usage against its limits, for display. */
+async function entityBudgetStatus(
 	db: Db,
-	projectId: string,
+	entity: BudgetEntity,
+	id: string,
 ): Promise<EntityBudgetStatus> {
-	const [spend, limitsRes] = await Promise.all([
-		getProjectSpend(db, projectId),
-		db.query<BudgetLimits>(
-			`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
-			 FROM projects WHERE id = $1`,
-			[projectId],
-		),
+	const [usage, limits] = await Promise.all([
+		getUsageByColumn(db, BUDGET_ENTITIES[entity].usageColumn, id),
+		readLimits(db, entity, id),
 	]);
-	const limits = limitsRes.rows[0] ?? {
-		daily_budget_cents: 0,
-		weekly_budget_cents: 0,
-		monthly_budget_cents: 0,
-	};
-	return buildStatus(spend, limits);
+	return toEntityBudgetStatus(usage, limits);
 }
 
-/** Which entity/window first blocks a run, or null when within budget. */
+export function getAgentBudgetStatus(db: Db, memberId: string): Promise<EntityBudgetStatus> {
+	return entityBudgetStatus(db, 'agent', memberId);
+}
+
+export function getProjectBudgetStatus(db: Db, projectId: string): Promise<EntityBudgetStatus> {
+	return entityBudgetStatus(db, 'project', projectId);
+}
+
+/** Which entity and window first blocks a run, with what it used against what it may. */
 export interface OverBudgetBlock {
 	scope: 'agent' | 'project';
 	period: BudgetPeriod;
+	usedTokens: number;
+	limitTokens: number;
 }
 
-function firstBlockingPeriod(status: EntityBudgetStatus): BudgetPeriod | null {
-	if (status.daily.overBudget) return BudgetPeriod.Daily;
-	if (status.weekly.overBudget) return BudgetPeriod.Weekly;
-	if (status.monthly.overBudget) return BudgetPeriod.Monthly;
+function firstBlockingWindow(
+	status: EntityBudgetStatus,
+): { period: BudgetPeriod; window: WindowStatus } | null {
+	if (status.daily.overBudget) return { period: BudgetPeriod.Daily, window: status.daily };
+	if (status.weekly.overBudget) return { period: BudgetPeriod.Weekly, window: status.weekly };
+	if (status.monthly.overBudget) return { period: BudgetPeriod.Monthly, window: status.monthly };
 	return null;
+}
+
+function toBlock(
+	scope: OverBudgetBlock['scope'],
+	status: EntityBudgetStatus,
+): OverBudgetBlock | null {
+	const blocking = firstBlockingWindow(status);
+	if (!blocking) return null;
+	return {
+		scope,
+		period: blocking.period,
+		usedTokens: blocking.window.usedTokens,
+		limitTokens: blocking.window.limitTokens,
+	};
 }
 
 /**
@@ -173,59 +213,91 @@ export async function checkOverBudget(
 	memberId: string,
 	projectId: string | null,
 ): Promise<OverBudgetBlock | null> {
-	const agentStatus = await getAgentBudgetStatus(db, memberId);
-	const agentPeriod = firstBlockingPeriod(agentStatus);
-	if (agentPeriod) return { scope: 'agent', period: agentPeriod };
-
-	if (projectId) {
-		const projectStatus = await getProjectBudgetStatus(db, projectId);
-		const projectPeriod = firstBlockingPeriod(projectStatus);
-		if (projectPeriod) return { scope: 'project', period: projectPeriod };
-	}
-	return null;
+	const agentBlock = await entityBlock(db, 'agent', memberId);
+	if (agentBlock) return agentBlock;
+	if (!projectId) return null;
+	return entityBlock(db, 'project', projectId);
 }
 
 /**
- * Record a run's cost as a single `cost_entries` row — the canonical cost event.
- * No-op for non-positive amounts. Returns the inserted row (or null on no-op) so
- * callers can broadcast the change.
+ * The window that blocks an entity, or null. The sums are skipped when every
+ * window is unlimited, which is the default: nothing can be over, so a gate run
+ * per dispatch and per run completion pays one primary-key read.
  */
-export async function recordRunCost(
+async function entityBlock(
 	db: Db,
+	entity: BudgetEntity,
+	id: string,
+): Promise<OverBudgetBlock | null> {
+	const limits = await readLimits(db, entity, id);
+	const unlimited =
+		Number(limits.daily_budget_tokens) <= 0 &&
+		Number(limits.weekly_budget_tokens) <= 0 &&
+		Number(limits.monthly_budget_tokens) <= 0;
+	if (unlimited) return null;
+	const usage = await getUsageByColumn(db, BUDGET_ENTITIES[entity].usageColumn, id);
+	return toBlock(entity, toEntityBudgetStatus(usage, limits));
+}
+
+/**
+ * Record a run's or chat turn's tokens as a single `usage_entries` row - the
+ * canonical usage event - and tell the open pages of the team that owns it, so
+ * the Budget page refreshes. No-op when nothing was used. Returns the inserted
+ * row, or null on a no-op.
+ */
+export async function recordUsage(
+	db: Db,
+	broadcast: { wsManager: WebSocketManager | undefined; teamId: string },
 	entry: {
 		memberId: string;
 		taskId: string | null;
 		projectId: string | null;
-		amountCents: number;
+		inputTokens: number;
+		outputTokens: number;
 		description: string;
-		aiProviderConfigId: string | null;
-		provider: AiProvider | null;
+		/** The credential that did the work, for the per-credential breakdown. */
+		aiProviderConfigId?: string | null;
+		provider?: AiProvider | null;
 		/**
-		 * Real money, or a notional figure for a run nobody is billed per token for.
-		 *
-		 * Required with no default so every call site has to decide and a new one is
-		 * a compile error. Getting it wrong in the false direction silently stops
-		 * charging a budget; in the true direction it starts enforcing on money that
-		 * was never spent.
+		 * When the work happened, where that is not now: a run reconciled after a
+		 * restart is counted at its own start, so an upgrade's counted-from floor
+		 * keeps pre-upgrade work out of the new budgets.
 		 */
-		billed: boolean;
+		occurredAt?: string | Date | null;
 	},
 ): Promise<Record<string, unknown> | null> {
-	if (entry.amountCents <= 0) return null;
+	if (entry.inputTokens <= 0 && entry.outputTokens <= 0) return null;
 	const res = await db.query<Record<string, unknown>>(
-		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description, ai_provider_config_id, provider, billed)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7::ai_provider, $8)
-		 RETURNING *`,
+		`INSERT INTO usage_entries
+		   (member_id, task_id, project_id, input_tokens, output_tokens, description,
+		    ai_provider_config_id, provider, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::ai_provider, COALESCE($9::timestamptz, now()))
+		 RETURNING ${USAGE_ENTRY_COLUMNS_SQL}`,
 		[
 			entry.memberId,
 			entry.taskId,
 			entry.projectId,
-			entry.amountCents,
+			Math.max(0, Math.round(entry.inputTokens)),
+			Math.max(0, Math.round(entry.outputTokens)),
 			entry.description,
-			entry.aiProviderConfigId,
-			entry.provider,
-			entry.billed,
+			entry.aiProviderConfigId ?? null,
+			entry.provider ?? null,
+			entry.occurredAt ?? null,
 		],
 	);
-	return res.rows[0] ?? null;
+	const row = res.rows[0] ?? null;
+	if (row) {
+		broadcastRowChange(
+			broadcast.wsManager,
+			wsRoom.team(broadcast.teamId),
+			'usage_entries',
+			'INSERT',
+			row,
+		);
+	}
+	return row;
 }
+
+/** A `usage_entries` row as the API returns it. */
+export const USAGE_ENTRY_COLUMNS_SQL = `id, member_id, task_id, project_id, input_tokens,
+	output_tokens, description, ai_provider_config_id, provider, created_at`;

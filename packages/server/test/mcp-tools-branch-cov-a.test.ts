@@ -13,6 +13,7 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Branch-coverage tests for packages/server/src/mcp/tools.ts (part A):
 // scope/authorization branches, task/comment tools, advisory warnings,
@@ -115,27 +116,7 @@ async function call(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result?: { content: Array<{ text: string }> };
-		error?: { message: string };
-	};
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	const text = body.result.content[0].text;
-	try {
-		return JSON.parse(text) as Record<string, unknown>;
-	} catch {
-		return { error: text };
-	}
+	return await callMcpTool(app, tokenStr, toolName, args);
 }
 
 const admin = (toolName: string, args: Record<string, unknown> = {}) => call(token, toolName, args);
@@ -745,14 +726,14 @@ describe('read tools', () => {
 		expect(r.every((a) => typeof a.admin_status === 'string')).toBe(true);
 	});
 
-	it('get_costs supports group_by agent and day', async () => {
-		const byAgent = await admin('get_costs', { project: projectSlug, group_by: 'agent' });
+	it('get_usage supports group_by agent and day', async () => {
+		const byAgent = await admin('get_usage', { project: projectSlug, group_by: 'agent' });
 		expect(Array.isArray(byAgent)).toBe(true);
-		// The day grouping is the one that pages: cost rows accumulate forever.
-		const byDay = await admin('get_costs', { project: projectSlug, group_by: 'day' });
+		// The day grouping is the one that pages: usage rows accumulate forever.
+		const byDay = await admin('get_usage', { project: projectSlug, group_by: 'day' });
 		expect(Array.isArray(byDay.items)).toBe(true);
 		expect(byDay.has_more).toBe(false);
-		const total = await admin('get_costs', { project: projectSlug });
+		const total = await admin('get_usage', { project: projectSlug });
 		expect(total.error).toBeUndefined();
 	});
 

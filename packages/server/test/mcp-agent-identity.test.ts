@@ -6,6 +6,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, mintAgentToken } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -55,27 +56,7 @@ async function call(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result?: { content: Array<{ text: string }> };
-		error?: { message: string };
-	};
-	if (body.error) return { error: body.error.message };
-	const text = body.result?.content?.[0]?.text ?? '{}';
-	try {
-		return JSON.parse(text) as Record<string, unknown>;
-	} catch {
-		return { error: text };
-	}
+	return await callMcpTool(app, tokenStr, toolName, args);
 }
 
 async function nameOf(slug: string): Promise<string | null> {

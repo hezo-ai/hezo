@@ -3,13 +3,13 @@ import {
 	ApprovalType,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 	isAgentEffort,
 	isReservedAgentSlug,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { checkHumanNameAvailable } from '../lib/agent-identity';
-import { budgetWindowsError } from '../lib/budget-validation';
+import { budgetWriteError } from '../lib/budget-validation';
 import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
@@ -29,9 +29,9 @@ export interface HireProposalInput {
 	reports_to?: string;
 	default_effort?: string;
 	heartbeat_interval_min?: number;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 	touches_code?: boolean;
 }
 
@@ -46,9 +46,9 @@ export interface HireProposalPayload {
 	reports_to: string | null;
 	default_effort: string;
 	heartbeat_interval_min: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
-	monthly_budget_cents: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	monthly_budget_tokens: number;
 	touches_code: boolean;
 }
 
@@ -63,6 +63,13 @@ export async function prepareHireProposal(
 	teamId: string,
 	input: HireProposalInput,
 ): Promise<{ error: string; conflict?: boolean } | { payload: HireProposalPayload }> {
+	const budgetError = budgetWriteError(input as unknown as Record<string, unknown>, {
+		daily_budget_tokens: 0,
+		weekly_budget_tokens: 0,
+		monthly_budget_tokens: DEFAULT_MONTHLY_BUDGET_TOKENS,
+	});
+	if (budgetError) return { error: budgetError };
+
 	const title = input.title?.trim();
 	if (!title) return { error: 'title is required' };
 
@@ -89,13 +96,6 @@ export async function prepareHireProposal(
 			error: `heartbeat_interval_min must be at least ${heartbeatIntervalFloorMin()} minutes`,
 		};
 	}
-
-	const budgetError = budgetWindowsError({
-		daily_budget_cents: input.daily_budget_cents ?? 0,
-		weekly_budget_cents: input.weekly_budget_cents ?? 0,
-		monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
-	});
-	if (budgetError) return { error: budgetError };
 
 	// No substitution variable is required: the resolver composes the agent's
 	// identity and its live skills/docs/preferences context around whatever body
@@ -154,9 +154,9 @@ export async function prepareHireProposal(
 			reports_to: reportsTo,
 			default_effort: input.default_effort ?? DEFAULT_EFFORT,
 			heartbeat_interval_min: input.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			daily_budget_cents: input.daily_budget_cents ?? 0,
-			weekly_budget_cents: input.weekly_budget_cents ?? 0,
-			monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+			daily_budget_tokens: input.daily_budget_tokens ?? 0,
+			weekly_budget_tokens: input.weekly_budget_tokens ?? 0,
+			monthly_budget_tokens: input.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 			touches_code: input.touches_code ?? false,
 		},
 	};
@@ -200,17 +200,68 @@ export interface HirePayloadPatchInput {
 	reports_to?: string | null;
 	default_effort?: string;
 	heartbeat_interval_min?: number;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 	touches_code?: boolean;
+}
+
+/**
+ * Validate a revision of a pending hire proposal and build its JSONB patch - the
+ * one check every edit path runs, the admin's REST edit and the Captain's tool
+ * alike, so a revision can never store what the create path would refuse: a
+ * retired dollar field, a prompt that fails the style check, a manager not on
+ * the team, a cadence below the scheduler's floor, an unknown effort, or a
+ * budget trio that is not whole, non-negative and coherent once merged with the
+ * proposal's current windows.
+ */
+export async function prepareHirePayloadPatch(
+	db: Db,
+	teamId: string,
+	current: Record<string, unknown>,
+	input: HirePayloadPatchInput,
+): Promise<{ error: string } | { patch: Record<string, unknown> }> {
+	const budgetError = budgetWriteError(input as unknown as Record<string, unknown>, {
+		daily_budget_tokens: Number(current.daily_budget_tokens ?? 0),
+		weekly_budget_tokens: Number(current.weekly_budget_tokens ?? 0),
+		monthly_budget_tokens: Number(current.monthly_budget_tokens ?? 0),
+	});
+	if (budgetError) return { error: budgetError };
+
+	if (input.system_prompt?.trim()) {
+		const styleError = authoredPromptError(input.system_prompt);
+		if (styleError) return { error: styleError };
+	}
+	if (typeof input.reports_to === 'string' && input.reports_to.trim()) {
+		const raw = input.reports_to.trim();
+		if (raw === current.slug) return { error: 'reports_to: an agent cannot report to itself' };
+		if (!(await resolveAgentId(db, teamId, raw))) {
+			return { error: `reports_to: no agent '${raw}' in this team` };
+		}
+	}
+	if (
+		input.heartbeat_interval_min !== undefined &&
+		input.heartbeat_interval_min < heartbeatIntervalFloorMin()
+	) {
+		return {
+			error: `heartbeat_interval_min must be at least ${heartbeatIntervalFloorMin()} minutes`,
+		};
+	}
+	if (input.default_effort !== undefined && !isAgentEffort(input.default_effort)) {
+		return { error: `Invalid default_effort: ${input.default_effort}` };
+	}
+
+	const patch = buildHirePayloadPatch(input);
+	if (Object.keys(patch).length === 0) return { error: 'No fields to update' };
+
+	return { patch };
 }
 
 /**
  * Build the JSONB patch for revising a pending hire payload. Only fields that
  * were supplied are included; the slug is intentionally fixed once derived.
  */
-export function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<string, unknown> {
+function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<string, unknown> {
 	const patch: Record<string, unknown> = {};
 	if (input.title !== undefined) patch.title = input.title.trim();
 	if (input.human_name !== undefined) patch.human_name = input.human_name?.trim() || null;
@@ -220,11 +271,12 @@ export function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<stri
 	if (input.default_effort !== undefined) patch.default_effort = input.default_effort;
 	if (input.heartbeat_interval_min !== undefined)
 		patch.heartbeat_interval_min = input.heartbeat_interval_min;
-	if (input.daily_budget_cents !== undefined) patch.daily_budget_cents = input.daily_budget_cents;
-	if (input.weekly_budget_cents !== undefined)
-		patch.weekly_budget_cents = input.weekly_budget_cents;
-	if (input.monthly_budget_cents !== undefined)
-		patch.monthly_budget_cents = input.monthly_budget_cents;
+	if (input.daily_budget_tokens !== undefined)
+		patch.daily_budget_tokens = input.daily_budget_tokens;
+	if (input.weekly_budget_tokens !== undefined)
+		patch.weekly_budget_tokens = input.weekly_budget_tokens;
+	if (input.monthly_budget_tokens !== undefined)
+		patch.monthly_budget_tokens = input.monthly_budget_tokens;
 	if (input.touches_code !== undefined) patch.touches_code = input.touches_code;
 	return patch;
 }

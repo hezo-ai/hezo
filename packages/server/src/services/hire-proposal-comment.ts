@@ -18,7 +18,7 @@ function buildContentSnapshot(payload: Record<string, unknown>): Record<string, 
 		title: payload.title,
 		slug: payload.slug,
 		role_description: payload.role_description ?? '',
-		monthly_budget_cents: payload.monthly_budget_cents ?? 0,
+		monthly_budget_tokens: payload.monthly_budget_tokens ?? 0,
 		heartbeat_interval_min: payload.heartbeat_interval_min ?? null,
 		touches_code: payload.touches_code ?? false,
 	};

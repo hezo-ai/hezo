@@ -47,9 +47,9 @@ interface BuiltinEffectiveConfig {
 	defaultEffort: string;
 	heartbeatIntervalMin: number;
 	runTimeoutMin: number;
-	monthlyBudgetCents: number;
-	dailyBudgetCents: number;
-	weeklyBudgetCents: number;
+	monthlyBudgetTokens: number;
+	dailyBudgetTokens: number;
+	weeklyBudgetTokens: number;
 	touchesCode: boolean;
 }
 
@@ -253,12 +253,12 @@ async function loadBuiltinDefaults(db: Db, slug: string): Promise<BuiltinEffecti
 		default_effort: string;
 		heartbeat_interval_min: number;
 		run_timeout_min: number;
-		monthly_budget_cents: number;
+		monthly_budget_tokens: number;
 		touches_code: boolean;
 	}>(
 		`SELECT id, name, role_description, default_summary, default_team_context,
 		        system_prompt_template, default_effort, heartbeat_interval_min,
-		        run_timeout_min, monthly_budget_cents, touches_code
+		        run_timeout_min, monthly_budget_tokens, touches_code
 		 FROM agent_types WHERE slug = $1`,
 		[slug],
 	);
@@ -276,7 +276,7 @@ async function loadBuiltinDefaults(db: Db, slug: string): Promise<BuiltinEffecti
 		heartbeatIntervalMin: base.heartbeat_interval_min,
 		runTimeoutMin: base.run_timeout_min,
 		// No team-type override here — the agent-type monthly default, daily/weekly unlimited.
-		...resolveAgentBudgets(base.monthly_budget_cents, null),
+		...resolveAgentBudgets(base.monthly_budget_tokens, null),
 		touchesCode: base.touches_code ?? false,
 	};
 }
@@ -318,7 +318,7 @@ async function resolveBuiltinEffectiveConfig(
 	const teamContextOverride = tmpl?.builtin_agent_team_contexts?.[slug] || '';
 	const templateProvidesOverride = !!join || !!promptOverride || !!teamContextOverride;
 
-	const budgets = resolveAgentBudgets(base.monthlyBudgetCents, join);
+	const budgets = resolveAgentBudgets(base.monthlyBudgetTokens, join);
 
 	return {
 		config: {
@@ -326,9 +326,9 @@ async function resolveBuiltinEffectiveConfig(
 			teamContext: teamContextOverride || base.teamContext,
 			systemPrompt: promptOverride || base.systemPrompt,
 			heartbeatIntervalMin: join?.heartbeat_interval_override ?? base.heartbeatIntervalMin,
-			monthlyBudgetCents: budgets.monthlyBudgetCents,
-			dailyBudgetCents: budgets.dailyBudgetCents,
-			weeklyBudgetCents: budgets.weeklyBudgetCents,
+			monthlyBudgetTokens: budgets.monthlyBudgetTokens,
+			dailyBudgetTokens: budgets.dailyBudgetTokens,
+			weeklyBudgetTokens: budgets.weeklyBudgetTokens,
 		},
 		templateProvidesOverride,
 	};
@@ -360,7 +360,7 @@ async function insertBuiltinAgent(
 		`INSERT INTO member_agents (id, agent_type_id, title, slug, avatar_spec, role_description,
 		                            summary, team_context,
 		                            default_effort, heartbeat_interval_min, run_timeout_min,
-		                            monthly_budget_cents, daily_budget_cents, weekly_budget_cents,
+		                            monthly_budget_tokens, daily_budget_tokens, weekly_budget_tokens,
 		                            touches_code)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::agent_effort, $10, $11, $12, $13, $14, $15)`,
 		[
@@ -375,9 +375,9 @@ async function insertBuiltinAgent(
 			config.defaultEffort,
 			config.heartbeatIntervalMin,
 			config.runTimeoutMin,
-			config.monthlyBudgetCents,
-			config.dailyBudgetCents,
-			config.weeklyBudgetCents,
+			config.monthlyBudgetTokens,
+			config.dailyBudgetTokens,
+			config.weeklyBudgetTokens,
 			config.touchesCode,
 		],
 	);
@@ -401,14 +401,14 @@ async function updateBuiltinAgent(
 		default_effort: string;
 		heartbeat_interval_min: number;
 		run_timeout_min: number;
-		monthly_budget_cents: number;
-		daily_budget_cents: number;
-		weekly_budget_cents: number;
+		monthly_budget_tokens: number;
+		daily_budget_tokens: number;
+		weekly_budget_tokens: number;
 		touches_code: boolean;
 	}>(
 		`SELECT title, role_description, summary, team_context, default_effort::text,
-		        heartbeat_interval_min, run_timeout_min, monthly_budget_cents,
-		        daily_budget_cents, weekly_budget_cents, touches_code
+		        heartbeat_interval_min, run_timeout_min, monthly_budget_tokens,
+		        daily_budget_tokens, weekly_budget_tokens, touches_code
 		 FROM member_agents WHERE id = $1`,
 		[memberId],
 	);
@@ -422,9 +422,9 @@ async function updateBuiltinAgent(
 		current.default_effort !== config.defaultEffort ||
 		current.heartbeat_interval_min !== config.heartbeatIntervalMin ||
 		current.run_timeout_min !== config.runTimeoutMin ||
-		current.monthly_budget_cents !== config.monthlyBudgetCents ||
-		current.daily_budget_cents !== config.dailyBudgetCents ||
-		current.weekly_budget_cents !== config.weeklyBudgetCents ||
+		current.monthly_budget_tokens !== config.monthlyBudgetTokens ||
+		current.daily_budget_tokens !== config.dailyBudgetTokens ||
+		current.weekly_budget_tokens !== config.weeklyBudgetTokens ||
 		current.touches_code !== config.touchesCode;
 
 	if (metadataChanged) {
@@ -436,9 +436,9 @@ async function updateBuiltinAgent(
 			     default_effort = $4::agent_effort,
 			     heartbeat_interval_min = $5,
 			     run_timeout_min = $6,
-			     monthly_budget_cents = $7,
-			     daily_budget_cents = $8,
-			     weekly_budget_cents = $9,
+			     monthly_budget_tokens = $7,
+			     daily_budget_tokens = $8,
+			     weekly_budget_tokens = $9,
 			     touches_code = $10
 			 WHERE id = $11`,
 			[
@@ -448,9 +448,9 @@ async function updateBuiltinAgent(
 				config.defaultEffort,
 				config.heartbeatIntervalMin,
 				config.runTimeoutMin,
-				config.monthlyBudgetCents,
-				config.dailyBudgetCents,
-				config.weeklyBudgetCents,
+				config.monthlyBudgetTokens,
+				config.dailyBudgetTokens,
+				config.weeklyBudgetTokens,
 				config.touchesCode,
 				memberId,
 			],
@@ -564,9 +564,9 @@ export async function applyMarketplaceTeamToTeam(
 		default_effort: a.default_effort,
 		heartbeat_interval_min: a.heartbeat_interval_min,
 		run_timeout_min: a.run_timeout_min,
-		monthly_budget_cents: a.monthly_budget_cents,
-		daily_budget_cents: a.daily_budget_cents,
-		weekly_budget_cents: a.weekly_budget_cents,
+		monthly_budget_tokens: a.monthly_budget_tokens,
+		daily_budget_tokens: a.daily_budget_tokens,
+		weekly_budget_tokens: a.weekly_budget_tokens,
 		touches_code: a.touches_code,
 		reports_to_slug: a.reports_to_slug,
 		// Marketplace roles are not catalog agent types — provisioned inline, like hires.
@@ -680,9 +680,9 @@ export async function applyMarketplaceRoleToTeam(
 		default_effort: role.default_effort,
 		heartbeat_interval_min: role.heartbeat_interval_min,
 		run_timeout_min: role.run_timeout_min,
-		monthly_budget_cents: role.monthly_budget_cents,
-		daily_budget_cents: role.daily_budget_cents,
-		weekly_budget_cents: role.weekly_budget_cents,
+		monthly_budget_tokens: role.monthly_budget_tokens,
+		daily_budget_tokens: role.daily_budget_tokens,
+		weekly_budget_tokens: role.weekly_budget_tokens,
 		touches_code: role.touches_code,
 		reports_to_slug: reportsToSlug,
 		// Marketplace roles are not catalog agent types — provisioned inline, like hires.

@@ -183,6 +183,7 @@ Before writing a helper, check whether it has a home. **Extend the seam; never a
 | A complete test double | `createStubDocker()` |
 | A test context | `createTestContext()` (server), `renderApp()` + `seed*()` (web) |
 | A runtime's or provider's own quirk | that entity's adapter or table row |
+| Anything a person must act on | `postAdminNotice` - an inbox row via `fireAdminMention`; a comment that only says so reaches nobody |
 
 ## One mechanism, no silent fallbacks
 
@@ -225,6 +226,7 @@ The reference workload is **~10 concurrent agent runs on an instance holding 1GB
 - **Share resources; do not multiply them per unit of work**, and find out why something was scoped narrowly before you widen it.
 - **A new mutex is a throughput ceiling.** Say in a comment what it protects and why a narrower scope is insufficient; never hold one across IO.
 - **Stream; do not copy.** Data that can exceed a few MB is streamed end to end - never collected, joined or buffered before being sent. **Coalesce on the wire and respect backpressure**: an ignored send result is unbounded server-side buffering.
+- **A wakeup an agent run creates is bounded like a recurring job.**
 - **Every recurring job is bounded, observable, and paced to what it watches.** **A cache needs an invalidation story and a bound**, stated where you declare it.
 - **Deleting the user's data is the operator's decision, never a default.** A table that only grows is a query-design problem. Only internal bookkeeping with no user-facing surface may be swept automatically, and the comment must say why it qualifies.
 - **Measure the claim.** A performance change states what it improved and how that was observed.
@@ -331,7 +333,7 @@ Every route enforces authorization - never trust URL parameters alone.
 - **Nested resources verify they belong to the parent** before any read or write. Global endpoints still verify team access.
 - **Socket subscriptions verify team membership matches the room.**
 - **Tool handlers enforce the same authorization as their route equivalents.**
-- **API keys authenticate the tool surface only** - rejected on the REST and socket surfaces. An approved key is instance-scoped and admin-equivalent, so key management stays human-superuser-only: a key can never mint or approve keys.
+- **API keys and agent run tokens authenticate the tool surface only** - rejected on the REST and socket surfaces. An approved key is instance-scoped and admin-equivalent, so key management stays human-superuser-only: a key can never mint or approve keys.
 
 ## AI runtime hooks
 
@@ -340,14 +342,12 @@ Every task run ends through a completeness judge, a deterministic handoff-delive
 - **The judge is for task runs only. Do not add one to a new non-task path.** Every rule it carries is about abandoning task work, and it reads only the final message; a chat turn has no task and its final message is already delivered. It costs a round trip per turn and, on a block, a whole turn spent on a task that does not exist.
 - **Not every runtime can block and continue.** Where one cannot, the hook fails open by design - never paper over that with a second mechanism.
 - **Strengthen this area with a structural signal, never a phrase.** Prefer reporting what the system did, or asking a question its own state answers, over matching text: every text-classifying check needs new vocabulary for each new phrasing, and a structural one needs none. A phrase that is genuinely needed joins the one shared vocabulary rather than becoming a new branch.
-- **Judge behaviour reads the resolved runtime, never the provider** - a runtime is reachable by any credential configured onto it. **A newly selected judge model needs a pricing row**, or every run on it prices to $0.
+- **Judge behaviour reads the resolved runtime, never the provider** - a runtime is reachable by any credential configured onto it.
 
-## Cost: always priced from the table
-Per-run cost is computed **always** from the pricing table, using the token counts each runtime reports. **A runtime's own dollar figure is ignored in every parser** - it is a client-side estimate from the CLI's built-in rate card, which for a third-party endpoint belongs to the wrong provider entirely. The CLIs' only job in cost accounting is accurate token counts. An unknown model prices to $0 - fail-low, never fail-high.
+## Usage: counted in tokens
+Budgets and ceilings count input (cached input included) plus output, for every run and chat turn whatever its credential. Hezo holds no price list. **A runtime's own dollar figure is ignored in every parser** - the CLIs' only job here is accurate token counts.
 
-**A cost that is shown is not a cost that is charged.** A subscription bills nothing per token, so its runs are priced at list rates and recorded as **notional** - `cost_entries.billed = false`. Notional spend is display-only: it reaches no budget query, gates no dispatch and pauses no agent. A new reader of `cost_entries` decides which it wants; a new writer must say.
-
-**Where usage is recovered from a file rather than stdout, scrub the file after parsing** - it can carry the provider credential in plaintext, and a runtime's rollout is the whole transcript. Recovery runs on the failure path too, or a killed run records zero for work that happened. Parsing such a file has traps that otherwise price runs silently wrong - cumulative vs per-request totals, which bucket already contains the cache, whether reasoning is inside output, and the file size; they are in `.dev/agent-run-hooks.md`, and you will not guess them.
+**Where usage is recovered from a file rather than stdout, scrub the file after parsing** - it can carry the provider credential in plaintext, and a runtime's rollout is the whole transcript. Recovery runs on the failure path too, or a killed run records zero for work that happened. Parsing such a file has traps that otherwise count runs silently wrong - cumulative vs per-request totals, which bucket already contains the cache, whether reasoning is inside output, the file size, and where the model is named; they are in `.dev/agent-run-hooks.md`, and you will not guess them.
 
 ## Container toolset
 The agent image pre-bakes the common toolchain, and anything else installs cleanly at runtime through the per-run egress proxy with our CA already trusted. **`wget` is deliberately absent - use `curl`.** **If you add a tool, add it to the toolset paragraph in the shared instructions too**, or agents will not know it exists.

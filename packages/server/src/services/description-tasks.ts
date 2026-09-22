@@ -8,7 +8,11 @@ import { createWakeup } from './wakeup';
 
 const log = logger.child('description-tasks');
 
-const COHERENCE_LABEL = 'team-coherence-review';
+/** The label every team coherence review task carries. */
+export const COHERENCE_LABEL = 'team-coherence-review';
+
+/** {@link COHERENCE_LABEL} as the JSONB array a `labels @>` test binds. */
+export const COHERENCE_LABEL_JSON = JSON.stringify([COHERENCE_LABEL]);
 
 /** Heading under which each triggering change is recorded on the coherence ticket. */
 const COHERENCE_CHANGES_HEADER = '## Changes that triggered this review';
@@ -56,17 +60,32 @@ async function loadTeamContext(db: Db, teamId: string): Promise<TeamCoordination
 	return loadTeamCoordinationContext(db, teamId);
 }
 
-async function findOpenLabeledTask(db: Db, teamId: string, label: string): Promise<string | null> {
+/** A team's open task carrying `label`, or null. */
+export async function findOpenLabeledTask(
+	db: Db,
+	teamId: string,
+	label: string,
+): Promise<{ id: string; identifier: string; assignee_id: string | null } | null> {
 	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(', ');
-	const result = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
+	const result = await db.query<{ id: string; identifier: string; assignee_id: string | null }>(
+		`SELECT id, identifier, assignee_id FROM tasks
 		 WHERE team_id = $1
 		   AND labels @> $2::jsonb
 		   AND status NOT IN (${placeholders})
 		 LIMIT 1`,
 		[teamId, JSON.stringify([label]), ...TERMINAL_TASK_STATUSES],
 	);
-	return result.rows[0]?.id ?? null;
+	return result.rows[0] ?? null;
+}
+
+/**
+ * SQL predicate: the Coach reviews the task aliased `taskAlias` once it is done.
+ * A finished coherence review is not reviewed: it is a pass over the prompts the
+ * Coach edits, so reviewing it feeds the Coach its own changes back. Binds
+ * {@link COHERENCE_LABEL_JSON} at `labelParam`.
+ */
+export function coachReviewsTaskSql(taskAlias: string, labelParam: string): string {
+	return `NOT ${taskAlias}.labels @> ${labelParam}::jsonb`;
 }
 
 /** One bullet recording a change on the coherence ticket. */
@@ -301,17 +320,44 @@ export async function pendingSetupReviewBlockerId(
 	return r.rows[0]?.id ?? null;
 }
 
+/** Whether `runId` is a run on one of `teamId`'s coherence review tasks. */
+async function runIsWorkingCoherenceReview(
+	db: Db,
+	runId: string,
+	teamId: string,
+): Promise<boolean> {
+	const r = await db.query(
+		`SELECT 1 FROM heartbeat_runs r
+		   JOIN tasks t ON t.id = r.task_id
+		  WHERE r.id = $1 AND t.team_id = $2 AND t.labels @> $3::jsonb`,
+		[runId, teamId, COHERENCE_LABEL_JSON],
+	);
+	return r.rows.length > 0;
+}
+
 export async function enqueueTeamCoherenceReviewTask(
 	db: Db,
 	teamId: string,
 	reason: TeamCoherenceReviewReason,
-	opts: { autoStart?: boolean; changeSummary?: string } = {},
+	opts: {
+		autoStart?: boolean;
+		changeSummary?: string;
+		/** The agent run that made the change, when an agent made it. */
+		byRunId?: string | null;
+	} = {},
 ): Promise<string | null> {
 	if (process.env.HEZO_E2E_SKIP_COHERENCE_REVIEW) return null;
+	// A change made while working this team's coherence review is part of that
+	// review. Filing it back onto the review would wake the same assignee to review
+	// its own edits, and every such run makes more of them.
+	if (opts.byRunId && (await runIsWorkingCoherenceReview(db, opts.byRunId, teamId))) {
+		log.debug(`Change by run ${opts.byRunId} is part of the coherence review it is working`);
+		return null;
+	}
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 
-	const existing = await findOpenLabeledTask(db, teamId, COHERENCE_LABEL);
+	const existing = (await findOpenLabeledTask(db, teamId, COHERENCE_LABEL))?.id;
 	if (existing) {
 		// Coalesce onto the open ticket. Record this change on it so the review can
 		// account for every update that triggered it, and re-wake the assignee so the

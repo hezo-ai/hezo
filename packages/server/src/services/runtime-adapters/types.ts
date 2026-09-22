@@ -1,4 +1,4 @@
-import type { AgentEffort, AiProvider, CostTokens } from '@hezo/shared';
+import type { AgentEffort, AiProvider } from '@hezo/shared';
 import type { AgentRunUsage } from '../agent-stream-parser';
 import type { EffortRuntimeApplication } from '../effort';
 import type { SandboxFiles } from '../sandbox/types';
@@ -226,11 +226,36 @@ export interface RuntimeArgsContext {
 	containerHomeDir: string | null;
 }
 
-/** What a runtime needs to recover usage a CLI left on disk rather than on stdout. */
+/**
+ * The most a whole-file usage read may buffer. A log past it is left unread: the
+ * process holding it is also the API, the proxy and, by default, the database,
+ * and a read repeats for the life of the run. An adapter whose figures survive a
+ * tail reads the tail instead and needs no budget.
+ */
+export const MAX_OFF_STREAM_USAGE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Reading a CLI's usage file, and scrubbing it. Two steps because the runner
+ * reads the file while the run goes on, to enforce the per-run token ceiling,
+ * and scrubs it only once the run is over.
+ */
+export interface OffStreamUsage {
+	/**
+	 * The usage the file holds so far. Never removes anything.
+	 *
+	 * Best-effort by contract - null means "no usage to report", which records no
+	 * tokens rather than failing the run. A failed read reports through `onError`
+	 * and returns null.
+	 */
+	read(ctx: RuntimeUsageContext): Promise<AgentRunUsage | null>;
+	/** Remove the file: it carries the provider credential, or the whole transcript. */
+	scrub(files: SandboxFiles): Promise<void>;
+}
+
+/** What a runtime needs to read usage a CLI left on disk rather than on stdout. */
 export interface RuntimeUsageContext {
 	/** Reads and removals are scoped to the per-run home mount. */
 	files: SandboxFiles;
-	price: ((model: string | undefined, tokens: CostTokens) => number) | undefined;
 	onError: (msg: string) => void;
 }
 
@@ -286,14 +311,10 @@ export interface RuntimeAdapter {
 	applyEffort?(effort: AgentEffort): EffortRuntimeApplication;
 
 	/**
-	 * Recover token usage for a CLI that reports none on its stream, from a file
-	 * it leaves in the per-run home. The implementation is responsible for
-	 * scrubbing that file: they carry provider credentials in plaintext.
-	 *
-	 * Best-effort by contract - null means "no usage to report", which prices the
-	 * run at $0 rather than failing it.
+	 * Token usage for a CLI that reports none, or none until its end, on its
+	 * stream, read from a file it writes into the per-run home.
 	 */
-	recoverUsage?(ctx: RuntimeUsageContext): Promise<AgentRunUsage | null>;
+	offStreamUsage?: OffStreamUsage;
 
 	/**
 	 * True when this CLI can exit 0 having killed background work it had not

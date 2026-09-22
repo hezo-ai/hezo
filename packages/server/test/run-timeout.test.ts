@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -7,17 +10,19 @@ import {
 	WakeupStatus,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeConfig } from '../src/config/runtime';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
-import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import { RUN_TOKEN_CEILING, type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { MAX_TASK_ATTEMPT_GIVEUPS } from '../src/services/no-work-backoff';
+import { CONTAINER_SUBSCRIPTION_DIR } from '../src/services/runtime-home';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -49,6 +54,7 @@ let projectSlug: string;
 let taskId: string;
 let taskIdentifier: string;
 let agentId: string;
+let adminToken: string;
 
 const originalFetch = globalThis.fetch;
 
@@ -80,7 +86,7 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 		...rest,
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
-		files: createStubDocker().files,
+		files: rest.files ?? createStubDocker().files,
 	});
 	// Transparently answer the run-user probe so those infra execs don't hit execStart.
 	return withRunUserStub(base);
@@ -157,7 +163,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
-	const adminToken = ctx.token;
+	adminToken = ctx.token;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
@@ -212,6 +218,17 @@ async function resetTaskHistory() {
 	await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 	await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [taskId]);
 }
+
+/** A Claude Code assistant turn reporting the tokens it used. */
+const turnUsing = (inputTokens: number) =>
+	`${JSON.stringify({
+		type: 'assistant',
+		message: {
+			role: 'assistant',
+			usage: { input_tokens: inputTokens, output_tokens: 0 },
+			content: [{ type: 'text', text: 'working' }],
+		},
+	})}\n`;
 
 describe('run timeout classification (runAgent)', () => {
 	it('finalizes a run aborted for run_timeout as timed_out and flags result.timedOut', async () => {
@@ -309,33 +326,194 @@ describe('run timeout classification (runAgent)', () => {
 		expect(run.rows[0].error ?? '').not.toContain('tool-call ceiling');
 	});
 
-	it('says so in the run log when a run burned tokens and still priced at $0', async () => {
-		// The two cases this makes visible are otherwise indistinguishable from a
-		// genuinely free run: a runtime that named no model, and a model the pricing
-		// table has never heard of. Both leave the spend page empty while the
-		// allowance drains, and the server-log warning is not somewhere an operator
-		// looks. No pricing service is wired into these deps, so every model misses.
+	it('stops a run whose tokens cross the per-run ceiling, and fails it', async () => {
+		// Counted from the running usage the runtime streams, so the stop lands
+		// mid-run rather than after the run has finished spending.
+		const turns = 10;
+		const perTurn = Math.ceil(RUN_TOKEN_CEILING / (turns - 2));
+		let turnsSent = 0;
 		const deps = makeDeps({
-			execStart: async (_execId: string, opts?: { onChunk?: (c: any) => void | Promise<void> }) => {
-				await opts?.onChunk?.({
-					stream: 'stdout',
-					text: `${JSON.stringify({
-						type: 'result',
-						usage: { input_tokens: 5000, output_tokens: 400 },
-					})}\n`,
-				});
+			execStart: async (
+				_execId: string,
+				opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+			) => {
+				for (let i = 0; i < turns; i++) {
+					await opts?.onChunk?.({ stream: 'stdout', text: turnUsing(perTurn) });
+					turnsSent++;
+					if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+				}
 				return { stdout: '', stderr: '' };
 			},
 		});
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
 
-		const log = await db.query<{ content: string }>(
-			`SELECT string_agg(content, '' ORDER BY seq) AS content
-			 FROM heartbeat_run_log_chunks WHERE run_id = $1`,
+		expect(turnsSent).toBe(turns - 2);
+		expect(result.timedOut).toBeFalsy();
+		const run = await db.query<{ status: string; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
 			[result.heartbeatRunId],
 		);
-		expect(log.rows[0]?.content ?? '').toContain('priced at $0');
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].error).toContain(
+			`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
+		);
+	});
+
+	it('leaves a run under the token ceiling alone', async () => {
+		let aborted = false;
+		const deps = makeDeps({
+			execStart: async (
+				_execId: string,
+				opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+			) => {
+				await opts?.onChunk?.({ stream: 'stdout', text: turnUsing(RUN_TOKEN_CEILING - 1) });
+				if (opts?.signal?.aborted) aborted = true;
+				return { stdout: '', stderr: '' };
+			},
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
+
+		expect(aborted).toBe(false);
+		const run = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].error ?? '').not.toContain(RUN_TOKEN_CEILING.toLocaleString('en-US'));
+	});
+
+	describe('on a runtime that reports usage only at its end (Codex)', () => {
+		let homeRoot: string;
+
+		beforeAll(async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ provider: 'openai', api_key: 'sk-test-codex', label: 'openai' }),
+			});
+			globalThis.fetch = originalFetch;
+		});
+
+		beforeEach(() => {
+			homeRoot = mkdtempSync(join(tmpdir(), 'run-ceiling-home-'));
+		});
+
+		afterEach(() => {
+			rmSync(homeRoot, { recursive: true, force: true });
+		});
+
+		const codexTask = () => ({ ...makeTask(), runtime_type: 'codex' as const });
+
+		/**
+		 * The per-run home, kept on disk under `homeRoot` at its container path, so
+		 * the runner's usage poll reads what the "CLI" wrote there.
+		 */
+		const homeFiles = (containerId: string, root: string) =>
+			root.startsWith(CONTAINER_SUBSCRIPTION_DIR)
+				? hostSandboxFiles(join(homeRoot, root))
+				: createStubDocker().files(containerId, root);
+
+		const codexHomeOf = (env: string[]): string =>
+			env.find((e) => e.startsWith('CODEX_HOME='))?.slice('CODEX_HOME='.length) ?? '';
+
+		const rolloutUsing = (inputTokens: number) =>
+			`${JSON.stringify({
+				type: 'event_msg',
+				payload: {
+					type: 'token_count',
+					info: {
+						total_token_usage: {
+							input_tokens: inputTokens,
+							cached_input_tokens: 0,
+							cache_write_input_tokens: 0,
+							output_tokens: 0,
+							total_tokens: inputTokens,
+						},
+					},
+				},
+			})}\n`;
+
+		it('lets a run finish whose only usage report, its terminal turn event, is over the ceiling', async () => {
+			let aborted = false;
+			const deps = makeDeps({
+				files: homeFiles,
+				execStart: async (
+					_execId: string,
+					opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+				) => {
+					await opts?.onChunk?.({
+						stream: 'stdout',
+						text: `${JSON.stringify({
+							type: 'turn.completed',
+							usage: { input_tokens: RUN_TOKEN_CEILING + 1, output_tokens: 10 },
+						})}\n`,
+					});
+					if (opts?.signal?.aborted) aborted = true;
+					return { stdout: '', stderr: '' };
+				},
+			});
+
+			const result = await runAgent(deps, makeAgent(), codexTask(), makeProject(), undefined);
+
+			expect(aborted).toBe(false);
+			const run = await db.query<{ error: string | null }>(
+				'SELECT error FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].error ?? '').not.toContain(RUN_TOKEN_CEILING.toLocaleString('en-US'));
+		});
+
+		it('stops a run mid-way once the usage file it writes crosses the ceiling', async () => {
+			let codexHome = '';
+			let waited = 0;
+			const deps: RunnerDeps = {
+				...makeDeps({
+					files: homeFiles,
+					execCreate: async (_id: string, opts: { Env?: string[] }) => {
+						codexHome = codexHomeOf(opts.Env ?? []);
+						return 'exec-codex';
+					},
+					execStart: async (
+						_execId: string,
+						opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+					) => {
+						// The CLI streams nothing with usage in it; only its rollout says what
+						// the run has used so far.
+						const dir = join(homeRoot, codexHome, 'sessions', '2026', '09', '22');
+						mkdirSync(dir, { recursive: true });
+						writeFileSync(
+							join(dir, 'rollout-2026-09-22T10-00-00-run.jsonl'),
+							rolloutUsing(RUN_TOKEN_CEILING + 1),
+						);
+						const deadline = Date.now() + 5_000;
+						while (!opts?.signal?.aborted && Date.now() < deadline) {
+							waited++;
+							await new Promise((r) => setTimeout(r, 10));
+						}
+						if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+						return { stdout: '', stderr: '' };
+					},
+				}),
+				usagePollMs: 20,
+			};
+
+			const result = await runAgent(deps, makeAgent(), codexTask(), makeProject(), undefined);
+
+			expect(waited).toBeGreaterThan(0);
+			const run = await db.query<{ status: string; error: string | null; input_tokens: number }>(
+				'SELECT status, error, input_tokens FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(run.rows[0].error).toContain(
+				`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
+			);
+			// The end-of-run recovery still records what the file held, then scrubs it.
+			expect(Number(run.rows[0].input_tokens)).toBe(RUN_TOKEN_CEILING + 1);
+			expect(existsSync(join(homeRoot, codexHome, 'sessions'))).toBe(false);
+		});
 	});
 
 	it('finalizes a bare abort (user cancel) as cancelled, not timed_out', async () => {
@@ -530,8 +708,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 
 		const run = await db.query<{ status: string; error: string }>(
 			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
@@ -542,6 +720,39 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
 		expect(run.rows[0].error).toContain('Server shut down while this run was in flight');
 		expect(run.rows[0].error).toContain('returning this run to the queue');
+	});
+
+	it('records what a drained run used, though the work goes back to the queue', async () => {
+		const ac = new AbortController();
+		const deps = makeDeps({
+			execStart: async (_execId: string, opts?: { onChunk?: (c: any) => void | Promise<void> }) => {
+				await opts?.onChunk?.({ stream: 'stdout', text: turnUsing(12_345) });
+				ac.abort('server_shutdown');
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeue).toBeDefined();
+		const run = await db.query<{ input_tokens: number; usage_partial: boolean }>(
+			'SELECT input_tokens, usage_partial FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(Number(run.rows[0].input_tokens)).toBe(12_345);
+		expect(run.rows[0].usage_partial).toBe(true);
+		const ledger = await db.query<{ input_tokens: number }>(
+			'SELECT input_tokens FROM usage_entries WHERE description = $1',
+			[`Agent run ${result.heartbeatRunId}`],
+		);
+		expect(ledger.rows.map((r) => Number(r.input_tokens))).toEqual([12_345]);
 	});
 
 	it('hands back a run the drain caught before it had a row at all', async () => {
@@ -561,8 +772,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 		// No run row, deliberately: none was ever created, so none is invented.
 		expect(result.heartbeatRunId).toBeUndefined();
 	});
@@ -605,8 +816,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 	});
 
 	it('hands back a shutdown that lands in the setup window', async () => {
@@ -632,8 +843,8 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBe(true);
-		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		expect(result.requeue).toBeDefined();
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ServerShutdown);
 	});
 
 	it('still fails a bare pre-run abort rather than re-queueing it', async () => {
@@ -652,7 +863,7 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 			ac.signal,
 		);
 
-		expect(result.requeued).toBeFalsy();
+		expect(result.requeue).toBeUndefined();
 	});
 
 	it('returns the wakeup to the queue, which is the promise the message makes', async () => {
@@ -685,8 +896,7 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 				stderr: 'Server shut down while this run was in flight',
 				durationMs: 1,
 				heartbeatRunId: runRow.rows[0].id,
-				requeued: true,
-				requeueReason: WakeupSkipReason.ServerShutdown,
+				requeue: { reason: WakeupSkipReason.ServerShutdown },
 			},
 		);
 

@@ -3,13 +3,18 @@ import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
-import { resolveAgentId } from '../lib/resolve';
+import { actingPersonFromAuth, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
 import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
-import { buildHirePayloadPatch, type HirePayloadPatchInput } from '../services/hire-proposal';
+import {
+	type HirePayloadPatchInput,
+	type HireProposalInput,
+	prepareHirePayloadPatch,
+	prepareHireProposal,
+} from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
 
 export const approvalsRoutes = new Hono<Env>();
@@ -185,11 +190,31 @@ approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'type and payload are required', 400);
 	}
 
+	// A hire payload becomes an agent on approval, so it passes the checks every
+	// other hire path runs and is stored in their normalized form.
+	let payload = body.payload;
+	if (body.type === ApprovalType.Hire) {
+		const prepared = await prepareHireProposal(
+			db,
+			teamId,
+			body.payload as unknown as HireProposalInput,
+		);
+		if ('error' in prepared) {
+			return err(
+				c,
+				prepared.conflict ? 'CONFLICT' : 'INVALID_REQUEST',
+				prepared.error,
+				prepared.conflict ? 409 : 400,
+			);
+		}
+		payload = { ...body.payload, ...prepared.payload };
+	}
+
 	const result = await db.query(
 		`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
      VALUES ($1, $2::approval_type, $3, $4::jsonb)
      RETURNING *`,
-		[teamId, body.type, body.requested_by_member_id, JSON.stringify(body.payload)],
+		[teamId, body.type, body.requested_by_member_id, JSON.stringify(payload)],
 	);
 
 	broadcastChange(
@@ -206,10 +231,12 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
 
-	const existing = await db.query<{ status: string; team_id: string; type: string }>(
-		'SELECT status, team_id, type FROM approvals WHERE id = $1',
-		[approvalId],
-	);
+	const existing = await db.query<{
+		status: string;
+		team_id: string;
+		type: string;
+		payload: Record<string, unknown>;
+	}>('SELECT status, team_id, type, payload FROM approvals WHERE id = $1', [approvalId]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Approval not found', 404);
 	}
@@ -226,39 +253,9 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	}
 
 	const body = await c.req.json<HirePayloadPatchInput>();
-	if (body.system_prompt?.trim()) {
-		const styleError = authoredPromptError(body.system_prompt);
-		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
-	}
-	// A revised manager must resolve to an agent on this team (empty clears it).
-	if (typeof body.reports_to === 'string' && body.reports_to.trim()) {
-		const managerId = await resolveAgentId(db, approval.team_id, body.reports_to.trim());
-		if (!managerId) {
-			return err(
-				c,
-				'INVALID_REQUEST',
-				`reports_to: no agent '${body.reports_to}' in this team`,
-				400,
-			);
-		}
-	}
-	// A revised cadence below the scheduler's floor would be silently clamped, so
-	// reject it here as prepareHireProposal does on the create paths.
-	if (
-		body.heartbeat_interval_min !== undefined &&
-		body.heartbeat_interval_min < heartbeatIntervalFloorMin()
-	) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			`heartbeat_interval_min must be at least ${heartbeatIntervalFloorMin()} minutes`,
-			400,
-		);
-	}
-	const patch = buildHirePayloadPatch(body);
-	if (Object.keys(patch).length === 0) {
-		return err(c, 'INVALID_REQUEST', 'No fields to update', 400);
-	}
+	const prepared = await prepareHirePayloadPatch(db, approval.team_id, approval.payload, body);
+	if ('error' in prepared) return err(c, 'INVALID_REQUEST', prepared.error, 400);
+	const { patch } = prepared;
 
 	const updated = await db.query<Record<string, unknown>>(
 		`UPDATE approvals SET payload = payload || $1::jsonb WHERE id = $2 RETURNING *`,
@@ -299,9 +296,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 
 	const auth = c.get('auth');
 	let actorMemberId: string | null = null;
-	if (auth.type === AuthType.Agent) {
-		actorMemberId = auth.memberId;
-	} else if (auth.type === AuthType.Admin) {
+	if (auth.type === AuthType.Admin) {
 		const r = await db.query<{ id: string }>(
 			`SELECT m.id FROM members m
 			   JOIN member_users mu ON mu.id = m.id
@@ -316,6 +311,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		resolutionNote: body.resolution_note ?? null,
 		dataDir: c.get('dataDir'),
 		actorMemberId,
+		decider: actingPersonFromAuth(auth),
 		wsManager: c.get('wsManager'),
 		events: c.get('events'),
 		containerDeps: {

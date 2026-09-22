@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { AgentEffort } from '@hezo/shared';
 import {
 	type AgentRunUsage,
+	codexRolloutModel,
 	extractCodexUsageFromRollout,
 	mergeRunUsage,
 } from '../agent-stream-parser';
@@ -98,11 +99,21 @@ const CODEX_ROLLOUT_DEPTH = 6;
  *
  * These files are the full verbatim transcript - every tool result in full - and
  * run to hundreds of megabytes; the largest observed locally was 232 MB. The
- * figures wanted here are cumulative and the model is restated per turn, so the
- * tail carries everything a whole-file read would, and a whole-file read at ten
- * concurrent runs is an out-of-memory fault rather than a slow path.
+ * token figures are cumulative, so the tail carries them, and a whole-file read
+ * at ten concurrent runs is an out-of-memory fault rather than a slow path.
  */
 const MAX_CODEX_ROLLOUT_TAIL_BYTES = 2_000_000;
+
+/**
+ * How much of a rollout's start to read for its model, when only the tail is read
+ * for its tokens.
+ *
+ * A rollout restates its model in a `turn_context` record per turn, not per
+ * request, so a single-turn run states it once, near the start - measured at
+ * about 140 KB in, behind the session header and the instructions. A tail read
+ * of any rollout over the tail budget found none and recorded no model.
+ */
+const CODEX_ROLLOUT_HEAD_BYTES = 512_000;
 
 export const codexAdapter: RuntimeAdapter = {
 	applyEffort: (effort) => ({
@@ -110,41 +121,47 @@ export const codexAdapter: RuntimeAdapter = {
 		extraEnv: [],
 		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 	}),
-	async recoverUsage({ files, price, onError }) {
-		// Codex names no model on its `exec --json` stream and reports usage only on
-		// the one terminal turn event, so a run killed before that event records
-		// nothing. Both are in the rollout however the run ended.
-		try {
-			const paths: string[] = [];
-			for (const dir of CODEX_ROLLOUT_DIRS) {
-				if (!(await files.exists(dir))) continue;
-				paths.push(...(await files.findByName(dir, CODEX_ROLLOUT_MATCH, CODEX_ROLLOUT_DEPTH)));
-			}
-			if (paths.length === 0) return null;
+	offStreamUsage: {
+		async read({ files, onError }) {
+			// Codex names no model on its `exec --json` stream and reports usage only on
+			// the one terminal turn event, so a run killed before that event records
+			// nothing. Both are in the rollout however the run ended.
+			try {
+				const paths: string[] = [];
+				for (const dir of CODEX_ROLLOUT_DIRS) {
+					if (!(await files.exists(dir))) continue;
+					paths.push(...(await files.findByName(dir, CODEX_ROLLOUT_MATCH, CODEX_ROLLOUT_DEPTH)));
+				}
+				if (paths.length === 0) return null;
 
-			// Summed across files rather than picking one: CODEX_HOME is per-run, so
-			// every rollout under it belongs to this run - including any a subagent
-			// wrote, which bills to the same account.
-			let total: AgentRunUsage | null = null;
-			for (const path of paths) {
-				const size = await files.size(path);
-				const text =
-					size !== null && size <= MAX_CODEX_ROLLOUT_TAIL_BYTES
+				// Summed across files rather than picking one: CODEX_HOME is per-run, so
+				// every rollout under it belongs to this run - including any a subagent
+				// wrote, which bills to the same account.
+				let total: AgentRunUsage | null = null;
+				for (const path of paths) {
+					const size = await files.size(path);
+					const whole = size !== null && size <= MAX_CODEX_ROLLOUT_TAIL_BYTES;
+					const text = whole
 						? await files.read(path)
 						: await files.readTail(path, MAX_CODEX_ROLLOUT_TAIL_BYTES);
-				const usage = extractCodexUsageFromRollout(text, price);
-				if (!usage) continue;
-				total = total ? mergeRunUsage(total, usage) : usage;
+					const openingModel = whole
+						? undefined
+						: codexRolloutModel(await files.readHead(path, CODEX_ROLLOUT_HEAD_BYTES));
+					const usage = extractCodexUsageFromRollout(text, openingModel);
+					if (!usage) continue;
+					total = total ? mergeRunUsage(total, usage) : usage;
+				}
+				return total;
+			} catch (e) {
+				onError(`failed to read codex rollout for usage: ${(e as Error).message}`);
+				return null;
 			}
-			return total;
-		} catch (e) {
-			onError(`failed to read codex rollout for usage: ${(e as Error).message}`);
-			return null;
-		} finally {
-			// Scrubbed by contract: this is the whole verbatim transcript, materially
-			// more sensitive than the credential file sitting beside it.
+		},
+		async scrub(files) {
+			// This is the whole verbatim transcript, materially more sensitive than the
+			// credential file sitting beside it.
 			for (const dir of CODEX_ROLLOUT_DIRS) await files.removeDir(dir);
-		}
+		},
 	},
 	capabilities: {
 		transport: 'streamable-http',

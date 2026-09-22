@@ -29,7 +29,7 @@ export async function seedTestAppTeamTemplate(db: Db): Promise<void> {
 		const res = await db.query<{ id: string }>(
 			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 			                          default_team_context, system_prompt_template, default_effort,
-			                          heartbeat_interval_min, run_timeout_min, monthly_budget_cents,
+			                          heartbeat_interval_min, run_timeout_min, monthly_budget_tokens,
 			                          touches_code, is_builtin, source)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET system_prompt_template = EXCLUDED.system_prompt_template
@@ -45,7 +45,7 @@ export async function seedTestAppTeamTemplate(db: Db): Promise<void> {
 				a.default_effort,
 				a.heartbeat_interval_min,
 				a.run_timeout_min,
-				a.monthly_budget_cents,
+				a.monthly_budget_tokens,
 				a.touches_code,
 			],
 		);

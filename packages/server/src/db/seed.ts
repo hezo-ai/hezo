@@ -1,4 +1,9 @@
-import { AgentEffort, CEO_AGENT_SLUG, DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
+import {
+	AgentEffort,
+	CEO_AGENT_SLUG,
+	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
+} from '@hezo/shared';
 import type { Db } from './/database';
 
 interface AgentSummaries {
@@ -22,7 +27,7 @@ interface AgentTypeDef {
 	default_effort: string;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	monthly_budget_cents: number;
+	monthly_budget_tokens: number;
 	touches_code: boolean;
 	role_description: string;
 }
@@ -47,7 +52,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
-			monthly_budget_cents: 2000,
+			monthly_budget_tokens: DEFAULT_MONTHLY_BUDGET_TOKENS,
 			touches_code: false,
 			role_description:
 				'Translates team mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
@@ -60,7 +65,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
-			monthly_budget_cents: 3000,
+			monthly_budget_tokens: DEFAULT_MONTHLY_BUDGET_TOKENS,
 			touches_code: false,
 			role_description:
 				'Reviews completed tasks to extract lessons and improve agent system prompts over time.',
@@ -91,7 +96,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 			                          default_team_context, system_prompt_template,
 			                          default_effort, heartbeat_interval_min, run_timeout_min,
-			                          monthly_budget_cents, touches_code, is_builtin, source)
+			                          monthly_budget_tokens, touches_code, is_builtin, source)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
@@ -102,7 +107,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 			     default_effort = EXCLUDED.default_effort,
 			     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
 			     run_timeout_min = EXCLUDED.run_timeout_min,
-			     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+			     monthly_budget_tokens = EXCLUDED.monthly_budget_tokens,
 			     touches_code = EXCLUDED.touches_code,
 			     updated_at = now()`,
 			[
@@ -116,7 +121,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 				def.default_effort,
 				def.heartbeat_interval_min,
 				def.run_timeout_min,
-				def.monthly_budget_cents,
+				def.monthly_budget_tokens,
 				def.touches_code,
 			],
 		);
@@ -130,7 +135,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 		`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 		                          default_team_context, system_prompt_template,
 		                          default_effort, heartbeat_interval_min, run_timeout_min,
-		                          monthly_budget_cents, touches_code, is_builtin, source)
+		                          monthly_budget_tokens, touches_code, is_builtin, source)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, true, 'builtin'::agent_type_source)
 		 ON CONFLICT (slug) DO UPDATE SET
 		     name = EXCLUDED.name,
@@ -141,7 +146,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 		     default_effort = EXCLUDED.default_effort,
 		     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
 		     run_timeout_min = EXCLUDED.run_timeout_min,
-		     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+		     monthly_budget_tokens = EXCLUDED.monthly_budget_tokens,
 		     touches_code = EXCLUDED.touches_code,
 		     updated_at = now()`,
 		[
@@ -155,7 +160,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 			AgentEffort.Max,
 			DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			60,
-			3000,
+			DEFAULT_MONTHLY_BUDGET_TOKENS,
 			false,
 		],
 	);

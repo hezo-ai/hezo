@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { CommentContentType } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -297,7 +296,7 @@ describe('resolve-asset-deletion (legacy pending cards)', () => {
 		const commentId = await seedDeletionRequest([a]);
 		const { token: agentJwt } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
 		const res = await resolveDeletion(commentId, true, agentJwt);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 		// Still pending — the admin can act later.
 		const row = await db.query<{ chosen_option: unknown }>(
 			'SELECT chosen_option FROM task_comments WHERE id = $1',

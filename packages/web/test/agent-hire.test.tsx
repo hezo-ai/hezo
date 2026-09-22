@@ -91,9 +91,9 @@ test('admin modifies a pending hire proposal then approves it', async () => {
 				system_prompt:
 					'You are the Analyst. {{team_name}} {{reports_to}} {{skills_context}} {{project_docs_context}} {{team_preferences_context}}',
 				heartbeat_interval_min: 60,
-				daily_budget_cents: 0,
-				weekly_budget_cents: 0,
-				monthly_budget_cents: 2000,
+				daily_budget_tokens: 0,
+				weekly_budget_tokens: 0,
+				monthly_budget_tokens: 20_000_000,
 				touches_code: false,
 			});
 		},
@@ -156,9 +156,9 @@ test('an agent-filed cadence outside the presets survives a round trip through t
 				system_prompt:
 					'You are the Auditor. {{team_name}} {{reports_to}} {{skills_context}} {{project_docs_context}} {{team_preferences_context}}',
 				heartbeat_interval_min: 90,
-				daily_budget_cents: 0,
-				weekly_budget_cents: 0,
-				monthly_budget_cents: 2000,
+				daily_budget_tokens: 0,
+				weekly_budget_tokens: 0,
+				monthly_budget_tokens: 20_000_000,
 				touches_code: false,
 			});
 		},
@@ -344,8 +344,10 @@ test('can hire agent with full fields', async () => {
 
 	// A new hire ships uncapped, so the monthly window starts disabled and renders
 	// no input at all - enabling it is what the admin does to set a figure.
-	await user.click(await findByLabelText('Enable monthly budget'));
-	const budgetInput = (await findByLabelText('Monthly budget')) as HTMLInputElement;
+	await user.click(await findByLabelText('Monthly: set a budget'));
+	const budgetInput = (await findByLabelText(
+		'Monthly: budget in million tokens',
+	)) as HTMLInputElement;
 	await user.clear(budgetInput);
 	await user.type(budgetInput, '50');
 

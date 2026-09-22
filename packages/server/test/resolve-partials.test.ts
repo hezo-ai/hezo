@@ -72,7 +72,9 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 
 		const blankCaptain = docs['blank/captain.md'];
 		expect(blankCaptain).toBeDefined();
-		expect(blankCaptain).toContain('Every run you take is at **max effort**');
+		expect(blankCaptain).toContain('Your decisions cascade across the whole team.');
+		// Effort is the operator's setting; the prompt no longer claims it is forced.
+		expect(blankCaptain).not.toContain('the runtime forces');
 		expect(blankCaptain).toContain('## Hire workflow');
 		expect(blankCaptain).toContain('Ask before you write.');
 		expect(blankCaptain).not.toContain('{{> partials/');

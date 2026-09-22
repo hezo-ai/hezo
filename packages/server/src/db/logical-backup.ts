@@ -518,7 +518,7 @@ async function restoreFromLines(
 			await tx.exec(`ALTER TABLE ${fk.tbl} DROP CONSTRAINT ${quoteIdent(fk.name)}`);
 		}
 
-		// Migrations may seed rows (pricing catalog, defaults); the backup's
+		// Migrations may seed rows (defaults); the backup's
 		// rows are authoritative, so clear data tables before loading.
 		for (const table of tables) {
 			if (table.name === '_migrations') continue;

@@ -237,7 +237,7 @@ describe('re-opening a terminal task wakes the assignee', () => {
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'backlog' }),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 
 		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
 			task.id,

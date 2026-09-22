@@ -40,6 +40,56 @@ function buildSnippet(content: unknown): string {
 	return `${stripped.slice(0, SNIPPET_MAX_LEN - 1).trimEnd()}…`;
 }
 
+/**
+ * Who a row names as its author. A system notice has no author member, and a
+ * person reading "Admin asked you" about a notice Hezo raised would look for a
+ * colleague who never wrote it.
+ */
+function mentionAuthorName(
+	row: { content_type: string; author_display_name: string | null },
+	fallback: string,
+): string {
+	if (row.author_display_name) return row.author_display_name;
+	return row.content_type === CommentContentType.System ? 'Hezo' : fallback;
+}
+
+/**
+ * The fields a notice's one-line reading needs, named rather than filtered: a row
+ * on a list endpoint is bounded in width, so a payload that later gains a list or
+ * a long string cannot start riding every inbox row. Anything not named here is
+ * read from the comment itself, on the task.
+ */
+const NOTICE_SNIPPET_FIELDS = [
+	'kind',
+	'rounds',
+	'tokens',
+	'ceiling',
+	'agent_slug',
+	'agent_slugs',
+	'scope',
+	'period',
+	'used_tokens',
+	'limit_tokens',
+	'tokens_per_cent',
+	'basis',
+] as const;
+
+/**
+ * A system notice's fields, for the row to read in the viewer's language through
+ * the thread's own catalog sentences. The English `text` stays the snippet, which
+ * is what a reader gets for a notice this does not cover.
+ */
+function noticeFields(contentType: string, content: unknown): Record<string, unknown> | null {
+	if (contentType !== CommentContentType.System) return null;
+	if (!content || typeof content !== 'object') return null;
+	const source = content as Record<string, unknown>;
+	const fields: Record<string, unknown> = {};
+	for (const name of NOTICE_SNIPPET_FIELDS) {
+		if (source[name] !== undefined) fields[name] = source[name];
+	}
+	return fields;
+}
+
 /** The secret being asked for, on a credential-request row only. */
 function credentialName(contentType: string, content: unknown): string | null {
 	if (contentType !== CommentContentType.CredentialRequest) return null;
@@ -126,8 +176,9 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 				content_type: r.content_type,
 				credential_name: credentialName(r.content_type, r.content),
 				snippet: buildSnippet(r.content),
+				notice: noticeFields(r.content_type, r.content),
 				author_member_id: r.author_member_id,
-				author_display_name: r.author_display_name ?? 'Admin',
+				author_display_name: mentionAuthorName(r, 'Admin'),
 				author_slug: r.author_slug,
 				// A human author's uploaded avatar. An agent is drawn from its own
 				// `avatar_spec`, and the built-in CEO/Coach portraits resolve
@@ -374,7 +425,8 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 				content_type: m.content_type,
 				credential_name: credentialName(m.content_type, m.content),
 				snippet: buildSnippet(m.content),
-				author_display_name: m.author_display_name ?? 'Agent',
+				notice: noticeFields(m.content_type, m.content),
+				author_display_name: mentionAuthorName(m, 'Agent'),
 				created_at: m.created_at,
 			},
 		})),

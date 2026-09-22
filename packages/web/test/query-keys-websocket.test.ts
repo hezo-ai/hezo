@@ -89,11 +89,11 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		expect(keys).toContainEqual(queryKeys.projects.budgetStatus(SLUG));
 	});
 
-	test('cost_entries row change invalidates costs AND budget status', () => {
-		// New spend moves both the cost charts and the spend-vs-cap status.
+	test('usage_entries row change invalidates usage AND budget status', () => {
+		// New usage moves both the usage charts and the usage-vs-limit status.
 		const { client, keys } = recordingClient();
-		invalidateQueriesForRowChange(client, SLUG, 'cost_entries', {});
-		expect(keys).toContainEqual(['projects', SLUG, 'costs']);
+		invalidateQueriesForRowChange(client, SLUG, 'usage_entries', {});
+		expect(keys).toContainEqual(['projects', SLUG, 'usage']);
 		expect(keys).toContainEqual(queryKeys.projects.budgetStatus(SLUG));
 	});
 

@@ -197,7 +197,6 @@ export interface WsChatMessageCompleteMessage {
 	content: string;
 	inputTokens: number;
 	outputTokens: number;
-	costCents: number;
 	/** Set on a failed message: the reason, in the words the server recorded. */
 	error: string | null;
 	/**

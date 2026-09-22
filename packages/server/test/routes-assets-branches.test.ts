@@ -264,13 +264,13 @@ describe('GET /projects/:projectId/assets', () => {
 });
 
 describe('DELETE /projects/:projectId/assets/:assetId', () => {
-	it('403s for agent auth', async () => {
+	it('refuses an agent run token', async () => {
 		const up = (await (await uploadProject('keep.png', 'image/png', pngBytes(9))).json()).data;
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/assets/${up.id}`, {
 			method: 'DELETE',
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 		const still = await ctx.db.query('SELECT 1 FROM assets WHERE id = $1', [up.id]);
 		expect(still.rows).toHaveLength(1);
 	});
@@ -317,15 +317,15 @@ describe('PATCH /projects/:projectId/assets/:assetId', () => {
 		});
 	}
 
-	it('403s for agent auth', async () => {
+	it('refuses an agent run token', async () => {
 		const up = (await (await uploadProject('agent-no.png', 'image/png', pngBytes(11))).json()).data;
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/assets/${up.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ folder: 'x' }),
 		});
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.code).toBe('FORBIDDEN');
+		expect(res.status).toBe(401);
+		expect((await res.json()).error.code).toBe('UNAUTHORIZED');
 	});
 
 	it('404s for an unknown project', async () => {

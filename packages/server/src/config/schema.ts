@@ -97,7 +97,6 @@ const jobsSchema = z
 		wakeupCron: cron.optional(),
 		heartbeatCron: cron.optional(),
 		inboxArchiveCron: cron.optional(),
-		pricingRefreshCron: cron.optional(),
 		modelPinRefreshCron: cron.optional(),
 		updateCheckCron: cron.optional(),
 		autoInstallCron: cron.optional(),
@@ -327,10 +326,10 @@ export const configFileSchema = z
 export type ConfigFile = z.infer<typeof configFileSchema>;
 
 /**
- * Keys that are structurally valid but must never appear in a config file, each
- * with the reason an operator needs to hear. `.strict()` would already reject
- * them as unknown, but "Unrecognized key: masterKey" invites the reader to
- * conclude they spelled it wrong and go looking for the right spelling.
+ * Keys a config file may not set, by dotted path, and why. A key that is
+ * structurally valid, and a mechanism that was removed, are both listed here
+ * rather than left to the strict parse, which would say only "Unrecognized key"
+ * and send the operator hunting for a spelling they never got wrong.
  */
 const REJECTED_KEYS: Record<string, string> = {
 	masterKey:
@@ -345,7 +344,20 @@ const REJECTED_KEYS: Record<string, string> = {
 	chat:
 		'the pinned chat container and its health check were removed - chat replies now borrow ' +
 		'a task container per reply, so there is nothing to configure. Delete the "chat" block.',
+	'jobs.pricingRefreshCron':
+		'Hezo no longer holds model prices: budgets count tokens, so there is no price list to ' +
+		'refresh. Delete the key.',
 };
+
+/** Whether `exported` sets the value at a dotted `path`. */
+function setsPath(exported: object, path: string): boolean {
+	let node: unknown = exported;
+	for (const part of path.split('.')) {
+		if (node === null || typeof node !== 'object' || !(part in node)) return false;
+		node = (node as Record<string, unknown>)[part];
+	}
+	return true;
+}
 
 /** A config-file validation failure, already formatted for an operator to read. */
 export class ConfigFileError extends Error {}
@@ -371,7 +383,7 @@ export function validateConfigFile(path: string, exported: unknown): ConfigFile 
 	}
 
 	for (const [key, reason] of Object.entries(REJECTED_KEYS)) {
-		if (key in exported) throw new ConfigFileError(`${path} sets "${key}", but ${reason}`);
+		if (setsPath(exported, key)) throw new ConfigFileError(`${path} sets "${key}", but ${reason}`);
 	}
 
 	const parsed = configFileSchema.safeParse(exported);

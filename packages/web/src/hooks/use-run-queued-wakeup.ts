@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
-import { type ManualDispatchResult, queuedDispatchMessageKey } from '../lib/manual-dispatch';
+import { type ManualDispatchResult, manualDispatchNoticeKey } from '../lib/manual-dispatch';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { toast } from './use-toast';
@@ -20,9 +20,10 @@ export function useRunQueuedWakeup({ projectId, taskId }: RunQueuedWakeupArgs) {
 				{},
 			),
 		onSuccess: (data) => {
-			// Still queued: the guard that declined the start is a wait, and the row
-			// this button acted on is untouched. Say which wait it is.
-			if (data.queued) toast.info(t(queuedDispatchMessageKey(data.reason)));
+			// Not started: either a wait (the row is still queued) or a hold the
+			// presser cannot lift. Say which it is.
+			const notice = manualDispatchNoticeKey(data);
+			if (notice) toast.info(t(notice));
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.taskQueuedWakeups(projectId, taskId),
 			});

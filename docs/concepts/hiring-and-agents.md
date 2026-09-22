@@ -54,7 +54,7 @@ When you hire an agent you set:
   you for the cadence before filing rather than choosing one for you. The agent's page
   shows a live countdown to its next heartbeat (hidden while the agent is disabled or
   paused).
-- **Budget** - optional spending limits (see
+- **Budget** - optional token limits (see
   [Budgets & cost control](/docs/concepts/budgets-and-costs)).
 - **Code access** - whether the agent works in the project's code workspace.
 
@@ -149,9 +149,14 @@ credential until the reset time the provider gives. Agents on other tasks wait t
 none of them starts a container just to be refused. When the reset time comes, the waiting
 work starts again. Hezo raises one Inbox item when the pause begins, naming the credential
 and the time. To resume sooner, for example after adding credits, press **Run now** on a
-waiting task. If that run gets through, the rest of the work resumes with it. Replacing the
-credential in Settings > AI Providers also ends the pause. When the provider gives no reset
-time, Hezo tries a single run every half hour until one gets through.
+waiting task. If that run gets through, the rest of the work on that credential resumes
+with it. Replacing the credential in Settings > AI Providers also ends the pause. When the
+provider gives no reset time, Hezo tries a single run every half hour until one gets through.
+
+When the pause ends, the waiting work does not all start at once. It resumes oldest first,
+one run every 30 seconds, so a few runs can show whether the allowance is really back
+before the rest start. If the provider turns the next run away, the pause starts again and
+the work still waiting stays queued. Work on other credentials is not affected.
 
 Either Inbox item is a notice rather than a decision: click it and it opens the run behind
 it, inside the task, and clears itself on the way. Often you need do nothing at all, because
@@ -191,6 +196,8 @@ at all.)
 
 ## Other settings
 
-You can also adjust an agent's heartbeat interval and budgets over time, and pause or
-resume agents when you need to. Standing preferences you give the CEO in chat are
-remembered and applied going forward.
+You can also adjust an agent's heartbeat interval, its run time limit and its budgets
+over time, and pause or resume agents when you need to. The **run time limit** is how long
+one run of that agent may take before Hezo stops it and hands the work back to the queue.
+Raise it for an agent whose work is long, and lower it for one you want kept short.
+Standing preferences you give the CEO in chat are remembered and applied going forward.

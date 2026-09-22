@@ -9,6 +9,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 interface CapturedBroadcast {
 	room: string;
@@ -105,19 +106,7 @@ describe('comment-family realtime broadcasts carry project_id', () => {
 		name: string,
 		args: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
-		const res = await ctx.app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name, arguments: args },
-				id: 1,
-			}),
-		});
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-		return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
+		return await callMcpTool(ctx.app, agentToken, name, args);
 	}
 
 	async function seedComment(text: string): Promise<string> {

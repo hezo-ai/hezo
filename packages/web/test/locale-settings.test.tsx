@@ -77,14 +77,16 @@ test('each date format previews itself with a real date', async () => {
 	expect(labels.some((l) => l.startsWith(year))).toBe(true);
 });
 
-test('each currency format previews the same amount punctuated differently', async () => {
+test('each number format previews the same number punctuated differently', async () => {
 	await openLocaleSettings();
 
 	const labels = optionLabels('locale-number-format');
 	expect(labels).toHaveLength(3);
-	expect(labels.some((l) => l.includes('$1,234.56'))).toBe(true);
-	expect(labels.some((l) => l.includes('1.234,56 $'))).toBe(true);
-	expect(labels.some((l) => l.includes('1 234,56 $'))).toBe(true);
+	expect(labels.some((l) => l.includes('1,234.56'))).toBe(true);
+	expect(labels.some((l) => l.includes('1.234,56'))).toBe(true);
+	expect(labels.some((l) => l.includes('1 234,56'))).toBe(true);
+	// A number format carries no currency: nothing is priced in money any more.
+	expect(labels.some((l) => l.includes('$'))).toBe(false);
 });
 
 test('saving persists globally and re-renders the UI in the new language', async () => {
@@ -133,7 +135,7 @@ test('picking a language re-renders the card in it before anything is saved', as
 	const card = cardText();
 	expect(card).toContain('Sprache');
 	expect(card).toContain('Datumsformat');
-	expect(card).toContain('Währungsformat');
+	expect(card).toContain('Zahlenformat');
 	// The submit button too - it reads from a message key, not a string the host
 	// translated before the preview existed.
 	expect(document.querySelector('[data-testid="locale-save"]')?.textContent).toBe('Speichern');

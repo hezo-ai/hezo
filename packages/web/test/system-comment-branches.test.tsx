@@ -4,6 +4,7 @@
 // directly, with a minimal standalone TanStack router so <Link> resolves —
 // no full app boot needed (the logic under test is pure rendering).
 
+import { DEFAULT_LOCALE_SETTINGS, HQ_PROJECT_SLUG, NumberFormat } from '@hezo/shared';
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -188,6 +189,44 @@ test('run_abandoned: agent_slug present but no projectId → span, no link', asy
 	);
 	await findByTestId('run-abandoned-comment');
 	expect(queryByTestId('run-abandoned-agent')).toBeNull();
+});
+
+// ─── handoff_limit ────────────────────────────────────────────────────────
+
+test('handoff_limit: names each agent, the rounds and the tokens, and waits on the admin', async () => {
+	const { findByTestId, findAllByTestId } = renderSystem(
+		comment({
+			kind: 'handoff_limit',
+			rounds: 9,
+			tokens: 412345678,
+			agent_slugs: ['researcher', 'reviewer'],
+			text: 'fallback',
+		}),
+		'proj',
+	);
+	const wrapper = await findByTestId('handoff-limit-comment');
+	expect(wrapper.textContent).toContain('@researcher and @reviewer handed this task');
+	expect(wrapper.textContent).toContain('9 times in a row');
+	expect(wrapper.textContent).toContain('412,345,678 tokens');
+	// Any member can read the thread, but only the admin's reply lifts the hold.
+	expect(wrapper.textContent).toContain('until the admin replies');
+	expect(wrapper.textContent).not.toContain('fallback');
+
+	const links = (await findAllByTestId('handoff-limit-agent')) as HTMLAnchorElement[];
+	expect(links.map((l) => l.getAttribute('href'))).toEqual([
+		'/projects/proj/agents/researcher',
+		'/projects/proj/agents/reviewer',
+	]);
+});
+
+test('handoff_limit: no agent slugs → fallback word, no links', async () => {
+	const { findByTestId, queryByTestId } = renderSystem(
+		comment({ kind: 'handoff_limit', rounds: 8, tokens: 1 }),
+		'proj',
+	);
+	const wrapper = await findByTestId('handoff-limit-comment');
+	expect(wrapper.textContent).toContain('agent handed this task');
+	expect(queryByTestId('handoff-limit-agent')).toBeNull();
 });
 
 // ─── run_failed ───────────────────────────────────────────────────────────
@@ -602,4 +641,77 @@ test('parent_change renders an end without a project slug as plain text', async 
 	expect((await findByTestId('parent-change-comment')).textContent).toContain(
 		'nested this task under OP-9',
 	);
+});
+
+// ─── budget_conversion ──────────────────────────────────────────────────────
+
+test('budget_conversion names each budget by scope and punctuates dollars by the number format', async () => {
+	localStorage.setItem(
+		'locale',
+		JSON.stringify({ ...DEFAULT_LOCALE_SETTINGS, number_format: NumberFormat.SpaceComma }),
+	);
+	try {
+		const { findByTestId } = renderSystem(
+			comment({
+				kind: 'budget_conversion',
+				tokens_per_cent: 10_000,
+				basis: 'fallback',
+				conversions: [
+					{
+						scope: 'agent',
+						id: 'a1',
+						name: 'Captain',
+						context: 'Acme',
+						window: 'monthly',
+						cents: 123_450,
+						tokens: 1_234_500_000,
+					},
+					{
+						scope: 'project',
+						id: 'p1',
+						name: 'Acme',
+						context: null,
+						window: 'daily',
+						cents: 100,
+						tokens: 1_000_000,
+					},
+				],
+				invalid: [{ id: 'h1', name: 'Scout', context: 'Acme', window: 'weekly', value: '"NaN"' }],
+			}),
+		);
+		// Group separators are no-break spaces; compare them as plain spaces.
+		const text = ((await findByTestId('budget-conversion-comment')).textContent ?? '').replace(
+			/[\u00a0\u202f]/g,
+			' ',
+		);
+		expect(text).toContain('starting from this upgrade');
+		// Dollars and tokens share one punctuation, and the symbol stays "$" rather
+		// than the "US$" or "$US" a currency format picks for this punctuation.
+		expect(text).toContain(
+			'The Captain agent in Acme, monthly: 1 234,50 $ became 1 234 500 000 tokens',
+		);
+		expect(text).toContain('The Acme project, daily: 1,00 $ became 1 000 000 tokens');
+		expect(text).toContain(
+			'The proposed Scout hire in Acme, weekly: "NaN" was not a dollar amount, so it is now unlimited',
+		);
+	} finally {
+		localStorage.clear();
+	}
+});
+
+test("a handoff notice links the Coach to its HQ page, and a project agent to this project's", async () => {
+	const { findAllByTestId } = renderSystem(
+		comment({
+			kind: 'handoff_limit',
+			rounds: 8,
+			tokens: 1_000,
+			agent_slugs: ['coach', 'engineer'],
+		}),
+		'acme',
+	);
+	const hrefs = (await findAllByTestId('handoff-limit-agent')).map((a) => a.getAttribute('href'));
+	expect(hrefs).toEqual([
+		`/projects/${HQ_PROJECT_SLUG}/agents/coach`,
+		'/projects/acme/agents/engineer',
+	]);
 });

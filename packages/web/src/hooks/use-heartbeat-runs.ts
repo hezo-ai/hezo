@@ -31,16 +31,10 @@ export interface HeartbeatRun {
 	error: string | null;
 	input_tokens: number;
 	output_tokens: number;
-	cost_cents: number | null;
 	/** True when the usage above is a mid-run snapshot (the run was interrupted before it finished). */
 	usage_partial: boolean;
-	/** The model the cost was priced from. Null when the runtime reported none. */
+	/** The model that did the work. Null when the runtime reported none. */
 	model: string | null;
-	/**
-	 * False when nobody is billed per token for this run, so `cost_cents` is what
-	 * the same tokens would have cost at published rates rather than money spent.
-	 */
-	cost_billed: boolean;
 	invocation_command: string | null;
 	/**
 	 * Full run log. Present only on single-run reads (`useHeartbeatRun`, the

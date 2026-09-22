@@ -97,6 +97,70 @@ export interface SystemRunAbandonedContent {
 	text?: string;
 }
 
+/**
+ * Agents handed a task to each other too many times in a row, so every agent is
+ * held off it until the admin replies. Posted once per hold, with an inbox row.
+ */
+export interface SystemHandoffLimitContent {
+	kind: 'handoff_limit';
+	rounds?: number;
+	tokens?: number;
+	agent_slugs?: string[];
+	text?: string;
+}
+
+/** Agents used more than a task's token ceiling since the admin last spoke; held until the admin does. */
+export interface SystemTaskTokenCeilingContent {
+	kind: 'task_token_ceiling';
+	tokens?: number;
+	ceiling?: number;
+	text?: string;
+}
+
+/** A budget paused an agent. Posted once per pause, with an inbox row. */
+export interface SystemBudgetPausedContent {
+	kind: 'budget_paused';
+	agent_slug?: string;
+	scope?: 'agent' | 'project';
+	period?: 'daily' | 'weekly' | 'monthly';
+	used_tokens?: number;
+	limit_tokens?: number;
+	text?: string;
+}
+
+/** Which budget a conversion line is about. */
+export type BudgetConversionScope =
+	| 'agent'
+	| 'project'
+	| 'agent_type'
+	| 'team_type'
+	| 'hire_proposal';
+
+/** The dollar budgets an upgrade converted to tokens, posted once on an HQ task. */
+export interface SystemBudgetConversionContent {
+	kind: 'budget_conversion';
+	tokens_per_cent?: number;
+	basis?: 'history' | 'fallback';
+	conversions?: Array<{
+		scope: BudgetConversionScope;
+		id: string;
+		name: string;
+		context?: string | null;
+		window: 'daily' | 'weekly' | 'monthly';
+		cents: number;
+		tokens: number;
+	}>;
+	/** Pending hire budgets that were not a dollar amount, now unlimited. */
+	invalid?: Array<{
+		id: string;
+		name: string;
+		context?: string | null;
+		window: 'daily' | 'weekly' | 'monthly';
+		value: string;
+	}>;
+	text?: string;
+}
+
 export interface SystemRepoDesignatedContent {
 	kind: 'repo_designated';
 	repo_identifier?: string;
@@ -123,6 +187,10 @@ export type SystemContent =
 	| SystemDescriptionChangeContent
 	| SystemRunFailedContent
 	| SystemRunAbandonedContent
+	| SystemHandoffLimitContent
+	| SystemTaskTokenCeilingContent
+	| SystemBudgetPausedContent
+	| SystemBudgetConversionContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;
 
@@ -142,7 +210,7 @@ export interface ActionContent {
 	title?: string;
 	slug?: string;
 	role_description?: string;
-	monthly_budget_cents?: number;
+	monthly_budget_tokens?: number;
 	heartbeat_interval_min?: number | null;
 	touches_code?: boolean;
 	// goal_suggestion snapshot (kind === 'goal_suggestion')

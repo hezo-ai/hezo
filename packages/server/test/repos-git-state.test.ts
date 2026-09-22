@@ -72,9 +72,7 @@ async function waitForContainerStatus(want: string, timeoutMs = 10_000): Promise
 }
 
 describe('GET /repos/:repoId/git-state', () => {
-	it('rejects a non-superuser (team-member agent) with 403', async () => {
-		// A team-member agent passes project-access middleware and reaches the
-		// in-handler requireSuperuser gate — so a 403 here proves that gate, not membership.
+	it('refuses an agent run token', async () => {
 		const { token, runId } = await mintAgentToken(
 			ctx.db,
 			ctx.masterKeyManager,
@@ -83,7 +81,7 @@ describe('GET /repos/:repoId/git-state', () => {
 			planningTaskId,
 		);
 		const res = await fetch(gitStateUrl(), { headers: authHeader(token) });
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 		await finalizeAgentRun(ctx.db, runId);
 	});
 
@@ -136,7 +134,7 @@ describe('GET /repos/:repoId/git-state', () => {
 });
 
 describe('POST /repos/:repoId/git-state', () => {
-	it('rejects a non-superuser (team-member agent) with 403', async () => {
+	it('refuses an agent run token', async () => {
 		const { token, runId } = await mintAgentToken(
 			ctx.db,
 			ctx.masterKeyManager,
@@ -145,7 +143,7 @@ describe('POST /repos/:repoId/git-state', () => {
 			planningTaskId,
 		);
 		const res = await fetch(gitStateUrl(), { method: 'POST', headers: authHeader(token) });
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 		await finalizeAgentRun(ctx.db, runId);
 	});
 
@@ -230,7 +228,7 @@ describe('POST /repos/:repoId/git-state', () => {
 });
 
 describe('POST /repos/:repoId/reset', () => {
-	it('rejects a non-superuser (team-member agent) with 403', async () => {
+	it('refuses an agent run token', async () => {
 		const { token, runId } = await mintAgentToken(
 			ctx.db,
 			ctx.masterKeyManager,
@@ -243,7 +241,7 @@ describe('POST /repos/:repoId/reset', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ action: 'discard_local' }),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 		await finalizeAgentRun(ctx.db, runId);
 	});
 

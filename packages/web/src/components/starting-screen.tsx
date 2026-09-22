@@ -15,7 +15,6 @@ const PHASE_ORDER = [
 	'migrations',
 	'seed',
 	'asset-storage',
-	'pricing',
 	'sandbox',
 	'workspace',
 	'ready',

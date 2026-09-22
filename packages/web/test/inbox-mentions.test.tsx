@@ -66,6 +66,61 @@ async function seedAgentAdminMention(
 	};
 }
 
+/** A notice Hezo raised for the admin: a system comment with no author, plus its inbox row. */
+async function seedNoticeMention(
+	workspace: SeededWorkspace,
+	task: SeededTask,
+	content: Record<string, unknown>,
+): Promise<void> {
+	const { db } = getTestContext();
+	const userRow = await db.query<{ user_id: string }>(
+		`SELECT mu.user_id FROM member_users mu
+		 JOIN members m ON m.id = mu.id
+		 WHERE m.team_id = $1 AND mu.role = 'admin'
+		 LIMIT 1`,
+		[workspace.team.id],
+	);
+	const commentRow = await db.query<{ id: string }>(
+		`INSERT INTO task_comments (task_id, content_type, content)
+		 VALUES ($1, 'system'::comment_content_type, $2::jsonb)
+		 RETURNING id`,
+		[task.id, JSON.stringify(content)],
+	);
+	await db.query(
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)`,
+		[workspace.team.id, task.id, commentRow.rows[0].id, userRow.rows[0].user_id],
+	);
+}
+
+test("a notice Hezo raised reads through the thread's catalog sentence, not the server's English", async () => {
+	let projectSlug = '';
+	const { findByTestId, queryByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'A runaway task' });
+			await seedNoticeMention(ws, task, {
+				kind: 'task_token_ceiling',
+				tokens: 123_456_789,
+				ceiling: 100_000_000,
+				text: 'Server-side English fallback.',
+			});
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/inbox', params: { projectId: projectSlug } });
+
+	const card = await findByTestId('mention-card', undefined, { timeout: 10_000 });
+	await waitFor(() =>
+		expect(card.textContent).toContain(
+			'Agents have used 123,456,789 tokens on this task since the admin last replied, past its limit of 100,000,000.',
+		),
+	);
+	expect(queryByText(/Server-side English fallback/)).toBeNull();
+});
+
 test('inbox renders a admin mention card with author + snippet', async () => {
 	let ctx: { projectSlug: string; taskIdentifier: string };
 	const { findByTestId, findByText, router } = await renderApp({

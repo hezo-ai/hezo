@@ -4,8 +4,8 @@ import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 // The Wire task header renders status / priority / assignee as quiet-tint badges
 // (treatment A — colour-coded rounded pills, the design-system default) plus a
-// mono runs · duration · cost summary derived from the task's runs + cost entries.
-test('task header renders colour-coded status/priority pills + a runs/duration/cost summary', async () => {
+// mono runs · duration · tokens summary derived from the task's runs + usage entries.
+test('task header renders colour-coded status/priority pills + a runs/duration/tokens summary', async () => {
 	const ref = { projectSlug: '', taskId: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -20,15 +20,15 @@ test('task header renders colour-coded status/priority pills + a runs/duration/c
 				`UPDATE tasks SET status='in_progress'::task_status, priority='high'::task_priority WHERE id=$1`,
 				[task.id],
 			);
-			// One finished 41s run + a $1.86 cost entry (cost_entries has no team_id since 004).
+			// One finished 41s run + a usage entry of 1.9M tokens.
 			await db.query(
 				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
 				 VALUES ($1,$2,$3,'succeeded'::heartbeat_run_status,'2026-01-01T00:00:00Z','2026-01-01T00:00:41Z')`,
 				[agent.id, ws.team.id, task.id],
 			);
 			await db.query(
-				`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents)
-				 VALUES ($1,$2,$3,186)`,
+				`INSERT INTO usage_entries (member_id, task_id, project_id, input_tokens, output_tokens)
+				 VALUES ($1,$2,$3,1800000,60000)`,
 				[agent.id, task.id, project.id],
 			);
 			ref.projectSlug = project.slug;
@@ -59,10 +59,10 @@ test('task header renders colour-coded status/priority pills + a runs/duration/c
 	expect(assignee.className).toContain('rounded-full');
 	expect(assignee.className).toContain('bg-neutral-soft');
 
-	// The runs/duration/cost summary stays mono.
+	// The runs/duration/tokens summary stays mono.
 	const summary = await findByTestId('task-run-summary');
 	expect(summary.textContent).toContain('1 run');
 	expect(summary.textContent).toContain('41s');
-	expect(summary.textContent).toContain('$1.86');
+	expect(summary.textContent).toContain('1.9M tokens');
 	expect(summary.className).toContain('font-mono');
 });

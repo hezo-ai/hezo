@@ -94,7 +94,6 @@ test('run comment shows created tasks as links to their pages', async () => {
 				error: null,
 				input_tokens: 0,
 				output_tokens: 0,
-				cost_cents: 0,
 				invocation_command: null,
 				log_text: 'done',
 				working_dir: null,
@@ -171,7 +170,6 @@ test('run comment omits created tasks section when list is empty', async () => {
 				error: null,
 				input_tokens: 0,
 				output_tokens: 0,
-				cost_cents: 0,
 				log_text: 'done',
 				created_tasks: [],
 			};
@@ -244,7 +242,6 @@ test('run comment header shows "started by …" chip when actor_name is set', as
 				error: null,
 				input_tokens: 0,
 				output_tokens: 0,
-				cost_cents: 0,
 				log_text: 'done',
 				created_tasks: [],
 			};
@@ -320,7 +317,6 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 				error: null,
 				input_tokens: 0,
 				output_tokens: 0,
-				cost_cents: 0,
 				log_text: 'done',
 				created_tasks: [],
 				created_docs: [{ filename: 'spec.md', project_slug: project.slug }],

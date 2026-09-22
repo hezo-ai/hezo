@@ -46,7 +46,6 @@ function makeRunRow(
 		error: status === 'cancelled' ? 'Terminated by user' : null,
 		input_tokens: 0,
 		output_tokens: 0,
-		cost_cents: null,
 		invocation_command: null,
 		log_text: '[synthetic] running',
 		working_dir: null,

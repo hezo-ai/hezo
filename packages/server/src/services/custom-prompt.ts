@@ -80,6 +80,7 @@ export async function writeCustomPrompt(
 		trackBackground(
 			enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
 				changeSummary: summary,
+				byRunId: auth.type === AuthType.Agent ? auth.runId : null,
 			}).catch((e) =>
 				log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
 			),

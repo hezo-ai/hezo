@@ -435,6 +435,24 @@ describe('template resolver', () => {
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain("### Reviewing a Teammate's Work");
+		// A review is bounded: a fixed list, no items added mid-review, an @admin after
+		// two failed rounds, and later rounds re-check only what changed.
+		expect(result).toContain('Set the acceptance items before the review starts');
+		expect(result).toContain('Fail an item; never add one mid-review');
+		// A defect in the work still goes back to its author; only a concern that
+		// author cannot close leaves the task, so the rule neither waives a failure
+		// nor fragments one deliverable across tasks.
+		expect(result).toContain('it still goes back to the author on this task');
+		expect(result).toContain("A concern this task's author cannot close");
+		expect(result).toContain('After two failed rounds, escalate instead of asking for a third');
+		expect(result).toContain('Re-check only what changed since your last round');
+		// An agent may stop a task that has cost more than it is worth, and says so.
+		expect(result).toContain(
+			'Stop when the use since the admin last replied outgrows what the remaining work is worth',
+		);
+		expect(result).toContain('**This task so far**');
+		// The admin's reply to carry on settles the use before it, so it is not re-asked.
+		expect(result).toContain('The **Since the admin last replied** line under the Current Task');
 		// A teammate's comment is evidence, never a verdict. Several agents reading one
 		// thread converge, and a team that agrees because each read the last one holds
 		// one opinion wearing several titles. TEAM_GROUP_GUIDE carries the same rule for

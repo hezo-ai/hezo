@@ -14,6 +14,7 @@ import {
 	mintAgentToken,
 	settleTeamSetupReview,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Line-coverage tests for packages/server/src/routes/tasks.ts driven over real
 // HTTP requests: list filters/sort/pagination + unread-mention and
@@ -212,31 +213,6 @@ describe('GET /tasks — list filters, sort, pagination, annotations', () => {
 });
 
 describe('POST /tasks — creation callers', () => {
-	it('lets an agent run create a task (agent caller identity)', async () => {
-		const scopeTask = await createTask('Agent-create scope task');
-		const { token: agentToken, runId } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			scopeTask.id,
-		);
-		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Created by an agent', assignee_id: agentId }),
-		});
-		expect(res.status).toBe(201);
-		const data = (await res.json()).data;
-		expect(data.title).toBe('Created by an agent');
-		const row = await db.query<{ created_by_member_id: string | null }>(
-			'SELECT created_by_member_id FROM tasks WHERE id = $1',
-			[data.id],
-		);
-		expect(row.rows[0].created_by_member_id).toBe(agentId);
-		await finalizeAgentRun(db, runId);
-	});
-
 	it('maps CreateTaskError NOT_FOUND to 404 on an explicit foreign project', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
@@ -305,8 +281,8 @@ describe('GET /tasks/:taskId + resolve + latest-run', () => {
 		const runId = await createAgentRun(db, agentId, teamId, task.id);
 		await finalizeAgentRun(db, runId, 'succeeded');
 		await db.query(
-			`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description)
-			 VALUES ($1, $2, $3, 42, 'test cost')`,
+			`INSERT INTO usage_entries (member_id, task_id, project_id, input_tokens, description)
+			 VALUES ($1, $2, $3, 42, 'test usage')`,
 			[agentId, task.id, projectId],
 		);
 
@@ -320,7 +296,7 @@ describe('GET /tasks/:taskId + resolve + latest-run', () => {
 		expect(data.project_slug).toBe(projectSlug);
 		expect(data.assignee_name).toBe('Uncov Agent');
 		expect(data.run_count).toBe(1);
-		expect(data.total_cost_cents).toBe(42);
+		expect(data.total_tokens).toBe(42);
 		expect(data.last_run_status).toBe('succeeded');
 		expect(data.has_active_run).toBe(false);
 	});
@@ -436,21 +412,6 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 		expect(row.rows[0].updated).toBeNull();
 	});
 
-	it('attributes an agent-set progress_summary to the agent', async () => {
-		const task = await createTask('Agent summary target');
-		const { token: agentToken, runId } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			task.id,
-		);
-		const res = await patchTask(task.id, { progress_summary: 'agent did this' }, agentToken);
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.progress_summary_updated_by).toBe(agentId);
-		await finalizeAgentRun(db, runId);
-	});
-
 	it('rejects a null assignee_id', async () => {
 		const task = await createTask('Null assignee target');
 		const res = await patchTask(task.id, { assignee_id: null });
@@ -495,43 +456,6 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 		expect(comments.rows.some((r) => /assign/i.test(r.content?.text ?? ''))).toBe(true);
 	});
 
-	it('denies an agent run moving a different task to in_progress (run scope)', async () => {
-		const own = await createTask('Scope own task');
-		const other = await createTask('Scope other task');
-		const { token: agentToken, runId } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			own.id,
-		);
-		const denied = await patchTask(other.id, { status: 'in_progress' }, agentToken);
-		expect(denied.status).toBe(403);
-		expect((await denied.json()).error.message).toMatch(/scoped to its own task/);
-
-		// The same transition on the run's own task is allowed.
-		const allowed = await patchTask(own.id, { status: 'in_progress' }, agentToken);
-		expect(allowed.status).toBe(200);
-		expect((await allowed.json()).data.status).toBe('in_progress');
-		await finalizeAgentRun(db, runId);
-	});
-
-	it('forbids an agent re-opening a terminal task', async () => {
-		const task = await createTask('Terminal guard task');
-		expect((await patchTask(task.id, { status: 'cancelled' })).status).toBe(200);
-		const { token: agentToken, runId } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			task.id,
-		);
-		const res = await patchTask(task.id, { status: 'backlog' }, agentToken);
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.message).toMatch(/re-open/i);
-		await finalizeAgentRun(db, runId);
-	});
-
 	it('blocks done while a sub-task is still open', async () => {
 		const parent = await createTask('Done gate parent');
 		const sub = await app.request(`/api/projects/${projectSlug}/tasks/${parent.id}/sub-tasks`, {
@@ -552,36 +476,6 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toMatch(/still has a running run/);
 		await finalizeAgentRun(db, runId);
-	});
-
-	it('blocks an agent closing over an unanswered @admin ask (humans may)', async () => {
-		const task = await createTask('Done gate admin ask');
-		const comment = await db.query<{ id: string }>(
-			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, $2, 'text'::comment_content_type, '{"text":"@admin should I?"}'::jsonb)
-			 RETURNING id`,
-			[task.id, agentId],
-		);
-		await db.query(
-			'INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)',
-			[teamId, task.id, comment.rows[0].id, adminUserId],
-		);
-		const { token: agentToken, runId } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			task.id,
-		);
-		const res = await patchTask(task.id, { status: 'done' }, agentToken);
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/@admin question/);
-		await finalizeAgentRun(db, runId);
-
-		// A human closing the same task bypasses the ask gate.
-		const human = await patchTask(task.id, { status: 'done' });
-		expect(human.status).toBe(200);
-		expect((await human.json()).data.status).toBe('done');
 	});
 
 	it('does not hold done over a credential request, whose answer is never a text reply', async () => {
@@ -610,8 +504,12 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 			teamId,
 			task.id,
 		);
-		const res = await patchTask(task.id, { status: 'done' }, agentToken);
-		expect(res.status).toBe(200);
+		const res = await callMcpTool(app, agentToken, 'update_task', {
+			project: projectSlug,
+			task_id: task.id,
+			status: 'done',
+		});
+		expect(res.error).toBeUndefined();
 		await finalizeAgentRun(db, runId);
 	});
 

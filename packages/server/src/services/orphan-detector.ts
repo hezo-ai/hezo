@@ -352,8 +352,16 @@ async function handBackNeverStartedWork(
 ): Promise<HandbackOutcome> {
 	const original = run.wakeup_id
 		? (
-				await db.query<{ source: WakeupSource; task_id: string | null }>(
-					`SELECT source, payload->>'task_id' AS task_id
+				await db.query<{
+					source: WakeupSource;
+					task_id: string | null;
+					created_by_run_id: string | null;
+					attribution: Record<string, unknown>;
+				}>(
+					`SELECT source, payload->>'task_id' AS task_id, created_by_run_id,
+					        jsonb_strip_nulls(jsonb_build_object(
+					          'triggered_by', payload->'triggered_by',
+					          'decided_by', payload->'decided_by')) AS attribution
 					 FROM agent_wakeup_requests WHERE id = $1`,
 					[run.wakeup_id],
 				)
@@ -417,13 +425,25 @@ async function handBackNeverStartedWork(
 		'UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1 WHERE id = $1',
 		[run.id],
 	);
-	await createWakeup(db, run.member_id, run.team_id, original?.source ?? WakeupSource.Timer, {
-		reason: 'never_started_retry',
-		task_id: run.task_id,
-		retry_count: run.process_loss_retry_count + 1,
-		max_retries: MAX_RETRIES,
-		previous_failure: { run_id: run.id },
-	});
+	// The retry keeps the original's source and who raised it: an agent's handoff
+	// retried is still an agent's handoff, and a person's Run now or decision is
+	// still theirs.
+	await createWakeup(
+		db,
+		run.member_id,
+		run.team_id,
+		original?.source ?? WakeupSource.Timer,
+		{
+			reason: 'never_started_retry',
+			task_id: run.task_id,
+			retry_count: run.process_loss_retry_count + 1,
+			max_retries: MAX_RETRIES,
+			previous_failure: { run_id: run.id },
+			...(original?.attribution ?? {}),
+		},
+		undefined,
+		original?.created_by_run_id ?? null,
+	);
 	return 'replaced';
 }
 
@@ -466,24 +486,51 @@ export async function retryOrEscalateLostRun(
 		const tailText =
 			knownLogTail ?? (await readRunLogTail(db, run.runId, ORPHAN_LOG_TAIL_CHARS)).text;
 
-		await createWakeup(db, run.memberId, run.teamId, WakeupSource.Timer, {
-			reason: 'orphan_retry',
-			// Naming the task is what makes this a retry rather than a nudge. A
-			// task-less wakeup coalesces onto the agent's queued heartbeat and
-			// `activateAgent` then picks a task by its own ordering, so the retry
-			// could land on different work than was lost - and `retry_of_run_id`
-			// would record lineage across two unrelated tasks. It also brings the
-			// pre-dispatch busy and capacity guards into play, since every one of
-			// them is inside `if (wakeupTaskId)`.
-			...(run.taskId ? { task_id: run.taskId } : {}),
-			retry_count: run.priorRetries + 1,
-			max_retries: MAX_RETRIES,
-			previous_failure: {
-				run_id: run.runId,
-				exit_code: failedRun.rows[0]?.exit_code ?? null,
-				log_tail: tailText.length > 0 ? tailText : null,
+		// An infrastructure retry carries the lost run's own attribution: the work
+		// is the same handoff, and a retry that looked like nobody's would restart
+		// the handoff chain the lost run was already counted in.
+		const lost = await db.query<{
+			created_by_run_id: string | null;
+			attribution: Record<string, unknown>;
+		}>(
+			`SELECT w.created_by_run_id,
+			        jsonb_strip_nulls(jsonb_build_object(
+			          'triggered_by', w.payload->'triggered_by',
+			          'decided_by', w.payload->'decided_by')) AS attribution
+			   FROM agent_wakeup_requests w
+			   JOIN heartbeat_runs hr ON hr.wakeup_id = w.id
+			  WHERE hr.id = $1`,
+			[run.runId],
+		);
+		const origin = lost.rows[0];
+
+		await createWakeup(
+			db,
+			run.memberId,
+			run.teamId,
+			WakeupSource.Timer,
+			{
+				reason: 'orphan_retry',
+				// Naming the task is what makes this a retry rather than a nudge. A
+				// task-less wakeup coalesces onto the agent's queued heartbeat and
+				// `activateAgent` then picks a task by its own ordering, so the retry
+				// could land on different work than was lost - and `retry_of_run_id`
+				// would record lineage across two unrelated tasks. It also brings the
+				// pre-dispatch busy and capacity guards into play, since every one of
+				// them is inside `if (wakeupTaskId)`.
+				...(run.taskId ? { task_id: run.taskId } : {}),
+				retry_count: run.priorRetries + 1,
+				max_retries: MAX_RETRIES,
+				previous_failure: {
+					run_id: run.runId,
+					exit_code: failedRun.rows[0]?.exit_code ?? null,
+					log_tail: tailText.length > 0 ? tailText : null,
+				},
+				...(origin?.attribution ?? {}),
 			},
-		});
+			undefined,
+			origin?.created_by_run_id ?? null,
+		);
 		return 'retried';
 	}
 
@@ -651,6 +698,7 @@ export async function clearAgentErrorApprovalsOnRecovery(
 			resolutionNote: `Agent recovered on run ${run.runId}.`,
 			dataDir: deps.dataDir,
 			actorMemberId: null,
+			decider: { user_id: null, api_key_id: null },
 			wsManager: deps.wsManager,
 			events: deps.events,
 		});

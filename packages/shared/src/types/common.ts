@@ -296,6 +296,17 @@ export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 
 /**
+ * Body limit for a route that takes one attachment as multipart form data.
+ *
+ * The file cap above measures the file; on the wire it travels inside a
+ * multipart envelope (boundary, part headers, form fields), so a body limit of
+ * exactly `ATTACHMENT_MAX_BYTES` rejects a valid maximum-size file. The route's
+ * own check on the file's size still answers an oversized file with its
+ * specific error.
+ */
+export const ATTACHMENT_UPLOAD_BODY_MAX_BYTES = ATTACHMENT_MAX_BYTES + 1024 * 1024;
+
+/**
  * Ceiling on any `/api` request body - a backstop against an unbounded body, not
  * a per-route policy. It MUST stay comfortably above every per-route cap:
  *
@@ -838,6 +849,12 @@ export interface AdminMentionItem {
 	credential_name: string | null;
 	/** One line of the comment body, Markdown stripped - render it as plain text. */
 	snippet: string;
+	/**
+	 * A system notice's own fields (its `kind` and figures, without its lists), so
+	 * the row reads in the viewer's language; `snippet` is its English fallback.
+	 * Null on every other kind.
+	 */
+	notice: Record<string, unknown> | null;
 	author_member_id: string | null;
 	author_display_name: string;
 	author_slug: string | null;
@@ -990,6 +1007,21 @@ export const WakeupSkipReason = {
 	 */
 	RetrospectiveHold: 'retrospective_hold',
 	/**
+	 * Agents have handed this task to each other too many times in a row with the
+	 * admin silent, so every agent is held off it until the admin replies or runs
+	 * it. The rounds are counted from runs an agent's comment, mention or reply
+	 * started.
+	 * See `handoffHold` in `services/no-work-backoff.ts`.
+	 */
+	HandoffRoundsExhausted: 'handoff_rounds_exhausted',
+	/**
+	 * Agents have used more tokens on this task since the admin last spoke than
+	 * its ceiling allows, so every agent is held off it until the admin replies,
+	 * which grants a fresh ceiling, or runs it. See `tokenCeilingHold` in
+	 * `services/no-work-backoff.ts`.
+	 */
+	TaskTokenCeiling: 'task_token_ceiling',
+	/**
 	 * Another run still held the rotating provider credential when this one gave
 	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
 	 * on different clocks: capacity frees when the idle pass reclaims a container,
@@ -1035,8 +1067,8 @@ export const WakeupSkipReason = {
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 
-// Rolling spend windows for agent/project budgets. Each is enforced independently;
-// a 0 limit means unlimited for that window. Spend is summed from cost_entries.
+// Rolling usage windows for agent/project budgets. Each is enforced independently;
+// a 0 limit means unlimited for that window. Usage is summed from usage_entries.
 export const BudgetPeriod = {
 	Daily: 'daily',
 	Weekly: 'weekly',
@@ -1969,9 +2001,6 @@ export interface ProviderRuntimeAdapter extends ProviderRuntimeBinding {
  * either binding. It is only a *default* — an agent or task may select any model
  * the provider catalog returns, which is why both bindings let the run's
  * selected model override it.
- *
- * Keep a `model_pricing` row for whatever this points at: runs are priced solely
- * from that table, so an unpriced model records $0.
  */
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 
@@ -3289,16 +3318,15 @@ export type DateFormat = (typeof DateFormat)[keyof typeof DateFormat];
 export const DATE_FORMATS: readonly DateFormat[] = Object.values(DateFormat);
 
 /**
- * How a money amount is punctuated. Presentation only — Hezo costs are always
- * USD (providers bill in USD and budgets are stored as USD cents), so this
- * never converts a currency, it only picks separators and symbol placement.
+ * How a number is punctuated. Presentation only: it picks the thousands and
+ * decimal separators, for token counts and every other figure Hezo shows.
  */
 export const NumberFormat = {
-	/** $1,234.56 */
+	/** 1,234.56 */
 	DotComma: 'dot-comma',
-	/** 1.234,56 $ */
+	/** 1.234,56 */
 	CommaDot: 'comma-dot',
-	/** 1 234,56 $ */
+	/** 1 234,56 */
 	SpaceComma: 'space-comma',
 } as const;
 export type NumberFormat = (typeof NumberFormat)[keyof typeof NumberFormat];

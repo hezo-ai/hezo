@@ -9,7 +9,7 @@ const LOG_TEXT = [
 	'Proceeding with the change.',
 	'[tool] Bash(command=ls -la, description=list files)',
 	'[tool-result] total 0',
-	'[done] success turns=2 duration=900ms tokens=10/20 cost=$0.0001',
+	'[done] success turns=2 duration=900ms tokens=10/20',
 ].join('\n');
 
 test('task-page run comment exposes the formatted/raw log switcher and defaults to formatted', async () => {
@@ -55,7 +55,6 @@ test('task-page run comment exposes the formatted/raw log switcher and defaults 
 				error: null,
 				input_tokens: 10,
 				output_tokens: 20,
-				cost_cents: 0,
 				invocation_command: null,
 				log_text: LOG_TEXT,
 				working_dir: null,

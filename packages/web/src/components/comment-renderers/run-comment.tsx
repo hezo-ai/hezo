@@ -22,11 +22,11 @@ import { useRunLogs } from '../../hooks/use-run-logs';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { agentPageParams } from '../agent-link';
-import { CostFigure } from '../cost-figures';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
 import { useOpenPreview } from '../task-detail/preview-context';
 import { TerminateRunButton } from '../terminate-run-button';
+import { TokenFigure } from '../token-figure';
 import { InfoTooltip } from '../ui/info-tooltip';
 import { RelativeTime } from '../ui/relative-time';
 import { Tooltip } from '../ui/tooltip';
@@ -347,16 +347,15 @@ export function RunCommentBody({
 							<span data-testid="run-comment-duration">{formatElapsed(durationMs)}</span>
 						</>
 					)}
-					{run?.cost_cents != null && run.cost_cents > 0 && (
+					{run && run.input_tokens + run.output_tokens > 0 && (
 						<>
 							<span aria-hidden="true" className="hidden sm:inline">
 								·
 							</span>
-							<CostFigure
-								cents={run.cost_cents}
-								billed={run.cost_billed}
+							<TokenFigure
+								tokens={run.input_tokens + run.output_tokens}
 								className="hidden sm:inline"
-								testId="run-comment-cost"
+								testId="run-comment-tokens"
 							/>
 						</>
 					)}

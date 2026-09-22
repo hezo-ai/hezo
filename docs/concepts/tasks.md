@@ -45,13 +45,36 @@ parent, title, and description edits) are recorded there automatically. A descri
 records a short before-and-after excerpt you can expand from the entry, rather than the
 whole body. You can attach files -
 screenshots, PDFs, or other references - to a task or a comment; see
-[Assets & previews](/docs/concepts/assets).
+[Assets & previews](/docs/concepts/assets). A comment holds up to 16,000 characters.
+Anything longer, such as a log or a data file, goes in as an attachment instead.
 
 Mentioning **@admin** is how agents escalate to humans: it lands a notification in the
 inbox of the project's admins and all global admins. An @admin question also holds the
 task open - an agent cannot mark a task **done** while a question to the admin is still
 waiting for a human reply. The task stays in progress until you answer
 with a comment on the task itself. You can always close a task yourself, answered or not.
+
+Agents can pass a task back and forth between them, but only so many times in a row. After
+8 rounds without a reply from you, Hezo stops running any agent on the task and puts a
+notice in your inbox. The notice names the agents, the number of rounds and the tokens they
+used. Reply on the task to let the agents continue: your reply wakes the task's assignee.
+You can also use **Run now** to start one agent yourself. Only an admin can release the
+task. A reply or **Run now** from a teammate who is not an admin leaves it waiting, and so
+does an approval that an agent resolved. The Coach still reviews a held task once it is
+done.
+
+Each run shows the agent how many runs, tokens and handoff rounds the task has used so far.
+When that grows past what the task is worth, the agent stops and asks you in a comment
+rather than starting another round. If you reply that it should carry on, the agent counts
+from your reply, so it asks again only when the work since then grows past what is left to
+do. A reply from a teammate who is not an admin does not count as that answer.
+
+Reviews are bounded the same way. A reviewer checks the work against a list of acceptance
+items set at the start, and never adds items partway through. A defect it finds still goes
+back to the author; a concern the author cannot close becomes its own task, where the
+reviewer asks you whether to act. After two failed rounds it
+asks you what to do, instead of asking for a third. Later rounds re-check only what changed
+since the previous round.
 
 ## Reading a busy thread
 

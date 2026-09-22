@@ -91,9 +91,9 @@ describe('POST /agents validation', () => {
 		// daily > weekly is a cross-window violation (0 = unlimited, so use non-zero).
 		const res = await post({
 			title: 'Budget Bot',
-			daily_budget_cents: 5000,
-			weekly_budget_cents: 100,
-			monthly_budget_cents: 100,
+			daily_budget_tokens: 5000,
+			weekly_budget_tokens: 100,
+			monthly_budget_tokens: 100,
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
@@ -223,8 +223,8 @@ describe('system-prompt revisions / restore / preview 404s', () => {
 				body: JSON.stringify({ revision_number: 1 }),
 			},
 		);
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.code).toBe('FORBIDDEN');
+		expect(res.status).toBe(401);
+		expect((await res.json()).error.code).toBe('UNAUTHORIZED');
 	});
 
 	it('preview 404s for an unknown agent', async () => {
@@ -337,7 +337,7 @@ describe('PATCH /agents validation', () => {
 	});
 
 	it('rejects an incoherent merged budget trio', async () => {
-		const res = await patch('engineer', { daily_budget_cents: 999999, weekly_budget_cents: 1 });
+		const res = await patch('engineer', { daily_budget_tokens: 999999, weekly_budget_tokens: 1 });
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
 	});

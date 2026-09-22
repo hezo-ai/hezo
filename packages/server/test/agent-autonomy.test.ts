@@ -8,6 +8,7 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
+import { callMcpTool } from './helpers/mcp-call';
 
 let ctx: ServerTestContext;
 let teamId: string;
@@ -194,16 +195,23 @@ describe('task: progress_summary and rules', () => {
 			teamId,
 			taskId,
 		);
-		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: 'Completed API endpoints, working on tests' }),
+		const result = await callMcpTool(ctx.app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: taskId,
+			progress_summary: 'Completed API endpoints, working on tests',
 		});
-		expect(patchRes.status).toBe(200);
-		const updated = ((await patchRes.json()) as any).data;
-		expect(updated.progress_summary).toBe('Completed API endpoints, working on tests');
-		expect(updated.progress_summary_updated_at).toBeTruthy();
-		expect(updated.progress_summary_updated_by).toBe(engineerAgentId);
+		expect(result.error).toBeUndefined();
+		const row = await ctx.db.query<{
+			progress_summary: string;
+			progress_summary_updated_at: string | null;
+			progress_summary_updated_by: string | null;
+		}>(
+			'SELECT progress_summary, progress_summary_updated_at, progress_summary_updated_by FROM tasks WHERE id = $1',
+			[taskId],
+		);
+		expect(row.rows[0].progress_summary).toBe('Completed API endpoints, working on tests');
+		expect(row.rows[0].progress_summary_updated_at).toBeTruthy();
+		expect(row.rows[0].progress_summary_updated_by).toBe(engineerAgentId);
 	});
 
 	it('rejects a human writing progress_summary, leaving what the agent wrote intact', async () => {
@@ -225,10 +233,10 @@ describe('task: progress_summary and rules', () => {
 			teamId,
 			taskId,
 		);
-		await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ progress_summary: 'Agent checkpoint' }),
+		await callMcpTool(ctx.app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: taskId,
+			progress_summary: 'Agent checkpoint',
 		});
 
 		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
@@ -392,6 +400,47 @@ describe('agent-runner: retry context in task prompt', () => {
 		expect(prompt).toContain('Add feature');
 		// Progress Summary section is omitted when the field is empty.
 		expect(prompt).not.toContain('### Progress Summary');
+	});
+
+	it('buildTaskPrompt states what the task has used so far under its status', async () => {
+		const { buildTaskPrompt, taskUsageLine } = await import('../src/services/agent-runner');
+		const task = {
+			id: 'test-id',
+			identifier: 'AUT-9',
+			title: 'Long-running review',
+			description: '',
+			status: 'in_progress',
+			priority: 'medium',
+			project_id: 'test-project',
+			rules: null,
+			progress_summary: null,
+		};
+
+		const prompt = buildTaskPrompt('System prompt', task, undefined, {
+			usageSoFar: { runs: 12, tokens: 48_230_000, sinceAdminReply: null, handoffRounds: 3 },
+		});
+
+		const line =
+			'**This task so far:** 12 runs, 48.2M tokens, 3 consecutive agent-to-agent handoffs.';
+		expect(prompt).toContain(line);
+		expect(prompt.indexOf(line)).toBeGreaterThan(prompt.indexOf('**Status:** in_progress'));
+		expect(taskUsageLine({ runs: 1, tokens: 900, sinceAdminReply: null, handoffRounds: 1 })).toBe(
+			'**This task so far:** 1 run, 900 tokens, 1 consecutive agent-to-agent handoff.',
+		);
+		// After the admin replies, the line splits out what came since: the part the
+		// agent weighs, so a reply to carry on is not re-asked on the next run.
+		expect(
+			taskUsageLine({
+				runs: 46,
+				tokens: 1_200_000_000,
+				sinceAdminReply: { runs: 3, tokens: 40_000_000 },
+				handoffRounds: 2,
+			}),
+		).toBe(
+			'**This task so far:** 46 runs, 1.2B tokens. **Since the admin last replied:** 3 runs, 40M tokens, 2 consecutive agent-to-agent handoffs.',
+		);
+		// No usage passed, no line: the section is not invented.
+		expect(buildTaskPrompt('System prompt', task)).not.toContain('This task so far');
 	});
 
 	it('buildTaskPrompt includes rules when present', async () => {

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { postAdminNotice } from '../src/services/comment-wakeups';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -380,6 +381,117 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 	});
 });
 
+describe('postAdminNotice', () => {
+	it('puts a system notice in every admin inbox, under Hezo rather than a person', async () => {
+		const taskIdLocal = await insertTask(captainId, 'System notice test');
+		const commentId = await postAdminNotice({
+			db,
+			teamId,
+			taskId: taskIdLocal,
+			content: { kind: 'handoff_limit', text: 'No agent will run on this task until you reply.' },
+		});
+		if (!commentId) throw new Error('expected the notice to be posted');
+
+		const rows = await mentionsForComment(commentId);
+		expect(rows.map((r) => r.user_id)).toEqual(
+			expect.arrayContaining([testAdminUserId, secondAdminUserId]),
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const row = ((await res.json()).data as Array<Record<string, unknown>>).find(
+			(m) => m.comment_id === commentId,
+		);
+		expect(row?.author_display_name).toBe('Hezo');
+		expect(row?.snippet).toBe('No agent will run on this task until you reply.');
+		// The row carries the notice's own fields, so the web reads it in the viewer's
+		// language; the English text is the snippet and is not repeated here.
+		expect(row?.notice).toEqual({ kind: 'handoff_limit' });
+	});
+
+	it("gives a notice's fields to the row without its lists or its English text", async () => {
+		const taskIdLocal = await insertTask(captainId, 'Conversion notice test');
+		const commentId = await postAdminNotice({
+			db,
+			teamId,
+			taskId: taskIdLocal,
+			content: {
+				kind: 'budget_conversion',
+				tokens_per_cent: 12.5,
+				basis: 'history',
+				conversions: [{ id: 'a', scope: 'agent', name: 'Engineer', window: 'monthly' }],
+				invalid: [],
+				text: 'Budgets now count tokens.',
+			},
+		});
+		if (!commentId) throw new Error('expected the notice to be posted');
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const row = ((await res.json()).data as Array<Record<string, unknown>>).find(
+			(m) => m.comment_id === commentId,
+		);
+		expect(row?.notice).toEqual({
+			kind: 'budget_conversion',
+			tokens_per_cent: 12.5,
+			basis: 'history',
+		});
+	});
+
+	it('gives the project dashboard the same notice fields as the inbox', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Dashboard notice test');
+		const commentId = await postAdminNotice({
+			db,
+			teamId,
+			taskId: taskIdLocal,
+			content: {
+				kind: 'task_token_ceiling',
+				tokens: 123_456_789,
+				ceiling: 100_000_000,
+				text: 'English fallback.',
+			},
+		});
+		if (!commentId) throw new Error('expected the notice to be posted');
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/needs-you`, {
+			headers: authHeader(token),
+		});
+		const { items } = (await res.json()).data as {
+			items: Array<{ kind: string; mention?: { notice: Record<string, unknown> | null } }>;
+		};
+		const row = items.find((r) => r.mention?.notice?.kind === 'task_token_ceiling');
+		expect(row?.mention?.notice).toEqual({
+			kind: 'task_token_ceiling',
+			tokens: 123_456_789,
+			ceiling: 100_000_000,
+		});
+	});
+
+	it('gives no notice fields to a row anchored on an ordinary comment', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Ordinary mention test');
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb) RETURNING id`,
+			[taskIdLocal, captainId, JSON.stringify({ text: '@admin which way?' })],
+		);
+		await db.query(
+			`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)`,
+			[teamId, taskIdLocal, comment.rows[0].id, testAdminUserId],
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const row = ((await res.json()).data as Array<Record<string, unknown>>).find(
+			(m) => m.comment_id === comment.rows[0].id,
+		);
+		expect(row?.snippet).toBe('@admin which way?');
+		expect(row?.notice).toBeNull();
+	});
+});
+
 describe('GET /teams/:teamId/inbox/count', () => {
 	it('counts the caller-unread mentions plus pending approvals', async () => {
 		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
@@ -427,7 +539,7 @@ describe('GET /teams/:teamId/inbox/count', () => {
 		const res = await app.request(`/api/projects/${projectSlug}/inbox/count`, {
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('excludes archived rows so the badge cannot exceed the default-tab list', async () => {

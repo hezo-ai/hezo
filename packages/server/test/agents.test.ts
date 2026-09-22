@@ -246,7 +246,7 @@ describe('agents CRUD', () => {
 			body: JSON.stringify({
 				title: 'Data Scientist',
 				role_description: 'Analyzes data and builds ML models',
-				monthly_budget_cents: 4000,
+				monthly_budget_tokens: 4000,
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -267,11 +267,11 @@ describe('agents CRUD', () => {
 		const res = await app.request(`/api/projects/${projectSlug}/agents/${engineer.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ monthly_budget_cents: 8000 }),
+			body: JSON.stringify({ monthly_budget_tokens: 8000 }),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.monthly_budget_cents).toBe(8000);
+		expect(body.data.monthly_budget_tokens).toBe(8000);
 	});
 
 	it('disables an enabled agent', async () => {

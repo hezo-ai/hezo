@@ -1,4 +1,4 @@
-import { DEFAULT_MONTHLY_BUDGET_CENTS } from '@hezo/shared';
+import { DEFAULT_MONTHLY_BUDGET_TOKENS } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
@@ -94,7 +94,7 @@ describe('POST /agent-types', () => {
 		expect(created.source).toBe('custom');
 		expect(created.is_builtin).toBe(false);
 		expect(created.run_timeout_min).toBe(60);
-		expect(created.monthly_budget_cents).toBe(DEFAULT_MONTHLY_BUDGET_CENTS);
+		expect(created.monthly_budget_tokens).toBe(DEFAULT_MONTHLY_BUDGET_TOKENS);
 		expect(created.touches_code).toBe(false);
 	});
 
@@ -107,7 +107,7 @@ describe('POST /agent-types', () => {
 			system_prompt_template: 'prompt',
 			heartbeat_interval_min: 120,
 			run_timeout_min: 30,
-			monthly_budget_cents: 9000,
+			monthly_budget_tokens: 9000,
 			touches_code: true,
 		});
 		expect(created.slug).toBe('ops-custom');
@@ -116,7 +116,7 @@ describe('POST /agent-types', () => {
 		expect(created.system_prompt_template).toBe('prompt');
 		expect(created.heartbeat_interval_min).toBe(120);
 		expect(created.run_timeout_min).toBe(30);
-		expect(created.monthly_budget_cents).toBe(9000);
+		expect(created.monthly_budget_tokens).toBe(9000);
 		expect(created.touches_code).toBe(true);
 	});
 });
@@ -161,7 +161,7 @@ describe('PATCH /agent-types/:id', () => {
 				system_prompt_template: 'new prompt',
 				heartbeat_interval_min: 240,
 				run_timeout_min: 15,
-				monthly_budget_cents: 500,
+				monthly_budget_tokens: 500,
 			}),
 		});
 		expect(res.status).toBe(200);
@@ -172,7 +172,7 @@ describe('PATCH /agent-types/:id', () => {
 		expect(updated.system_prompt_template).toBe('new prompt');
 		expect(updated.heartbeat_interval_min).toBe(240);
 		expect(updated.run_timeout_min).toBe(15);
-		expect(updated.monthly_budget_cents).toBe(500);
+		expect(updated.monthly_budget_tokens).toBe(500);
 	});
 
 	it('ignores schedule/budget fields on a builtin type but applies prose edits', async () => {
@@ -187,7 +187,7 @@ describe('PATCH /agent-types/:id', () => {
 				description: 'builtin desc edit',
 				heartbeat_interval_min: 777,
 				run_timeout_min: 777,
-				monthly_budget_cents: 777,
+				monthly_budget_tokens: 777,
 			}),
 		});
 		expect(res.status).toBe(200);
@@ -195,7 +195,7 @@ describe('PATCH /agent-types/:id', () => {
 		expect(updated.description).toBe('builtin desc edit');
 		expect(updated.heartbeat_interval_min).toBe(builtin.heartbeat_interval_min);
 		expect(updated.run_timeout_min).toBe(builtin.run_timeout_min);
-		expect(updated.monthly_budget_cents).toBe(builtin.monthly_budget_cents);
+		expect(updated.monthly_budget_tokens).toBe(builtin.monthly_budget_tokens);
 	});
 
 	it('returns the row unchanged when no editable fields are supplied', async () => {

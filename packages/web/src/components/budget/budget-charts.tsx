@@ -1,67 +1,57 @@
-import { type DailyCostPoint, useDailyCostSeries } from '../../hooks/use-costs';
+import { type DailyUsagePoint, useDailyUsageSeries } from '../../hooks/use-usage';
 import { useI18n } from '../../lib/i18n';
-import { centsToPlottedDollars, formatDay, plottedDollars } from '../charts/chart-format';
+import { formatDay } from '../charts/chart-format';
 import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
 
-/** The two kinds of money a day bucket can hold, stacked in this order. */
-const BILLED = 'billed';
-const NOTIONAL = 'notional';
+/** The two kinds of token a day bucket holds, stacked in this order. */
+const INPUT = 'input';
+const OUTPUT = 'output';
 
-/**
- * Split each day into what was charged and what was not.
- *
- * The unbilled segment is emitted only on days that have one, so a project
- * paying for every run keeps the single-series chart it has always had - and one
- * running entirely on subscriptions gets a chart instead of an empty panel
- * claiming no spend.
- */
+/** Split each day into input (cached input included) and output tokens. */
 function toCells(
-	points: DailyCostPoint[] | undefined,
-	labels: { billed: string; notBilled: string },
+	points: DailyUsagePoint[] | undefined,
+	labels: { input: string; output: string },
 ): SeriesCell[] {
 	const cells: SeriesCell[] = [];
 	for (const p of points ?? []) {
 		cells.push({
 			bucket: p.day,
-			seriesKey: BILLED,
-			seriesLabel: labels.billed,
-			value: p.total_cents,
+			seriesKey: INPUT,
+			seriesLabel: labels.input,
+			value: p.input_tokens,
 		});
-		if (p.notional_cents > 0) {
-			cells.push({
-				bucket: p.day,
-				seriesKey: NOTIONAL,
-				seriesLabel: labels.notBilled,
-				value: p.notional_cents,
-			});
-		}
+		cells.push({
+			bucket: p.day,
+			seriesKey: OUTPUT,
+			seriesLabel: labels.output,
+			value: p.output_tokens,
+		});
 	}
 	return cells;
 }
 
 /**
- * Per-day project spend, billed and unbilled stacked. Responsive: full-width and
- * stacked on mobile, the bar/line toggle wraps above the chart.
+ * Per-day project token usage, input and output stacked. Responsive: full-width
+ * and stacked on mobile, the bar/line toggle wraps above the chart.
  */
 export function BudgetCharts({ projectId, title }: { projectId: string; title?: string }) {
-	const { t } = useI18n();
-	const { data, isLoading } = useDailyCostSeries(projectId);
+	const { t, formatCompact } = useI18n();
+	const { data, isLoading } = useDailyUsageSeries(projectId);
 
 	return (
 		<StackedSeriesChart
 			title={title}
 			cells={toCells(data?.summary, {
-				billed: t('cost.series.billed'),
-				notBilled: t('cost.series.notBilled'),
+				input: t('budget.usage.series.input'),
+				output: t('budget.usage.series.output'),
 			})}
 			isLoading={isLoading}
-			toDisplay={centsToPlottedDollars}
-			formatValue={plottedDollars}
+			toDisplay={(tokens) => tokens}
+			formatValue={formatCompact}
 			formatBucket={formatDay}
-			// Fixed rather than sorted by total, so the billed segment is the same
-			// colour whether or not a project is mostly running on subscriptions.
-			seriesOrder={[BILLED, NOTIONAL]}
-			emptyText="No spend recorded."
+			// Fixed rather than sorted by total, so input keeps its colour on every day.
+			seriesOrder={[INPUT, OUTPUT]}
+			emptyText={t('budget.usage.chart.empty')}
 			testId="budget-chart"
 		/>
 	);

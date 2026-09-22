@@ -1,6 +1,8 @@
 import {
-	AuthType,
+	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
+	commentHasContent,
+	commentTextFits,
 	parseThreadRowCategories,
 	type ThreadRowCategory,
 	WakeupSource,
@@ -22,7 +24,7 @@ import { normalizeAllowedHosts } from '../lib/credential-placeholder';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import {
-	apiKeyIdFromAuth,
+	actingPersonFromAuth,
 	resolveActor,
 	resolveReactorMemberId,
 	resolveTaskId,
@@ -31,7 +33,13 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { fireCommentWakeups } from '../services/comment-wakeups';
+import { requireAdminEquivalent } from '../middleware/auth';
+import { checkProjectAssetIds } from '../services/asset-ownership';
+import {
+	commentTooLongError,
+	postComment,
+	resumeHeldTaskOnAdminReply,
+} from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { invalidateSecretsVault } from '../services/egress';
 import {
@@ -39,10 +47,19 @@ import {
 	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
-import { recordTaskLinks } from '../services/task-events';
+import { insertSystemComment } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
+
+/** Every kind the `comment_content_type` enum holds, so an unknown one is a 400. */
+const COMMENT_CONTENT_TYPES: ReadonlySet<string> = new Set(Object.values(CommentContentType));
+
+/** Comment kinds only the server writes, refused on the create route. */
+const SERVER_WRITTEN_CONTENT_TYPES: ReadonlySet<string> = new Set([
+	CommentContentType.System,
+	CommentContentType.Run,
+]);
 
 export const commentsRoutes = new Hono<Env>();
 
@@ -410,8 +427,8 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const auth = c.get('auth');
 
-	const taskCheck = await db.query<{ id: string; assignee_id: string | null }>(
-		'SELECT id, assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
+	const taskCheck = await db.query<{ id: string; assignee_id: string | null; project_id: string }>(
+		'SELECT id, assignee_id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
 	);
 	if (taskCheck.rows.length === 0) {
@@ -420,43 +437,53 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 
 	const body = await c.req.json<{
 		content_type?: string;
-		content: Record<string, unknown>;
+		content: Record<string, unknown> | string;
 		effort?: string;
 		parent_comment_id?: string | null;
 		attachment_ids?: string[];
 	}>();
 
-	const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
+	const attachmentCheck = await checkProjectAssetIds(
+		db,
+		taskCheck.rows[0].project_id,
+		body.attachment_ids,
+		COMMENT_ATTACHMENTS_MAX,
+	);
+	if (!attachmentCheck.ok) return err(c, 'INVALID_REQUEST', attachmentCheck.message, 400);
+	const attachmentIds = attachmentCheck.ids;
 	const contentType = body.content_type ?? CommentContentType.Text;
-	const isText = contentType === CommentContentType.Text;
-	if (isText) {
-		const text =
-			typeof body.content === 'string'
+	// Hezo writes system notices and run cards itself. A caller posting one would
+	// forge a hold notice or a run the thread never had.
+	if (SERVER_WRITTEN_CONTENT_TYPES.has(contentType)) {
+		return err(c, 'INVALID_REQUEST', `content_type ${contentType} is written by Hezo only`, 400);
+	}
+	// A kind the enum does not hold would otherwise fail at the cast, as a 500 the
+	// caller cannot act on.
+	if (!COMMENT_CONTENT_TYPES.has(contentType)) {
+		return err(c, 'INVALID_REQUEST', `Unknown content_type: ${contentType}`, 400);
+	}
+	// The web composer sends a text comment's words as a bare string; stored, every
+	// text comment has the one shape agents also write.
+	const content: Record<string, unknown> | null =
+		typeof body.content === 'string'
+			? { text: body.content }
+			: body.content && typeof body.content === 'object'
 				? body.content
-				: typeof body.content === 'object' && body.content !== null
-					? ((body.content as Record<string, unknown>).text as string | undefined)
-					: undefined;
-		if ((typeof text !== 'string' || text.length === 0) && attachmentIds.length === 0) {
+				: null;
+	if (!content) return err(c, 'INVALID_REQUEST', 'content is required', 400);
+	if (contentType === CommentContentType.Text) {
+		const text = typeof content.text === 'string' ? content.text : '';
+		if (!commentHasContent(text, attachmentIds.length)) {
 			return err(c, 'INVALID_REQUEST', 'content or attachment_ids is required', 400);
 		}
-	} else if (!body.content) {
-		return err(c, 'INVALID_REQUEST', 'content is required', 400);
-	}
-	if (attachmentIds.length > 0) {
-		const matched = await db.query<{ id: string }>(
-			`SELECT id FROM assets
-			 WHERE id = ANY($1::uuid[])
-			   AND project_id = (SELECT project_id FROM tasks WHERE id = $2)`,
-			[attachmentIds, taskId],
-		);
-		if (matched.rows.length !== attachmentIds.length) {
-			return err(
-				c,
-				'INVALID_REQUEST',
-				'One or more attachments do not belong to this project',
-				400,
-			);
+		if (!commentTextFits(text)) {
+			return err(c, 'COMMENT_TOO_LONG', commentTooLongError(text.length), 400);
 		}
+	} else if (!commentTextFits(JSON.stringify(content))) {
+		// A structured comment comes back whole in a thread read, so one oversized
+		// card would push every page carrying it past the reader's cap. The whole
+		// serialized row is held to the text limit rather than only its prose.
+		return err(c, 'COMMENT_TOO_LONG', commentTooLongError(JSON.stringify(content).length), 400);
 	}
 
 	// Optional per-comment effort override. Admin users set this to dial up/down
@@ -475,108 +502,37 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		parentCommentId = body.parent_comment_id;
 	}
 
-	let authorMemberId: string | null = null;
-	if (auth.type === AuthType.Admin) {
-		authorMemberId = null;
-	} else if (auth.type === AuthType.Agent) {
-		authorMemberId = auth.memberId;
-	}
-	// An API key authors as its first-class identity, not a member.
-	const authorApiKeyId = apiKeyIdFromAuth(auth);
-	// A human author keeps `author_member_id` null by convention; `author_user_id`
-	// records *which* human, so their avatar (user_icons) renders on the comment.
-	const authorUserId = auth.type === AuthType.Admin ? auth.userId : null;
-
-	const result = await withTransaction(db, async () => {
-		const inserted = await db.query<{ id: string; public_id: string }>(
-			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, author_user_id, parent_comment_id, content_type, content)
-     VALUES ($1, $2, $3, $4, $5, $6::comment_content_type, $7::jsonb)
-     RETURNING *`,
-			[
-				taskId,
-				authorMemberId,
-				authorApiKeyId,
-				authorUserId,
-				parentCommentId,
-				body.content_type ?? CommentContentType.Text,
-				JSON.stringify(body.content),
-			],
-		);
-
-		if (attachmentIds.length > 0) {
-			const newCommentId = inserted.rows[0].id;
-			await db.query(
-				`INSERT INTO comment_attachments (comment_id, asset_id)
-				 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
-				[newCommentId, attachmentIds],
-			);
-		}
-		return inserted;
-	});
-
-	await fireCommentWakeups({
+	// REST is the people's surface: a human author keeps `author_member_id` null by
+	// convention, and `author_user_id` records *which* human, so their avatar
+	// (user_icons) renders on the comment.
+	const person = actingPersonFromAuth(auth);
+	const { row } = await postComment({
 		db,
-		taskId,
-		teamId,
-		commentId: result.rows[0].id,
-		content: body.content,
-		contentType: body.content_type ?? CommentContentType.Text,
-		authorMemberId,
-		authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
-		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
-		effort: commentEffort,
-		parentCommentId,
 		wsManager: c.get('wsManager'),
-	});
-
-	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';
-	if (commentText) {
-		recordTaskLinks(
-			db,
-			teamId,
-			taskId,
-			commentText,
-			authorMemberId,
-			authorApiKeyId,
-			c.get('wsManager'),
-			{ kind: 'comment', commentPublicId: result.rows[0].public_id },
-		).catch((e) => log.error('Failed to record task links from comment:', e));
-	}
-
-	broadcastCommentFamilyChange(
-		c.get('wsManager'),
 		teamId,
-		c.get('projectId') as string,
-		'task_comments',
-		'INSERT',
-		result.rows[0] as Record<string, unknown>,
-	);
-	if (attachmentIds.length > 0) {
-		broadcastCommentFamilyChange(
-			c.get('wsManager'),
-			teamId,
-			c.get('projectId') as string,
-			'comment_attachments',
-			'INSERT',
-			{
-				comment_id: result.rows[0].id,
-				asset_ids: attachmentIds,
-			},
-		);
-	}
+		projectId: c.get('projectId') as string,
+		taskId,
+		author: { memberId: null, userId: person.user_id, apiKeyId: person.api_key_id },
+		parentCommentId,
+		contentType: contentType as CommentContentType,
+		content,
+		effort: commentEffort,
+		attachmentIds,
+	});
 
 	const masterKeyManager = c.get('masterKeyManager');
-	const attachments = await loadAttachmentsForComments(db, [result.rows[0].id], masterKeyManager);
-	const created = {
-		...(result.rows[0] as Record<string, unknown>),
-		attachments: attachments.get(result.rows[0].id) ?? [],
-	};
+	const attachments = await loadAttachmentsForComments(db, [row.id], masterKeyManager);
+	const created = { ...row, attachments: attachments.get(row.id) ?? [] };
 	return ok(c, created, 201);
 });
 
 commentsRoutes.post(
 	'/projects/:projectId/tasks/:taskId/comments/:commentId/fulfill-credential',
 	async (c) => {
+		// This writes the instance's secrets table, as `POST /secrets` does, so it
+		// asks for the same principal rather than project access alone.
+		const denied = requireAdminEquivalent(c);
+		if (denied) return denied;
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
 		const masterKeyManager = c.get('masterKeyManager');
@@ -589,6 +545,7 @@ commentsRoutes.post(
 			confirmed?: boolean;
 			allowed_hosts?: string[];
 			allow_body_substitution?: boolean;
+			replace_existing?: boolean;
 		}>();
 
 		const existing = await db.query<{
@@ -657,9 +614,22 @@ commentsRoutes.post(
 			return err(c, 'LOCKED', 'Master key not available', 503);
 		}
 
-		const { secretId, updatedComment } = await withTransaction(db, async () => {
+		const result = await withTransaction(db, async () => {
 			const encryptedValue = isConfirmation ? '' : encrypt(storedValue as string, encryptionKey);
 			const category = pickSecretCategory(kind);
+
+			// The agent chose this name. A name that already holds a secret is a
+			// different credential's row, so the write only replaces one when the
+			// person says so - and it never lets the request card decide where an
+			// existing credential may be sent.
+			const standing = await db.query<{ id: string; allowed_hosts: string[] }>(
+				'SELECT id, allowed_hosts FROM secrets WHERE name = $1 FOR UPDATE',
+				[name],
+			);
+			const existingSecret = standing.rows[0];
+			if (existingSecret && body.replace_existing !== true) return { conflict: name } as const;
+			const hosts =
+				existingSecret && overrideHosts.length === 0 ? existingSecret.allowed_hosts : allowedHosts;
 
 			const upsert = await db.query<{ id: string }>(
 				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_body_substitution)
@@ -671,39 +641,46 @@ commentsRoutes.post(
 				               allow_body_substitution = EXCLUDED.allow_body_substitution,
 				               updated_at = now()
 				 RETURNING id`,
-				[name, encryptedValue, category, allowedHosts, allowBodySubstitution],
+				[name, encryptedValue, category, hosts, allowBodySubstitution],
 			);
 			const secretId = upsert.rows[0].id;
 			invalidateSecretsVault();
 
 			const updated = await db.query(
 				`UPDATE task_comments
-				   SET chosen_option = $1::jsonb
+				   SET chosen_option = $1::jsonb, chosen_by_user_id = $3
 				 WHERE id = $2
 				 RETURNING *`,
 				[
 					JSON.stringify({ secret_id: secretId, fulfilled_at: new Date().toISOString() }),
 					commentId,
+					actingPersonFromAuth(c.get('auth')).user_id,
 				],
 			);
 
-			await db.query(
-				`INSERT INTO task_comments (task_id, content_type, content)
-				 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-				[
-					taskId,
-					JSON.stringify({
-						text: isConfirmation
-							? `Confirmed: ${name}`
-							: `Credential provided: ${name} (stored as secret, value not shown)`,
-					}),
-				],
-			);
+			await insertSystemComment(db, {
+				taskId,
+				content: {
+					text: isConfirmation
+						? `Confirmed: ${name}`
+						: `Credential provided: ${name} (stored as secret, value not shown)`,
+				},
+			});
 			return {
 				secretId,
 				updatedComment: updated.rows[0] as Record<string, unknown>,
-			};
+			} as const;
 		});
+
+		if ('conflict' in result) {
+			return err(
+				c,
+				'SECRET_EXISTS',
+				`A secret named ${result.conflict} already exists. Send replace_existing: true to overwrite it, or ask for a different name.`,
+				409,
+			);
+		}
+		const { secretId, updatedComment } = result;
 
 		// Clear the request's inbox rows — providing the value IS acting on them,
 		// for every admin, not only whoever happened to open the form.
@@ -721,6 +698,12 @@ commentsRoutes.post(
 			log.error('Failed to mark credential-request mentions read:', e);
 		}
 
+		// The answer is the admin's word on the task too, so a hold waiting for it
+		// lifts and the task's own assignee runs, whoever asked for the credential.
+		await resumeHeldTaskOnAdminReply({ db, taskId, teamId, commentId }).catch((e) =>
+			log.error('Failed to resume a held task after a credential answer:', e),
+		);
+
 		if (requestingAgentId) {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
 				requestingAgentId,
@@ -732,6 +715,7 @@ commentsRoutes.post(
 						comment_id: commentId,
 						secret_id: secretId,
 						name,
+						decided_by: actingPersonFromAuth(c.get('auth')),
 					});
 				} catch (e) {
 					log.error('Failed to create credential_provided wakeup:', e);
@@ -776,11 +760,6 @@ commentsRoutes.post(
 		const teamId = c.get('teamId') as string;
 		const projectId = c.get('projectId') as string;
 		const auth = c.get('auth');
-		// Deletion is destructive and admin-gated by design — an agent (even the
-		// requester) must never be able to resolve its own request.
-		if (auth.type === AuthType.Agent) {
-			return err(c, 'FORBIDDEN', 'Only the admin can resolve asset deletion requests', 403);
-		}
 		const db = c.get('db');
 		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
@@ -816,6 +795,7 @@ commentsRoutes.post(
 		const requestedIds = requestedAssets.map((a) => a.id);
 		const requestingAgentId = row.author_member_id;
 		const resolvedAt = new Date().toISOString();
+		const decider = actingPersonFromAuth(c.get('auth'));
 
 		let deletedIds: string[] = [];
 		let deletedPaths: string[] = [];
@@ -848,10 +828,12 @@ commentsRoutes.post(
 				const missing = requestedIds.length - ids.length;
 
 				const updated = await db.query(
-					`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
+					`UPDATE task_comments SET chosen_option = $1::jsonb, chosen_by_user_id = $3
+					  WHERE id = $2 RETURNING *`,
 					[
 						JSON.stringify({ status: 'approved', resolved_at: resolvedAt, deleted_asset_ids: ids }),
 						commentId,
+						decider.user_id,
 					],
 				);
 
@@ -859,11 +841,7 @@ commentsRoutes.post(
 					`Asset deletion approved: ${ids.length} deleted` +
 					(paths.length > 0 ? ` (${paths.map((p) => `assets/${p}`).join(', ')})` : '') +
 					(missing > 0 ? `; ${missing} no longer existed` : '');
-				await db.query(
-					`INSERT INTO task_comments (task_id, content_type, content)
-					 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-					[taskId, JSON.stringify({ text: summary })],
-				);
+				await insertSystemComment(db, { taskId, content: { text: summary } });
 				return { ids, paths, updated: updated.rows[0] as Record<string, unknown> };
 			});
 			deletedIds = result.ids;
@@ -882,15 +860,19 @@ commentsRoutes.post(
 		} else {
 			updatedComment = await withTransaction(db, async () => {
 				const updated = await db.query(
-					`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
-					[JSON.stringify({ status: 'denied', resolved_at: resolvedAt }), commentId],
+					`UPDATE task_comments SET chosen_option = $1::jsonb, chosen_by_user_id = $3
+					  WHERE id = $2 RETURNING *`,
+					[
+						JSON.stringify({ status: 'denied', resolved_at: resolvedAt }),
+						commentId,
+						decider.user_id,
+					],
 				);
 				const refs = requestedAssets.map((a) => `assets/${a.path}`).join(', ');
-				await db.query(
-					`INSERT INTO task_comments (task_id, content_type, content)
-					 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
-					[taskId, JSON.stringify({ text: `Asset deletion denied: ${refs}` })],
-				);
+				await insertSystemComment(db, {
+					taskId,
+					content: { text: `Asset deletion denied: ${refs}` },
+				});
 				return updated.rows[0] as Record<string, unknown>;
 			});
 		}
@@ -910,6 +892,10 @@ commentsRoutes.post(
 			log.error('Failed to mark asset-deletion mentions read:', e);
 		}
 
+		await resumeHeldTaskOnAdminReply({ db, taskId, teamId, commentId }).catch((e) =>
+			log.error('Failed to resume a held task after an asset-deletion answer:', e),
+		);
+
 		// Wake the requesting agent with the outcome (mirrors fulfill-credential).
 		if (requestingAgentId) {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
@@ -922,6 +908,7 @@ commentsRoutes.post(
 						comment_id: commentId,
 						status: body.approve ? 'approved' : 'denied',
 						deleted: deletedPaths,
+						decided_by: decider,
 					});
 				} catch (e) {
 					log.error('Failed to create asset_deletion_resolved wakeup:', e);

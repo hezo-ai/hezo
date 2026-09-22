@@ -29,7 +29,6 @@ import {
 	shellQuoteArg,
 } from '../src/services/agent-runner';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -189,7 +188,6 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 			State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
 			Config: { Image: 'test' },
 		}),
-		containerLogs: async () => new ReadableStream(),
 		execCreate: async () => 'exec-123',
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		killRunProcesses: async () => {},
@@ -1400,6 +1398,76 @@ describe('runAgent', () => {
 			);
 
 			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
+		});
+
+		it('tells the agent what the task has used so far', async () => {
+			const project = makeProject();
+			const task = makeTask();
+			// The task is shared across this file, so start from its runs alone.
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [task.id]);
+			await db.query(
+				`INSERT INTO heartbeat_runs
+				   (team_id, member_id, task_id, status, started_at, finished_at, input_tokens, output_tokens)
+				 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now() - interval '1 hour',
+				         now() - interval '50 minutes', 2400000, 100000)`,
+				[project.team_id, makeAgent().id, task.id],
+			);
+			let capturedPrompt = '';
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					return 'exec-usage-line';
+				},
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			await runAgent(deps, makeAgent(), task, project);
+
+			// The earlier run, plus the one being prompted, which has started by now.
+			expect(capturedPrompt).toMatch(
+				/\*\*This task so far:\*\* 2 runs, 2\.5M tokens, 0 consecutive/,
+			);
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [task.id]);
+		});
+
+		it('runs a Captain at its configured effort rather than forcing max', async () => {
+			const project = makeProject();
+			let capturedPrompt = '';
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					return 'exec-captain-effort';
+				},
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			await runAgent(
+				deps,
+				{ ...makeAgent(), slug: 'captain', default_effort: AgentEffort.High },
+				makeTask(),
+				project,
+			);
+
+			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
+			expect(capturedPrompt.trim().endsWith('ultrathink')).toBe(false);
 		});
 
 		it('exposes HEZO_AGENT_EFFORT in the container env', async () => {
@@ -2770,16 +2838,8 @@ describe('runAgent', () => {
 				},
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
-			// Wire a deterministic table path (a manual override, independent of the
-			// bundled snapshot). This run also reports total_cost_usd, which must be
-			// ignored — cost is always computed from the table over the token buckets.
-			const pricing = new PricingService(db);
-			await upsertManualRate(db, {
-				model_id: 'claude-opus-4-7',
-				input_per_token: 0.0001,
-				output_per_token: 0.0002,
-			});
-			await pricing.reload();
+			// This run also reports total_cost_usd, which is ignored: only the token
+			// counts are recorded.
 			const deps: RunnerDeps = {
 				db,
 				docker,
@@ -2787,7 +2847,6 @@ describe('runAgent', () => {
 				serverPort: 3000,
 				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
-				pricing,
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
@@ -2796,9 +2855,8 @@ describe('runAgent', () => {
 				log_text: string;
 				input_tokens: number;
 				output_tokens: number;
-				cost_cents: number;
 			}>(
-				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens, cost_cents FROM heartbeat_runs WHERE id = $1`,
+				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens FROM heartbeat_runs WHERE id = $1`,
 				[result.heartbeatRunId],
 			);
 			const log = row.rows[0].log_text;
@@ -2811,9 +2869,6 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			// The reported total_cost_usd (0.1234 → 12c) is discarded; the table prices
-			// the tokens: 1200*0.0001 + 350*0.0002 = 0.19 → 19 cents.
-			expect(row.rows[0].cost_cents).toBe(19);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {

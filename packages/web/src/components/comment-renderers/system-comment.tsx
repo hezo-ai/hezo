@@ -1,18 +1,29 @@
-import { formatTaskStatus } from '@hezo/shared';
+import { formatMoneyUsd, formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
-import { Trans, useI18n } from '../../lib/i18n';
+import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
+import {
+	budgetConversionIntroKey,
+	handoffAgentSlugs,
+	noticeParts,
+} from '../../lib/system-notice-text';
+import { AgentLink } from '../agent-link';
 import type {
+	BudgetConversionScope,
+	SystemBudgetConversionContent,
+	SystemBudgetPausedContent,
 	SystemContent,
 	SystemDescriptionChangeContent,
+	SystemHandoffLimitContent,
 	SystemParentChangeContent,
 	SystemRepoDesignatedContent,
 	SystemRunAbandonedContent,
 	SystemRunFailedContent,
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
+	SystemTaskTokenCeilingContent,
 } from '../comment-content';
 import { ActorBadge } from '../ui/actor-badge';
 import type { CommentDataOf } from './comment-data';
@@ -34,6 +45,18 @@ function isRunFailed(c: SystemContent): c is SystemRunFailedContent {
 }
 function isRunAbandoned(c: SystemContent): c is SystemRunAbandonedContent {
 	return c.kind === 'run_abandoned';
+}
+function isHandoffLimit(c: SystemContent): c is SystemHandoffLimitContent {
+	return c.kind === 'handoff_limit';
+}
+function isTaskTokenCeiling(c: SystemContent): c is SystemTaskTokenCeilingContent {
+	return c.kind === 'task_token_ceiling';
+}
+function isBudgetPaused(c: SystemContent): c is SystemBudgetPausedContent {
+	return c.kind === 'budget_paused';
+}
+function isBudgetConversion(c: SystemContent): c is SystemBudgetConversionContent {
+	return c.kind === 'budget_conversion';
 }
 function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
@@ -80,6 +103,22 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isRunAbandoned(content)) {
 		return <RunAbandonedBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isHandoffLimit(content)) {
+		return <HandoffLimitBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isTaskTokenCeiling(content)) {
+		return <TaskTokenCeilingBody content={content} timestamp={timestamp} />;
+	}
+
+	if (content && isBudgetPaused(content)) {
+		return <BudgetPausedBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isBudgetConversion(content)) {
+		return <BudgetConversionBody content={content} timestamp={timestamp} />;
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -330,14 +369,14 @@ function RunFailedBody({
 	const timedOut = status === 'timed_out';
 	const agentNode =
 		agentSlug && projectId ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: agentSlug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={agentSlug}
 				className="text-xs text-info-soft-fg hover:underline"
-				data-testid="run-failed-agent"
+				testId="run-failed-agent"
 			>
 				@{agentSlug}
-			</Link>
+			</AgentLink>
 		) : (
 			<span className="text-xs text-text-2">{t('comment.runAgentFallback')}</span>
 		);
@@ -391,14 +430,14 @@ function RunAbandonedBody({
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 	const agentNode =
 		agentSlug && projectId ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: agentSlug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={agentSlug}
 				className="text-xs text-info-soft-fg hover:underline"
-				data-testid="run-abandoned-agent"
+				testId="run-abandoned-agent"
 			>
 				@{agentSlug}
-			</Link>
+			</AgentLink>
 		) : (
 			<span className="text-xs text-text-2">{t('comment.runAgentFallback')}</span>
 		);
@@ -412,6 +451,201 @@ function RunAbandonedBody({
 					<Trans k="comment.runAbandoned" vars={{ agent: agentNode }} />
 				</span>
 			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+/**
+ * The handoff-limit notice: which agents went back and forth, how many times,
+ * and what it used. The agents are joined by the reader's own list rules.
+ */
+function HandoffLimitBody({
+	content,
+	projectId,
+	timestamp,
+}: {
+	content: SystemHandoffLimitContent;
+	projectId?: string;
+	timestamp: React.ReactNode;
+}) {
+	const i18n = useI18n();
+	const parts = noticeParts(content, i18n);
+	const slugs = handoffAgentSlugs(content);
+	let element = 0;
+	const agentsNode =
+		slugs.length > 0 ? (
+			new Intl.ListFormat(i18n.language, { type: 'conjunction' })
+				.formatToParts(slugs.map((slug) => `@${slug}`))
+				.map((part) => {
+					// A separator always follows the element before it, whose slug is unique.
+					if (part.type !== 'element') {
+						return <Fragment key={`after-${slugs[element - 1]}`}>{part.value}</Fragment>;
+					}
+					const slug = slugs[element++];
+					return projectId ? (
+						<AgentLink
+							key={slug}
+							projectId={projectId}
+							agentId={slug}
+							className="text-xs text-info-soft-fg hover:underline"
+							testId="handoff-limit-agent"
+						>
+							@{slug}
+						</AgentLink>
+					) : (
+						<span key={slug}>@{slug}</span>
+					);
+				})
+		) : (
+			<span>{i18n.t('comment.runAgentFallback')}</span>
+		);
+	if (!parts) return null;
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="handoff-limit-comment"
+		>
+			<span className="text-xs text-text-2">
+				<Trans k={parts.key} vars={{ ...parts.vars, agents: agentsNode }} />
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+/** The per-task token ceiling notice: what was used against the ceiling. */
+function TaskTokenCeilingBody({
+	content,
+	timestamp,
+}: {
+	content: SystemTaskTokenCeilingContent;
+	timestamp: React.ReactNode;
+}) {
+	const i18n = useI18n();
+	const parts = noticeParts(content, i18n);
+	if (!parts) return null;
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="task-token-ceiling-comment"
+		>
+			<span className="text-xs text-text-2">{i18n.t(parts.key, parts.vars)}</span>
+			{timestamp}
+		</div>
+	);
+}
+
+/** A budget paused an agent: whose budget, which window, and what was used. */
+function BudgetPausedBody({
+	content,
+	projectId,
+	timestamp,
+}: {
+	content: SystemBudgetPausedContent;
+	projectId?: string;
+	timestamp: React.ReactNode;
+}) {
+	const i18n = useI18n();
+	const parts = noticeParts(content, i18n);
+	const slug = parts?.agentSlugs[0];
+	const agentNode =
+		slug && projectId ? (
+			<AgentLink
+				projectId={projectId}
+				agentId={slug}
+				className="text-xs text-info-soft-fg hover:underline"
+				testId="budget-paused-agent"
+			>
+				@{slug}
+			</AgentLink>
+		) : (
+			<span>{parts?.vars.agent}</span>
+		);
+	if (!parts) return null;
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="budget-paused-comment"
+		>
+			<span className="text-xs text-text-2">
+				<Trans k={parts.key} vars={{ ...parts.vars, agent: agentNode }} />
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+const CONVERSION_LINE_KEYS: Record<'daily' | 'weekly' | 'monthly', MessageKey> = {
+	daily: 'comment.budgetConversion.line.daily',
+	weekly: 'comment.budgetConversion.line.weekly',
+	monthly: 'comment.budgetConversion.line.monthly',
+};
+
+const INVALID_BUDGET_KEYS: Record<'daily' | 'weekly' | 'monthly', MessageKey> = {
+	daily: 'comment.budgetConversion.invalid.daily',
+	weekly: 'comment.budgetConversion.invalid.weekly',
+	monthly: 'comment.budgetConversion.invalid.monthly',
+};
+
+/** The same subjects where the row names no project or team to place them in. */
+const CONVERSION_SUBJECT_PLAIN_KEYS: Record<BudgetConversionScope, MessageKey> = {
+	agent: 'comment.budgetConversion.subject.agentPlain',
+	project: 'comment.budgetConversion.subject.project',
+	agent_type: 'comment.budgetConversion.subject.agentType',
+	team_type: 'comment.budgetConversion.subject.agentType',
+	hire_proposal: 'comment.budgetConversion.subject.hireProposalPlain',
+};
+
+/** How each converted budget names itself, so two lines with one name read apart. */
+const CONVERSION_SUBJECT_KEYS: Record<BudgetConversionScope, MessageKey> = {
+	agent: 'comment.budgetConversion.subject.agent',
+	project: 'comment.budgetConversion.subject.project',
+	agent_type: 'comment.budgetConversion.subject.agentType',
+	team_type: 'comment.budgetConversion.subject.teamType',
+	hire_proposal: 'comment.budgetConversion.subject.hireProposal',
+};
+
+/** The upgrade's conversion of dollar budgets to tokens, one line per budget. */
+function BudgetConversionBody({
+	content,
+	timestamp,
+}: {
+	content: SystemBudgetConversionContent;
+	timestamp: React.ReactNode;
+}) {
+	const { t, formatNumber, number_format } = useI18n();
+	const rate = formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100));
+	const conversions = Array.isArray(content.conversions) ? content.conversions : [];
+	const invalid = Array.isArray(content.invalid) ? content.invalid : [];
+	// Without a context there is nothing for "in {context}" to name, so the line
+	// falls back to the plain subject rather than ending on a dangling preposition.
+	const subject = (scope: BudgetConversionScope, name: string, context?: string | null) =>
+		context
+			? t(CONVERSION_SUBJECT_KEYS[scope] ?? CONVERSION_SUBJECT_KEYS.agent, { name, context })
+			: t(CONVERSION_SUBJECT_PLAIN_KEYS[scope] ?? CONVERSION_SUBJECT_PLAIN_KEYS.agent, { name });
+	return (
+		<div className="flex flex-col gap-1 leading-[22px]" data-testid="budget-conversion-comment">
+			<span className="text-xs text-text-2">{t(budgetConversionIntroKey(content), { rate })}</span>
+			<ul className="ml-4 list-disc text-xs text-text-2">
+				{conversions.map((c) => (
+					<li key={`${c.scope}-${c.id}-${c.window}`}>
+						{t(CONVERSION_LINE_KEYS[c.window] ?? CONVERSION_LINE_KEYS.monthly, {
+							name: subject(c.scope, c.name, c.context),
+							dollars: formatMoneyUsd(c.cents, number_format),
+							tokens: formatNumber(c.tokens),
+						})}
+					</li>
+				))}
+				{invalid.map((b) => (
+					<li key={`invalid-${b.id}-${b.window}`}>
+						{t(INVALID_BUDGET_KEYS[b.window] ?? INVALID_BUDGET_KEYS.monthly, {
+							name: subject('hire_proposal', b.name, b.context),
+							value: b.value,
+						})}
+					</li>
+				))}
+			</ul>
 			{timestamp}
 		</div>
 	);
@@ -508,14 +742,14 @@ function TaskLinkSystemBody({
 
 	const actorNode =
 		actorKind === 'agent' && actorSlug ? (
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={{ projectId, agentId: actorSlug }}
+			<AgentLink
+				projectId={projectId}
+				agentId={actorSlug}
 				className={linkClass}
-				data-testid="task-link-actor"
+				testId="task-link-actor"
 			>
 				{actorName}
-			</Link>
+			</AgentLink>
 		) : (
 			<span className={textClass}>{actorName}</span>
 		);

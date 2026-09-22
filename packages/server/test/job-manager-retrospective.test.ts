@@ -255,6 +255,15 @@ describe('missed-review sweep', () => {
 		await ctx.db.query(`UPDATE projects SET archived_at = NULL WHERE id = $1`, [projectId]);
 	});
 
+	it('ignores a finished coherence review, which never wakes the Coach', async () => {
+		const review = await seedClosedTask('Team coherence review', 2);
+		await ctx.db.query(
+			`UPDATE tasks SET labels = '["team-coherence-review"]'::jsonb WHERE id = $1`,
+			[review.id],
+		);
+		expect(await sweep()).toBeUndefined();
+	});
+
 	it('takes the oldest close first, so a burst of misses drains in order', async () => {
 		await seedClosedTask('Closed an hour ago', 1);
 		const oldest = await seedClosedTask('Closed ten hours ago', 10);

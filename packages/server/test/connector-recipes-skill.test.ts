@@ -5,6 +5,7 @@ import type { Env } from '../src/lib/types';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -35,26 +36,7 @@ async function callTool(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: { project: projectSlug, ...args } },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result?: { content: Array<{ text: string }> };
-		error?: { message: string };
-	};
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	try {
-		return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
-	} catch {
-		return { error: body.result.content[0].text };
-	}
+	return await callMcpTool(app, token, name, { project: projectSlug, ...args });
 }
 
 describe('connector-recipes virtual skill: manifest + steering', () => {

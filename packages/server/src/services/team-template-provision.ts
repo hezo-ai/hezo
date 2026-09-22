@@ -44,7 +44,7 @@ interface AgentTypeRow {
 	default_effort: string;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	monthly_budget_cents: number;
+	monthly_budget_tokens: number;
 	touches_code: boolean;
 	reports_to_slug: string | null;
 	heartbeat_interval_override: number | null;
@@ -81,9 +81,9 @@ export interface RosterAgentDef {
 	default_effort: string;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	monthly_budget_cents: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
+	monthly_budget_tokens: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
 	touches_code: boolean;
 	reports_to_slug: string | null;
 	agent_type_id: string | null;
@@ -101,7 +101,7 @@ async function loadTemplateAgentTypes(db: Db, templateIds: string[]): Promise<Ag
 			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
 			        at.default_team_context, at.system_prompt_template,
 			        at.default_effort, at.heartbeat_interval_min, at.run_timeout_min,
-			        at.monthly_budget_cents, at.touches_code,
+			        at.monthly_budget_tokens, at.touches_code,
 			        ctat.reports_to_slug,
 			        ctat.heartbeat_interval_override, ctat.monthly_budget_override,
 				        ctat.daily_budget_override, ctat.weekly_budget_override
@@ -127,7 +127,7 @@ async function loadTemplateAgentTypes(db: Db, templateIds: string[]): Promise<Ag
 
 /** Map a DB agent-type join row to the neutral roster shape (budgets/heartbeat resolved). */
 function agentTypeRowToRosterDef(row: AgentTypeRow): RosterAgentDef {
-	const budgets = resolveAgentBudgets(row.monthly_budget_cents, row);
+	const budgets = resolveAgentBudgets(row.monthly_budget_tokens, row);
 	return {
 		slug: row.slug,
 		title: row.name,
@@ -138,9 +138,9 @@ function agentTypeRowToRosterDef(row: AgentTypeRow): RosterAgentDef {
 		default_effort: row.default_effort,
 		heartbeat_interval_min: row.heartbeat_interval_override ?? row.heartbeat_interval_min,
 		run_timeout_min: row.run_timeout_min,
-		monthly_budget_cents: budgets.monthlyBudgetCents,
-		daily_budget_cents: budgets.dailyBudgetCents,
-		weekly_budget_cents: budgets.weeklyBudgetCents,
+		monthly_budget_tokens: budgets.monthlyBudgetTokens,
+		daily_budget_tokens: budgets.dailyBudgetTokens,
+		weekly_budget_tokens: budgets.weeklyBudgetTokens,
 		touches_code: row.touches_code ?? false,
 		reports_to_slug: row.reports_to_slug,
 		agent_type_id: row.id,
@@ -263,7 +263,7 @@ export async function insertRosterAgents(
 			                            gender, avatar_spec, role_description, summary,
 			                            team_context,
 			                            default_effort, heartbeat_interval_min, run_timeout_min,
-			                            monthly_budget_cents, daily_budget_cents, weekly_budget_cents,
+			                            monthly_budget_tokens, daily_budget_tokens, weekly_budget_tokens,
 			                            touches_code)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::agent_effort, $13, $14, $15,
 			         $16, $17, $18)`,
@@ -282,9 +282,9 @@ export async function insertRosterAgents(
 				def.default_effort,
 				def.heartbeat_interval_min,
 				def.run_timeout_min,
-				def.monthly_budget_cents,
-				def.daily_budget_cents,
-				def.weekly_budget_cents,
+				def.monthly_budget_tokens,
+				def.daily_budget_tokens,
+				def.weekly_budget_tokens,
 				def.touches_code ?? false,
 			],
 		);

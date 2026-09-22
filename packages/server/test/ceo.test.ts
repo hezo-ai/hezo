@@ -67,11 +67,15 @@ describe('instance CEO agent type', () => {
 		expect(startup.agent_types).toHaveLength(10);
 	});
 
-	it('forces max effort for the CEO regardless of configured default or wakeup payload', () => {
-		expect(resolveEffort(undefined, AgentEffort.Low, CEO_AGENT_SLUG)).toBe(AgentEffort.Max);
-		expect(resolveEffort(AgentEffort.Low, AgentEffort.Low, CEO_AGENT_SLUG)).toBe(AgentEffort.Max);
-		// Non-leaders keep their configured default.
-		expect(resolveEffort(undefined, AgentEffort.Low, 'engineer')).toBe(AgentEffort.Low);
+	it('seeds the CEO at max effort, and its configured effort is the one it runs at', async () => {
+		const seeded = await db.query<{ default_effort: string }>(
+			'SELECT default_effort::text AS default_effort FROM agent_types WHERE slug = $1',
+			[CEO_AGENT_SLUG],
+		);
+		expect(seeded.rows[0].default_effort).toBe(AgentEffort.Max);
+		expect(resolveEffort(undefined, seeded.rows[0].default_effort)).toBe(AgentEffort.Max);
+		// An operator who lowers it gets what they set.
+		expect(resolveEffort(undefined, AgentEffort.Low)).toBe(AgentEffort.Low);
 	});
 });
 

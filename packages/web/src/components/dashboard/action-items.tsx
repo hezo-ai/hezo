@@ -7,6 +7,7 @@ import {
 	AGENT_ERROR_ROW,
 	inboxRowKind,
 	inboxRowLead,
+	inboxRowSnippet,
 	isAgentErrorApproval,
 } from '../../lib/inbox-row-kind';
 import { Badge } from '../ui/badge';
@@ -71,7 +72,8 @@ function ActionItemRow({
 	projectId: string;
 	row: ProjectDashboardNeedsYouItem;
 }) {
-	const { t } = useI18n();
+	const i18n = useI18n();
+	const { t } = i18n;
 	if (row.kind === 'approval') {
 		const a = row.approval;
 		// A run-failure notice is a `strategy` row: its type would call it a
@@ -128,7 +130,8 @@ function ActionItemRow({
 					</>
 				) : (
 					<>
-						{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
+						{m.author_display_name} on {m.task_identifier}:{' '}
+						{inboxRowSnippet(m, i18n) || m.task_title}
 					</>
 				)}
 			</RowContent>

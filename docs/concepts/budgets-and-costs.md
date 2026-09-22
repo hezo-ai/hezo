@@ -6,83 +6,93 @@ section: Concepts
 
 # Budgets & cost control
 
-Autonomous agents can run up a model bill quickly. Hezo tracks every run's cost and
-lets you cap spend at both the agent and the project level.
+Autonomous agents can use up a provider allowance or a model bill quickly. Hezo counts
+every token each run and chat turn uses, lets you cap that per agent and per project,
+and stops the loops a budget alone would not catch.
 
-The money tabs live on a project's **Team & Budget** page, beside the **Team** tab that
-holds the roster. There are two of them, because there are two different bills:
+These tabs live on a project's **Team & Budget** page, beside the **Team** tab that holds
+the roster. There are two of them, because agents use two different things:
 
-- **Budget** - what the agents cost in model tokens.
-- **Hours** - what the containers cost in uptime.
+- **Budget** - the model tokens the agents use.
+- **Hours** - how long the containers are up.
 
-## Cost tracking
+## Token usage
 
-Each agent run records what it cost, based on the tokens it used and the pricing for
-the model it ran on. Costs roll up two ways (**per agent** and **per project**), so
-you can see exactly where spend is going from the budget view.
+Each agent run records the tokens it used: input, cached input included, plus output.
+That total is what budgets count, for every run, whatever pays for it: an API key, a
+subscription, or a model on your own hardware. Hezo keeps no price list, so a figure
+never depends on a price it has to guess. Usage rolls up two ways (**per agent** and
+**per project**), so the budget view shows where the tokens went.
 
-**Chat turns are counted too.** A reply in the assistant chat bills its tokens the
-same way a run does, under the replying agent and its project, and an agent or
-project at its budget limit pauses in chat as well: the thread shows a notice, and
-the conversation carries on with your next message once the window rolls over or
-you raise the limit.
-
-Model pricing ships built in and refreshes daily from
-[pricepertoken.com](https://pricepertoken.com), so rates stay current without any
-setup. The catalog carries no cache rates, so Hezo derives them from each model's
-input rate: Anthropic bills cache reads at a tenth of the input rate and cache
-writes at a small premium, OpenAI bills cache reads at a tenth with no write
-premium, and agent runs are cache-heavy, so this is most of what a run costs.
-
-For a provider whose cache rates are not yet known, cache traffic still bills at
-the full input rate, so those particular figures are an upper bound: your real bill
-is lower than the figure shown, never higher. For exact billing on a model (or to
-correct a rate), add a manual pricing override in Settings. Overrides win and can
-include cache rates.
-
-## Subscription runs are costed but not billed
-
-A provider you signed into with a subscription does not charge per token, so there
-is no bill for Hezo to track. It still records what each run would have cost at the
-provider's published API rates, and shows that figure marked as not billed.
-
-With nothing recorded, a team running entirely on subscriptions saw an empty spend
-page while getting through billions of tokens a week, and the first sign of trouble
-was the provider cutting them off.
-
-The figure is there to show you what the fleet is doing, not to budget against:
-
-- It never counts towards a daily, weekly or monthly limit.
-- It never pauses an agent.
-- It is kept separate from real spend everywhere both are shown, so "what did this
-  cost me" stays answerable.
-
-If you want a hard stop on subscription usage, the controls that apply are the
-per-agent run time limit and the per-run tool-call ceiling, not a budget.
+**Chat turns are counted too.** A reply in the assistant chat counts its tokens the same
+way a run does, under the replying agent and its project, and an agent or project at
+its budget limit pauses in chat as well: the thread shows a notice, and the conversation
+carries on with your next message once the window rolls over or you raise the limit.
 
 ## Budget windows
 
-You set limits over three rolling windows, in UTC:
+You set limits in tokens over three rolling windows, in UTC:
 
 - **Daily** - from the start of the day.
 - **Weekly** - from the start of the week (Monday).
 - **Monthly** - from the start of the month.
 
-Limits apply to both **agents** and **projects**, independently. A limit of zero means
-**unlimited** for that window.
+The budget editors take millions of tokens, so `20` means 20,000,000. Limits apply to
+both **agents** and **projects**, independently. A limit of zero means **unlimited** for
+that window.
 
-**New agents ship with no cap.** Set one where you want a ceiling; until you do, an
-agent's spend is bounded only by its project's caps and by `run_timeout_min`. Agents
-hired before this release keep whatever cap they were given.
+**Every agent starts with no limit**, the built-in roles included. Set one where you want
+a ceiling. The per-run and per-task limits below still apply to every agent.
 
 ## Enforcement
 
 When an agent (or the project it belongs to) reaches a budget limit in any window, its
-runs are paused. The agent resumes automatically when that window rolls over (the next
-day, week, or month). That gives you a hard ceiling on spend you don't have to watch:
-set a daily cap and a runaway agent stops until tomorrow.
+runs are paused, and a notice in your inbox names the budget, the window and what was
+used. The notice is on the task the agent was working, or on the project's planning task
+when the run had no task of its own, and you get one per agent, budget and window. The agent resumes
+on its own when that window rolls over (the next day, week, or month), or as soon as you
+raise the limit.
 
 You can also pause and resume agents yourself at any time, independently of budgets.
+
+## Limits that apply without a budget
+
+Some work goes wrong in ways no daily limit catches in time. These apply to every
+agent, whether or not it has a budget:
+
+- **A single run stops at 30 million tokens.** A run that long spends most of its tokens
+  re-reading its own context. This applies to every runtime. For Codex, Grok and Kimi Code,
+  Hezo reads the usage once a minute, so a run can go a little past the limit before it
+  stops. A run that has already finished its work is never stopped.
+- **A task stops at 100 million tokens** used since you last replied on it. Hezo
+  puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
+  wakes the task's assignee and allows another 100 million, and **Run now** starts one
+  agent yourself. A teammate who is not an admin cannot release it either way.
+- **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
+  a reply from you, the task waits for you. See
+  [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).
+- **Each run has a time limit and a tool-call ceiling.** The time limit is a per-agent
+  setting (see [Hiring and agents](/docs/concepts/hiring-and-agents#other-settings)); the
+  tool-call ceiling is global (see
+  [Configuration](/docs/deployment/configuration)).
+
+## Upgrading from dollar budgets
+
+Budgets counted dollars before this release, and skipped runs on a subscription. When an
+instance upgrades, every non-zero dollar budget becomes a token budget at that
+instance's own rate: the list price of its runs over the previous 30 days. An instance
+with no priced runs in that window converts at one million tokens per dollar. A limit of
+zero stays unlimited. Where more than one window is set, a longer one is raised if it
+would fall below what the shorter ones allow.
+
+Budgets count usage from the upgrade on. Earlier usage stays in the charts but counts
+against no budget, because many of those runs were never counted before. A pending hire
+proposal whose budget was not a dollar amount becomes unlimited.
+
+A notice on an HQ task in your inbox lists each converted budget, old and new, and any
+proposal budget that became unlimited, so you can adjust them. A request that still
+sends a dollar budget field, such as `monthly_budget_cents`, is refused with an error
+naming the field that replaced it.
 
 ## Container hours
 
@@ -107,7 +117,7 @@ Three things affect how that figure reads:
   last message, then stops on its own.
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
-  Each agent's run time for the month is shown on the **Budget** tab, beside its spend.
+  Each agent's run time for the month is shown on the **Budget** tab, beside its tokens.
   That one really is a calendar month, and is a different figure from the hours below.
 
 On a local Docker daemon an hour of uptime costs nothing, so there the Hours tab is a

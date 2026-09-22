@@ -7,6 +7,7 @@ import type { Db } from '../src/db/database';
 import type { AuthInfo, Env } from '../src/lib/types';
 import {
 	canAuthAccessTeam,
+	humanSurfaceRefusal,
 	safeCompareHex,
 	signAdminJwt,
 	signAgentJwt,
@@ -22,6 +23,7 @@ import {
 	finalizeAgentRun,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -29,7 +31,6 @@ let adminToken: string;
 let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let teamSlug: string;
 let internalProjectId: string;
 let agentId: string;
 
@@ -47,7 +48,6 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Auth Test Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
 		.slug;
@@ -366,7 +366,7 @@ describe('authMiddleware (via HTTP)', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('allows API requests with valid agent token', async () => {
+	it('refuses REST requests with a valid agent token, naming the surfaces agents use', async () => {
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -375,12 +375,20 @@ describe('authMiddleware (via HTTP)', () => {
 			null,
 			{ projectId: internalProjectId },
 		);
-		// Agents drive the MCP surface, but the shared auth layer still accepts a
-		// valid agent JWT on /api routes (the handler then applies its own authz).
-		const res = await app.request('/api/projects', {
-			headers: authHeader(agentToken),
+		// REST is the people's surface: an agent run reaches Hezo through MCP and
+		// its file upload, so a valid run token is refused before any route runs.
+		for (const path of ['/api/projects', `/api/teams/${teamId}`]) {
+			const res = await app.request(path, { headers: authHeader(agentToken) });
+			expect(res.status).toBe(401);
+			const body = await res.json();
+			expect(body.error.code).toBe('UNAUTHORIZED');
+			expect(body.error.message).toMatch(/MCP endpoint and \/mcp\/assets/);
+		}
+
+		const viaMcp = await callMcpTool(app, agentToken, 'list_agents', {
+			project: internalProjectId,
 		});
-		expect(res.status).toBe(200);
+		expect(viaMcp.error).toBeUndefined();
 	});
 
 	it('skips non-API paths (no auth needed)', async () => {
@@ -390,6 +398,31 @@ describe('authMiddleware (via HTTP)', () => {
 		const res = await app.request('/');
 		expect(res.status).not.toBe(401);
 		expect(res.status).not.toBe(403);
+	});
+});
+
+describe('humanSurfaceRefusal', () => {
+	it('refuses an agent run and an API key on the human surfaces, and lets a person through', () => {
+		const agent: AuthInfo = {
+			type: AuthType.Agent,
+			memberId: agentId,
+			teamId,
+			runId: null,
+			taskId: null,
+			projectId: internalProjectId,
+			crossProject: false,
+		};
+		const apiKey: AuthInfo = {
+			type: AuthType.ApiKey,
+			apiKeyId: 'ak-1',
+			isSuperuser: true,
+			crossTeam: true,
+		};
+		expect(humanSurfaceRefusal(agent)).toMatch(/MCP endpoint and \/mcp\/assets/);
+		expect(humanSurfaceRefusal(apiKey)).toMatch(/MCP endpoint only/);
+		expect(
+			humanSurfaceRefusal({ type: AuthType.Admin, userId: 'u-1', isSuperuser: false }),
+		).toBeNull();
 	});
 });
 

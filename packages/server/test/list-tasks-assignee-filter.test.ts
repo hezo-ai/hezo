@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -106,23 +107,13 @@ afterAll(async () => {
 async function callListTasks(
 	args: Record<string, unknown>,
 ): Promise<Array<Record<string, unknown>>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: 'list_tasks', arguments: { project: projectId, ...args } },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
 	// list_tasks pages: the rows live under `items` alongside the cursor.
-	const page = JSON.parse(body.result.content[0].text) as {
-		items: Array<Record<string, unknown>>;
-	};
+	const page = await callMcpTool<{ items: Array<Record<string, unknown>> }>(
+		app,
+		token,
+		'list_tasks',
+		{ project: projectId, ...args },
+	);
 	return page.items;
 }
 

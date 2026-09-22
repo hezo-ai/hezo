@@ -1,4 +1,4 @@
-import { CommentContentType, DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -14,6 +14,7 @@ import {
 	projectSlugFor,
 	projectSlugForTeamSlug,
 } from './helpers/app';
+import { callMcpToolRaw } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -74,21 +75,8 @@ async function callMcp(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<{ status: number; result: unknown }> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	const text = body.result?.content?.[0]?.text ?? '{}';
-	return { status: res.status, result: JSON.parse(text) };
+	const { status, body } = await callMcpToolRaw(app, agentToken, name, args);
+	return { status, result: JSON.parse(body.result?.content?.[0]?.text ?? '{}') };
 }
 
 async function reactionsRowCount(commentId: string): Promise<number> {
@@ -119,7 +107,6 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Reactions Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	const teamSlug = teamData.slug;
 
 	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		headers: authHeader(token),
@@ -322,7 +309,7 @@ describe('REST reactions endpoints', () => {
 			`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(otherToken) },
 		);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('lets a superuser react in a team they can access but are not a member of (HQ fallback)', async () => {

@@ -478,7 +478,7 @@ describe('CEO chat HTTP routes', () => {
 			expect(asst.rows[0].content).toBe('Hi there');
 		});
 
-		test('an agent principal (CEO session token) posts without a user attribution', async () => {
+		test('refuses a CEO chat session token: a chat turn reaches Hezo through MCP', async () => {
 			const ceo = await ctx.db.query<{ id: string }>(
 				`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
 				 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
@@ -503,20 +503,11 @@ describe('CEO chat HTTP routes', () => {
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ text: 'from an agent' }),
 			});
-			expect(res.status).toBe(201);
-			const body = (await res.json()).data;
-			const user = await ctx.db.query<{ author_user_id: string | null }>(
-				'SELECT author_user_id FROM chat_messages WHERE id = $1',
-				[body.user_message_id],
+			expect(res.status).toBe(401);
+			const count = await ctx.db.query<{ n: number }>(
+				"SELECT count(*)::int AS n FROM chat_messages WHERE content = 'from an agent'",
 			);
-			expect(user.rows[0].author_user_id).toBeNull();
-			await poll(async () => {
-				const r = await ctx.db.query<{ status: string }>(
-					'SELECT status FROM chat_messages WHERE id = $1',
-					[body.assistant_message_id],
-				);
-				return r.rows[0]?.status === ChatMessageStatus.Complete;
-			});
+			expect(count.rows[0].n).toBe(0);
 		});
 
 		test('returns 503 CEO_UNAVAILABLE when the turn cannot start', async () => {

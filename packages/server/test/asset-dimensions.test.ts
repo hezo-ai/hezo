@@ -11,6 +11,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool, callMcpToolContent, type McpContentBlock } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -33,34 +34,22 @@ function png(width: number, height: number): Buffer {
 	return Buffer.concat([sig, ihdr]);
 }
 
-type McpBlock = { type: string; text?: string; data?: string; mimeType?: string };
-
 async function rawMcp(
 	authToken: string,
 	toolName: string,
 	args: Record<string, unknown>,
-): Promise<McpBlock[]> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: McpBlock[] } };
-	return body.result.content;
+): Promise<McpContentBlock[]> {
+	const content = await callMcpToolContent(app, authToken, toolName, args);
+	if ('error' in content) throw new Error(content.error);
+	return content;
 }
 
-async function callTool(
+function callTool(
 	authToken: string,
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const content = await rawMcp(authToken, toolName, args);
-	return JSON.parse(content[0].text ?? '{}');
+	return callMcpTool(app, authToken, toolName, args);
 }
 
 async function agentToken(): Promise<string> {

@@ -162,7 +162,7 @@ export async function usageHoldWait(
  */
 export async function liftUsageHold(db: Db, configId: string): Promise<boolean> {
 	if (!(await clearUsageHold(db, configId))) return false;
-	await releaseUsageHeldWakeups(db);
+	await releaseUsageHeldWakeups(db, configId);
 	return true;
 }
 

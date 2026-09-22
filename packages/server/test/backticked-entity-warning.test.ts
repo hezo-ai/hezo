@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 describe('extractBacktickedMentionCandidates', () => {
 	it('extracts a task identifier wrapped in inline code', () => {
@@ -116,21 +117,7 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 			taskId ?? null,
 			{ projectId },
 		);
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name, arguments: args },
-				id: 1,
-			}),
-		});
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as {
-			result: { content: Array<{ type: string; text: string }> };
-		};
-		return JSON.parse(body.result.content[0].text);
+		return await callMcpTool(app, agentToken, name, args);
 	}
 
 	beforeAll(async () => {

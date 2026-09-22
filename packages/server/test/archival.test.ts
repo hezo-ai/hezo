@@ -13,6 +13,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Archival (soft delete) for project docs and assets: agents archive via MCP,
 // only admins hard-delete, and every default listing surface is active-only.
@@ -36,18 +37,7 @@ async function callToolViaMcp(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, authToken, toolName, args);
 }
 
 async function listToolNames(authToken: string): Promise<string[]> {
@@ -163,9 +153,17 @@ describe('project doc archival — REST', () => {
 
 	it('records the agent as archiver when an agent archives', async () => {
 		await putDoc('agent-archived.md', 'body');
-		const res = await patchDoc('agent-archived.md', { archived: true }, await agentToken());
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.archived_by_name).toBe('Archivist');
+		const res = await callToolViaMcp(await agentToken(), 'archive_project_doc', {
+			project: projectId,
+			filename: 'agent-archived.md',
+		});
+		expect(res.error).toBeUndefined();
+		const row = await db.query<{ archived_by_member_id: string | null }>(
+			`SELECT archived_by_member_id FROM documents
+			 WHERE project_id = $1 AND slug = 'agent-archived.md'`,
+			[projectId],
+		);
+		expect(row.rows[0].archived_by_member_id).toBe(agentId);
 	});
 
 	it('blocks writes and revision restores while archived', async () => {
@@ -200,7 +198,7 @@ describe('project doc archival — REST', () => {
 			method: 'DELETE',
 			headers: authHeader(await agentToken()),
 		});
-		expect(agentDelete.status).toBe(403);
+		expect(agentDelete.status).toBe(401);
 
 		const adminDelete = await app.request(`/api/projects/${projectId}/docs/deletable.md`, {
 			method: 'DELETE',
@@ -331,12 +329,12 @@ describe('asset archival — REST', () => {
 	it('remains agent-forbidden on PATCH and DELETE', async () => {
 		const a = await uploadAsset('agent-forbidden.txt');
 		const t = await agentToken();
-		expect((await patchAsset(a.id, { archived: true }, t)).status).toBe(403);
+		expect((await patchAsset(a.id, { archived: true }, t)).status).toBe(401);
 		const del = await app.request(`/api/projects/${projectId}/assets/${a.id}`, {
 			method: 'DELETE',
 			headers: authHeader(t),
 		});
-		expect(del.status).toBe(403);
+		expect(del.status).toBe(401);
 	});
 
 	it('auto-suffixes a new upload colliding with an archived asset (path stays reserved)', async () => {
@@ -596,22 +594,21 @@ describe('archived items are read-only', () => {
 
 	it('does not resurrect an archived prd.md when its pending approval is approved', async () => {
 		await putDoc('prd.md', 'approved baseline');
-		const t = await agentToken();
 
-		// An agent PUT to prd.md files a strategy approval instead of writing.
-		const filed = await app.request(`/api/projects/${projectId}/docs/prd.md`, {
-			method: 'PUT',
-			headers: { ...authHeader(t), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: 'agent rewrite' }),
-		});
-		expect(filed.status).toBe(202);
-
+		// A pending prd.md rewrite, as instances before this release filed them.
 		const approval = await db.query<{ id: string }>(
-			`SELECT id FROM approvals WHERE team_id = $1 AND type = 'strategy' AND status = 'pending'
-			 ORDER BY created_at DESC LIMIT 1`,
-			[teamId],
+			`INSERT INTO approvals (team_id, type, payload)
+			 VALUES ($1, 'strategy'::approval_type, $2::jsonb) RETURNING id`,
+			[
+				teamId,
+				JSON.stringify({
+					action: 'update_prd',
+					filename: 'prd.md',
+					content: 'agent rewrite',
+					project_id: projectId,
+				}),
+			],
 		);
-		expect(approval.rows.length).toBe(1);
 
 		// The admin archives the doc before getting to the approval.
 		await patchDoc('prd.md', { archived: true });

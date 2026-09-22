@@ -196,6 +196,25 @@ export function describeFilesConformance(fixture: LiveAdapterFixture, h: Conform
 			}
 		});
 
+		it('reads the head of a file up to its last whole line', async () => {
+			// For what a transcript states once at its start, such as the model a
+			// session opened on, when the file is too large to read whole.
+			const line = `${'y'.repeat(200)}\n`;
+			await files.write('long.log', `FIRST\n${line.repeat(50)}`);
+
+			const whole = await files.readHead('long.log', 1_000_000);
+			expect(whole.startsWith('FIRST\n')).toBe(true);
+			expect(whole.split('\n').length).toBe(52);
+
+			const head = await files.readHead('long.log', 1_000);
+			expect(head.startsWith('FIRST\n')).toBe(true);
+			expect(head.endsWith('\n')).toBe(true);
+			expect(head.length).toBeLessThanOrEqual(1_000);
+			for (const l of head.split('\n').filter(Boolean)) {
+				expect(l === 'FIRST' || l.length === 200).toBe(true);
+			}
+		});
+
 		it('refuses a path that escapes its root', async () => {
 			// The root is the sandbox boundary this interface exists to enforce; a
 			// caller that can climb out of it can read the operator's own disk on a

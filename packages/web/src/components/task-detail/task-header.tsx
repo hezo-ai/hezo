@@ -6,10 +6,10 @@ import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use
 import { formatDuration } from '../../lib/format-duration';
 import { useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
-import { CostFigure, NotionalFigure } from '../cost-figures';
 import { MarkdownProse } from '../markdown-prose';
 import { TaskPriorityBadge } from '../task-priority-badge';
 import { TaskStatusBadge } from '../task-status-badge';
+import { TokenFigure } from '../token-figure';
 import { Badge } from '../ui/badge';
 import { BreadcrumbRow } from '../ui/breadcrumb';
 import { Tooltip } from '../ui/tooltip';
@@ -102,7 +102,7 @@ function usePinnedBandHeight(navRef: RefObject<HTMLElement | null>, pinned: bool
  * identity or a way back to the list, and taking on the task's name once the
  * heading below has scrolled out of sight - then the title, an inline mono
  * metadata row (status ·
- * priority · assignee) with a runs · duration · cost summary, the queued-wakeup
+ * priority · assignee) with a runs · duration · tokens summary, the queued-wakeup
  * chip, and the description card. The title renames in place and the description
  * edits in place; both are recorded on the task thread as meta comments by the
  * server. Nothing status-mutating lives here — assignee / close / reopen are in
@@ -225,7 +225,7 @@ export function TaskHeader({
 
 			{/* Wire spec - status / priority / assignee render as quiet-tint badges
 			    (treatment A, the default), color-coding state at a glance the same way
-			    the task list does, with a mono runs / duration / cost summary pushed
+			    the task list does, with a mono runs / duration / tokens summary pushed
 			    right. Assignee carries no semantic state, so it stays neutral. */}
 			<div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 				<TaskStatusBadge status={task.status} testId="task-status-inline" />
@@ -255,16 +255,10 @@ export function TaskHeader({
 					>
 						{task.run_count} {task.run_count === 1 ? 'run' : 'runs'}
 						{task.total_duration_seconds > 0 && ` · ${formatDuration(task.total_duration_seconds)}`}
-						{task.total_cost_cents > 0 && (
+						{task.total_tokens > 0 && (
 							<>
 								{' · '}
-								<CostFigure cents={task.total_cost_cents} billed testId="task-run-cost" />
-							</>
-						)}
-						{task.notional_cost_cents > 0 && (
-							<>
-								{' · '}
-								<NotionalFigure cents={task.notional_cost_cents} testId="task-run-notional-cost" />
+								<TokenFigure tokens={task.total_tokens} testId="task-run-tokens" />
 							</>
 						)}
 					</span>

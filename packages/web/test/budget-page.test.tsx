@@ -1,7 +1,7 @@
 import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
-import { seedProject, seedWorkspace } from './helpers/seed';
+import { seedProject, seedUsage, seedWorkspace } from './helpers/seed';
 
 test("Budget page renders a named agent's generated avatar instead of initials", async () => {
 	let teamSlug = '';
@@ -45,34 +45,28 @@ test('Budgets page shows per-agent windows and flags an over-budget agent', asyn
 			overAgentSlug = agent.slug;
 			teamSlug = ws.internalSlug;
 
-			// Give the agent a tiny daily limit, then record spend that exceeds it.
+			// Give the agent a small daily limit, then record usage that exceeds it.
 			await apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.id}`, {
 				method: 'PATCH',
 				headers: ws.headers,
-				body: JSON.stringify({ daily_budget_cents: 100 }),
+				body: JSON.stringify({ daily_budget_tokens: 1_000_000 }),
 			});
 			const projects = (await (await apiBase('/api/projects', { headers: ws.headers })).json()) as {
 				data: Array<{ id: string; slug: string }>;
 			};
 			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
-			await apiBase(`/api/projects/${ws.internalSlug}/costs`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({
-					member_id: agent.id,
-					amount_cents: 250,
-					project_id: projectId,
-					description: 'over budget',
-				}),
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projectId as string,
+				inputTokens: 2_500_000,
+				description: 'over budget',
 			});
 		},
 	});
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	// The subtitle no longer discloses an upper-bound estimate: cache traffic is
-	// priced at its own rates now, so the figure is the figure.
-	await findByText('Track spend and set caps for this project and its agents.');
+	await findByText('Track token usage and set limits for this project and its agents.');
 
 	// The agent row renders, is flagged over budget, and the project banner appears.
 	await findByTestId(`agent-budget-row-${overAgentSlug}`);
@@ -96,15 +90,12 @@ test('Budgets page renders per-day breakdown panels by agent and adapter', async
 				data: Array<{ id: string; slug: string }>;
 			};
 			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
-			await apiBase(`/api/projects/${ws.internalSlug}/costs`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({
-					member_id: agent.id,
-					amount_cents: 120,
-					project_id: projectId,
-					description: 'a run',
-				}),
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projectId as string,
+				inputTokens: 120_000,
+				outputTokens: 4_000,
+				description: 'a run',
 			});
 		},
 	});
@@ -112,14 +103,14 @@ test('Budgets page renders per-day breakdown panels by agent and adapter', async
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
 	// Both stacked panels are present...
-	await findByText('Spend per day by agent');
-	await findByText('Spend per day by AI adapter');
-	// ...and each renders its chart once the seeded cost flows through the breakdown
+	await findByText('Tokens per day by agent');
+	await findByText('Tokens per day by AI adapter');
+	// ...and each renders its chart once the seeded usage flows through the breakdown
 	// endpoints (project chart uses its own test id, so exactly two stacked charts).
 	// The two breakdown queries resolve independently, so wait for both charts to mount
 	// rather than letting findAllByTestId return after just the first.
 	await waitFor(() => {
-		expect(document.querySelectorAll('[data-testid="stacked-spend-chart"]').length).toBe(2);
+		expect(document.querySelectorAll('[data-testid="stacked-usage-chart"]').length).toBe(2);
 	});
 });
 
@@ -152,7 +143,7 @@ test('Budget page: Project budget header has a single Edit link to the settings 
 	// Following it lands on the settings page, where the budget caps editor lives.
 	await user.click(editLink);
 	await findByTestId('edit-project-budget', undefined, { timeout: 15_000 });
-	await findByRole('button', { name: 'Edit caps' });
+	await findByRole('button', { name: 'Edit limits' });
 });
 
 test('Budget page: each agent card links to that agent’s settings budget section', async () => {
@@ -206,9 +197,9 @@ test('Budget page: project window columns render caps and the binding-window ban
 				method: 'PATCH',
 				headers: ws.headers,
 				body: JSON.stringify({
-					daily_budget_cents: 1000,
-					weekly_budget_cents: 10000,
-					monthly_budget_cents: 50000,
+					daily_budget_tokens: 10_000_000,
+					weekly_budget_tokens: 100_000_000,
+					monthly_budget_tokens: 500_000_000,
 				}),
 			});
 			if (!patchRes.ok) throw new Error(`seed: setting project caps failed (${patchRes.status})`);
@@ -218,32 +209,30 @@ test('Budget page: project window columns render caps and the binding-window ban
 			};
 			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
 
-			// $9 of project spend → daily 90% (the binding window), weekly 45%, monthly 18%.
-			await apiBase(`/api/projects/${ws.internalSlug}/costs`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({
-					member_id: agent.id,
-					amount_cents: 900,
-					project_id: projectId,
-					description: 'project spend',
-				}),
+			// 9M project tokens → daily 90% (the binding window), weekly 9%, monthly 2%.
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projectId as string,
+				inputTokens: 9_000_000,
+				description: 'project usage',
 			});
 		},
 	});
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	// The daily window renders its $10 cap and 90% usage against the progress bar.
+	// The daily window renders its 10M-token cap and 90% usage against the progress bar.
 	const daily = await findByTestId('budget-window-daily', undefined, { timeout: 15_000 });
 	await waitFor(() => {
-		expect(daily.textContent ?? '').toContain('$10.00');
+		expect(daily.textContent ?? '').toContain('9M');
+		expect(daily.textContent ?? '').toContain('/ 10M');
 		expect(daily.textContent ?? '').toContain('90%');
 	});
 
 	// The binding-window banner surfaces the daily window and links to raise its cap.
 	const banner = await findByTestId('binding-window-banner');
-	expect(banner.textContent ?? '').toContain('Raise daily cap');
+	expect(banner.textContent ?? '').toContain('Today: closest to its limit');
+	expect(banner.textContent ?? '').toContain('Raise the limit');
 });
 
 test('Budget page: saving an agent cap edit refreshes the status (no stale cache)', async () => {
@@ -263,17 +252,17 @@ test('Budget page: saving an agent cap edit refreshes the status (no stale cache
 			await apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.id}`, {
 				method: 'PATCH',
 				headers: ws.headers,
-				body: JSON.stringify({ monthly_budget_cents: 3000 }),
+				body: JSON.stringify({ monthly_budget_tokens: 30_000_000 }),
 			});
 		},
 	});
 
-	// Populate the budget-status cache with the old $30 monthly cap.
+	// Populate the budget-status cache with the old 30M-token monthly cap.
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 	const row = await findByTestId(`agent-budget-row-${agentSlug}`, undefined, { timeout: 15_000 });
-	await waitFor(() => expect(row.textContent ?? '').toContain('$30.00'));
+	await waitFor(() => expect(row.textContent ?? '').toContain('/ 30M'));
 
-	// Raise the monthly cap to $50 through the agent settings form.
+	// Raise the monthly cap to 50 million tokens through the agent settings form.
 	await router.navigate({
 		to: '/projects/$projectId/agents/$agentId/settings',
 		params: { projectId: teamSlug, agentId: agentSlug },
@@ -291,18 +280,59 @@ test('Budget page: saving an agent cap edit refreshes the status (no stale cache
 		async () => {
 			const { apiBase } = getTestContext();
 			const res = await apiBase(`/api/projects/${teamSlug}/agents/${agentSlug}`, { headers });
-			const body = (await res.json()) as { data?: { monthly_budget_cents?: number } };
-			expect(body.data?.monthly_budget_cents).toBe(5000);
+			const body = (await res.json()) as { data?: { monthly_budget_tokens?: number } };
+			expect(body.data?.monthly_budget_tokens).toBe(50_000_000);
 		},
 		{ timeout: 10_000 },
 	);
 
 	// Back on the Budget page the card must show the new cap right away — the
 	// mutation invalidates budget-status; without that, the 60s staleTime would
-	// keep serving the old $30 cap from cache.
+	// keep serving the old cap from cache.
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 	const updated = await findByTestId(`agent-budget-row-${agentSlug}`, undefined, {
 		timeout: 15_000,
 	});
-	await waitFor(() => expect(updated.textContent ?? '').toContain('$50.00'));
+	await waitFor(() => expect(updated.textContent ?? '').toContain('/ 50M'));
+});
+
+test("Team settings lists each agent's usage under the name the roster gives it", async () => {
+	let teamSlug = '';
+
+	const { router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			const agent = ws.agents.find((candidate) => candidate.slug === 'engineer') ?? ws.agents[0];
+			teamSlug = ws.internalSlug;
+			await apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.id}`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({ human_name: 'Rowan' }),
+			});
+			const projects = (await (await apiBase('/api/projects', { headers: ws.headers })).json()) as {
+				data: Array<{ id: string; slug: string }>;
+			};
+			await seedUsage({
+				memberId: agent.id,
+				projectId: projects.data.find((p) => p.slug === ws.internalSlug)?.id as string,
+				inputTokens: 1_234_000,
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: teamSlug },
+	});
+
+	await waitFor(
+		() => {
+			const section = document.querySelector('#settings-budget')?.textContent ?? '';
+			expect(section).toContain('Rowan');
+			expect(section).toContain('1,234,000');
+		},
+		{ timeout: 15_000 },
+	);
 });

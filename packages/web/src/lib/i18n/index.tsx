@@ -2,9 +2,9 @@ import {
 	coerceLocaleSettings,
 	DEFAULT_LOCALE_SETTINGS,
 	detectLocaleDefaults,
+	formatCompactNumber,
 	formatDateIn,
 	formatDateTimeIn,
-	formatMoneyUsd,
 	formatNumber,
 	type Language,
 	type LocaleSettings,
@@ -64,8 +64,9 @@ interface I18nContextValue extends LocaleSettings {
 	plural: (key: PluralKey, count: number, vars?: Record<string, string | number>) => string;
 	formatDate: (value: Date | string | null | undefined) => string;
 	formatDateTime: (value: Date | string | null | undefined) => string;
-	formatMoney: (cents: number) => string;
 	formatNumber: (value: number) => string;
+	/** A large number shortened for a glance, e.g. a token count on a chart. */
+	formatCompact: (value: number) => string;
 	/**
 	 * Adopt the locale the server reported. Called from inside the query tree,
 	 * which is where `/api/status` is already fetched - the provider deliberately
@@ -142,8 +143,8 @@ function buildI18nValue(
 			const date = toDate(value);
 			return date ? formatDateTimeIn(date, locale) : '';
 		},
-		formatMoney: (cents) => formatMoneyUsd(cents, locale.number_format),
 		formatNumber: (value) => formatNumber(value, locale.number_format),
+		formatCompact: (value) => formatCompactNumber(value, locale.language),
 		applyServerLocale,
 	};
 }

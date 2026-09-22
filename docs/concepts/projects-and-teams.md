@@ -38,15 +38,15 @@ A normal project dashboard shows, top to bottom:
 - **In progress** - tasks currently in progress.
 - **Team snapshot** - open-task count, last activity, and any agents currently running.
 - **Goals** - the top goals by health.
-- **Spend** - Today / This week / This month / All time, with the same calendar budget
-  windows and caps as the [Team & Budget page](/docs/concepts/budgets-and-costs).
+- **Usage** - tokens Today / This week / This month / All time, with the same calendar
+  budget windows and limits as the [Team & Budget page](/docs/concepts/budgets-and-costs).
 
 Status and action items stay at the top. The four below them are yours to arrange: drag a
 widget by the handle that appears at its top-left on hover, and the new order is saved for
 that project.
 
 **HQ** gets a minimal dashboard: action items, in-progress work, and the team snapshot -
-no spend, progress summary, or goals (those belong to ordinary projects).
+no token usage, progress summary, or goals (those belong to ordinary projects).
 
 ## Project icon
 

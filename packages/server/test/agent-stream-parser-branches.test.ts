@@ -1,9 +1,8 @@
-import { AgentRuntime, type CostTokens } from '@hezo/shared';
+import { AgentRuntime } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	createAgentChatParser,
 	createAgentStreamParser,
-	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
 
 /**
@@ -380,7 +379,6 @@ describe('Claude Code — assistant usage edge arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 5,
 			outputTokens: 2,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 5,
@@ -397,7 +395,6 @@ describe('Claude Code — assistant usage edge arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -434,7 +431,7 @@ describe('Claude Code — user/result edge arms', () => {
 	it('uses subtype as status on a successful result and defaults duration/turns/cost to zero', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		const out = feed(parser, [{ type: 'result', subtype: 'success', is_error: false, usage: {} }]);
-		expect(out).toBe('[done] success turns=0 duration=0ms tokens=0/0 cost=$0.0000\n');
+		expect(out).toBe('[done] success turns=0 duration=0ms tokens=0/0\n');
 	});
 
 	it('falls back to status=success when result has neither is_error nor subtype', () => {
@@ -451,7 +448,6 @@ describe('Claude Code — user/result edge arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -485,7 +481,6 @@ describe('Codex — thread.started + item edge arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -606,8 +601,8 @@ describe('Antigravity — init/step/result edge arms', () => {
 		expect(feed(parser, [{ event: 'init', init: {} }])).toBe('[session] model=antigravity\n');
 	});
 
-	it('prices against the run model when there is no init event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Antigravity, undefined, 'gemini-2.5-pro');
+	it('records the run model when there is no init event', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity, 'gemini-2.5-pro');
 		feed(parser, [
 			{
 				event: 'result',
@@ -615,6 +610,7 @@ describe('Antigravity — init/step/result edge arms', () => {
 			},
 		]);
 		expect(parser.getUsage()?.inputTokens).toBe(5);
+		expect(parser.getUsage()?.model).toBe('gemini-2.5-pro');
 	});
 
 	it('renders nothing for a step_update frame', () => {
@@ -636,7 +632,6 @@ describe('Antigravity — init/step/result edge arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -746,12 +741,11 @@ describe('generic parser — extractGenericTool arms', () => {
 
 describe('generic parser — usage/error/terminal arms', () => {
 	it('prefers the tokens object when usage is absent', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 0);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [{ type: 'metrics', tokens: { input: 12, output: 4 } }]);
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 12,
 			outputTokens: 4,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 12,
@@ -763,12 +757,11 @@ describe('generic parser — usage/error/terminal arms', () => {
 	});
 
 	it('falls back to the stats object for usage', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 0);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [{ type: 'metrics', stats: { prompt: 7, candidates: 2 } }]);
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 7,
 			outputTokens: 2,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 7,
@@ -792,28 +785,20 @@ describe('generic parser — usage/error/terminal arms', () => {
 	});
 
 	it('ignores a bare total_cost_usd with no token object present', () => {
-		// A reported dollar figure alone is not usage — tokens are the only
-		// authoritative signal, and cost is always computed from them.
+		// A reported dollar figure alone is not usage - tokens are the only
+		// authoritative signal.
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [{ type: 'usage', total_cost_usd: 0.5 }]);
 		expect(parser.getUsage()).toBeNull();
 	});
 
-	it('records the model from a model field for later pricing', () => {
-		const seen: Array<string | undefined> = [];
-		const price: PriceModelFn = (m: string | undefined, _t: CostTokens) => {
-			seen.push(m);
-			return 1;
-		};
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
+	it('records the model from a model field', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [
 			{ type: 'session', model: 'kimi-9' },
 			{ type: 'usage', usage: { input_tokens: 5, output_tokens: 2 } },
 		]);
-		// Priced when the total is read, not per event: the counts arrive per step
-		// and only their sum is what the run is charged for.
-		parser.getUsage();
-		expect(seen).toContain('kimi-9');
+		expect(parser.getUsage()?.model).toBe('kimi-9');
 	});
 
 	it('matches a generic error type and renders a [tool-error] line', () => {
@@ -858,7 +843,6 @@ describe('generic parser — usage/error/terminal arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 3,
 			outputTokens: 9,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 3,
@@ -1077,7 +1061,6 @@ describe('chat parser — remaining arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -1103,7 +1086,6 @@ describe('chat parser — remaining arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 0,
 			outputTokens: 0,
-			costCents: 0,
 			model: null,
 			buckets: {
 				inputTokens: 0,
@@ -1163,7 +1145,6 @@ describe('chat parser — remaining arms', () => {
 		expect(parser.getUsage()).toEqual({
 			inputTokens: 4,
 			outputTokens: 1,
-			costCents: 0,
 			// The model the cost was priced from, carried through so a $0 figure
 			// stays distinguishable from one priced against nothing.
 			model: 'k',

@@ -1,9 +1,9 @@
-import { AuthType, DEFAULT_TEAM_ID } from '@hezo/shared';
+import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import type { AuthInfo, Env } from '../src/lib/types';
+import type { Env } from '../src/lib/types';
 import { getToolDefs } from '../src/mcp/server';
 import { safeClose } from './helpers';
 import {
@@ -15,6 +15,7 @@ import {
 	mintAgentToken,
 	projectSlugForTeamSlug,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -115,20 +116,7 @@ async function insertTaskDirect(assigneeId: string, title: string): Promise<stri
 
 // Helper: call MCP tool via /mcp endpoint with admin token
 async function callToolViaMcp(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, token, toolName, args);
 }
 
 /** Call a paged list tool and return just its rows. */
@@ -168,7 +156,8 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('get_skill');
 		expect(toolNames).toContain('create_skill');
 		expect(toolNames).toContain('propose_skill');
-		expect(toolNames).toContain('get_costs');
+		expect(toolNames).toContain('get_usage');
+		expect(toolNames).not.toContain('get_costs');
 		expect(toolNames).toContain('get_agent_system_prompt');
 		expect(toolNames).toContain('update_agent_system_prompt');
 		expect(toolNames).toContain('list_project_docs');
@@ -366,20 +355,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 	async function callUpdateTaskAsAgent(args: Record<string, unknown>): Promise<unknown> {
 		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name: 'update_task', arguments: args },
-				id: 1,
-			}),
-		});
-		const body = (await res.json()) as {
-			result: { content: Array<{ type: string; text: string }> };
-		};
-		return JSON.parse(body.result.content[0].text);
+		return await callMcpTool(app, agentToken, 'update_task', args);
 	}
 
 	it('update_task via MCP lets an agent mark a task done (the completed state)', async () => {
@@ -876,12 +852,12 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect((r.rows[0] as any).resolution_note).toBe('LGTM');
 	});
 
-	it('get_costs query returns cost summary', async () => {
-		const r = await db.query<{ total_cents: number }>(
-			'SELECT COALESCE(SUM(amount_cents), 0)::int AS total_cents FROM cost_entries WHERE project_id = $1',
+	it('get_usage query returns a token summary', async () => {
+		const r = await db.query<{ total_tokens: number }>(
+			'SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::int AS total_tokens FROM usage_entries WHERE project_id = $1',
 			[projectId],
 		);
-		expect(r.rows[0].total_cents).toBeDefined();
+		expect(r.rows[0].total_tokens).toBeDefined();
 	});
 
 	it('get_agent_system_prompt query returns prompt from documents', async () => {
@@ -1436,20 +1412,7 @@ describe('MCP coordination: HQ agents act inside project teams', () => {
 		toolName: string,
 		args: Record<string, unknown>,
 	): Promise<{ updated?: boolean; error?: string }> {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name: toolName, arguments: args },
-				id: 1,
-			}),
-		});
-		const body = (await res.json()) as {
-			result: { content: Array<{ type: string; text: string }> };
-		};
-		return JSON.parse(body.result.content[0].text);
+		return await callMcpTool(app, tokenStr, toolName, args);
 	}
 
 	it('lets the CEO set the team summary while running cross-team', async () => {
@@ -1484,18 +1447,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		toolName: string,
 		args: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name: toolName, arguments: args },
-				id: 1,
-			}),
-		});
-		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-		return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
+		return (await callMcpTool(app, tokenStr, toolName, args)) as Record<string, unknown>;
 	}
 
 	async function startIntake(

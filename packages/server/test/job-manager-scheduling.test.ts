@@ -13,7 +13,6 @@ import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { MAX_TASK_ATTEMPT_GIVEUPS } from '../src/services/no-work-backoff';
 import { clearRefreshFns, registerRefreshFn } from '../src/services/oauth/token-resolver';
-import type { PricingService } from '../src/services/pricing';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -159,11 +158,11 @@ afterEach(async () => {
 	await ctx.db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
 	await ctx.db.query(
 		`UPDATE member_agents SET runtime_status = $1::agent_runtime_status,
-		        daily_budget_cents = 0, last_heartbeat_at = now()
+		        daily_budget_tokens = 0, last_heartbeat_at = now()
 		 WHERE id = ANY($2)`,
 		[AgentRuntimeStatus.Idle, [agentId, secondAgentId]],
 	);
-	await ctx.db.query('DELETE FROM cost_entries WHERE member_id = ANY($1)', [
+	await ctx.db.query('DELETE FROM usage_entries WHERE member_id = ANY($1)', [
 		[agentId, secondAgentId],
 	]);
 	await ctx.db.query(
@@ -607,7 +606,7 @@ describe('JobManager scheduling & dispatch', () => {
 		it('lifts a reactive budget pause once the agent is back within budget', async () => {
 			const manager = createJobManager();
 			await ctx.db.query(
-				`UPDATE member_agents SET runtime_status = $1::agent_runtime_status, daily_budget_cents = 1000
+				`UPDATE member_agents SET runtime_status = $1::agent_runtime_status, daily_budget_tokens = 1000
 				 WHERE id = $2`,
 				[AgentRuntimeStatus.OutOfAgentBudget, agentId],
 			);
@@ -625,12 +624,12 @@ describe('JobManager scheduling & dispatch', () => {
 		it('keeps the pause while the agent is still over budget', async () => {
 			const manager = createJobManager();
 			await ctx.db.query(
-				`UPDATE member_agents SET runtime_status = $1::agent_runtime_status, daily_budget_cents = 100
+				`UPDATE member_agents SET runtime_status = $1::agent_runtime_status, daily_budget_tokens = 100
 				 WHERE id = $2`,
 				[AgentRuntimeStatus.OutOfAgentBudget, agentId],
 			);
 			await ctx.db.query(
-				'INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)',
+				'INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 500)',
 				[agentId, projectId],
 			);
 
@@ -1121,9 +1120,8 @@ describe('JobManager scheduling & dispatch', () => {
 	});
 
 	describe('start() cron registration', () => {
-		it('registers the optional pricing and telemetry crons and is idempotent', () => {
+		it('registers the optional telemetry cron and is idempotent', () => {
 			const manager = createJobManager({
-				pricing: { refresh: async () => 0 } as unknown as PricingService,
 				telemetry: { enabled: true, endpoint: 'http://127.0.0.1:1/unused' },
 			});
 			const spy = vi.spyOn(internals(manager).cron, 'createJob');
@@ -1138,10 +1136,10 @@ describe('JobManager scheduling & dispatch', () => {
 					'inbox-archive',
 					'budget-resume',
 					'update-check',
-					'pricing-refresh',
 					'telemetry',
 				]),
 			);
+			expect(names).not.toContain('pricing-refresh');
 			const count = spy.mock.calls.length;
 			manager.start();
 			expect(spy.mock.calls.length).toBe(count);

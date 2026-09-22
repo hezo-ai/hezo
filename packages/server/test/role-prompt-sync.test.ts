@@ -328,6 +328,7 @@ describe('accepting an offered role update', () => {
 			resolutionNote: null,
 			dataDir: '',
 			actorMemberId: null,
+			decider: { user_id: null, api_key_id: null },
 		});
 		expect(resolved.ok).toBe(true);
 
@@ -371,6 +372,7 @@ describe('accepting an offered role update', () => {
 			resolutionNote: null,
 			dataDir: '',
 			actorMemberId: null,
+			decider: { user_id: null, api_key_id: null },
 		});
 		expect(resolved.ok).toBe(true);
 		const after = await db.query<{ content: string }>(

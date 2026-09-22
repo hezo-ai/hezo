@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 // Review comments on project docs: CRUD via
 // /api/projects/:projectId/docs/:filename/review-comments, the version-scoped
@@ -89,18 +90,7 @@ async function mcp(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result?: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result?.content[0].text ?? '{}') as Record<string, unknown>;
+	return await callMcpTool(app, token, toolName, args);
 }
 
 describe('review comment CRUD', () => {

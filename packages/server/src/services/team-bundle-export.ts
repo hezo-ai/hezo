@@ -23,6 +23,7 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	generateTeamKeywords,
 	inferGender,
+	LEGACY_ROSTER_BUDGET_CENTS,
 	MARKETPLACE_SCHEMA_VERSION,
 	type MarketplaceCaptainOverride,
 	type MarketplaceRosterAgent,
@@ -59,9 +60,9 @@ interface MemberRow {
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	monthly_budget_cents: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
+	monthly_budget_tokens: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
 	touches_code: boolean;
 	reports_to: string | null;
 }
@@ -89,7 +90,7 @@ export async function exportTeamBundle(db: Db, teamId: string): Promise<Marketpl
 		        ma.role_description, ma.summary, ma.team_context,
 		        ma.default_effort::text AS default_effort,
 		        ma.heartbeat_interval_min, ma.run_timeout_min,
-		        ma.monthly_budget_cents, ma.daily_budget_cents, ma.weekly_budget_cents,
+		        ma.monthly_budget_tokens, ma.daily_budget_tokens, ma.weekly_budget_tokens,
 		        ma.touches_code, ma.reports_to
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
@@ -157,9 +158,10 @@ export async function exportTeamBundle(db: Db, teamId: string): Promise<Marketpl
 			default_effort: m.default_effort,
 			heartbeat_interval_min: m.heartbeat_interval_min,
 			run_timeout_min: m.run_timeout_min,
-			monthly_budget_cents: m.monthly_budget_cents,
-			daily_budget_cents: m.daily_budget_cents,
-			weekly_budget_cents: m.weekly_budget_cents,
+			monthly_budget_tokens: m.monthly_budget_tokens,
+			daily_budget_tokens: m.daily_budget_tokens,
+			weekly_budget_tokens: m.weekly_budget_tokens,
+			...LEGACY_ROSTER_BUDGET_CENTS,
 			touches_code: m.touches_code,
 		});
 	}

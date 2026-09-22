@@ -225,7 +225,7 @@ describe('runAgent capacity park', () => {
 		const row = await runRow(result.heartbeatRunId as string);
 		expect(row.status).toBe('succeeded');
 		expect(row.started_at).not.toBeNull();
-		expect(result.requeued).toBeFalsy();
+		expect(result.requeue).toBeUndefined();
 	});
 
 	it('gives the work back to the queue as cancelled, never failed, once the ceiling passes', async () => {
@@ -239,7 +239,7 @@ describe('runAgent capacity park', () => {
 				project(),
 			);
 
-			expect(result.requeued).toBe(true);
+			expect(result.requeue).toBeDefined();
 			const row = await runRow(result.heartbeatRunId as string);
 			// Cancelled, not failed: the instance being full is not the agent
 			// failing, and nothing should post a failure ping for it.

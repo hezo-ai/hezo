@@ -14,6 +14,7 @@ import {
 	mintAgentToken,
 	projectSlugFor,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -33,20 +34,7 @@ async function callTool(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(bearer), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
-	};
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, bearer, name, args);
 }
 
 /** A run on `taskId` owned by `memberId`, in whatever state the case needs. */
@@ -401,7 +389,7 @@ describe('MCP update_task: handing off a task you are running', () => {
 	});
 });
 
-describe('REST PATCH: agent callers get the same rules as the MCP twin', () => {
+describe('reassignment rules for agents (update_task) and the admin (REST PATCH)', () => {
 	async function patchAssignee(
 		bearer: string,
 		taskId: string,
@@ -413,21 +401,6 @@ describe('REST PATCH: agent callers get the same rules as the MCP twin', () => {
 			body: JSON.stringify({ assignee_id: assigneeId }),
 		});
 	}
-
-	it('lets an agent hand off the task its own run is executing', async () => {
-		const taskId = await createTask('REST handoff mid-run', architectId);
-		const { token: archToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			architectId,
-			teamId,
-			taskId,
-			{ projectId },
-		);
-		const res = await patchAssignee(archToken, taskId, engineerId);
-		expect(res.status).toBe(200);
-		expect(await assigneeOf(taskId)).toBe(engineerId);
-	});
 
 	// REST never enforced the hierarchy rule; the unconditional run guard used to
 	// hide that, because an agent reaching here from inside its own run was 409'd
@@ -443,8 +416,12 @@ describe('REST PATCH: agent callers get the same rules as the MCP twin', () => {
 			taskId,
 			{ projectId },
 		);
-		const res = await patchAssignee(engToken, taskId, qaEngineerId);
-		expect(res.status).toBe(403);
+		const res = await callMcpTool(app, engToken, 'update_task', {
+			project: projectId,
+			task_id: taskId,
+			assignee_id: qaEngineerId,
+		});
+		expect(res.error).toBeTruthy();
 		expect(await assigneeOf(taskId)).toBe(engineerId);
 	});
 
@@ -461,9 +438,12 @@ describe('REST PATCH: agent callers get the same rules as the MCP twin', () => {
 			{ projectId },
 		);
 		try {
-			const res = await patchAssignee(capToken, taskId, architectId);
-			expect(res.status).toBe(409);
-			expect((await res.json()).error.message).toContain('@engineer');
+			const res = await callMcpTool(app, capToken, 'update_task', {
+				project: projectId,
+				task_id: taskId,
+				assignee_id: architectId,
+			});
+			expect(res.error).toContain('@engineer');
 			expect(await assigneeOf(taskId)).toBe(engineerId);
 		} finally {
 			await dropRun(blockingRun);

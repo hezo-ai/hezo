@@ -15,13 +15,13 @@ import {
 	projectSlugFor,
 	settleTeamSetupReview,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -99,7 +99,6 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Events Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Widget',
@@ -176,7 +175,7 @@ describe('status change system events', () => {
 		expect(ev.author_member_id).not.toBeNull();
 	});
 
-	it('records an agent-authored PATCH status change attributed to the agent', async () => {
+	it('records an agent-authored status change attributed to the agent', async () => {
 		const task = await createTask('PATCH by agent');
 		const { token: agentToken } = await mintAgentToken(
 			db,
@@ -186,12 +185,12 @@ describe('status change system events', () => {
 			task.id,
 		);
 
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: TaskStatus.InProgress }),
+		const res = await callMcpTool(app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: task.id,
+			status: TaskStatus.InProgress,
 		});
-		expect(res.status).toBe(200);
+		expect(res.error).toBeUndefined();
 
 		const events = await systemComments(task.id, 'status_change');
 		const ev = events[events.length - 1];
@@ -248,12 +247,12 @@ describe('title change system events', () => {
 			task.id,
 		);
 
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Bot rename' }),
+		const res = await callMcpTool(app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: task.id,
+			title: 'Bot rename',
 		});
-		expect(res.status).toBe(200);
+		expect(res.error).toBeUndefined();
 
 		const events = await systemComments(task.id, 'title_change');
 		const ev = events[events.length - 1];
@@ -395,8 +394,12 @@ describe('description change system events', () => {
 			task.id,
 		);
 
-		const res = await patchDescription(task.id, 'After the agent.', agentToken);
-		expect(res.status).toBe(200);
+		const res = await callMcpTool(app, agentToken, 'update_task', {
+			project: projectId,
+			task_id: task.id,
+			description: 'After the agent.',
+		});
+		expect(res.error).toBeUndefined();
 
 		const events = await systemComments(task.id, 'description_change');
 		const ev = events[events.length - 1];

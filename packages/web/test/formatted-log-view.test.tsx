@@ -12,7 +12,7 @@ const LOG_TEXT = [
 	'[tool] Bash(command=ls -la /tmp, description=list files)',
 	'[tool-result] total 8 drwxr-xr-x 4 node node',
 	'All done with the work.',
-	'[done] success turns=3 duration=1200ms tokens=100/200 cost=$0.0100',
+	'[done] success turns=3 duration=1200ms tokens=100/200',
 ].join('\n');
 
 test('run log defaults to the formatted view and toggles to raw via the icon buttons', async () => {
@@ -24,8 +24,8 @@ test('run log defaults to the formatted view and toggles to raw via the icon but
 			const ws = await seedWorkspace();
 			const agent = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const run = await ctx.db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, input_tokens, output_tokens, cost_cents)
-				 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now(), now(), 100, 200, 1)
+				`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, input_tokens, output_tokens)
+				 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now(), now(), 100, 200)
 				 RETURNING id`,
 				[agent.id, ws.team.id],
 			);

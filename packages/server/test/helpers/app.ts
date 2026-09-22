@@ -171,6 +171,7 @@ function firstResolvableFiles(
 		read: async (p) => (await pick()).read(p),
 		readBytes: async (p) => (await pick()).readBytes(p),
 		readTail: async (p, maxBytes) => (await pick()).readTail(p, maxBytes),
+		readHead: async (p, maxBytes) => (await pick()).readHead(p, maxBytes),
 		size: async (p) => (await pick()).size(p),
 		list: async (p) => (await pick()).list(p),
 		remove: async (p) => (await pick()).remove(p),
@@ -398,7 +399,6 @@ export async function createTestApp(
 		containerLogStreamer,
 		events,
 		chatSessionManager,
-		undefined,
 		opts.assetStore,
 	);
 	const userResult = await db.query<{ id: string }>(

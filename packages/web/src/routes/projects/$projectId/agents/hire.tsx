@@ -1,9 +1,9 @@
 import {
 	AgentAdminStatus,
 	ApprovalStatus,
-	type BudgetWindowsCents,
+	type BudgetWindowsTokens,
 	CAPTAIN_AGENT_SLUG,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Check, Loader2, X } from 'lucide-react';
@@ -54,10 +54,10 @@ const emptyValues: HireFormValues = {
 	// Default a new hire to reporting to the Captain (every team has one).
 	reportsTo: CAPTAIN_AGENT_SLUG,
 	budget: {
-		daily_budget_cents: 0,
-		weekly_budget_cents: 0,
-		monthly_budget_cents: DEFAULT_MONTHLY_BUDGET_CENTS,
-	} satisfies BudgetWindowsCents,
+		daily_budget_tokens: 0,
+		weekly_budget_tokens: 0,
+		monthly_budget_tokens: DEFAULT_MONTHLY_BUDGET_TOKENS,
+	} satisfies BudgetWindowsTokens,
 	// Deliberately unset: the admin picks the cadence rather than inheriting a
 	// prefilled one. The select is `required`, so submit is blocked until they do.
 	heartbeat: '',
@@ -72,9 +72,9 @@ function valuesFromPayload(p: Record<string, unknown>): HireFormValues {
 		systemPrompt: (p.system_prompt as string) ?? '',
 		reportsTo: (p.reports_to as string) ?? '',
 		budget: {
-			daily_budget_cents: (p.daily_budget_cents as number) ?? 0,
-			weekly_budget_cents: (p.weekly_budget_cents as number) ?? 0,
-			monthly_budget_cents: (p.monthly_budget_cents as number) ?? 0,
+			daily_budget_tokens: (p.daily_budget_tokens as number) ?? 0,
+			weekly_budget_tokens: (p.weekly_budget_tokens as number) ?? 0,
+			monthly_budget_tokens: (p.monthly_budget_tokens as number) ?? 0,
 		},
 		// Kept verbatim, including a value outside the dropdown's presets - the form
 		// renders it as its own option rather than rewriting the proposer's choice.
@@ -101,9 +101,9 @@ function editsFromValues(v: HireFormValues): HireProposalEdits {
 		system_prompt: v.systemPrompt,
 		reports_to: v.reportsTo,
 		heartbeat_interval_min: heartbeatMinutes(v),
-		daily_budget_cents: v.budget.daily_budget_cents,
-		weekly_budget_cents: v.budget.weekly_budget_cents,
-		monthly_budget_cents: v.budget.monthly_budget_cents,
+		daily_budget_tokens: v.budget.daily_budget_tokens,
+		weekly_budget_tokens: v.budget.weekly_budget_tokens,
+		monthly_budget_tokens: v.budget.monthly_budget_tokens,
 		touches_code: v.touchesCode,
 	};
 }
@@ -135,9 +135,9 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 			role_description: values.roleDesc || undefined,
 			system_prompt: values.systemPrompt || undefined,
 			reports_to: values.reportsTo || undefined,
-			daily_budget_cents: values.budget.daily_budget_cents,
-			weekly_budget_cents: values.budget.weekly_budget_cents,
-			monthly_budget_cents: values.budget.monthly_budget_cents,
+			daily_budget_tokens: values.budget.daily_budget_tokens,
+			weekly_budget_tokens: values.budget.weekly_budget_tokens,
+			monthly_budget_tokens: values.budget.monthly_budget_tokens,
 			heartbeat_interval_min: heartbeatMinutes(values),
 			touches_code: values.touchesCode,
 		});

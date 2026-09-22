@@ -108,16 +108,16 @@ describe('PATCH /projects/:projectId — validation + reshaping', () => {
 	it('updates budget windows when consistent', async () => {
 		// weekly ≥ daily×7, monthly ≥ daily×~30.4.
 		const { status, body } = await patch({
-			daily_budget_cents: 1000,
-			weekly_budget_cents: 8000,
-			monthly_budget_cents: 40000,
+			daily_budget_tokens: 1000,
+			weekly_budget_tokens: 8000,
+			monthly_budget_tokens: 40000,
 		});
 		expect(status).toBe(200);
-		expect((body.data as { daily_budget_cents: number }).daily_budget_cents).toBe(1000);
+		expect((body.data as { daily_budget_tokens: number }).daily_budget_tokens).toBe(1000);
 	});
 
 	it('rejects an inconsistent budget trio (daily > weekly)', async () => {
-		const { status, body } = await patch({ daily_budget_cents: 9999, weekly_budget_cents: 100 });
+		const { status, body } = await patch({ daily_budget_tokens: 9999, weekly_budget_tokens: 100 });
 		expect(status).toBe(400);
 		expect((body.error as { code: string }).code).toBe('INVALID_REQUEST');
 	});

@@ -92,8 +92,8 @@ other. See
 A team also gets better without any change to its structure. The
 [Coach](/docs/concepts/coach-and-self-improving-teams) makes the team's *existing* agents
 work better, leaving the roster and the reporting lines as they are. Every
-time a task is completed, the Coach reviews how it went and writes durable **learned
-rules** back onto the agents that need them, and sometimes updates a project document or
+time a task is completed (other than a team coherence review), the Coach reviews how it
+went and writes durable **learned rules** back onto the agents that need them, and sometimes updates a project document or
 skill - so the same mistake doesn't happen twice and the existing agents coordinate more
 smoothly over time.
 

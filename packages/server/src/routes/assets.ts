@@ -3,6 +3,7 @@ import {
 	AssetSortOrder,
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
+	ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 	AuthType,
 	assetBasename,
 	assetContentDisposition,
@@ -228,7 +229,6 @@ export async function storeUploadedAsset(
 		throw e;
 	}
 
-	const isAgent = auth.type === AuthType.Agent;
 	c.get('events').emit({
 		type: 'asset.created',
 		teamId,
@@ -238,8 +238,8 @@ export async function storeUploadedAsset(
 		actorApiKeyId: apiKeyIdFromAuth(auth),
 		assetId: asset.id,
 		filename: asset.original_filename,
-		taskId: taskId ?? (isAgent ? auth.taskId : null),
-		runId: isAgent ? auth.runId : null,
+		taskId: taskId ?? (auth.type === AuthType.Agent ? (auth.taskId ?? null) : null),
+		runId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
 	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'assets', 'INSERT', {
@@ -274,7 +274,7 @@ export async function readUploadForm(
 assetsRoutes.post(
 	'/projects/:projectId/tasks/:taskId/assets',
 	bodyLimit({
-		maxSize: ATTACHMENT_MAX_BYTES,
+		maxSize: ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
 	}),
 	async (c) => {
@@ -321,7 +321,7 @@ assetsRoutes.post(
 assetsRoutes.post(
 	'/projects/:projectId/assets',
 	bodyLimit({
-		maxSize: ATTACHMENT_MAX_BYTES,
+		maxSize: ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
 	}),
 	async (c) => {
@@ -381,9 +381,6 @@ assetsRoutes.get('/projects/:projectId/assets', async (c) => {
 assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only the admin can delete assets', 403);
-	}
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
@@ -429,14 +426,6 @@ assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 assetsRoutes.patch('/projects/:projectId/assets/:assetId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) {
-		return err(
-			c,
-			'FORBIDDEN',
-			'Agents manage assets with the move_project_asset / archive_project_asset tools',
-			403,
-		);
-	}
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);

@@ -16,6 +16,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { callMcpTool } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -45,18 +46,7 @@ async function callToolViaMcp(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
+	return await callMcpTool(app, authToken, toolName, args);
 }
 
 async function uploadProjectAsset(
@@ -526,7 +516,7 @@ describe('project asset deletion', () => {
 			method: 'DELETE',
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it('deletes an asset and removes its bytes from disk', async () => {
@@ -1208,7 +1198,7 @@ describe('admin move endpoint (PATCH /projects/:projectId/assets/:assetId)', () 
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ folder: 'anywhere' }),
 		});
-		expect(agentRes.status).toBe(403);
+		expect(agentRes.status).toBe(401);
 
 		const badRes = await app.request(`/api/projects/${projectId}/assets/${up.data.id}`, {
 			method: 'PATCH',

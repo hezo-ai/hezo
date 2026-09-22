@@ -22,13 +22,13 @@ falls back to Simplified - closer than English in both cases, but not a perfect 
 ## Where you set it
 
 **On first run**, with your master key. The language showing when you create the key
-becomes the instance's language, together with the date format and currency format that
+becomes the instance's language, together with the date format and number format that
 usually go with it, so every screen after that - for you and for anyone else who signs in -
 reads the same way. The button in the top right of the master-key screen is where you
 change it first. See [First-run setup](/docs/getting-started/first-run).
 
 **After that**, in **Settings -> Languages & formats**, where you can also change the date
-and currency formats on their own.
+and number formats on their own.
 
 While you are signed out - at the unlock screen after a locked start, or at the sign-in screen -
 there is a language button in the top right, because those screens have no menu to reach
@@ -39,7 +39,7 @@ whole instance.
 
 Picking a language re-renders the picker itself straight away, so you can check it reads the
 way you expect before you commit to it. Nothing is saved at that point: the rest of the app,
-and your date and currency choices, change only when you press Save. Leave the screen without
+and your date and number choices, change only when you press Save. Leave the screen without
 saving and everything stays as it was.
 
 ## It is a setting for the whole instance
@@ -48,9 +48,9 @@ The language is **global**, not per person. Everyone using this Hezo instance se
 language, and only an admin can change it. That matches how the rest of the instance-level
 settings work.
 
-## Date and currency formats
+## Date and number formats
 
-Language, date format, and currency format are three separate choices on the same screen,
+Language, date format, and number format are three separate choices on the same screen,
 because they genuinely come apart: plenty of people want German prose with ISO dates.
 
 **Date format** sets the order of the fields:
@@ -65,18 +65,15 @@ because they genuinely come apart: plenty of people want German prose with ISO d
 Month names always follow your **language**, not the date format - so a German instance on
 day-first dates reads "29 Jul 2026" with the German abbreviation, not the English one.
 
-**Currency format** sets how amounts are punctuated:
+**Number format** sets how numbers, such as token counts, are punctuated:
 
 | Option | Example |
 |---|---|
-| $1,234.56 | period for decimals, comma for thousands |
-| 1.234,56 $ | comma for decimals, period for thousands |
-| 1 234,56 $ | comma for decimals, space for thousands |
+| 1,234.56 | period for decimals, comma for thousands |
+| 1.234,56 | comma for decimals, period for thousands |
+| 1 234,56 | comma for decimals, space for thousands |
 
-This changes **presentation only**. Hezo always bills in US dollars, because that is what
-the AI model providers charge in, and budgets are stored in dollars. There is no currency
-conversion and no exchange rate anywhere in Hezo - picking a European format does not turn
-your spend into euros, it only writes the same dollar amount the way you are used to
+This changes **presentation only**: the same number, written the way you are used to
 reading it.
 
 Each option previews itself with a real value, so you can pick by looking rather than by
