@@ -39,7 +39,7 @@ reporting lines, and writes the descriptions the agents read about each other. T
 Captain's planning task sits below it, waiting on it to finish.
 
 Open the project from the rail later and it lands on the **Dashboard**, where you can see
-action items waiting on you, current spend, work in progress, a progress snippet, and
+action items waiting on you, token usage, work in progress, a progress snippet, and
 goals at a glance.
 
 Once setup is done the Captain starts on the **planning task**, turning your brief into
@@ -60,5 +60,5 @@ look for work, so the team keeps moving without you driving each step.
   it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
   Pending approvals and credential requests reach your Inbox and the Dashboard's action
   items; opening one takes you to the task thread where it was asked.
-- **Keep an eye on spend** from the Dashboard or the full budget view. See
+- **Keep an eye on usage** from the Dashboard or the full budget view. See
   [Budgets & cost control](/docs/concepts/budgets-and-costs).

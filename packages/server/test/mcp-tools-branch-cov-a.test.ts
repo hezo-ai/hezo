@@ -745,14 +745,14 @@ describe('read tools', () => {
 		expect(r.every((a) => typeof a.admin_status === 'string')).toBe(true);
 	});
 
-	it('get_costs supports group_by agent and day', async () => {
-		const byAgent = await admin('get_costs', { project: projectSlug, group_by: 'agent' });
+	it('get_usage supports group_by agent and day', async () => {
+		const byAgent = await admin('get_usage', { project: projectSlug, group_by: 'agent' });
 		expect(Array.isArray(byAgent)).toBe(true);
-		// The day grouping is the one that pages: cost rows accumulate forever.
-		const byDay = await admin('get_costs', { project: projectSlug, group_by: 'day' });
+		// The day grouping is the one that pages: usage rows accumulate forever.
+		const byDay = await admin('get_usage', { project: projectSlug, group_by: 'day' });
 		expect(Array.isArray(byDay.items)).toBe(true);
 		expect(byDay.has_more).toBe(false);
-		const total = await admin('get_costs', { project: projectSlug });
+		const total = await admin('get_usage', { project: projectSlug });
 		expect(total.error).toBeUndefined();
 	});
 

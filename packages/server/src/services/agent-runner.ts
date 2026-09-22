@@ -5,13 +5,11 @@ import {
 	type AgentEffort,
 	type AgentRuntime,
 	AI_PROVIDER_INFO,
-	AiAuthMethod,
 	type AiProvider,
 	COACH_REVIEW_TRIGGER,
 	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
 	ContainerStatus,
-	type CostTokens,
 	credentialSerializesRuns,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
@@ -88,7 +86,7 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
-import { checkOverBudget, recordRunCost } from './budget';
+import { checkOverBudget, recordUsage } from './budget';
 import {
 	detectNoWakeExits,
 	fitCommentForDelivery,
@@ -160,7 +158,6 @@ import {
 	retryOrEscalateLostRun,
 	STALE_STATE_GRACE_SECONDS,
 } from './orphan-detector';
-import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
 import type { RetrospectiveSignals } from './project-retrospective';
 import {
@@ -237,7 +234,7 @@ import type { WebSocketManager } from './ws';
 /**
  * Flatten a parser usage record for the log-chunk writer.
  *
- * The DB layer takes flat columns and has no business learning `CostTokens`;
+ * The DB layer takes flat columns and has no business learning `TokenBuckets`;
  * the runner owns both shapes, so the adapter lives on this side of the seam.
  * A runtime that reports no split writes NULLs, which the COALESCE in the
  * statement leaves alone - so a later flush that does have them still lands.
@@ -247,13 +244,23 @@ function toUsageSnapshot(usage: AgentRunUsage | null): RunUsageSnapshot | null {
 	return {
 		inputTokens: usage.inputTokens,
 		outputTokens: usage.outputTokens,
-		costCents: usage.costCents,
 		cacheReadTokens: usage.buckets?.cacheReadTokens ?? null,
 		cacheCreationTokens: usage.buckets?.cacheCreationTokens ?? null,
 	};
 }
 
 const log = logger.child('agent-runner');
+
+/**
+ * The most tokens one run may use - input with cached input, plus output - before
+ * the runner stops it.
+ *
+ * 30 million, from three days of production runs: it cut five runs, all of them
+ * the two-agent loop that spent most of a week's allowance, and none on a task
+ * that went on to finish. 10 million would have cut 53, seven of them on
+ * finished work.
+ */
+export const RUN_TOKEN_CEILING = 30_000_000;
 
 export interface AgentInfo {
 	id: string;
@@ -343,8 +350,6 @@ export interface RunnerDeps {
 	egressCAPath?: string | null;
 	/** When present, a container the runner lazy-starts resubscribes its log stream. */
 	containerLogStreamer?: ContainerLogStreamer;
-	/** Runtime model pricing; when present, the parser computes run cost from it. */
-	pricing?: PricingService;
 	/**
 	 * How long a run blocked on container capacity waits, and how often it
 	 * re-tries. Defaults to {@link CAPACITY_PARK_POLL_MS} /
@@ -590,7 +595,7 @@ export function assertPromptAcceptable(runtime: AgentRuntime, prompt: string): v
 
 // Basename of Kimi Code's per-session wire log, written under
 // `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
-// `stream-json` stdout carries no token usage at all, so — as with Grok — cost is
+// `stream-json` stdout carries no token usage at all, so - as with Grok - usage is
 // recovered from this file. The path depth is an upstream implementation detail,
 // so the runner searches the per-run home rather than reconstructing it.
 const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
@@ -616,19 +621,19 @@ const KIMI_SESSION_LOG_MAX_DEPTH = 8;
  * Moonshot bearer token), so neither should outlive the run on the host.
  *
  * Returns null for every other runtime, so the caller keeps the parser's stream
- * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
- * rather than a failed run), and the home mount is removed at cleanup regardless.
+ * usage. Best-effort throughout: a missing or unreadable log yields null (no
+ * usage rather than a failed run), and the home mount is removed at cleanup
+ * regardless.
  */
 export async function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
 	files: SandboxFiles | null,
-	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
 	onError: (msg: string) => void,
 ): Promise<AgentRunUsage | null> {
 	if (!files) return null;
 	const recover = RUNTIME_ADAPTERS[runtimeType].recoverUsage;
 	if (!recover) return null;
-	return recover({ files, price: priceFn, onError });
+	return recover({ files, onError });
 }
 
 // Deliver the prompt one of three ways, selected per runtime via the
@@ -1284,6 +1289,7 @@ export type RunAbortReason =
 	| ContainerExitAbortReason
 	| 'run_timeout'
 	| 'tool_call_ceiling'
+	| 'token_ceiling'
 	| 'tunnel_lost'
 	| 'server_shutdown';
 
@@ -1292,6 +1298,7 @@ const RUN_ABORT_REASONS: readonly string[] = [
 	'container_stopped',
 	'run_timeout',
 	'tool_call_ceiling',
+	'token_ceiling',
 	'tunnel_lost',
 	'server_shutdown',
 ];
@@ -1450,6 +1457,11 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 			`run reached its tool-call ceiling of ${runtimeConfig().runs.maxToolCalls} calls - ` +
 			'every tool result stays in the conversation and is re-sent on the next call, so a run ' +
 			'this long is spending most of its allowance re-reading its own context'
+		);
+	if (reason === 'token_ceiling')
+		return (
+			`run used more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens - ` +
+			'a single run that long is spending most of its allowance re-reading its own context'
 		);
 	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
 	if (reason === 'tunnel_lost')
@@ -1649,7 +1661,7 @@ export async function runAgent(
 			// Append only the new log text as chunk rows (never rewrite the whole
 			// log — the old full-blob UPDATE pattern left a dead TOAST copy per
 			// flush). The running usage persists alongside so a crash mid-run still
-			// leaves a non-zero token/cost snapshot, flagged partial until a clean
+			// leaves a non-zero token snapshot, flagged partial until a clean
 			// completion. One statement, so it is atomic without a transaction:
 			// the broker re-sends the same delta after a failed flush, so chunk +
 			// usage must land all-or-nothing to stay exactly-once, and every
@@ -2311,7 +2323,6 @@ export async function runAgent(
 			{
 				aiProviderConfigId: credential.configId,
 				provider,
-				costBilled: credential.authMethod !== AiAuthMethod.Subscription,
 			},
 			// Recorded here rather than at insert because the container is acquired
 			// after the row exists. It is what lets a container's death fail exactly
@@ -2528,11 +2539,7 @@ export async function runAgent(
 		const workspaceFiles = deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT);
 		const promptRelPath = getPromptRelPath(heartbeatRunId);
 
-		const pricing = deps.pricing;
-		const priceFn = pricing
-			? (model: string | undefined, tokens: CostTokens) => pricing.costCents(model, tokens)
-			: undefined;
-		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride, provider);
+		const parser = createAgentStreamParser(runtimeType, modelOverride, provider);
 
 		const persistRotatedAuth = async (): Promise<void> => {
 			await persistRotatedSubscriptionAuth({
@@ -2553,7 +2560,7 @@ export async function runAgent(
 		// a wedge here previously left agents stuck "running" forever.
 		// Memoised because both the clean-exit path and the abort/throw finalizer
 		// need it, and it scrubs the file it reads - a second call would find
-		// nothing and report $0 over the top of a real figure.
+		// nothing and report no usage over the top of a real figure.
 		//
 		// Reached from the failure path too, which is the whole point: Codex, Grok
 		// and Kimi all report no usage on their streams, so a run of any of them
@@ -2565,33 +2572,9 @@ export async function runAgent(
 			recoveredUsage = await recoverOffStreamRunUsage(
 				runtimeType,
 				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
-				priceFn,
 				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
 			return recoveredUsage;
-		};
-
-		/**
-		 * Say so in the run log when a run burned tokens and still priced at $0.
-		 *
-		 * The server log already warns once per unknown model, but an operator does
-		 * not read the server log - they read the run. Without this the two cases
-		 * that matter are indistinguishable from a genuinely free run: a runtime
-		 * that named no model, and a model the pricing table has never heard of
-		 * (a provider alias, or one released since the catalog last refreshed).
-		 * Both leave the spend page empty while the allowance drains.
-		 */
-		const warnIfUnpriced = (usage: AgentRunUsage | null): void => {
-			if (!usage || usage.costCents > 0) return;
-			if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
-			emit(
-				'stderr',
-				`[runner] This run used ${usage.inputTokens} input / ${usage.outputTokens} output tokens but priced at $0, ` +
-					(usage.model
-						? `because no pricing row matches the model "${usage.model}". Add one in Settings > Model pricing.`
-						: 'because its runtime reported no model. Cost cannot be attributed without one.') +
-					'\n',
-			);
 		};
 
 		const cleanupRunArtifacts = async () => {
@@ -2764,6 +2747,18 @@ export async function runAgent(
 						`[runner] Run stopped at its tool-call ceiling (${maxToolCalls}). Every tool result stays in the conversation and is re-sent on the next call, so a run this long spends most of its allowance re-reading its own context.\n`,
 					);
 					runAbort.abort('tool_call_ceiling');
+				}
+				// The same stop, measured in what the run has used rather than what it
+				// has called. It reads the usage the runtime reports as it goes; a
+				// runtime that reports only at the end is bounded by the task ceiling.
+				const used = currentUsage ? currentUsage.inputTokens + currentUsage.outputTokens : 0;
+				if (!ceilingHit && used >= RUN_TOKEN_CEILING) {
+					ceilingHit = true;
+					emit(
+						'stderr',
+						`[runner] Run stopped at its token ceiling (${RUN_TOKEN_CEILING.toLocaleString('en-US')}). A single run this long is spending most of its allowance re-reading its own context.\n`,
+					);
+					runAbort.abort('token_ceiling');
 				}
 			};
 
@@ -3300,10 +3295,8 @@ export async function runAgent(
 
 			// Codex, Grok and Kimi report usage in a file (runUsage); every other
 			// runtime reports it on the stream. The file wins where both exist: for
-			// Codex it is the only source that also names the model, and a run priced
-			// against no model prices to $0.
+			// Codex it is the only source that also names the model.
 			const finalUsage = runUsage ?? parser.getUsage();
-			warnIfUnpriced(finalUsage);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -3442,7 +3435,6 @@ export async function runAgent(
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
 			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage();
-			warnIfUnpriced(abortUsage);
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
 				deps.db,
@@ -5671,13 +5663,11 @@ async function markHeartbeatRunRunning(
 	adapter: {
 		aiProviderConfigId: string | null;
 		provider: AiProvider | null;
-		/** False on a subscription, where nobody is billed per token. */
-		costBilled: boolean;
 	},
 	containerId: string | null,
 ): Promise<boolean> {
-	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
-	// can attribute the run's cost to it without re-resolving, and the container
+	// Stamp the resolved AI adapter config on the run so recordRunUsageAndEnforce
+	// can attribute the run's usage to it without re-resolving, and the container
 	// so a container's death can fail only the runs it was actually carrying.
 	//
 	// `queued_reason` is cleared on the way past: it describes what the run was
@@ -5687,7 +5677,7 @@ async function markHeartbeatRunRunning(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
 		        ai_provider_config_id = $4, provider = $5::ai_provider,
-		        container_id = $6, cost_billed = $7, queued_reason = NULL
+		        container_id = $6, queued_reason = NULL
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -5697,7 +5687,6 @@ async function markHeartbeatRunRunning(
 			adapter.aiProviderConfigId,
 			adapter.provider,
 			containerId,
-			adapter.costBilled,
 		],
 	);
 	// Guarded on the row still being `queued`, so whoever declared an outcome
@@ -5749,12 +5738,11 @@ async function updateHeartbeatRun(
 		     error = COALESCE($3, error),
 		     input_tokens = COALESCE($4, input_tokens),
 		     output_tokens = COALESCE($5, output_tokens),
-		     cost_cents = COALESCE($6, cost_cents),
-		     cache_read_tokens = COALESCE($11, cache_read_tokens),
-		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
-		     usage_partial = COALESCE($7, usage_partial),
-		     tool_call_counts = COALESCE($13::jsonb, tool_call_counts),
-		     model = COALESCE($14, model)
+		     usage_partial = COALESCE($6, usage_partial),
+		     cache_read_tokens = COALESCE($10, cache_read_tokens),
+		     cache_creation_tokens = COALESCE($11, cache_creation_tokens),
+		     tool_call_counts = COALESCE($12::jsonb, tool_call_counts),
+		     model = COALESCE($13, model)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
 		     -- party: terminateHeartbeatRun backfills operator_terminated while the
@@ -5762,30 +5750,23 @@ async function updateHeartbeatRun(
 		     -- through recordHandbackOutcome. Leaving the column out entirely is what
 		     -- makes their writes survive, rather than a COALESCE direction a later
 		     -- simplification could quietly reverse.
-		 WHERE id = $8
-		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
+		 WHERE id = $7
+		   AND status IN ($8::heartbeat_run_status, $9::heartbeat_run_status)
 		 RETURNING id`,
 		[
-			update.status,
-			update.exitCode,
-			update.error ?? null,
-			update.usage?.inputTokens ?? null,
-			update.usage?.outputTokens ?? null,
-			update.usage?.costCents ?? null,
-			update.usagePartial ?? null,
-			runId,
-			HeartbeatRunStatus.Queued,
-			HeartbeatRunStatus.Running,
-			// $11/$12. Appended rather than slotted in beside the other usage binds
-			// so every existing placeholder keeps its number - renumbering a
-			// ten-parameter statement to insert two in the middle is how the wrong
-			// value lands in the wrong column.
-			update.usage?.buckets?.cacheReadTokens ?? null,
-			update.usage?.buckets?.cacheCreationTokens ?? null,
-			// $13, appended for the same reason as $11/$12 above.
-			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null,
-			// $14. What the cost was priced from, so a $0 figure stays auditable.
-			update.usage?.model ?? null,
+			update.status, // $1
+			update.exitCode, // $2
+			update.error ?? null, // $3
+			update.usage?.inputTokens ?? null, // $4
+			update.usage?.outputTokens ?? null, // $5
+			update.usagePartial ?? null, // $6
+			runId, // $7
+			HeartbeatRunStatus.Queued, // $8
+			HeartbeatRunStatus.Running, // $9
+			update.usage?.buckets?.cacheReadTokens ?? null, // $10
+			update.usage?.buckets?.cacheCreationTokens ?? null, // $11
+			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null, // $12
+			update.usage?.model ?? null, // $13
 		],
 	);
 	if (applied.rows.length > 0) {
@@ -5817,69 +5798,57 @@ async function updateHeartbeatRun(
 	}
 
 	// Outside the guard: tokens burned are burned whoever declared the outcome.
-	// Run completion is the canonical cost event: record the run's total spend as a
-	// single cost_entries row (guarded on positive usage so failure/abort paths and
-	// retries — which carry no usage — never double-insert), then reactively pause
+	// Run completion is the canonical usage event: record the run's tokens as a
+	// single usage_entries row (guarded on positive usage so failure/abort paths and
+	// retries - which carry no usage - never double-insert), then reactively pause
 	// the agent if this pushed it (or its project) over any budget window.
-	await recordRunCostAndEnforce(db, runId, update.usage ?? null, broadcast);
+	await recordRunUsageAndEnforce(db, runId, update.usage ?? null, broadcast);
 }
 
 /**
- * Insert the run's cost into `cost_entries` and pause the agent if now over
- * budget. Best-effort: a failure here logs and continues — it must not turn a
- * completed run into a failed one. Exported so startup reconciliation can charge
- * the surviving cost of a run the server killed mid-flight (see
- * `JobManager.reconcileOnStartup`).
+ * Insert the run's tokens into `usage_entries` and pause the agent if now over
+ * budget. Every run counts, whatever its credential: a subscription spends an
+ * allowance as surely as an API key spends money. Best-effort: a failure here
+ * logs and continues - it must not turn a completed run into a failed one.
+ * Exported so startup reconciliation can count the surviving usage of a run the
+ * server killed mid-flight (see `JobManager.reconcileOnStartup`).
  */
-export async function recordRunCostAndEnforce(
+export async function recordRunUsageAndEnforce(
 	db: Db,
 	runId: string,
 	usage: AgentRunUsage | null,
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
-	if (!usage || usage.costCents <= 0) return;
+	if (!usage || usage.inputTokens + usage.outputTokens <= 0) return;
 	try {
 		// The resolved AI adapter config was stamped on the run at start
-		// (markHeartbeatRunRunning); read it back to attribute this cost to it.
-		// `cost_billed` was stamped alongside it, from the credential's auth method
-		// at the time - not joined now, because a config can be deleted or flipped
-		// and either would re-label a run that finished months ago.
+		// (markHeartbeatRunRunning); read it back to attribute this usage to it.
 		const runRow = await db.query<{
 			ai_provider_config_id: string | null;
 			provider: AiProvider | null;
-			cost_billed: boolean;
-		}>(`SELECT ai_provider_config_id, provider, cost_billed FROM heartbeat_runs WHERE id = $1`, [
-			runId,
-		]);
-		const adapter = runRow.rows[0] ?? {
-			ai_provider_config_id: null,
-			provider: null,
-			cost_billed: true,
-		};
+		}>(`SELECT ai_provider_config_id, provider FROM heartbeat_runs WHERE id = $1`, [runId]);
+		const adapter = runRow.rows[0];
 
-		const entry = await recordRunCost(db, {
+		const entry = await recordUsage(db, {
 			memberId: broadcast.memberId,
 			taskId: broadcast.taskId ?? null,
 			projectId: broadcast.projectId ?? null,
-			amountCents: usage.costCents,
+			inputTokens: usage.inputTokens,
+			outputTokens: usage.outputTokens,
 			description: `Agent run ${runId}`,
-			aiProviderConfigId: adapter.ai_provider_config_id,
-			provider: adapter.provider,
-			billed: adapter.cost_billed,
+			aiProviderConfigId: adapter?.ai_provider_config_id ?? null,
+			provider: adapter?.provider ?? null,
 		});
 		if (entry && broadcast.wsManager) {
 			broadcastRowChange(
 				broadcast.wsManager,
 				wsRoom.team(broadcast.teamId),
-				'cost_entries',
+				'usage_entries',
 				'INSERT',
 				entry,
 			);
 		}
 
-		// Notional spend moves no budget, so the gate would be a guaranteed no-op
-		// read on the run-completion path.
-		if (!adapter.cost_billed) return;
 		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
 		if (block) {
 			await pauseAgentForBudget(
@@ -5888,10 +5857,11 @@ export async function recordRunCostAndEnforce(
 				broadcast.teamId,
 				block,
 				broadcast.wsManager,
+				{ taskId: broadcast.taskId ?? null },
 			);
 		}
 	} catch (e) {
-		log.error({ err: e, runId }, 'failed to record run cost / enforce budget');
+		log.error({ err: e, runId }, 'failed to record run usage / enforce budget');
 	}
 }
 

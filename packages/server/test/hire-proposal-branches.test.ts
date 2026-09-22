@@ -4,7 +4,7 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -63,8 +63,8 @@ describe('prepareHireProposal — rejection branches', () => {
 	it('rejects an incoherent budget trio', async () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Budget Bot',
-			daily_budget_cents: 10_000,
-			weekly_budget_cents: 1, // below the daily×7 floor
+			daily_budget_tokens: 10_000,
+			weekly_budget_tokens: 1, // below the daily×7 floor
 		});
 		expect(isError(r) && r.error).toMatch(/Weekly budget must be at least/);
 	});
@@ -72,9 +72,9 @@ describe('prepareHireProposal — rejection branches', () => {
 	it('rejects a negative budget value', async () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Negative Bot',
-			daily_budget_cents: -5,
+			daily_budget_tokens: -5,
 		});
-		expect(isError(r) && r.error).toMatch(/must be an integer ≥ 0/);
+		expect(isError(r) && r.error).toMatch(/must be a whole number of tokens ≥ 0/);
 	});
 
 	it('accepts a non-empty system_prompt with no substitution variables', async () => {
@@ -142,13 +142,13 @@ describe('prepareHireProposal — success branches', () => {
 		expect(p.reports_to).toBeNull();
 		expect(p.default_effort).toBe(DEFAULT_EFFORT);
 		expect(p.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
-		expect(p.daily_budget_cents).toBe(0);
-		expect(p.weekly_budget_cents).toBe(0);
-		expect(p.monthly_budget_cents).toBe(DEFAULT_MONTHLY_BUDGET_CENTS);
+		expect(p.daily_budget_tokens).toBe(0);
+		expect(p.weekly_budget_tokens).toBe(0);
+		expect(p.monthly_budget_tokens).toBe(DEFAULT_MONTHLY_BUDGET_TOKENS);
 		// And that default is unlimited. Asserted as a literal, unlike the line
 		// above: this one pins a product decision rather than the wiring, so a
 		// change back to an arbitrary figure should have to come through here.
-		expect(DEFAULT_MONTHLY_BUDGET_CENTS).toBe(0);
+		expect(DEFAULT_MONTHLY_BUDGET_TOKENS).toBe(0);
 		expect(p.touches_code).toBe(false);
 	});
 
@@ -162,9 +162,9 @@ describe('prepareHireProposal — success branches', () => {
 			// honoured, which a value equal to DEFAULT_EFFORT could not.
 			default_effort: 'low',
 			heartbeat_interval_min: 60,
-			daily_budget_cents: 100,
-			weekly_budget_cents: 1000,
-			monthly_budget_cents: 5000,
+			daily_budget_tokens: 100,
+			weekly_budget_tokens: 1000,
+			monthly_budget_tokens: 5000,
 			touches_code: true,
 		});
 		expect(isError(r)).toBe(false);
@@ -211,9 +211,9 @@ describe('buildHirePayloadPatch', () => {
 			reports_to: '   ', // whitespace-only → cleared to null
 			default_effort: 'low',
 			heartbeat_interval_min: 30,
-			daily_budget_cents: 1,
-			weekly_budget_cents: 2,
-			monthly_budget_cents: 3,
+			daily_budget_tokens: 1,
+			weekly_budget_tokens: 2,
+			monthly_budget_tokens: 3,
 			touches_code: true,
 		});
 		expect(patch).toEqual({
@@ -223,9 +223,9 @@ describe('buildHirePayloadPatch', () => {
 			reports_to: null,
 			default_effort: 'low',
 			heartbeat_interval_min: 30,
-			daily_budget_cents: 1,
-			weekly_budget_cents: 2,
-			monthly_budget_cents: 3,
+			daily_budget_tokens: 1,
+			weekly_budget_tokens: 2,
+			monthly_budget_tokens: 3,
 			touches_code: true,
 		});
 	});

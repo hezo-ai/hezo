@@ -13,13 +13,14 @@ test('home shows the dashboard with an active project card carrying live stats',
 			const project = await seedProject(ws, { name: 'Mission Demo' });
 			const agent = ws.agents[0];
 			const db = getTestContext().db;
-			// One running agent + $4.82 spent today → an Active card with live stats.
+			// One running agent + 4.8M tokens today → an Active card with live stats.
 			await db.query(
 				`UPDATE member_agents SET runtime_status = 'active'::agent_runtime_status WHERE id = $1`,
 				[agent.id],
 			);
 			await db.query(
-				`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 482)`,
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens, output_tokens)
+				 VALUES ($1, $2, 4800000, 20000)`,
 				[agent.id, project.id],
 			);
 			ref.name = project.name;
@@ -32,9 +33,9 @@ test('home shows the dashboard with an active project card carrying live stats',
 	const active = await findByTestId('home-active', undefined, { timeout: 15_000 });
 	expect(active.textContent).toContain(ref.name);
 
-	// The card carries the running indicator and the $-today figure.
+	// The card carries the running indicator and today's tokens.
 	const card = await findByTestId('home-active-card');
 	expect(card.textContent).toContain('running');
 	expect(card.textContent).toContain('tasks');
-	expect(card.textContent).toContain('$4.82 today');
+	expect(card.textContent).toContain('4.8M tokens today');
 });

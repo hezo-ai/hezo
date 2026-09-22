@@ -187,23 +187,19 @@ describe('appendRunLogChunks usage stamping', () => {
 		await appendRunLogChunks(db, runId, 'streaming\n', {
 			inputTokens: 120,
 			outputTokens: 34,
-			costCents: 7,
 		});
 
 		expect(await readRunLogText(db, runId)).toBe('streaming\n');
 		const row = await db.query<{
 			input_tokens: number;
 			output_tokens: number;
-			cost_cents: number;
 			usage_partial: boolean;
-		}>(
-			'SELECT input_tokens, output_tokens, cost_cents, usage_partial FROM heartbeat_runs WHERE id = $1',
-			[runId],
-		);
+		}>('SELECT input_tokens, output_tokens, usage_partial FROM heartbeat_runs WHERE id = $1', [
+			runId,
+		]);
 		expect(row.rows[0]).toMatchObject({
 			input_tokens: 120,
 			output_tokens: 34,
-			cost_cents: 7,
 			usage_partial: true,
 		});
 	});
@@ -212,7 +208,7 @@ describe('appendRunLogChunks usage stamping', () => {
 	it('stamps usage with no delta, and leaves the log untouched', async () => {
 		const runId = await seedRun();
 		await appendRunLogChunks(db, runId, 'only line\n');
-		await appendRunLogChunks(db, runId, '', { inputTokens: 5, outputTokens: 6, costCents: 1 });
+		await appendRunLogChunks(db, runId, '', { inputTokens: 5, outputTokens: 6 });
 
 		expect(await readRunLogText(db, runId)).toBe('only line\n');
 		const row = await db.query<{ input_tokens: number; usage_partial: boolean }>(
@@ -227,7 +223,6 @@ describe('appendRunLogChunks usage stamping', () => {
 		await appendRunLogChunks(db, runId, 'streaming\n', {
 			inputTokens: 9000,
 			outputTokens: 120,
-			costCents: 4,
 			cacheReadTokens: 7500,
 			cacheCreationTokens: 400,
 		});
@@ -242,7 +237,7 @@ describe('appendRunLogChunks usage stamping', () => {
 			[runId],
 		);
 		// The whole reason the split is flushed rather than only stamped at the end:
-		// a run killed mid-flight keeps an auditable cost instead of a bare sum.
+		// a run killed mid-flight keeps its split instead of a bare sum.
 		expect(Number(row.rows[0].input_tokens)).toBe(9000);
 		expect(Number(row.rows[0].cache_read_tokens)).toBe(7500);
 		expect(Number(row.rows[0].cache_creation_tokens)).toBe(400);
@@ -254,7 +249,6 @@ describe('appendRunLogChunks usage stamping', () => {
 		await appendRunLogChunks(db, runId, 'a\n', {
 			inputTokens: 100,
 			outputTokens: 10,
-			costCents: 1,
 			cacheReadTokens: 60,
 			cacheCreationTokens: 5,
 		});
@@ -263,7 +257,6 @@ describe('appendRunLogChunks usage stamping', () => {
 		await appendRunLogChunks(db, runId, 'b\n', {
 			inputTokens: 200,
 			outputTokens: 20,
-			costCents: 2,
 		});
 		const row = await db.query<{
 			input_tokens: string | number;
@@ -280,7 +273,6 @@ describe('appendRunLogChunks usage stamping', () => {
 		await appendRunLogChunks(db, runId, 'c\n', {
 			inputTokens: 1,
 			outputTokens: 1,
-			costCents: 0,
 		});
 
 		const seqs = await db.query<{ seq: number }>(

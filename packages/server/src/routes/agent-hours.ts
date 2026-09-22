@@ -31,8 +31,8 @@ interface HoursAgentRow {
 /**
  * Per-agent wall-clock time for the project, powering the Activity page's Hours
  * tab. "Hours" is `finished_at - started_at` summed over finished runs: what the
- * agent occupied, not what it billed - the Budget page answers the money
- * question from `cost_entries` instead.
+ * agent occupied, not what it used - the Budget page answers the usage
+ * question from `usage_entries` instead.
  *
  * Scope is the project's own team. Runs carry `team_id`, not `project_id`, and
  * the 1:1 project/team model makes the two equivalent - a run by an HQ singleton
@@ -90,7 +90,7 @@ agentHoursRoutes.get('/projects/:projectId/agent-hours', async (c) => {
 
 	// One grouped query for every agent's three windows rather than N+1, matching
 	// the shape `budget-status` uses - and the same UTC boundaries, so an hours
-	// figure and a spend figure for "this week" always cover the same week.
+	// figure and a token figure for "this week" always cover the same week.
 	const agents = await db.query<HoursAgentRow>(
 		`SELECT hr.member_id AS agent_id,
 		        COALESCE(ma.title, m.display_name) AS agent_title,

@@ -142,6 +142,7 @@ import {
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { checkProjectAssetIds } from '../services/asset-ownership';
+import { USAGE_TOKEN_SUMS_SQL } from '../services/budget';
 import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
 import { upsertChatMemory, upsertConversationChatMemory } from '../services/chat-memory';
 import {
@@ -639,6 +640,10 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
+
+/** What a budget counts, as every budget parameter's description states it. */
+const BUDGET_TOKENS_NOTE =
+	'A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited.';
 
 /** The comment text cap as the comment tools' descriptions state it. */
 const COMMENT_TEXT_CAP = COMMENT_TEXT_MAX_CHARS.toLocaleString('en-US');
@@ -2447,7 +2452,7 @@ export function registerTools(
 				// address them the way the thread does.
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.human_name, ma.human_name_slug,
-				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+				        ma.daily_budget_tokens, ma.weekly_budget_tokens, ma.monthly_budget_tokens,
 				        ma.runtime_status, ma.admin_status,
 				        ma.reports_to, mgr.slug AS reports_to_slug, mgr.title AS reports_to_title
 				 FROM members m JOIN member_agents ma ON ma.id = m.id
@@ -2497,7 +2502,10 @@ export function registerTools(
 				.min(heartbeatIntervalFloorMin())
 				.optional()
 				.describe(`Updated heartbeat interval. ${heartbeatIntervalArgDescription()}`),
-			monthly_budget_cents: z.number().optional().describe('Updated monthly budget in cents'),
+			monthly_budget_tokens: z
+				.number()
+				.optional()
+				.describe(`Updated monthly budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 		},
 		async (args, db, auth) => {
@@ -2598,9 +2606,18 @@ export function registerTools(
 				.int()
 				.min(heartbeatIntervalFloorMin())
 				.describe(heartbeatIntervalArgDescription()),
-			daily_budget_cents: z.number().optional().describe('Daily budget in cents'),
-			weekly_budget_cents: z.number().optional().describe('Weekly budget in cents'),
-			monthly_budget_cents: z.number().optional().describe('Monthly budget in cents'),
+			daily_budget_tokens: z
+				.number()
+				.optional()
+				.describe(`Daily budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
+			weekly_budget_tokens: z
+				.number()
+				.optional()
+				.describe(`Weekly budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
+			monthly_budget_tokens: z
+				.number()
+				.optional()
+				.describe(`Monthly budget, in tokens. ${BUDGET_TOKENS_NOTE}`),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 			task_id: z
 				.string()
@@ -4605,14 +4622,14 @@ export function registerTools(
 		{ write: true },
 	);
 
-	// Costs
+	// Usage
 	tool(
 		server,
-		'get_costs',
-		`Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false. Every shape reports two figures: \`total_cents\` is real money, and \`notional_cents\` is what runs on a subscription would have cost at the provider's published rates. A subscription is not billed per token, so the second counts towards no budget and never pauses anyone - read it as effort, not spend.`,
+		'get_usage',
+		`Get the token usage summary for a project: every token its runs and chat turns sent and received, input (cached input included) and output, which is what budgets count. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false. Every shape reports \`input_tokens\`, \`output_tokens\` and their sum \`total_tokens\`.`,
 		{
 			project: projectArg(),
-			group_by: z.enum(['agent', 'day']).optional().describe('Group costs by'),
+			group_by: z.enum(['agent', 'day']).optional().describe('Group usage by'),
 			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
@@ -4620,17 +4637,15 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			if (args.group_by === 'agent') {
 				const r = await db.query(
-					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents
-				 FROM cost_entries ce LEFT JOIN members m ON m.id = ce.member_id LEFT JOIN member_agents ma ON ma.id = ce.member_id
-				 WHERE ce.project_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
+					`SELECT ue.member_id, COALESCE(ma.title, m.display_name) AS agent_title, ${USAGE_TOKEN_SUMS_SQL}
+				 FROM usage_entries ue LEFT JOIN members m ON m.id = ue.member_id LEFT JOIN member_agents ma ON ma.id = ue.member_id
+				 WHERE ue.project_id = $1 GROUP BY ue.member_id, ma.title, m.display_name`,
 					[scope.projectId],
 				);
 				return r.rows;
 			}
 			if (args.group_by === 'day') {
-				// Cost rows accumulate for the life of the project, so the day grouping
+				// Usage rows accumulate for the life of the project, so the day grouping
 				// is the one branch here without a natural ceiling. It keys on the day
 				// itself: the grouping makes it unique, so no id tiebreak is needed.
 				const limit = parseListLimit(args.limit);
@@ -4639,23 +4654,19 @@ export function registerTools(
 				let dayFilter = '';
 				if (cursor) {
 					params.push(cursor.value);
-					dayFilter = ` AND date_trunc('day', ce.created_at)::date < $${params.length}::date`;
+					dayFilter = ` AND date_trunc('day', ue.created_at)::date < $${params.length}::date`;
 				}
-				const r = await db.query<{ day: string; total_cents: number }>(
-					`SELECT date_trunc('day', ce.created_at)::date AS day,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE ce.billed), 0)::int AS total_cents,
-					        COALESCE(sum(ce.amount_cents) FILTER (WHERE NOT ce.billed), 0)::int AS notional_cents
-				 FROM cost_entries ce WHERE ce.project_id = $1${dayFilter}
+				const r = await db.query<{ day: string }>(
+					`SELECT date_trunc('day', ue.created_at)::date AS day, ${USAGE_TOKEN_SUMS_SQL}
+				 FROM usage_entries ue WHERE ue.project_id = $1${dayFilter}
 				 GROUP BY day ORDER BY day DESC LIMIT ${limit + 1}`,
 					params,
 				);
-				return pagedList(r.rows, limit, 'get_costs', { column: 'day', idKey: 'day' });
+				return pagedList(r.rows, limit, 'get_usage', { column: 'day', idKey: 'day' });
 			}
 			const r = await db.query(
-				`SELECT COALESCE(sum(amount_cents) FILTER (WHERE billed), 0)::int AS total_cents,
-				        COALESCE(sum(amount_cents) FILTER (WHERE NOT billed), 0)::int AS notional_cents,
-				        count(*)::int AS entry_count
-				   FROM cost_entries WHERE project_id = $1`,
+				`SELECT ${USAGE_TOKEN_SUMS_SQL}, count(*)::int AS entry_count
+				   FROM usage_entries ue WHERE ue.project_id = $1`,
 				[scope.projectId],
 			);
 			return r.rows[0];

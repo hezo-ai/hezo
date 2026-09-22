@@ -195,6 +195,17 @@ describe('message catalogs', () => {
 		// Polish writes the loanword "Folder", capital and all. Every other
 		// language differs (Ordner, Dossier, Carpeta, Cartella, Map, Mapp, ...).
 		'assets.folderType': ['pl'],
+		// "Budget" genuinely is the word in these five, as `budget.tab.spend` records.
+		'settings.budget.title': ['de', 'fr', 'it', 'nl', 'sv'],
+		// "Total" is the French, Spanish and Portuguese word; German (Gesamt),
+		// Italian (Totale), Dutch (Totaal) and the rest differ.
+		'settings.budget.total': ['fr', 'es', 'pt-BR'],
+		// "tokens" is the loanword these five write for a model token, and the
+		// phrase carries no other word. German (Token), Italian (token), Polish
+		// (Tokeny) and the rest differ.
+		'usage.figure.short': ['fr', 'es', 'nl', 'pt-BR', 'sv'],
+		// Dutch writes "tokens in" before a month name exactly as English does.
+		'budget.usage.tokensOfMonth': ['nl'],
 	};
 
 	test('no message was left identical to the English source', () => {

@@ -19,9 +19,9 @@ export interface Project {
 	/** Per-project container memory override in GiB; null = inherit the instance-wide ram cap. */
 	memory_limit_gib: number | null;
 	container_disk_gb: number | null;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
-	monthly_budget_cents: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	monthly_budget_tokens: number;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
@@ -54,8 +54,8 @@ export interface Project {
 	 * an optional extra. Optional because older/partial payloads may omit it.
 	 */
 	code_agent_count?: number;
-	/** Spend on this project so far today (UTC), in cents. */
-	today_spend_cents: number;
+	/** Tokens this project used so far today (UTC). */
+	today_tokens: number;
 	/** Most recent task update, falling back to the project's creation time. */
 	last_activity_at: string;
 	/**
@@ -260,9 +260,9 @@ interface UpdateProjectVars {
 	/** null clears the override back to the instance-wide default ram cap. */
 	memory_limit_gib?: number | null;
 	container_disk_gb?: number | null;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 }
 
 export function useUpdateProject(projectId: string) {

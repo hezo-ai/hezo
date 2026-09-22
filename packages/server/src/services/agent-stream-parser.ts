@@ -20,8 +20,8 @@
 import {
 	AgentRuntime,
 	type AiProvider,
-	type CostTokens,
 	claudeCodeProviderUsesCustomEndpoint,
+	type TokenBuckets,
 } from '@hezo/shared';
 import { RunFailureClass } from './run-failure-classification';
 import { HEZO_MCP_SERVER_NAME } from './runtime-adapters/types';
@@ -30,31 +30,20 @@ export interface AgentRunUsage {
 	/**
 	 * TOTAL input: uncached plus both cache buckets.
 	 *
-	 * This is the opposite convention to {@link CostTokens.inputTokens}, which is
-	 * the UNCACHED remainder because that is the portion billed at the full input
-	 * rate. Two meanings of one phrase is one too many already - do not add a
-	 * third. `heartbeat_runs.input_tokens` and the `[done] … tokens=<in>/<out>`
-	 * line both carry the total, so the uncached figure is this less `buckets`.
+	 * This is the opposite convention to {@link TokenBuckets.inputTokens}, which is
+	 * the UNCACHED remainder. Two meanings of one phrase is one too many already -
+	 * do not add a third. `heartbeat_runs.input_tokens` and the
+	 * `[done] … tokens=<in>/<out>` line both carry the total, so the uncached
+	 * figure is this less `buckets`.
 	 */
 	inputTokens: number;
 	outputTokens: number;
-	costCents: number;
 	/**
-	 * The split the cost was computed from, or null where a runtime cannot say.
-	 *
-	 * Persisted so a recorded cost is auditable after the fact: a figure made of
-	 * cache reads at a tenth of the input rate and one made of fresh input are
-	 * very different runs, and collapsing them to a sum loses which it was.
+	 * The split by kind, or null where a runtime cannot say. Persisted on the run
+	 * so a reader can tell a run made of cache reads from one made of fresh input.
 	 */
-	buckets: CostTokens | null;
-	/**
-	 * The model the cost was priced from, or null where the runtime named none.
-	 *
-	 * Persisted on the run so a recorded figure stays auditable: `$0` because the
-	 * model was unknown and `$0` because the model is genuinely free are the same
-	 * number and completely different faults, and nothing else on the row can tell
-	 * them apart - a subscription run's argv carries no model either.
-	 */
+	buckets: TokenBuckets | null;
+	/** The model that did the work, or null where the runtime named none. */
 	model: string | null;
 }
 
@@ -64,19 +53,14 @@ export interface AgentRunUsage {
  * One helper rather than nine object literals, because the field that is easy to
  * get wrong is derived here once. Every runtime reports its buckets differently
  * - some state the uncached remainder, some state a total the cache is already
- * inside - but all of them normalize to `CostTokens` before pricing, so the
- * total is that normalized form summed, every time.
+ * inside - but all of them normalize to `TokenBuckets` first, so the total is
+ * that normalized form summed, every time.
  */
-function toRunUsage(
-	price: PriceModelFn,
-	model: string | undefined,
-	buckets: CostTokens,
-): AgentRunUsage {
+function toRunUsage(model: string | undefined, buckets: TokenBuckets): AgentRunUsage {
 	return {
 		inputTokens:
 			buckets.inputTokens + (buckets.cacheReadTokens ?? 0) + (buckets.cacheCreationTokens ?? 0),
 		outputTokens: buckets.outputTokens,
-		costCents: price(model, buckets),
 		buckets,
 		model: model ?? null,
 	};
@@ -85,15 +69,13 @@ function toRunUsage(
 /**
  * Sum two usage records, for a runtime that leaves more than one usage file.
  *
- * Costs add rather than being re-derived: each side was already priced against
- * whatever model produced it, and re-pricing the sum against one of them would
- * be wrong wherever they differ. The reported model is the heavier side's, on
- * the same "dominant by tokens" rule used within a single file.
+ * The reported model is the heavier side's, on the same "dominant by tokens"
+ * rule used within a single file.
  */
 export function mergeRunUsage(a: AgentRunUsage, b: AgentRunUsage): AgentRunUsage {
 	const add = (x: number | undefined, y: number | undefined): number | undefined =>
 		x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
-	const buckets: CostTokens | null =
+	const buckets: TokenBuckets | null =
 		a.buckets || b.buckets
 			? {
 					inputTokens: (a.buckets?.inputTokens ?? 0) + (b.buckets?.inputTokens ?? 0),
@@ -106,21 +88,10 @@ export function mergeRunUsage(a: AgentRunUsage, b: AgentRunUsage): AgentRunUsage
 	return {
 		inputTokens: a.inputTokens + b.inputTokens,
 		outputTokens: a.outputTokens + b.outputTokens,
-		costCents: a.costCents + b.costCents,
 		buckets,
 		model: (weight(a) >= weight(b) ? a.model : b.model) ?? a.model ?? b.model,
 	};
 }
-
-/**
- * Computes a run's cost in cents from its token buckets, looked up against the
- * runtime pricing table (see `services/pricing`). Injected by the runner so the
- * parser stays a pure stream transform; defaults to `0` when no pricing is
- * wired (standalone use / tests that don't exercise cost).
- */
-export type PriceModelFn = (model: string | undefined, tokens: CostTokens) => number;
-
-const NO_PRICE: PriceModelFn = () => 0;
 
 export interface AgentStreamParser {
 	onStdout(chunk: string): string;
@@ -395,7 +366,7 @@ function classifyCodexError(text: string | undefined): RuntimeErrorVerdict | nul
 /**
  * @param runModel the model the run was launched with, for the runtimes whose
  *   stream names no model. OpenCode reports token counts but never a model id,
- *   so without this every OpenCode run priced at $0 no matter what it spent. A
+ *   so without this no OpenCode run could say which model did its work. A
  *   model named in the stream still wins - this is the floor, not an override.
  * @param provider the run's model provider, for the runtimes whose stderr noise
  *   depends on which endpoint they were pointed at. Omitted, every parser keeps
@@ -403,12 +374,10 @@ function classifyCodexError(text: string | undefined): RuntimeErrorVerdict | nul
  */
 export function createAgentStreamParser(
 	runtime: AgentRuntime,
-	price: PriceModelFn = NO_PRICE,
 	runModel?: string | null,
 	provider?: AiProvider | null,
 ): AgentStreamParser {
 	return (STREAM_PARSER_FACTORIES[runtime] ?? createPassthroughParser)(
-		price,
 		runModel?.trim() || undefined,
 		provider ?? undefined,
 	);
@@ -421,25 +390,20 @@ export function createAgentStreamParser(
  * Every factory takes the same three arguments and ignores what it does not
  * need: Claude Code and Gemini name their model in the stream, while Codex,
  * OpenCode and the two usage-less runtimes do not, and depend on the run's own
- * model to price at all. Only Claude Code reads the provider.
+ * model to name one at all. Only Claude Code reads the provider.
  */
 const STREAM_PARSER_FACTORIES: Record<
 	AgentRuntime,
-	(
-		price: PriceModelFn,
-		runModel: string | undefined,
-		provider: AiProvider | undefined,
-	) => AgentStreamParser
+	(runModel: string | undefined, provider: AiProvider | undefined) => AgentStreamParser
 > = {
-	[AgentRuntime.ClaudeCode]: (price, _runModel, provider) =>
-		createClaudeCodeParser(price, provider),
-	[AgentRuntime.Codex]: (price, runModel) => createCodexParser(price, runModel),
-	[AgentRuntime.Antigravity]: (price, runModel) => createAntigravityParser(price, runModel),
+	[AgentRuntime.ClaudeCode]: (_runModel, provider) => createClaudeCodeParser(provider),
+	[AgentRuntime.Codex]: (runModel) => createCodexParser(runModel),
+	[AgentRuntime.Antigravity]: (runModel) => createAntigravityParser(runModel),
 	// OpenCode emits JSONL whose shapes vary across versions and are not fully
 	// documented, so it gets the lenient generic parser: recognizable text and
 	// tool activity render, usage is taken from whatever terminal event carries
 	// it, and unrecognized events are dropped so the log stays clean.
-	[AgentRuntime.OpenCode]: (price, runModel) => createGenericJsonlParser(price, runModel),
+	[AgentRuntime.OpenCode]: (runModel) => createGenericJsonlParser(runModel),
 	// Grok and Kimi Code report no usage on their streams at all; it is recovered
 	// post-run from a file their adapter names, so getUsage() here stays null.
 	[AgentRuntime.Grok]: () => createGrokParser(),
@@ -608,28 +572,27 @@ function createJsonlEventReader<T>(render: (event: unknown) => T[]): {
 
 export function createAgentChatParser(
 	runtime: AgentRuntime,
-	price: PriceModelFn = NO_PRICE,
 	runModel?: string | null,
 ): AgentChatParser {
 	const factory = CHAT_PARSER_FACTORIES[runtime];
 	if (!factory) return { onStdout: () => [], flush: () => [], getUsage: () => null };
-	return factory(price, runModel?.trim() || undefined);
+	return factory(runModel?.trim() || undefined);
 }
 
 /** The chat-side counterpart of {@link STREAM_PARSER_FACTORIES}, same contract. */
 const CHAT_PARSER_FACTORIES: Record<
 	AgentRuntime,
-	(price: PriceModelFn, runModel: string | undefined) => AgentChatParser
+	(runModel: string | undefined) => AgentChatParser
 > = {
-	[AgentRuntime.ClaudeCode]: (price) => createClaudeChatParser(price),
-	[AgentRuntime.Codex]: (price, runModel) => createCodexChatParser(price, runModel),
-	[AgentRuntime.Antigravity]: (price, runModel) => createAntigravityChatParser(price, runModel),
-	[AgentRuntime.OpenCode]: (price, runModel) => createGenericChatParser(price, runModel),
+	[AgentRuntime.ClaudeCode]: () => createClaudeChatParser(),
+	[AgentRuntime.Codex]: (runModel) => createCodexChatParser(runModel),
+	[AgentRuntime.Antigravity]: (runModel) => createAntigravityChatParser(runModel),
+	[AgentRuntime.OpenCode]: (runModel) => createGenericChatParser(runModel),
 	[AgentRuntime.Grok]: () => createGrokChatParser(),
 	[AgentRuntime.Kimi]: () => createKimiChatParser(),
 };
 
-function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
+function createClaudeChatParser(): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
@@ -657,8 +620,8 @@ function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 			const cacheRead = u.cache_read_input_tokens ?? 0;
 			const output = u.output_tokens ?? 0;
 			// Same policy as the run parser: the runtime's own dollar figure is
-			// ignored; cost comes from the pricing table over the token buckets.
-			usage = toRunUsage(price, modelId, {
+			// ignored; only the token buckets are recorded.
+			usage = toRunUsage(modelId, {
 				inputTokens: regularInput,
 				cacheCreationTokens: cacheCreation,
 				cacheReadTokens: cacheRead,
@@ -671,7 +634,7 @@ function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
 }
 
-function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentChatParser {
+function createCodexChatParser(runModel?: string): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined = runModel;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
@@ -687,7 +650,7 @@ function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentCha
 			const cached = u.cached_input_tokens ?? 0;
 			const cacheWrite = u.cache_write_input_tokens ?? 0;
 			// Reasoning is inside `output_tokens`, not beside it - see the run parser.
-			usage = toRunUsage(price, modelId, {
+			usage = toRunUsage(modelId, {
 				inputTokens: Math.max(0, input - cached - cacheWrite),
 				cacheReadTokens: cached,
 				cacheCreationTokens: cacheWrite,
@@ -713,17 +676,14 @@ function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentCha
 	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
 }
 
-function createAntigravityChatParser(
-	price: PriceModelFn,
-	runModel: string | undefined,
-): AgentChatParser {
+function createAntigravityChatParser(runModel: string | undefined): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
 	let model = runModel;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		const event = raw as AntigravityEvent;
 		if (event.event === 'init' && event.init?.model) model = event.init.model;
 		if (event.event === 'result') {
-			usage = antigravityUsage(event.result?.usage, model, price);
+			usage = antigravityUsage(event.result?.usage, model);
 			const text = (event.result?.response ?? '').trim();
 			return text ? [{ text }] : [];
 		}
@@ -889,8 +849,7 @@ function mcpToolCounts(
  * session-title and subagent calls - so the line is guaranteed noise on every
  * run. On Anthropic itself it is a real signal (a `--model` the CLI cannot
  * resolve), which is why the filter is scoped to the custom-endpoint providers
- * rather than applied to the runtime as a whole. It costs nothing else: run cost
- * is priced from `model_pricing`, never from the CLI's own rate card.
+ * rather than applied to the runtime as a whole.
  */
 const CLAUDE_UNRECOGNIZED_MODEL_PREFIX = '[claude-code:unrecognized_model]';
 
@@ -943,7 +902,7 @@ function withUnrecognizedModelFilter(base: AgentStreamParser): AgentStreamParser
 	};
 }
 
-function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): AgentStreamParser {
+function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
@@ -1031,7 +990,7 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 				run.cacheCreation += mu.cache_creation_input_tokens ?? 0;
 				run.cacheRead += mu.cache_read_input_tokens ?? 0;
 				run.output += mu.output_tokens ?? 0;
-				usage = toRunUsage(price, modelId, {
+				usage = toRunUsage(modelId, {
 					inputTokens: run.input,
 					cacheCreationTokens: run.cacheCreation,
 					cacheReadTokens: run.cacheRead,
@@ -1079,28 +1038,24 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 			const regularInput = u.input_tokens ?? 0;
 			const cacheCreation = u.cache_creation_input_tokens ?? 0;
 			const cacheRead = u.cache_read_input_tokens ?? 0;
-			// Displayed aggregate keeps every input token; cost prices the buckets
-			// separately (cache read ~0.1x, cache creation ~1.25x of base input).
+			// The total keeps every input token; the buckets are recorded separately.
 			const input = regularInput + cacheCreation + cacheRead;
 			const output = u.output_tokens ?? 0;
-			// The runtime's own dollar figure (total_cost_usd) is ignored — it's a
+			// The runtime's own dollar figure (total_cost_usd) is ignored: it is a
 			// client-side estimate from the CLI's rate card, which is the wrong
-			// provider's for third-party Anthropic-compatible endpoints. Cost always
-			// comes from the pricing table over the reported token buckets.
-			usage = toRunUsage(price, modelId, {
+			// provider's for third-party Anthropic-compatible endpoints, and usage
+			// is counted in tokens.
+			usage = toRunUsage(modelId, {
 				inputTokens: regularInput,
 				cacheCreationTokens: cacheCreation,
 				cacheReadTokens: cacheRead,
 				outputTokens: output,
 			});
-			const costCents = usage.costCents;
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
 			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
-			out.push(
-				`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output} cost=$${(costCents / 100).toFixed(4)}`,
-			);
+			out.push(`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output}`);
 			return out;
 		}
 
@@ -1180,10 +1135,10 @@ interface CodexEvent {
 /**
  * @param runModel the model the run was launched with. Codex's `thread.started`
  *   carries only a thread id - it names no model anywhere in the stream - so
- *   without this every Codex run priced at $0. A model named in the stream still
+ *   without this no Codex run could say which model did its work. A model named in the stream still
  *   wins; this is the floor, not an override.
  */
-function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamParser {
+function createCodexParser(runModel?: string): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let turns = 0;
@@ -1215,11 +1170,11 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 			// `reasoning_output_tokens` is a SUBSET of `output_tokens`, not a sibling
 			// bucket: the reported total is input + output with reasoning already
 			// inside it. Adding the two inflates the output bucket by the reasoning
-			// share - the bucket that prices at several times the input rate.
+			// share.
 			const output = u.output_tokens ?? 0;
-			// `input_tokens` already includes both cache buckets; price each at its own
-			// rate and the remainder at full input.
-			usage = toRunUsage(price, modelId, {
+			// `input_tokens` already includes both cache buckets; split them out and
+			// keep the remainder as uncached input.
+			usage = toRunUsage(modelId, {
 				inputTokens: Math.max(0, input - cached - cacheWrite),
 				cacheReadTokens: cached,
 				cacheCreationTokens: cacheWrite,
@@ -1326,7 +1281,7 @@ function codexToolName(item: CodexItem): string {
  * excludes `cache_read_tokens` (verified: a cache-hit record has
  * input+output=total with cache_read counted separately), and `output_tokens`
  * already includes `thinking_tokens`. So unlike Codex there is no cache to
- * subtract out - each bucket is priced at its own rate.
+ * subtract out - each bucket is recorded as reported.
  */
 interface AntigravityUsage {
 	input_tokens?: number;
@@ -1353,22 +1308,18 @@ interface AntigravityEvent {
 function antigravityUsage(
 	u: AntigravityUsage | undefined,
 	model: string | undefined,
-	price: PriceModelFn,
 ): AgentRunUsage {
 	const input = u?.input_tokens ?? 0;
 	const cached = u?.cache_read_tokens ?? 0;
 	const output = u?.output_tokens ?? 0;
-	return toRunUsage(price, model, {
+	return toRunUsage(model, {
 		inputTokens: input,
 		cacheReadTokens: cached,
 		outputTokens: output,
 	});
 }
 
-function createAntigravityParser(
-	price: PriceModelFn,
-	runModel: string | undefined,
-): AgentStreamParser {
+function createAntigravityParser(runModel: string | undefined): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let finalMessage: string | null = null;
@@ -1404,7 +1355,7 @@ function createAntigravityParser(
 
 		if (kind === 'result') {
 			const r = event.result ?? {};
-			usage = antigravityUsage(r.usage, model, price);
+			usage = antigravityUsage(r.usage, model);
 			const resp = (r.response ?? '').trim();
 			if (resp) {
 				finalMessage = resp;
@@ -1565,11 +1516,11 @@ interface GenericTokenBuckets {
  *
  * Probed one level into `part` as well as at the top level: OpenCode reports
  * per-step usage on `step_finish.part.tokens`, and a probe that only looked at
- * the event root found nothing and priced every run at $0.
+ * the event root found nothing and recorded no usage for any run.
  *
  * The cache halves are read from a nested `cache` object as well as from flat
  * names, and cache-creation is kept rather than dropped - it is the dominant
- * bucket on a first step and is billed at its own rate.
+ * bucket on a first step.
  */
 /**
  * Pull a message out of an OpenCode error event.
@@ -1644,13 +1595,9 @@ function addGenericUsage(
 	};
 }
 
-/** Price an accumulated total, reporting input as everything the run read. */
-function priceGenericUsage(
-	total: GenericTokenBuckets,
-	price: PriceModelFn,
-	modelId: string | undefined,
-): AgentRunUsage {
-	return toRunUsage(price, modelId, {
+/** An accumulated total, reporting input as everything the run read. */
+function genericUsage(total: GenericTokenBuckets, modelId: string | undefined): AgentRunUsage {
+	return toRunUsage(modelId, {
 		inputTokens: total.input,
 		cacheReadTokens: total.cacheRead,
 		cacheCreationTokens: total.cacheWrite,
@@ -1660,10 +1607,7 @@ function priceGenericUsage(
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;
 
-function createGenericJsonlParser(
-	price: PriceModelFn,
-	fallbackModelId: string | undefined,
-): AgentStreamParser {
+function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let tokens: GenericTokenBuckets | null = null;
 	let modelId: string | undefined = fallbackModelId;
@@ -1675,7 +1619,7 @@ function createGenericJsonlParser(
 	// as what the whole run spent, which is what it is once several steps report.
 	const doneLine = (total: GenericTokenBuckets, status: string): string => {
 		doneEmitted = true;
-		const soFar = priceGenericUsage(total, price, modelId);
+		const soFar = genericUsage(total, modelId);
 		return `[done] ${status} tokens=${soFar.inputTokens}/${soFar.outputTokens}`;
 	};
 
@@ -1737,7 +1681,7 @@ function createGenericJsonlParser(
 
 	const base = createJsonlParser(
 		renderEvent,
-		() => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
+		() => (tokens ? genericUsage(tokens, modelId) : null),
 		() => terminalError,
 		() => finalMessage,
 		() => null,
@@ -1760,10 +1704,7 @@ function createGenericJsonlParser(
 	};
 }
 
-function createGenericChatParser(
-	price: PriceModelFn,
-	fallbackModelId: string | undefined,
-): AgentChatParser {
+function createGenericChatParser(fallbackModelId: string | undefined): AgentChatParser {
 	let tokens: GenericTokenBuckets | null = null;
 	let modelId: string | undefined = fallbackModelId;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
@@ -1783,7 +1724,7 @@ function createGenericChatParser(
 	return {
 		onStdout: reader.onStdout,
 		flush: reader.flush,
-		getUsage: () => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
+		getUsage: () => (tokens ? genericUsage(tokens, modelId) : null),
 	};
 }
 
@@ -1792,7 +1733,7 @@ function createGenericChatParser(
 //
 // Grok's stream is a sequence of `{"type":"thought","data":…}` (reasoning
 // chunks), `{"type":"text","data":…}` (assistant text chunks) and a terminal
-// `{"type":"end","stopReason":…}`. It carries NO token usage — cost is recovered
+// `{"type":"end","stopReason":…}`. It carries NO token usage - it is recovered
 // separately from the `--debug-file` (see `extractGrokUsageFromDebugLog`), so
 // `getUsage()` here is always null and the runner supplies the real usage.
 // ---------------------------------------------------------------------------
@@ -1955,11 +1896,40 @@ function matchInt(line: string, re: RegExp): number | null {
  * `input_tokens=` / `output_tokens=` / `cache_read_tokens=` (and `model_id=` /
  * `request_id=`). The span's fields are echoed on several lines within the same
  * span, so we key by `request_id` (last write wins) before summing across turns,
- * then price the buckets the same way the Codex parser does (input_tokens is
- * inclusive of the cached portion — bill `input - cache_read` at the full input
- * rate and `cache_read` at the discounted cache-read rate). Returns null when the
- * log contains no usable span (unpriced ⇒ the caller records $0, fail-low).
+ * then split the buckets the same way the Codex parser does (input_tokens is
+ * inclusive of the cached portion, so `input - cache_read` is the uncached
+ * remainder). Returns null when the log contains no usable span, and the caller
+ * records no usage rather than inventing a number.
  */
+/** The model a rollout `turn_context` record names, or undefined. */
+function turnContextModel(payload: Record<string, unknown> | undefined): string | undefined {
+	const named = payload?.model;
+	return typeof named === 'string' && named.trim() ? named.trim() : undefined;
+}
+
+/**
+ * The first model a Codex rollout names, from the start of the file.
+ *
+ * For a rollout too large to read whole: its tokens are cumulative and read from
+ * the tail, but a single-turn run names its model only once, near the start.
+ */
+export function codexRolloutModel(head: string): string | undefined {
+	for (const line of head.split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith('{') || !trimmed.includes('"turn_context"')) continue;
+		try {
+			const event = JSON.parse(trimmed) as { type?: string; payload?: Record<string, unknown> };
+			if (event.type === 'turn_context') {
+				const model = turnContextModel(event.payload);
+				if (model) return model;
+			}
+		} catch {
+			// A head read can end on a torn record.
+		}
+	}
+	return undefined;
+}
+
 /** One cumulative `total_token_usage` snapshot from a Codex rollout. */
 interface CodexRolloutTotals {
 	input_tokens?: number;
@@ -1985,7 +1955,7 @@ function rolloutNum(t: CodexRolloutTotals, snake: keyof CodexRolloutTotals): num
  * records nothing at all. Both facts are in the rollout JSONL it writes under
  * `CODEX_HOME` regardless of how the run ended.
  *
- * Three things here are easy to get wrong, and each prices runs silently wrong:
+ * Three things here are easy to get wrong, and each counts runs silently wrong:
  *
  * - **`total_token_usage` is cumulative; never sum it, and never sum the
  *   per-request `last_token_usage` either.** Codex re-emits `token_count` more
@@ -2004,10 +1974,12 @@ function rolloutNum(t: CodexRolloutTotals, snake: keyof CodexRolloutTotals): num
  */
 export function extractCodexUsageFromRollout(
 	contents: string,
-	price: PriceModelFn = NO_PRICE,
+	openingModel?: string,
 ): AgentRunUsage | null {
-	const perModel = new Map<string, CostTokens>();
-	let model: string | undefined;
+	const perModel = new Map<string, TokenBuckets>();
+	// A tail read starts after the rollout's first `turn_context`, so the model
+	// the session opened on is passed in from a separate read of its head.
+	let model: string | undefined = openingModel;
 	let prev: CodexRolloutTotals | null = null;
 	let saw = false;
 
@@ -2022,8 +1994,7 @@ export function extractCodexUsageFromRollout(
 			continue;
 		}
 		if (event.type === 'turn_context') {
-			const named = event.payload?.model;
-			if (typeof named === 'string' && named.trim()) model = named.trim();
+			model = turnContextModel(event.payload) ?? model;
 			continue;
 		}
 		if (event.type !== 'event_msg') continue;
@@ -2057,19 +2028,16 @@ export function extractCodexUsageFromRollout(
 	}
 	if (!saw) return null;
 
-	// Priced per model and summed: a rollout can switch models mid-session, and
-	// pricing the whole thing at whichever was last seen would be wrong in both
-	// directions. The reported model is the one that moved the most tokens.
-	const summed: CostTokens = {
+	// Summed across models: a rollout can switch models mid-session, and the
+	// reported model is the one that moved the most tokens.
+	const summed: TokenBuckets = {
 		inputTokens: 0,
 		cacheReadTokens: 0,
 		cacheCreationTokens: 0,
 		outputTokens: 0,
 	};
-	let costCents = 0;
 	let dominant: { key: string; weight: number } | null = null;
 	for (const [key, buckets] of perModel) {
-		costCents += price(key || undefined, buckets);
 		summed.inputTokens += buckets.inputTokens;
 		summed.cacheReadTokens = (summed.cacheReadTokens ?? 0) + (buckets.cacheReadTokens ?? 0);
 		summed.cacheCreationTokens =
@@ -2086,16 +2054,12 @@ export function extractCodexUsageFromRollout(
 		inputTokens:
 			summed.inputTokens + (summed.cacheReadTokens ?? 0) + (summed.cacheCreationTokens ?? 0),
 		outputTokens: summed.outputTokens,
-		costCents,
 		buckets: summed,
 		model: dominant?.key || null,
 	};
 }
 
-export function extractGrokUsageFromDebugLog(
-	contents: string,
-	price: PriceModelFn = NO_PRICE,
-): AgentRunUsage | null {
+export function extractGrokUsageFromDebugLog(contents: string): AgentRunUsage | null {
 	const byRequest = new Map<
 		string,
 		{ input: number; output: number; cacheRead: number; model?: string }
@@ -2129,7 +2093,7 @@ export function extractGrokUsageFromDebugLog(
 		cacheRead += t.cacheRead;
 		if (t.model) model = t.model;
 	}
-	return toRunUsage(price, model, {
+	return toRunUsage(model, {
 		inputTokens: Math.max(0, input - cacheRead),
 		cacheReadTokens: cacheRead,
 		outputTokens: output,
@@ -2308,15 +2272,12 @@ const KIMI_RECORD_ID_KEYS = ['request_id', 'requestId', 'id'] as const;
  * Field spellings are probed in both camelCase and snake_case. That is deliberate
  * hedging, not indecision: the CLI ships two engine generations with duplicated
  * logging paths, and the older `kimi-cli` used the snake_case spelling. Accepting
- * both costs nothing and avoids a silent $0 on an upstream version bump.
+ * both costs nothing and avoids silently losing usage on an upstream version bump.
  *
- * Returns null when the log carries no usable record — the caller then records $0,
- * failing low rather than inventing a number.
+ * Returns null when the log carries no usable record - the caller then records
+ * no usage, failing low rather than inventing a number.
  */
-export function extractKimiUsageFromSessionLog(
-	contents: string,
-	price: PriceModelFn = NO_PRICE,
-): AgentRunUsage | null {
+export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage | null {
 	interface Rec {
 		input: number;
 		output: number;
@@ -2391,7 +2352,7 @@ export function extractKimiUsageFromSessionLog(
 	// `inputOther` is the non-cached remainder ("other" than cache), so unlike
 	// Codex/Grok it must NOT have the cached portion subtracted out — each bucket
 	// is billed at its own rate directly.
-	return toRunUsage(price, model, {
+	return toRunUsage(model, {
 		inputTokens: input,
 		cacheReadTokens: cacheRead,
 		cacheCreationTokens: cacheCreation,

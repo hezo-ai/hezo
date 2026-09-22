@@ -1,8 +1,8 @@
 import { INSTANCE_AGENT_SLUGS, isRunOutcomeFilter, RunOutcomeFilter } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
-import { CostFigure } from '../../../../../../components/cost-figures';
 import { InfiniteScrollSentinel } from '../../../../../../components/infinite-scroll-sentinel';
+import { TokenFigure } from '../../../../../../components/token-figure';
 import { Badge } from '../../../../../../components/ui/badge';
 import { FilterPills } from '../../../../../../components/ui/filter-pills';
 import { RelativeTime } from '../../../../../../components/ui/relative-time';
@@ -128,12 +128,11 @@ function ExecutionRow({
 
 			<span className="order-6 text-text-3 whitespace-nowrap sm:order-none">{elapsed}</span>
 
-			{run.cost_cents != null && run.cost_cents > 0 && (
-				<CostFigure
-					cents={run.cost_cents}
-					billed={run.cost_billed}
+			{run.input_tokens + run.output_tokens > 0 && (
+				<TokenFigure
+					tokens={run.input_tokens + run.output_tokens}
 					className="order-7 text-text-3 whitespace-nowrap sm:order-none"
-					testId="execution-row-cost"
+					testId="execution-row-tokens"
 				/>
 			)}
 

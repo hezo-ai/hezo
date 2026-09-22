@@ -1,34 +1,33 @@
-import { centsToDollars } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { DollarSign } from 'lucide-react';
+import { Gauge } from 'lucide-react';
 import { useId } from 'react';
-import { useBudgetStatus, useDailyCostSeries } from '../../hooks/use-costs';
+import { useBudgetStatus, useDailyUsageSeries } from '../../hooks/use-usage';
 import { useI18n } from '../../lib/i18n';
 import { Card } from '../ui/card';
-import { Tooltip } from '../ui/tooltip';
 
-/** Days of history the sparkline draws. Older spend is the Budget page's business. */
+/** Days of history the sparkline draws. Older usage is the Budget page's business. */
 const SPARK_DAYS = 14;
 const SPARK_W = 200;
 const SPARK_H = 40;
 
 /**
- * Daily spend as an area sparkline. Drawn inline rather than through a chart library: it carries
+ * Daily token usage as an area sparkline. Drawn inline rather than through a chart library: it carries
  * no axes, legend or interaction, so a path and a fill is the whole thing.
  *
  * Returns null below two points - a single day is a dot, not a trend, and a flat line drawn from
- * one value reads as "no spend" when it means "one day of history".
+ * one value reads as "no usage" when it means "one day of history".
  */
-function SpendSparkline({ points }: { points: number[] }) {
+function UsageSparkline({ points }: { points: number[] }) {
+	const { t } = useI18n();
 	const gradientId = useId();
 	if (points.length < 2) return null;
 
 	const max = Math.max(...points, 1);
 	const step = SPARK_W / (points.length - 1);
-	const coords = points.map((cents, i) => {
+	const coords = points.map((tokens, i) => {
 		const x = Math.round(i * step * 100) / 100;
 		// 2px of headroom so the peak's stroke is not clipped by the viewBox edge.
-		const y = Math.round((SPARK_H - 2 - (cents / max) * (SPARK_H - 4)) * 100) / 100;
+		const y = Math.round((SPARK_H - 2 - (tokens / max) * (SPARK_H - 4)) * 100) / 100;
 		return [x, y] as const;
 	});
 	const line = coords.map(([x, y]) => `${x},${y}`).join(' L');
@@ -40,10 +39,10 @@ function SpendSparkline({ points }: { points: number[] }) {
 			preserveAspectRatio="none"
 			className="my-2 block h-10 w-full"
 			role="img"
-			aria-label={`Daily spend over the last ${points.length} days`}
+			aria-label={t('dashboard.spend.sparkline', { count: points.length })}
 			data-testid="dashboard-spend-sparkline"
 		>
-			<title>{`Daily spend over the last ${points.length} days`}</title>
+			<title>{t('dashboard.spend.sparkline', { count: points.length })}</title>
 			<defs>
 				<linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
 					<stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.22" />
@@ -64,24 +63,23 @@ function SpendSparkline({ points }: { points: number[] }) {
 }
 
 /**
- * Month-to-date spend with a daily sparkline and the three other windows beneath it.
+ * Month-to-date tokens with a daily sparkline and the three other windows beneath it.
  *
- * The series and the all-time total come from one `group_by=day` request: the ungrouped form of
- * the same endpoint returns every cost row on the project, which is an unbounded response to
- * render one number with.
+ * The series and the all-time total come from one `group_by=day` request, which
+ * returns one row per day rather than every usage row on the project.
  */
 export function DashboardSpend({ projectId }: { projectId: string }) {
-	const { t, formatMoney } = useI18n();
+	const { t, formatCompact } = useI18n();
 	const { data: budget } = useBudgetStatus(projectId);
-	const { data: costs } = useDailyCostSeries(projectId);
+	const { data: usage } = useDailyUsageSeries(projectId);
 
 	const monthly = budget?.project.monthly;
-	const daily = (costs?.summary ?? []).slice(-SPARK_DAYS).map((point) => point.total_cents);
+	const daily = (usage?.summary ?? []).slice(-SPARK_DAYS).map((point) => point.total_tokens);
 
 	return (
 		<section data-testid="dashboard-spend">
 			<div className="mb-2 flex items-center gap-2">
-				<DollarSign className="h-4 w-4 shrink-0 text-text-3" aria-hidden="true" />
+				<Gauge className="h-4 w-4 shrink-0 text-text-3" aria-hidden="true" />
 				<h2 className="text-[12.5px] font-medium text-text-1">{t('dashboard.spend.heading')}</h2>
 				<Link
 					to="/projects/$projectId/budget"
@@ -99,48 +97,34 @@ export function DashboardSpend({ projectId }: { projectId: string }) {
 						}`}
 						data-testid="dashboard-spend-month"
 					>
-						{formatMoney(monthly?.spentCents ?? 0)}
+						{formatCompact(monthly?.usedTokens ?? 0)}
 					</span>
 					<span className="text-[11px] text-text-3">
-						{monthly && monthly.limitCents > 0
-							? t('dashboard.spend.ofCapThisMonth', {
-									amount: `$${centsToDollars(monthly.limitCents)}`,
-								})
+						{monthly && monthly.limitTokens > 0
+							? t('dashboard.spend.ofCapThisMonth', { amount: formatCompact(monthly.limitTokens) })
 							: t('dashboard.spend.thisMonth')}
 					</span>
 				</div>
-				<SpendSparkline points={daily} />
+				<UsageSparkline points={daily} />
 				<div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-3">
 					<span>
 						{t('dashboard.spend.today')}{' '}
 						<b className="font-mono font-medium tabular-nums text-text-1">
-							{formatMoney(budget?.project.daily.spentCents ?? 0)}
+							{formatCompact(budget?.project.daily.usedTokens ?? 0)}
 						</b>
 					</span>
 					<span>
 						{t('dashboard.spend.week')}{' '}
 						<b className="font-mono font-medium tabular-nums text-text-1">
-							{formatMoney(budget?.project.weekly.spentCents ?? 0)}
+							{formatCompact(budget?.project.weekly.usedTokens ?? 0)}
 						</b>
 					</span>
 					<span>
 						{t('dashboard.spend.allTime')}{' '}
 						<b className="font-mono font-medium tabular-nums text-text-1">
-							{formatMoney(costs?.total_cents ?? 0)}
+							{formatCompact(usage?.total_tokens ?? 0)}
 						</b>
 					</span>
-					{/* Beside the real figures, never inside them: the three above are
-					    money, and this one is what the same tokens would have cost. */}
-					{(costs?.notional_cents ?? 0) > 0 && (
-						<Tooltip content={t('cost.notional.explainer')}>
-							<span data-testid="dashboard-spend-notional">
-								{t('cost.series.notBilled')}{' '}
-								<b className="font-mono font-medium tabular-nums text-text-1">
-									{formatMoney(costs?.notional_cents ?? 0)}
-								</b>
-							</span>
-						</Tooltip>
-					)}
 				</div>
 			</Card>
 		</section>

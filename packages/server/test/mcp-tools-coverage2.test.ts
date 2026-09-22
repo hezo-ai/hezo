@@ -804,7 +804,7 @@ describe('register_connector branches', () => {
 	});
 });
 
-describe('full_text_search / get_costs branches', () => {
+describe('full_text_search / get_usage branches', () => {
 	it('full_text_search returns results+count', async () => {
 		const r = (await admin('full_text_search', {
 			project: projectSlug,
@@ -814,19 +814,19 @@ describe('full_text_search / get_costs branches', () => {
 		expect(typeof r.count).toBe('number');
 	});
 
-	it('get_costs grouped by agent and by day', async () => {
-		const byAgent = (await admin('get_costs', {
+	it('get_usage grouped by agent and by day', async () => {
+		const byAgent = (await admin('get_usage', {
 			project: projectSlug,
 			group_by: 'agent',
 		})) as unknown as unknown[];
 		expect(Array.isArray(byAgent)).toBe(true);
-		const byDay = (await admin('get_costs', {
+		const byDay = (await admin('get_usage', {
 			project: projectSlug,
 			group_by: 'day',
 		})) as unknown as { items: unknown[] };
 		expect(Array.isArray(byDay.items)).toBe(true);
-		const total = await admin('get_costs', { project: projectSlug });
-		expect(total).toHaveProperty('total_cents');
+		const total = await admin('get_usage', { project: projectSlug });
+		expect(total).toHaveProperty('total_tokens');
 	});
 });
 

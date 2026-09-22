@@ -29,13 +29,12 @@ import {
 	getHostPromptPath,
 	getHostSubscriptionRoot,
 	type RunnerDeps,
-	recordRunCostAndEnforce,
+	recordRunUsageAndEnforce,
 	runAgent,
 } from '../src/services/agent-runner';
 import { ensureProjectContainerRunning } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { detectOrphans } from '../src/services/orphan-detector';
-import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { CONTAINER_SUBSCRIPTION_BASE } from '../src/services/runtime-home';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { CONTAINER_WORKSPACE_ROOT } from '../src/services/workspace';
@@ -219,18 +218,11 @@ function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): Run
 }
 
 describe('runAgent lifecycle — full success bookkeeping', () => {
-	it('records usage+cost, flips a backlog task in_progress, broadcasts, and emits domain events', async () => {
-		const pricing = new PricingService(db);
-		await upsertManualRate(db, {
-			model_id: 'claude-opus-4-7',
-			input_per_token: 0.0001,
-			output_per_token: 0.0002,
-		});
-		await pricing.reload();
+	it('records usage, flips a backlog task in_progress, broadcasts, and emits domain events', async () => {
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 
 		// A fresh backlog task assigned to the agent so the run flips its status.
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
@@ -279,7 +271,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		events.subscribe((e) => captured.push(e as unknown as Record<string, unknown>));
 		const logs = new LogStreamBroker();
 		logs.setWsManager(wsManager);
-		const deps = baseDeps(docker, { pricing, wsManager, events, logs });
+		const deps = baseDeps(docker, { wsManager, events, logs });
 
 		const result = await runAgent(
 			deps,
@@ -304,7 +296,6 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 			exit_code: number;
 			input_tokens: number | null;
 			output_tokens: number | null;
-			cost_cents: number | null;
 			usage_partial: boolean;
 			started_at: string | null;
 			finished_at: string | null;
@@ -314,7 +305,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 			ai_provider_config_id: string | null;
 			kind: string;
 		}>(
-			`SELECT status, exit_code, input_tokens, output_tokens, cost_cents, usage_partial,
+			`SELECT status, exit_code, input_tokens, output_tokens, usage_partial,
 			        started_at::text, finished_at::text, invocation_command, working_dir,
 			        provider::text, ai_provider_config_id, kind::text
 			 FROM heartbeat_runs WHERE id = $1`,
@@ -325,7 +316,6 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		expect(row.exit_code).toBe(0);
 		expect(row.input_tokens).toBe(1000);
 		expect(row.output_tokens).toBe(500);
-		expect(row.cost_cents).toBe(20);
 		expect(row.usage_partial).toBe(false);
 		expect(row.started_at).not.toBeNull();
 		expect(row.finished_at).not.toBeNull();
@@ -356,14 +346,14 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		expect(runComment.rows.length).toBe(1);
 		expect(runComment.rows[0].content.run_id).toBe(result.heartbeatRunId);
 
-		// Cost entry recorded (1000*0.0001 + 500*0.0002 = 20 cents) and broadcast.
-		const entry = await db.query<{ amount_cents: number }>(
-			'SELECT amount_cents FROM cost_entries WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1',
+		// Usage entry recorded with the run's tokens, and broadcast.
+		const entry = await db.query<{ input_tokens: number; output_tokens: number }>(
+			'SELECT input_tokens, output_tokens FROM usage_entries WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1',
 			[agentId],
 		);
-		expect(entry.rows[0].amount_cents).toBe(20);
+		expect(entry.rows[0]).toEqual({ input_tokens: 1000, output_tokens: 500 });
 		expect(
-			broadcasts.some((b) => b.event?.table === 'cost_entries' && b.event?.action === 'INSERT'),
+			broadcasts.some((b) => b.event?.table === 'usage_entries' && b.event?.action === 'INSERT'),
 		).toBe(true);
 
 		// heartbeat_runs INSERT (queued) + UPDATE broadcasts, and the task-status flip broadcast.
@@ -391,7 +381,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 	});
 
 	it("resolves the agent's model override provider+model into the CLI --model arg", async () => {
@@ -725,19 +715,12 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 	});
 
 	it('pauses the agent when the run pushes it over its daily budget', async () => {
-		const pricing = new PricingService(db);
-		await upsertManualRate(db, {
-			model_id: 'claude-opus-4-7',
-			input_per_token: 0.0001,
-			output_per_token: 0.0002,
-		});
-		await pricing.reload();
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 		await db.query(
-			`UPDATE member_agents SET daily_budget_cents = 1, weekly_budget_cents = 0, monthly_budget_cents = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
+			`UPDATE member_agents SET daily_budget_tokens = 1000, weekly_budget_tokens = 0, monthly_budget_tokens = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
 			[agentId],
 		);
 		const initEvent = JSON.stringify({
@@ -761,12 +744,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 			},
 		});
 		try {
-			const result = await runAgent(
-				baseDeps(docker, { pricing }),
-				makeAgent(),
-				makeTask(),
-				makeProject(),
-			);
+			const result = await runAgent(baseDeps(docker), makeAgent(), makeTask(), makeProject());
 			expect(result.success).toBe(true);
 			const agentRow = await db.query<{ runtime_status: string }>(
 				'SELECT runtime_status FROM member_agents WHERE id = $1',
@@ -775,13 +753,13 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 			expect(agentRow.rows[0].runtime_status).not.toBe('idle');
 		} finally {
 			await db.query(
-				`UPDATE member_agents SET daily_budget_cents = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
+				`UPDATE member_agents SET daily_budget_tokens = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
 				[agentId],
 			);
 			await db.query(
 				`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
 			);
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 		}
 	});
 
@@ -984,13 +962,6 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 	});
 
 	it('persists partial usage captured before an exec transport failure', async () => {
-		const pricing = new PricingService(db);
-		await upsertManualRate(db, {
-			model_id: 'claude-opus-4-7',
-			input_per_token: 0.0001,
-			output_per_token: 0.0002,
-		});
-		await pricing.reload();
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
 		);
@@ -1015,12 +986,7 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 				throw new Error('exec transport died');
 			},
 		});
-		const result = await runAgent(
-			baseDeps(docker, { pricing }),
-			makeAgent(),
-			makeTask(),
-			makeProject(),
-		);
+		const result = await runAgent(baseDeps(docker), makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(false);
 		expect(result.stderr).toBe('exec transport died');
 		const run = await db.query<{
@@ -1040,7 +1006,7 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 	});
 });
 
@@ -1632,25 +1598,25 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 	});
 });
 
-describe('recordRunCostAndEnforce', () => {
-	it('returns without writing when the run carried no usage or zero cost', async () => {
+describe('recordRunUsageAndEnforce', () => {
+	it('returns without writing when the run carried no usage or zero tokens', async () => {
 		const before = await db.query<{ c: number }>(
-			'SELECT COUNT(*)::int AS c FROM cost_entries WHERE member_id = $1',
+			'SELECT COUNT(*)::int AS c FROM usage_entries WHERE member_id = $1',
 			[agentId],
 		);
-		await recordRunCostAndEnforce(db, 'ignored-run-id', null, {
+		await recordRunUsageAndEnforce(db, 'ignored-run-id', null, {
 			teamId,
 			taskId: null,
 			memberId: agentId,
 		});
-		await recordRunCostAndEnforce(
+		await recordRunUsageAndEnforce(
 			db,
 			'ignored-run-id',
-			{ inputTokens: 10, outputTokens: 10, costCents: 0, buckets: null, model: null },
+			{ inputTokens: 0, outputTokens: 0, buckets: null, model: null },
 			{ teamId, taskId: null, memberId: agentId },
 		);
 		const after = await db.query<{ c: number }>(
-			'SELECT COUNT(*)::int AS c FROM cost_entries WHERE member_id = $1',
+			'SELECT COUNT(*)::int AS c FROM usage_entries WHERE member_id = $1',
 			[agentId],
 		);
 		expect(after.rows[0].c).toBe(before.rows[0].c);
@@ -1662,13 +1628,13 @@ describe('recordRunCostAndEnforce', () => {
 				throw new Error('db exploded');
 			},
 		} as unknown as Db;
-		// Must resolve — a cost bookkeeping failure never turns a completed run
+		// Must resolve — a usage bookkeeping failure never turns a completed run
 		// into a failed one. (This intentionally logs one [error] line.)
 		await expect(
-			recordRunCostAndEnforce(
+			recordRunUsageAndEnforce(
 				throwingDb,
 				'run-x',
-				{ inputTokens: 1, outputTokens: 1, costCents: 5, buckets: null, model: null },
+				{ inputTokens: 1, outputTokens: 1, buckets: null, model: null },
 				{ teamId, taskId: null, memberId: agentId },
 			),
 		).resolves.toBeUndefined();

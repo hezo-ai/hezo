@@ -54,7 +54,7 @@ async function fetchLatest(): Promise<UpdateInfo> {
 		updateAvailable: false,
 		url: null,
 	};
-	// Test/CI-only, alongside HEZO_SKIP_PRICING_REFRESH and the e2e config's
+	// Test/CI-only, alongside the e2e config's
 	// `telemetry: { enabled: false }`:
 	// the e2e server makes no outbound feed fetches. This one is not just about the
 	// network - whether a release newer than this working tree's version happens to

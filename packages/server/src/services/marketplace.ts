@@ -53,9 +53,15 @@ const rosterAgentSchema = z.object({
 	default_effort: z.string(),
 	heartbeat_interval_min: z.number(),
 	run_timeout_min: z.number(),
-	monthly_budget_cents: z.number(),
-	daily_budget_cents: z.number(),
-	weekly_budget_cents: z.number(),
+	// A catalog built before budgets counted tokens has none of these: its roles
+	// are unlimited, which is what 0 means.
+	monthly_budget_tokens: z.number().int().min(0).default(0),
+	daily_budget_tokens: z.number().int().min(0).default(0),
+	weekly_budget_tokens: z.number().int().min(0).default(0),
+	// Retired dollar fields. Emitted as 0 for older instances and ignored here.
+	monthly_budget_cents: z.literal(0).catch(0).default(0),
+	daily_budget_cents: z.literal(0).catch(0).default(0),
+	weekly_budget_cents: z.literal(0).catch(0).default(0),
 	touches_code: z.boolean(),
 });
 

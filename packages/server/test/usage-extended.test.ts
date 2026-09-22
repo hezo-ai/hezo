@@ -36,7 +36,7 @@ beforeAll(async () => {
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 
 	const teamRes = await createTestTeam(db, {
-		name: 'Extended Cost Co',
+		name: 'Extended Usage Co',
 		template_id: typeId,
 	});
 	const team = (await teamRes.json()).data;
@@ -50,7 +50,7 @@ beforeAll(async () => {
 	agentId = agents.find((a: Record<string, unknown>) => a.slug === 'engineer').id;
 	agent2Id = agents.find((a: Record<string, unknown>) => a.slug === 'ui-designer').id;
 
-	// All cost reads are project-scoped now; everything below belongs to this project.
+	// All usage reads are project-scoped; everything below belongs to this project.
 	const proj1Res = await createTestProject(db, teamId, {
 		name: 'Project Alpha',
 		description: 'Test project.',
@@ -81,11 +81,11 @@ beforeAll(async () => {
 	anthropicConfigId = (cfg.rows as any[]).find((r) => r.provider === 'anthropic').id;
 	openaiConfigId = (cfg.rows as any[]).find((r) => r.provider === 'openai').id;
 
-	// Insert cost entries with varied dates, agents, and adapters directly via DB
+	// Insert usage entries with varied dates, agents, and adapters directly via DB
 	// so we can control timestamps precisely for date-range tests. All belong to the
 	// project above. Amounts stay small to stay within budget limits.
 	await db.query(
-		`INSERT INTO cost_entries (member_id, project_id, task_id, amount_cents, description, ai_provider_config_id, provider, created_at)
+		`INSERT INTO usage_entries (member_id, project_id, task_id, input_tokens, description, ai_provider_config_id, provider, created_at)
      VALUES
        ($2, $1, $3, 50,  'past entry',         $4, 'anthropic', '2024-01-15 10:00:00+00'),
        ($2, $1, NULL, 75, 'past no-task',       $4, 'anthropic', '2024-01-20 12:00:00+00'),
@@ -99,32 +99,32 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('costs – date range filtering', () => {
+describe('usage – date range filtering', () => {
 	it('filters by from date (inclusive)', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs?from=2024-02-01`, {
+		const res = await app.request(`/api/projects/${projectSlug}/usage?from=2024-02-01`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		// Only entries on/after 2024-02-01: agent2 (120) + agent1 unattributed (30)
 		expect(body.data.entries.length).toBe(2);
-		expect(body.data.total_cents).toBe(150);
+		expect(body.data.total_tokens).toBe(150);
 	});
 
 	it('filters by to date (inclusive)', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs?to=2024-01-31`, {
+		const res = await app.request(`/api/projects/${projectSlug}/usage?to=2024-01-31`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		// Only entries on/before 2024-01-31: past entry (50) + past no-task (75)
 		expect(body.data.entries.length).toBe(2);
-		expect(body.data.total_cents).toBe(125);
+		expect(body.data.total_tokens).toBe(125);
 	});
 
 	it('filters by from and to range together', async () => {
 		const res = await app.request(
-			`/api/projects/${projectSlug}/costs?from=2024-01-18&to=2024-02-28`,
+			`/api/projects/${projectSlug}/usage?from=2024-01-18&to=2024-02-28`,
 			{
 				headers: authHeader(token),
 			},
@@ -133,13 +133,13 @@ describe('costs – date range filtering', () => {
 		const body = await res.json();
 		// Entries in range: past no-task (75, Jan 20) + agent2 openai (120, Feb 10)
 		expect(body.data.entries.length).toBe(2);
-		expect(body.data.total_cents).toBe(195);
+		expect(body.data.total_tokens).toBe(195);
 	});
 });
 
-describe('costs – project scoping', () => {
+describe('usage – project scoping', () => {
 	it('returns only entries for the path project', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/usage`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -148,31 +148,31 @@ describe('costs – project scoping', () => {
 		for (const entry of body.data.entries) {
 			expect(entry.project_id).toBe(projectId);
 		}
-		expect(body.data.total_cents).toBe(275);
+		expect(body.data.total_tokens).toBe(275);
 	});
 
 	it('returns no entries for a different project', async () => {
 		// A team owns exactly one project (1:1), so a second project needs its own
-		// team. None of our cost entries belong to it, so it should read empty.
+		// team. None of our usage entries belong to it, so it should read empty.
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
-		const team2Res = await createTestTeam(db, { name: 'Other Cost Co', template_id: typeId });
+		const team2Res = await createTestTeam(db, { name: 'Other Usage Co', template_id: typeId });
 		const team2Id = (await team2Res.json()).data.id;
 		const other = await createTestProject(db, team2Id, { name: 'Project Beta' });
 		const otherSlug = (await other.json()).data.slug;
-		const res = await app.request(`/api/projects/${otherSlug}/costs`, {
+		const res = await app.request(`/api/projects/${otherSlug}/usage`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.entries.length).toBe(0);
-		expect(body.data.total_cents).toBe(0);
+		expect(body.data.total_tokens).toBe(0);
 	});
 });
 
-describe('costs – task_id filter', () => {
+describe('usage – task_id filter', () => {
 	it('returns only entries linked to the specified task', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs?task_id=${taskId}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/usage?task_id=${taskId}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -180,13 +180,13 @@ describe('costs – task_id filter', () => {
 		// Only "past entry" (50) has task_id set
 		expect(body.data.entries.length).toBe(1);
 		expect(body.data.entries[0].task_id).toBe(taskId);
-		expect(body.data.total_cents).toBe(50);
+		expect(body.data.total_tokens).toBe(50);
 	});
 });
 
-describe('costs – group_by=day', () => {
-	it('groups cost entries by day with correct totals', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs?group_by=day`, {
+describe('usage – group_by=day', () => {
+	it('groups usage entries by day with correct totals', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/usage?group_by=day`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -204,25 +204,25 @@ describe('costs – group_by=day', () => {
 		for (const d of days) expect(d).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 		expect(days).toEqual(['2024-01-15', '2024-01-20', '2024-02-10', '2024-03-01']);
 		// Total across all days
-		expect(body.data.total_cents).toBe(275); // 50+75+120+30
+		expect(body.data.total_tokens).toBe(275); // 50+75+120+30
 	});
 
 	it('group_by=day with date range returns subset', async () => {
 		const res = await app.request(
-			`/api/projects/${projectSlug}/costs?group_by=day&from=2024-02-01&to=2024-03-31`,
+			`/api/projects/${projectSlug}/usage?group_by=day&from=2024-02-01&to=2024-03-31`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.summary.length).toBe(2);
-		expect(body.data.total_cents).toBe(150); // 120+30
+		expect(body.data.total_tokens).toBe(150); // 120+30
 	});
 });
 
-describe('costs – group_by=day&breakdown=agent', () => {
-	it('returns per-day spend split by agent', async () => {
+describe('usage – group_by=day&breakdown=agent', () => {
+	it('returns per-day usage split by agent', async () => {
 		const res = await app.request(
-			`/api/projects/${projectSlug}/costs?group_by=day&breakdown=agent`,
+			`/api/projects/${projectSlug}/usage?group_by=day&breakdown=agent`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -235,17 +235,17 @@ describe('costs – group_by=day&breakdown=agent', () => {
 		for (const r of rows) expect(r.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
 		const byAgent = (id: string) =>
-			rows.filter((r) => r.agent_id === id).reduce((s, r) => s + r.total_cents, 0);
+			rows.filter((r) => r.agent_id === id).reduce((s, r) => s + r.total_tokens, 0);
 		expect(byAgent(agentId)).toBe(155); // 50 + 75 + 30
 		expect(byAgent(agent2Id)).toBe(120);
-		expect(body.data.total_cents).toBe(275);
+		expect(body.data.total_tokens).toBe(275);
 	});
 });
 
-describe('costs – group_by=day&breakdown=adapter', () => {
-	it('returns per-day spend split by AI adapter config', async () => {
+describe('usage – group_by=day&breakdown=adapter', () => {
+	it('returns per-day usage split by AI adapter config', async () => {
 		const res = await app.request(
-			`/api/projects/${projectSlug}/costs?group_by=day&breakdown=adapter`,
+			`/api/projects/${projectSlug}/usage?group_by=day&breakdown=adapter`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -255,7 +255,7 @@ describe('costs – group_by=day&breakdown=adapter', () => {
 		for (const r of rows) expect(r.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
 		const byConfig = (id: string | null) =>
-			rows.filter((r) => r.ai_provider_config_id === id).reduce((s, r) => s + r.total_cents, 0);
+			rows.filter((r) => r.ai_provider_config_id === id).reduce((s, r) => s + r.total_tokens, 0);
 		expect(byConfig(anthropicConfigId)).toBe(125); // 50 + 75
 		expect(byConfig(openaiConfigId)).toBe(120);
 		expect(byConfig(null)).toBe(30); // unattributed
@@ -263,46 +263,46 @@ describe('costs – group_by=day&breakdown=adapter', () => {
 		const anthropicRow = rows.find((r) => r.ai_provider_config_id === anthropicConfigId);
 		expect(anthropicRow.adapter_label).toBe('Anthropic Prod');
 		expect(anthropicRow.provider).toBe('anthropic');
-		expect(body.data.total_cents).toBe(275);
+		expect(body.data.total_tokens).toBe(275);
 	});
 });
 
-describe('costs – POST validation', () => {
+describe('usage – POST validation', () => {
 	it('returns 400 when member_id is missing', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/usage`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ amount_cents: 100 }),
+			body: JSON.stringify({ input_tokens: 100 }),
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('returns 400 when amount_cents is zero', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
+	it('returns 400 when input_tokens is zero', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/usage`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ member_id: agentId, amount_cents: 0 }),
+			body: JSON.stringify({ member_id: agentId, input_tokens: 0 }),
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('returns 400 when amount_cents is negative', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
+	it('returns 400 when input_tokens is negative', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/usage`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ member_id: agentId, amount_cents: -50 }),
+			body: JSON.stringify({ member_id: agentId, input_tokens: -50 }),
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('returns 400 when amount_cents is missing', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
+	it('returns 400 when input_tokens is missing', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/usage`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId }),

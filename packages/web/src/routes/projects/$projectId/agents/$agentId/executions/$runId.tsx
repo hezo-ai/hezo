@@ -3,9 +3,9 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { CostFigure } from '../../../../../../components/cost-figures';
 import { LogViewer } from '../../../../../../components/log-viewer';
 import { TerminateRunButton } from '../../../../../../components/terminate-run-button';
+import { TokenFigure } from '../../../../../../components/token-figure';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgent } from '../../../../../../hooks/use-agents';
@@ -189,13 +189,12 @@ function ExecutionDetailPage() {
 							<div className="rounded-lg border border-border-subtle bg-surface p-3">
 								<div className="text-[11px] text-text-3 uppercase tracking-wider mb-1">Usage</div>
 								<div className="flex items-baseline gap-2 flex-wrap">
-									{run.cost_cents != null && run.cost_cents > 0 && (
-										<CostFigure
-											cents={run.cost_cents}
-											billed={run.cost_billed}
+									{run.input_tokens + run.output_tokens > 0 && (
+										<TokenFigure
+											tokens={run.input_tokens + run.output_tokens}
 											approximate={run.usage_partial}
 											className="text-sm font-medium tabular-nums"
-											testId="run-cost"
+											testId="run-tokens"
 										/>
 									)}
 									<span className="text-xs text-text-3 whitespace-nowrap tabular-nums">
@@ -204,10 +203,10 @@ function ExecutionDetailPage() {
 										out tokens
 									</span>
 									{run.model && (
-										<Tooltip content={t('cost.pricedFrom', { model: run.model })}>
+										<Tooltip content={t('usage.model', { model: run.model })}>
 											<span
 												className="text-[11px] text-text-3 whitespace-nowrap"
-												data-testid="run-cost-model"
+												data-testid="run-model"
 											>
 												{run.model}
 											</span>

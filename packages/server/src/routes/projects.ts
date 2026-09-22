@@ -23,7 +23,7 @@ import {
 	broadcastProjectsChanged,
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
-import { budgetWindowsError } from '../lib/budget-validation';
+import { budgetWindowsError, retiredBudgetFieldError } from '../lib/budget-validation';
 import { buildContainerDeps } from '../lib/container-deps';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
@@ -131,11 +131,10 @@ projectsRoutes.get('/projects', async (c) => {
        (SELECT count(*) FROM member_agents ma2 JOIN members mm2 ON mm2.id = ma2.id
           WHERE mm2.team_id = p.team_id AND ma2.touches_code)::int
           AS code_agent_count,
-       -- Real spend only, so "today" on the project rail keeps meaning money.
-       (SELECT COALESCE(sum(ce.amount_cents), 0) FROM cost_entries ce
-          WHERE ce.project_id = p.id AND ce.billed
-            AND ce.created_at >= date_trunc('day', now()))::int
-          AS today_spend_cents,
+       (SELECT COALESCE(sum(ue.input_tokens + ue.output_tokens), 0) FROM usage_entries ue
+          WHERE ue.project_id = p.id
+            AND ue.created_at >= date_trunc('day', now()))::float8
+          AS today_tokens,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
@@ -571,11 +570,11 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await db.query<{
-		daily_budget_cents: number;
-		weekly_budget_cents: number;
-		monthly_budget_cents: number;
+		daily_budget_tokens: number;
+		weekly_budget_tokens: number;
+		monthly_budget_tokens: number;
 	}>(
-		`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
+		`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
 		 FROM projects WHERE id = $1 AND team_id = $2`,
 		[projectId, teamId],
 	);
@@ -588,10 +587,13 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		description?: string;
 		memory_limit_gib?: number | null;
 		container_disk_gb?: number | null;
-		daily_budget_cents?: number;
-		weekly_budget_cents?: number;
-		monthly_budget_cents?: number;
+		daily_budget_tokens?: number;
+		weekly_budget_tokens?: number;
+		monthly_budget_tokens?: number;
 	}>();
+
+	const retiredField = retiredBudgetFieldError(body);
+	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
 
 	const sets: string[] = [];
 	const params: unknown[] = [];
@@ -686,16 +688,16 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	// since a PATCH may touch only one window — enforces both per-field integer ≥ 0
 	// and the cross-window consistency rules (shared with the web forms).
 	const budgetColumns = [
-		'daily_budget_cents',
-		'weekly_budget_cents',
-		'monthly_budget_cents',
+		'daily_budget_tokens',
+		'weekly_budget_tokens',
+		'monthly_budget_tokens',
 	] as const;
 	if (budgetColumns.some((column) => body[column] !== undefined)) {
 		const current = existing.rows[0];
 		const merged = {
-			daily_budget_cents: body.daily_budget_cents ?? current.daily_budget_cents,
-			weekly_budget_cents: body.weekly_budget_cents ?? current.weekly_budget_cents,
-			monthly_budget_cents: body.monthly_budget_cents ?? current.monthly_budget_cents,
+			daily_budget_tokens: body.daily_budget_tokens ?? current.daily_budget_tokens,
+			weekly_budget_tokens: body.weekly_budget_tokens ?? current.weekly_budget_tokens,
+			monthly_budget_tokens: body.monthly_budget_tokens ?? current.monthly_budget_tokens,
 		};
 		const budgetError = budgetWindowsError(merged);
 		if (budgetError) {

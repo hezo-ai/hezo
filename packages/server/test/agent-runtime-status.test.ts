@@ -1,9 +1,10 @@
-import { AgentRuntimeStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { AgentRuntimeStatus, BudgetPeriod, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
+	BUDGET_PAUSED_COMMENT_KIND,
 	budgetPauseStatus,
 	pauseAgentForBudget,
 	reconcileBudgetPause,
@@ -18,6 +19,7 @@ let token: string;
 let teamId: string;
 let projectId: string;
 let agentId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -37,7 +39,7 @@ beforeAll(async () => {
 	const project = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json())
 		.data;
 	projectId = project.id;
-	const projectSlug = project.slug;
+	projectSlug = project.slug;
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
@@ -298,32 +300,42 @@ function captureWs(): { wsManager: any; rows: Array<Record<string, unknown>> } {
 
 describe('budget pause / resume', () => {
 	beforeEach(async () => {
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1 OR project_id = $2', [
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1 OR project_id = $2', [
 			agentId,
 			projectId,
 		]);
 		await db.query(
 			`UPDATE member_agents
 			 SET runtime_status = 'idle',
-			     daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0
+			     daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0
 			 WHERE id = $1`,
 			[agentId],
 		);
 		await db.query(
 			`UPDATE projects
-			 SET daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0
+			 SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0
 			 WHERE id = $1`,
 			[projectId],
 		);
 	});
 
 	it('maps a block scope to the matching out_of_*_budget status', () => {
-		expect(budgetPauseStatus({ scope: 'agent', period: 'daily' as any })).toBe(
-			AgentRuntimeStatus.OutOfAgentBudget,
-		);
-		expect(budgetPauseStatus({ scope: 'project', period: 'monthly' as any })).toBe(
-			AgentRuntimeStatus.OutOfProjectBudget,
-		);
+		expect(
+			budgetPauseStatus({
+				scope: 'agent',
+				period: BudgetPeriod.Daily,
+				usedTokens: 600,
+				limitTokens: 500,
+			}),
+		).toBe(AgentRuntimeStatus.OutOfAgentBudget);
+		expect(
+			budgetPauseStatus({
+				scope: 'project',
+				period: BudgetPeriod.Monthly,
+				usedTokens: 600,
+				limitTokens: 500,
+			}),
+		).toBe(AgentRuntimeStatus.OutOfProjectBudget);
 	});
 
 	it('pauses to the scoped budget state and broadcasts', async () => {
@@ -332,12 +344,52 @@ describe('budget pause / resume', () => {
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: 'daily' as any },
+			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
 			wsManager,
 		);
 		expect(await getStatus()).toBe(AgentRuntimeStatus.OutOfAgentBudget);
 		expect(rows).toHaveLength(1);
 		expect(rows[0].runtime_status).toBe(AgentRuntimeStatus.OutOfAgentBudget);
+	});
+
+	it('posts one @admin notice on the task the run was working, with the budget and usage', async () => {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: 'Budget pause notice',
+				description: 'x',
+				assignee_id: agentId,
+			}),
+		});
+		const taskId = (await taskRes.json()).data.id as string;
+		const block = {
+			scope: 'agent' as const,
+			period: BudgetPeriod.Weekly,
+			usedTokens: 1_200_000,
+			limitTokens: 1_000_000,
+		};
+		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId });
+		// Already paused: the second call changes nothing and posts nothing.
+		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId });
+
+		const notices = await db.query<{ id: string; content: Record<string, unknown> }>(
+			`SELECT id, content FROM task_comments WHERE task_id = $1 AND content->>'kind' = $2`,
+			[taskId, BUDGET_PAUSED_COMMENT_KIND],
+		);
+		expect(notices.rows).toHaveLength(1);
+		expect(notices.rows[0].content).toMatchObject({
+			scope: 'agent',
+			period: 'weekly',
+			used_tokens: 1_200_000,
+			limit_tokens: 1_000_000,
+		});
+		expect(notices.rows[0].content.text).toContain('1,000,000 tokens');
+		const mentions = await db.query<{ n: number }>(
+			'SELECT count(*)::int AS n FROM admin_mentions WHERE comment_id = $1',
+			[notices.rows[0].id],
+		);
+		expect(mentions.rows[0].n).toBeGreaterThan(0);
 	});
 
 	it('does not re-broadcast when already in the target budget state', async () => {
@@ -350,30 +402,30 @@ describe('budget pause / resume', () => {
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: 'monthly' as any },
+			{ scope: 'agent', period: BudgetPeriod.Monthly, usedTokens: 600, limitTokens: 500 },
 			wsManager,
 		);
 		expect(rows).toHaveLength(0);
 	});
 
 	it('resumes to idle once the window is back within budget', async () => {
-		// Over the daily cap, paused. Then the cap is lifted (cost cleared) and the
+		// Over the daily cap, paused. Then the usage is cleared and the
 		// sweep's reconcile must flip the agent back to idle so it can be scheduled.
-		await db.query('UPDATE member_agents SET daily_budget_cents = 500 WHERE id = $1', [agentId]);
+		await db.query('UPDATE member_agents SET daily_budget_tokens = 500 WHERE id = $1', [agentId]);
 		await db.query(
-			`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 600)`,
+			`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 600)`,
 			[agentId, projectId],
 		);
 		await pauseAgentForBudget(
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: 'daily' as any },
+			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
 			undefined,
 		);
 		expect(await getStatus()).toBe(AgentRuntimeStatus.OutOfAgentBudget);
 
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 		const { wsManager, rows } = captureWs();
 		const next = await reconcileBudgetPause(db, agentId, teamId, projectId, wsManager);
 		expect(next).toBe(AgentRuntimeStatus.Idle);
@@ -388,9 +440,9 @@ describe('budget pause / resume', () => {
 			"UPDATE member_agents SET runtime_status = 'out_of_agent_budget' WHERE id = $1",
 			[agentId],
 		);
-		await db.query('UPDATE projects SET monthly_budget_cents = 100 WHERE id = $1', [projectId]);
+		await db.query('UPDATE projects SET monthly_budget_tokens = 100 WHERE id = $1', [projectId]);
 		await db.query(
-			`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 200)`,
+			`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 200)`,
 			[agentId, projectId],
 		);
 
@@ -403,11 +455,11 @@ describe('budget pause / resume', () => {
 		// An idle (or active) agent is outside the budget-pause states, so reconcile
 		// must never touch it — even when it happens to be over budget.
 		await db.query(
-			"UPDATE member_agents SET runtime_status = 'idle', daily_budget_cents = 100 WHERE id = $1",
+			"UPDATE member_agents SET runtime_status = 'idle', daily_budget_tokens = 100 WHERE id = $1",
 			[agentId],
 		);
 		await db.query(
-			`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 250)`,
+			`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 250)`,
 			[agentId, projectId],
 		);
 		const next = await reconcileBudgetPause(db, agentId, teamId, projectId, undefined);

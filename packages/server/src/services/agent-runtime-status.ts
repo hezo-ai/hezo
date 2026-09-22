@@ -6,8 +6,12 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
+import { logger } from '../logger';
 import { checkOverBudget, type OverBudgetBlock } from './budget';
+import { postAdminNotice } from './comment-wakeups';
 import type { WebSocketManager } from './ws';
+
+const log = logger.child('agent-runtime-status');
 
 /** Postgres array literal of the budget-pause states, for `= ANY($n::…[])`. */
 const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
@@ -71,12 +75,16 @@ export function budgetPauseStatus(block: OverBudgetBlock): AgentRuntimeStatus {
 }
 
 /**
- * Reactively pause an agent for a budget trip — the single entry point shared by
- * the pre-run gate, post-run cost enforcement, and the manual cost-insert route,
- * so every window (daily/weekly/monthly) and scope (agent/project) pauses
+ * Reactively pause an agent for a budget trip - the single entry point shared by
+ * the pre-run gate, post-run usage enforcement, and the manual usage-insert
+ * route, so every window (daily/weekly/monthly) and scope (agent/project) pauses
  * identically. Sets the scoped `out_of_*_budget` status, writing only when the
  * status actually changes (so we don't churn broadcasts re-pausing an
  * already-paused agent).
+ *
+ * The pause is also a notice to the admin, on the task the agent was working
+ * when there is one: the budget, what was used and the window, in their inbox.
+ * Only the transition posts it, so a second trip into the same pause is silent.
  */
 export async function pauseAgentForBudget(
 	db: Db,
@@ -84,14 +92,15 @@ export async function pauseAgentForBudget(
 	teamId: string,
 	block: OverBudgetBlock,
 	wsManager: WebSocketManager | undefined,
+	context: { taskId: string | null } = { taskId: null },
 ): Promise<void> {
 	const status = budgetPauseStatus(block);
-	const res = await db.query<{ id: string }>(
+	const res = await db.query<{ id: string; slug: string }>(
 		`UPDATE member_agents
 		 SET runtime_status = $1::agent_runtime_status
 		 WHERE id = $2
 		   AND runtime_status IS DISTINCT FROM $1::agent_runtime_status
-		 RETURNING id`,
+		 RETURNING id, slug`,
 		[status, memberId],
 	);
 	if (res.rows.length === 0) return;
@@ -99,7 +108,28 @@ export async function pauseAgentForBudget(
 		id: memberId,
 		runtime_status: status,
 	});
+	if (!context.taskId) return;
+	const slug = res.rows[0].slug;
+	const whose = block.scope === 'project' ? "the project's" : `@${slug}'s`;
+	await postAdminNotice({
+		db,
+		teamId,
+		taskId: context.taskId,
+		content: {
+			kind: BUDGET_PAUSED_COMMENT_KIND,
+			agent_slug: slug,
+			scope: block.scope,
+			period: block.period,
+			used_tokens: block.usedTokens,
+			limit_tokens: block.limitTokens,
+			text: `@${slug} is paused: ${whose} ${block.period} budget of ${block.limitTokens.toLocaleString('en-US')} tokens is used up (${block.usedTokens.toLocaleString('en-US')} used). Raise the budget to let it run again before the window resets.`,
+		},
+		wsManager,
+	}).catch((e) => log.error(`Failed to post the budget pause notice for ${slug}:`, e));
 }
+
+/** The system comment kind that tells the admin an agent was paused by a budget. */
+export const BUDGET_PAUSED_COMMENT_KIND = 'budget_paused';
 
 /**
  * Re-evaluate a budget-paused agent against its current (rolling) spend and

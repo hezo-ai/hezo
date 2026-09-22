@@ -3,7 +3,7 @@ import {
 	ApprovalType,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 	isAgentEffort,
 	isReservedAgentSlug,
 } from '@hezo/shared';
@@ -29,9 +29,9 @@ export interface HireProposalInput {
 	reports_to?: string;
 	default_effort?: string;
 	heartbeat_interval_min?: number;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 	touches_code?: boolean;
 }
 
@@ -46,9 +46,9 @@ export interface HireProposalPayload {
 	reports_to: string | null;
 	default_effort: string;
 	heartbeat_interval_min: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
-	monthly_budget_cents: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	monthly_budget_tokens: number;
 	touches_code: boolean;
 }
 
@@ -91,9 +91,9 @@ export async function prepareHireProposal(
 	}
 
 	const budgetError = budgetWindowsError({
-		daily_budget_cents: input.daily_budget_cents ?? 0,
-		weekly_budget_cents: input.weekly_budget_cents ?? 0,
-		monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+		daily_budget_tokens: input.daily_budget_tokens ?? 0,
+		weekly_budget_tokens: input.weekly_budget_tokens ?? 0,
+		monthly_budget_tokens: input.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 	});
 	if (budgetError) return { error: budgetError };
 
@@ -154,9 +154,9 @@ export async function prepareHireProposal(
 			reports_to: reportsTo,
 			default_effort: input.default_effort ?? DEFAULT_EFFORT,
 			heartbeat_interval_min: input.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			daily_budget_cents: input.daily_budget_cents ?? 0,
-			weekly_budget_cents: input.weekly_budget_cents ?? 0,
-			monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+			daily_budget_tokens: input.daily_budget_tokens ?? 0,
+			weekly_budget_tokens: input.weekly_budget_tokens ?? 0,
+			monthly_budget_tokens: input.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 			touches_code: input.touches_code ?? false,
 		},
 	};
@@ -200,9 +200,9 @@ export interface HirePayloadPatchInput {
 	reports_to?: string | null;
 	default_effort?: string;
 	heartbeat_interval_min?: number;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 	touches_code?: boolean;
 }
 
@@ -220,11 +220,12 @@ export function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<stri
 	if (input.default_effort !== undefined) patch.default_effort = input.default_effort;
 	if (input.heartbeat_interval_min !== undefined)
 		patch.heartbeat_interval_min = input.heartbeat_interval_min;
-	if (input.daily_budget_cents !== undefined) patch.daily_budget_cents = input.daily_budget_cents;
-	if (input.weekly_budget_cents !== undefined)
-		patch.weekly_budget_cents = input.weekly_budget_cents;
-	if (input.monthly_budget_cents !== undefined)
-		patch.monthly_budget_cents = input.monthly_budget_cents;
+	if (input.daily_budget_tokens !== undefined)
+		patch.daily_budget_tokens = input.daily_budget_tokens;
+	if (input.weekly_budget_tokens !== undefined)
+		patch.weekly_budget_tokens = input.weekly_budget_tokens;
+	if (input.monthly_budget_tokens !== undefined)
+		patch.monthly_budget_tokens = input.monthly_budget_tokens;
 	if (input.touches_code !== undefined) patch.touches_code = input.touches_code;
 	return patch;
 }

@@ -96,7 +96,7 @@ runs, open **Settings → Storage → Database** (superuser only) and use **Comp
 logs**. Pick a window (for example, older than 30 days) and Hezo trims each of those runs'
 logs down to the part that still matters - the agent's end-of-run summary and outcome -
 while keeping the exact command that launched the run and clearly marking the log as
-compacted. Status, timing, token counts, and cost are untouched; runs newer than the window
+compacted. Status, timing and token counts are untouched; runs newer than the window
 are left alone.
 
 The card also shows your current **database size** and how much run logs are using, so you

@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 33,
+			"version": 34,
 			"roster_count": 10,
-			"latest_notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain and the Product Lead no longer carry their own copies of the rule. Comments, task descriptions, progress summaries and project docs read the same whoever wrote them; what a role is commissioned to produce still follows its own brief."
+			"latest_notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 24,
+			"version": 25,
 			"roster_count": 7,
-			"latest_notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain no longer carries its own copy of the rule. The register covers what an agent writes in Hezo - comments, task descriptions, progress summaries, project docs - and deliberately leaves content deliverables to the brand voice they are written for."
+			"latest_notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 25,
+			"version": 26,
 			"roster_count": 6,
-			"latest_notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain no longer carries its own copy of the rule. The register covers what an agent writes in Hezo - comments, task descriptions, progress summaries, project docs - and leaves the report itself to the format its brief specifies."
+			"latest_notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
 		}
 	]
 }

@@ -28,8 +28,8 @@ test('a run log links its container to that container’s page and states what i
 			const project = await seedProject(ws, { name: 'Container Meta Project' });
 			const task = await seedTask(ws, project, { title: 'Ship it', assignee_id: captain.id });
 			const run = await ctx.db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at, input_tokens, output_tokens, cost_cents)
-				 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now(), 10, 20, 1)
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at, input_tokens, output_tokens)
+				 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now(), 10, 20)
 				 RETURNING id`,
 				[captain.id, ws.team.id, task.id],
 			);

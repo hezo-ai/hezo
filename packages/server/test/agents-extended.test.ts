@@ -97,7 +97,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 				title: 'Payments Engineer',
 				role_description: 'Owns payments integration',
 				system_prompt: 'Draft prompt',
-				monthly_budget_cents: 7500,
+				monthly_budget_tokens: 7500,
 				heartbeat_interval_min: 90,
 			}),
 		});
@@ -118,7 +118,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		);
 		expect(created).toBeDefined();
 		expect(created.admin_status).toBe('enabled');
-		expect(created.monthly_budget_cents).toBe(7500);
+		expect(created.monthly_budget_tokens).toBe(7500);
 		expect(created.heartbeat_interval_min).toBe(90);
 		// Hire flow does not surface run_timeout_min; it falls back to the DB default.
 		expect(created.run_timeout_min).toBe(60);
@@ -397,7 +397,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 		const agent = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
 
 		const originalTitle = agent.title;
-		const originalBudget = agent.monthly_budget_cents;
+		const originalBudget = agent.monthly_budget_tokens;
 
 		const res = await app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
@@ -408,7 +408,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 		const body = await res.json();
 		expect(body.data.role_description).toBe('Updated role description for Architect');
 		expect(body.data.title).toBe(originalTitle);
-		expect(body.data.monthly_budget_cents).toBe(originalBudget);
+		expect(body.data.monthly_budget_tokens).toBe(originalBudget);
 	});
 
 	it('updates system_prompt and records a revision', async () => {

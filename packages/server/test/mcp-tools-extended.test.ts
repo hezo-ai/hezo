@@ -806,39 +806,44 @@ describe('MCP list_approvals / resolve_approval', () => {
 	});
 });
 
-describe('MCP get_costs grouping', () => {
+describe('MCP get_usage grouping', () => {
 	beforeAll(async () => {
 		await db.query(
-			`INSERT INTO cost_entries (project_id, member_id, amount_cents)
-			 VALUES ($1, $2, 150)`,
+			`INSERT INTO usage_entries (project_id, member_id, input_tokens, output_tokens)
+			 VALUES ($1, $2, 150, 50)`,
 			[projectId, agentId],
 		);
 	});
 
 	it('group_by=agent returns per-agent totals', async () => {
-		const rows = (await callTool('get_costs', {
+		const rows = (await callTool('get_usage', {
 			project: projectId,
 			group_by: 'agent',
-		})) as Array<{ member_id: string; total_cents: number }>;
-		expect(rows.some((r) => r.member_id === agentId && r.total_cents >= 150)).toBe(true);
+		})) as Array<{ member_id: string; total_tokens: number; output_tokens: number }>;
+		const mine = rows.find((r) => r.member_id === agentId);
+		expect(mine?.total_tokens).toBeGreaterThanOrEqual(200);
+		expect(mine?.output_tokens).toBeGreaterThanOrEqual(50);
 	});
 
 	it('group_by=day returns per-day totals', async () => {
 		const rows = (
-			(await callTool('get_costs', {
+			(await callTool('get_usage', {
 				project: projectId,
 				group_by: 'day',
-			})) as { items: Array<{ day: string; total_cents: number }> }
+			})) as { items: Array<{ day: string; total_tokens: number }> }
 		).items;
 		expect(rows.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('no grouping returns a single summary object', async () => {
-		const summary = (await callTool('get_costs', { project: projectId })) as {
-			total_cents: number;
+		const summary = (await callTool('get_usage', { project: projectId })) as {
+			input_tokens: number;
+			output_tokens: number;
+			total_tokens: number;
 			entry_count: number;
 		};
-		expect(summary.total_cents).toBeGreaterThanOrEqual(150);
+		expect(summary.total_tokens).toBe(summary.input_tokens + summary.output_tokens);
+		expect(summary.total_tokens).toBeGreaterThanOrEqual(200);
 		expect(summary.entry_count).toBeGreaterThanOrEqual(1);
 	});
 });
@@ -1593,7 +1598,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 		const revised = (await callToolAs(captain, 'update_hire_proposal', {
 			approval_id: created.approval_id,
 			role_description: 'Owns analytics and dashboards.',
-			monthly_budget_cents: 5000,
+			monthly_budget_tokens: 5000,
 		})) as { id?: string; payload?: Record<string, unknown>; error?: string };
 		expect(revised.error).toBeUndefined();
 		expect(revised.payload?.role_description).toBe('Owns analytics and dashboards.');

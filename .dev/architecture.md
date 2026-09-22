@@ -62,14 +62,14 @@ tree:
 packages/
 ├── server/   # Hono + PGlite + MCP backend; compiles to the binary (embeds web)
 ├── web/      # React frontend, bundled into the server binary at build time
-├── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+├── shared/   # Shared enums, types, crypto, budget math, mention parsing (@hezo/shared)
 └── ui/       # The primitives more than one app draws with (@hezo/ui)
 agents/       # Agent system-prompt markdown — the source of truth for seeded roles
 ```
 
 - **`packages/shared`** (`@hezo/shared`) is the home of every cross-cutting enum and
   type (`src/types/common.ts`), the provider→runtime maps, BIP39/HKDF crypto helpers,
-  budget/pricing math, and mention parsing. Add new status/type values here first —
+  budget math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
   dialog and confirmation, the button, input, textarea, toggle and password field, the
@@ -743,53 +743,56 @@ become separate conversations with no extra handling.
 
 ### Costs, budgets & container hours
 
-**Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
-the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
-per-model token rates from a single source: the pricepertoken.com MCP catalog
-(`get_all_models` over raw JSON-RPC), fetched at boot and daily by the job manager and
-upserted as `source='pricepertoken'`; a migration bakes a catalog snapshot into the
-table so a fresh instance prices runs before its first fetch, and `source='manual'`
-operator overrides win at lookup. The catalog carries no cache rates, so they are
-**derived from each row's own input rate** via `CACHE_RATE_MULTIPLIERS`
-(`services/pricing/pricepertoken.ts`), keyed by the catalog's `author_name`:
-Anthropic reads at 0.1x input and writes at 1.25x (the default 5-minute TTL).
-Deriving rather than baking absolute figures keeps cache rates correct when a base
-price moves and covers models released after the table ships. An author with no
-known multipliers keeps NULL rates and still bills cache traffic at the full input
-rate - a conservative upper bound, and the honest answer until that provider's
-multipliers are verified.
+**Usage & budgets.** `usage_entries` is the immutable per-run and per-chat-turn token ledger:
+`input_tokens` (cache included) and `output_tokens`, attributed to the member, task, project
+and the AI provider config that did the work - **never** team-scoped. Budgets count its sum,
+input plus output, for **every** run whatever its credential; Hezo holds no price list, so
+nothing depends on a rate it would have to guess. The old dollar path is gone with migration
+081: `model_pricing`, the pricing service and refresher, the `billed`/notional split, every
+`*_cents` column, and `jobs.pricingRefreshCron` (a config file still setting it is refused at
+startup by `REJECTED_KEYS`). It had two faults the token path cannot have: a subscription run
+was recorded as notional and reached no budget, and a model missing from the price list
+priced to $0, so an instance could spend a provider allowance with every budget reading zero.
 
-**The split behind a cost is persisted, not just priced.** Every parser normalizes its
-runtime's buckets to `CostTokens` before pricing, and `toRunUsage` (`agent-stream-parser.ts`)
-is the single place that turns those into an `AgentRunUsage`: it carries the buckets
-through on `usage.buckets` and derives `inputTokens` as their sum. Both halves land on
-`heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens` alongside the existing
-`input_tokens` - on the mid-run flush as well as at completion, so a run killed
-mid-flight keeps an auditable cost rather than a bare total. **Watch the two conventions:**
-`heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including cache, while
-`CostTokens.inputTokens` is the UNCACHED remainder, because that is the portion billed at
-the full rate. Deriving the total in one helper is what made Antigravity's reporting
-consistent with the rest: its buckets are disjoint, so reporting its stated `input_tokens`
-had been excluding cache reads from both the column and the log line, alone among the
-runtimes. Budgets are **windowed and computed on
-demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
-`projects` (0 = unlimited; there is **no team budget**), and spend is summed from
-`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
-mid-flight never reaches the run-completion cost record, so `reconcileOnStartup` charges
-its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
-interrupted run still counts against budgets.
+**The split behind a total is persisted.** Every parser normalizes its runtime's buckets to
+`TokenBuckets`, and `toRunUsage` (`agent-stream-parser.ts`) is the single place that turns those
+into an `AgentRunUsage`: it carries the buckets on `usage.buckets` and derives `inputTokens` as
+their sum. Both halves land on `heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens`
+alongside `input_tokens` - on the mid-run flush as well as at completion. **Watch the two
+conventions:** `heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including
+cache, while `TokenBuckets.inputTokens` is the UNCACHED remainder. `heartbeat_runs.model`
+records the model that did the work. Budgets are **windowed and computed on demand**: limits
+live as `daily_/weekly_/monthly_budget_tokens` on `member_agents` and `projects` (0 = unlimited;
+there is **no team budget**), and usage is summed from `usage_entries` over rolling UTC windows
+through `services/budget.ts` - no counter, no reset event (§ 5). The REST read is `/usage` and its
+tool twin `get_usage`; the grouped shapes are bounded by the roster or page by day, and the
+ungrouped read returns totals over every entry plus one keyset page of the entries themselves.
+A run killed mid-flight never
+reaches the completion record, so `reconcileOnStartup` counts its surviving token snapshot on
+reboot (shared `recordRunUsageAndEnforce`). Every budget pause that has a task posts a
+`budget_paused` notice through `postAdminNotice`, once per transition into the pause.
 
-**There is no mid-run *cost* ceiling, and that is a known gap.** Budgets are evaluated before
-dispatch and again at run completion, so a single run can overshoot its agent's whole daily
-cap by an unbounded margin; the overshoot is only discovered when its cost row lands, and
-what it clamps is the *next* run. A cost-denominated ceiling still needs a throttled read of
-the remaining window (`cost_entries` is only written at completion) and a token backstop,
-because the local providers price to $0 and a subscription prices to a figure nobody is
-billed for, so a cost-only ceiling would never fire on either.
+**Migration 081 converts, it never resets.** It prices the instance's last 30 days of runs
+from `model_pricing` with a frozen copy of the service's lookup, converts every non-zero dollar
+budget (agents, projects, custom agent types, team-type overrides, and the budgets inside hire
+approvals and their cards) at that tokens-per-cent rate, falling back to one million tokens per
+dollar with no priced history, rebuilds `usage_entries` from `heartbeat_runs` and `chat_messages`
+so the windows are right at the first dispatch, and records the conversions in `system_meta`.
+The first boot posts them as one `budget_conversion` notice on an unassigned HQ task, deleting
+the record in the same transaction. Built-in agent types are re-seeded every boot, so their
+token defaults come from `seed.ts`, not from the conversion. A request still sending a
+`*_budget_cents` field is refused with `retiredBudgetFieldError`, naming the replacement; an
+MCP tool call cannot be refused that way, since the SDK strips unknown keys before the handler.
 
-**What does bound a single run is `runs.maxToolCalls` (default 600), plus wall-clock
-`run_timeout_min`.** Tool calls rather than dollars because that is what actually grows the
-cost: every tool result stays in the conversation and is re-sent on the next call, so a run's
+**A run and a task each have a token ceiling.** `RUN_TOKEN_CEILING` (30M, `agent-runner.ts`)
+stops a run from `onChunk` the way the tool-call ceiling does, off the usage the runtime
+reports as it goes; a runtime that reports only at the end (Codex, and the file-recovered ones)
+is bounded by the task ceiling instead. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
+dispatch suppression: the tokens of every run on the task since a person last spoke, held for
+every agent until a person speaks, with one `task_token_ceiling` notice per hold.
+
+**What else bounds a single run is `runs.maxToolCalls` (default 600), plus wall-clock
+`run_timeout_min`.** Tool calls because they are what grows the tokens: every tool result stays in the conversation and is re-sent on the next call, so a run's
 token spend grows with the square of its length, and past a few hundred calls a run is mostly
 re-reading its own context. Enforced in `onChunk` off `parser.getToolCallTotal()` - the runner,
 not the MCP tool wrapper, because the tally counts *every* tool the runtime reports including
@@ -801,7 +804,7 @@ Every runtime's parser carries a tally, so there is no backend the ceiling silen
 **And what bounds a *task* is the attempt count**, since a ceiling or a timeout on its own just
 produces the next attempt. See the dispatch suppressions.
 
-**Container hours are metered separately from spend, and answer the other bill.**
+**Container hours are metered separately from tokens, and answer the other bill.**
 `container_uptime_entries` (migration 071) records **one row per running stretch**, not
 per container lifetime: a managed backend bills a started sandbox for vCPU + RAM + disk
 and a stopped one for reserved disk only, so a suspend/resume cycle is two rows with a
@@ -1382,8 +1385,8 @@ so a manual/already-set title is never clobbered) and broadcasts `ChatConversati
 title run is in flight per thread at a time (`ConversationRuntime.titling`); a new turn or a close
 preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it.
 
-**Chat spend is metered like a run's.** Every chat exec — the reply turn, compaction, the
-auto-title run — bills its parser usage to `cost_entries` via `recordRunCost` (member = the
+**Chat usage is metered like a run's.** Every chat exec — the reply turn, compaction, the
+auto-title run — records its parser usage in `usage_entries` via `recordUsage` (member = the
 session's agent, project = its project, `task_id` NULL, descriptions `Chat turn` /
 `Chat memory compaction` / `Chat auto-title`), broadcast to the team room so the Budget page
 refreshes live. `sendTurn` gates **before** the turn: the operator's message persists first
@@ -2553,8 +2556,8 @@ harmless while a queued chat turn is a person watching a spinner, so however bus
 tasks are, one container's worth of budget is always reachable by chat and never by
 them. Holding the lane back from task admission rather than excluding chat from the
 count keeps task-run capacity a **stable** number (opening the chat never silently
-shrinks the fleet mid-flight) and makes chat spend visible where every other spend is:
-the Hours tab, the memory arithmetic, `cost_entries`.
+shrinks the fleet mid-flight) and makes chat usage visible where every other usage is:
+the Hours tab, the memory arithmetic, `usage_entries`.
 
 **The lane is taken at the point of use, not baked into the default.** Subtracting a
 container's worth inside `computeDefaultMaxContainerMemoryGb` holds a lane only for an
@@ -3365,8 +3368,10 @@ session line carries `tools=N`. Codex's `thread.started` carries only a thread i
 Antigravity's `init` names no count, so their session lines omit the token entirely and the
 viewer hides the count rather than printing a zero nobody measured. Codex names no model
 anywhere in its stream either, so - exactly as for OpenCode - `createAgentStreamParser`
-seeds its parser with the run's own model as a pricing floor, without which every Codex run
-priced at $0. A model named on the stream still wins.
+seeds its parser with the run's own model as a floor, without which no Codex run could say
+which model did its work. A model named on the stream still wins. The file recovery does the
+same for a rollout too large to read whole: its tokens come from the tail, and its model from
+a separate `readHead` of the start, where a single-turn run names it once.
 
 The exec transport itself
 **retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
@@ -4154,8 +4159,8 @@ signal, and when the parser is built without a provider at all. That is the pred
 consumer, alongside the Stop-hook judge model and the subagent default. Filtering is
 line-oriented, so the wrapper buffers a partial stderr line until its newline, drains it in
 `flush()`, and releases it unfiltered past a 64 KiB ceiling rather than buffering without bound.
-Nothing else rests on the CLI's registry: run cost is priced from `model_pricing` over the
-reported token buckets, never from the CLI's own rate card.
+Nothing else rests on the CLI's registry: a run's usage is the token buckets it reports,
+never the CLI's own dollar estimate.
 
 The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
 for a provider a table row rather than a refactor.
@@ -4203,9 +4208,9 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
   only isolation mechanism available — there is no `--mcp-config`-style flag — and it is also
   what makes the session-log reads below possible.
-- **No token usage on stdout.** Like Grok, the `stream-json` stream carries none, so cost is
-  recovered post-run by `extractKimiUsageFromSessionLog` from the per-session `wire.jsonl`
-  under that home, then priced from `model_pricing` like every other runtime. The runner's
+- **No token usage on stdout.** Like Grok, the `stream-json` stream carries none, so usage
+  is recovered post-run by `extractKimiUsageFromSessionLog` from the per-session `wire.jsonl`
+  under that home. The runner's
   `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
   afterwards (each can carry the provider credential).
 
@@ -4224,8 +4229,8 @@ verification and the live model list (`resolveCatalogEndpoint`, branching on
 operator-supplied token stores the runner's sentinel (`ollama` / `lmstudio`) instead.
 `claudeCodeProviderUsesCustomEndpoint` returns true for them, so the Stop-hook judge and the
 Claude Code subagent default track the run's selected model — the only workable choice, since
-the models an operator has pulled are unknowable here. With no `model_pricing` rows, local
-runs price at `$0`, which for local inference is correct rather than the usual fail-low.
+the models an operator has pulled are unknowable here. Local runs count their tokens like any
+other, so budgets apply to them.
 
 ### Provider config & guided sign-in
 
@@ -4359,8 +4364,8 @@ Add dialog. It owns the lazy catalog fetch (`GET /api/ai-providers/:configId/mod
 on hover intent or on panel open, never on mount - a settings page with several rows would
 otherwise fire a live provider call per row) and builds the option list: the CLI-default
 fallback pinned first, then a stored model the provider no longer lists, then the catalog.
-Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`, so the
-pricing-override suggestions get the same order from the same place. The catalog is only
+Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`. The
+catalog is only
 listable against a stored credential, which is why the Add dialog asks for the model *after*
 the create rather than in the credential form; `POST /api/ai-providers` returns the created
 row (not just its id) so that step has the config without re-reading it.
@@ -4393,8 +4398,7 @@ flow verifies against, normalized by `parseProviderModels` in `@hezo/shared`). N
 is hardcoded. The call is server-initiated and goes **direct** (not through the agent egress
 proxy). Subscription-auth configs short-circuit with `SUBSCRIPTION_UNSUPPORTED` (their blob is
 not an API key the catalog endpoint accepts), and the pickers degrade to the CLI's default
-model; the pricing-override model-id field stays free-text but offers the aggregated live
-catalog as autocomplete suggestions.
+model.
 
 **Pinned starting model.** A newly created config does not start on `NULL`: the create route
 sets `default_model` from that provider's *pin* (`services/model-pins.ts`). A pin names a
@@ -6233,9 +6237,8 @@ it needed no migration.
 Three axes rather than one BCP-47 tag: field order and month language are independent (there
 is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
 (`@hezo/shared` › `i18n/format.ts`) builds dates field-by-field from a
-`Record<DateFormat, Descriptor>` table. Money is presentation-only - runs are always priced
-in USD - so `formatMoneyUsd` picks separators via a representative locale with
-`currencyDisplay: 'narrowSymbol'` and never converts.
+`Record<DateFormat, Descriptor>` table. `formatNumber` picks separators via a representative
+locale, and `formatCompactNumber` shortens a token count in the reader's language.
 
 The locale rides on the **public** `/api/status` payload, because every pre-auth screen
 renders in it before a credential exists (the boot-time status handler omits it - no DB is
@@ -6300,9 +6303,9 @@ goals over spend), then the heartbeat history. HQ (`is_internal`) omits the summ
 spend and heartbeat history. Query keys use the route-param slug; WebSocket invalidation
 covers the tables that feed each band.
 
-Spend reads `group_by=day` rather than the ungrouped form: it yields the sparkline series
-*and* `total_cents` in one request, where the ungrouped form returns every `cost_entries`
-row on the project to render one number.
+Usage reads `group_by=day` rather than the ungrouped form: it yields the sparkline series
+*and* `total_tokens` in one request, where the ungrouped form lists usage entries to render
+one number.
 
 The dashboard shows **no per-project container state**. A project does not own a container
 any more (see § Container pool), so `projects.container_status` names only whichever
@@ -6663,8 +6666,8 @@ port immediately, so requests can arrive before the app exists. Until `serverRea
 the entry delegates to `serveStartupRequest` (`startup-serving.ts`): browser navigations and
 static assets are served from the embedded SPA bundle, and `/api/status` answers **200** with
 `{ starting: true, phase, message, detail }` read from a boot-progress singleton
-(`startup-progress.ts`, advanced through `database → migrations → seed → pricing →
-workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
+(`startup-progress.ts`, advanced through `database → migrations → seed → asset-storage →
+sandbox → workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
 current phase and keeps polling, flipping to the master-key gate the moment boot finishes —
 so a browser that connects mid-boot never sees a raw JSON error. Other API/MCP/WebSocket
 surfaces still get a JSON **503 STARTING** so machine clients retry; `/health` always answers 200.
@@ -7065,7 +7068,7 @@ input/output token sums over the last 24h, and the per-provider run mix — plus
 `os`/`arch`. It carries a random per-install id persisted in `system_meta.instance_id`
 (generated lazily via `getOrCreateInstanceId`, `ON CONFLICT DO NOTHING` so it is stable). It
 deliberately excludes every name, prompt/content field, repo detail, user identity, and any
-`cost_cents`/monetary figure. The `JobManager` `telemetry` cron (`jobs.telemetryCron`, default
+usage or monetary figure. The `JobManager` `telemetry` cron (`jobs.telemetryCron`, default
 `0 0 5 * * *`) is registered only when `config.telemetry.enabled` (opt-out — on by default,
 disabled by `--disable-telemetry` / `telemetry.enabled: false`). `reportTelemetry` POSTs the JSON
 to `config.telemetry.endpoint` (default `https://hezo.ai/api/telemetry`) with a direct `fetch` +

@@ -44,6 +44,21 @@ export const CONVERSATIONAL_SOURCES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * SQL for when a person last spoke on a task: a comment they wrote, or a choice
+ * they made on a card. The second stamps `chosen_at` on the card's own row,
+ * usually an agent's, so reading authorship alone would miss it. NULL when no
+ * person has spoken. Read through `idx_comments_task_created`.
+ */
+export function personSpokeAtSql(taskParam: string): string {
+	return `(SELECT max(GREATEST(
+	           CASE WHEN c.author_user_id IS NOT NULL THEN c.created_at END,
+	           c.chosen_at))
+	    FROM task_comments c
+	   WHERE c.task_id = ${taskParam}
+	     AND (c.author_user_id IS NOT NULL OR c.chosen_at IS NOT NULL))`;
+}
+
+/**
  * Does this wakeup skip every dispatch suppression in this module?
  *
  * Yes for an operator override ("Run now", Retry), which stamps `triggered_by`
@@ -72,23 +87,14 @@ export async function dispatchSuppressionExempt(
 	if (!CONVERSATIONAL_SOURCES.has(source) || !taskId) return true;
 
 	const r = await db.query<{ exempt: boolean }>(
-		`WITH last_run AS (
-		   SELECT max(started_at) AS at FROM heartbeat_runs
-		    WHERE task_id = $2 AND member_id = $1
-		 )
-		 SELECT (
+		`SELECT (
 		   NOT EXISTS (
 		     SELECT 1 FROM agent_wakeup_requests w
 		      WHERE w.id = $3 AND w.created_by_run_id IS NOT NULL
 		   )
-		   OR EXISTS (
-		     SELECT 1 FROM task_comments c CROSS JOIN last_run lr
-		      WHERE c.task_id = $2
-		        AND (
-		          (c.author_user_id IS NOT NULL AND (lr.at IS NULL OR c.created_at > lr.at))
-		          OR (c.chosen_at IS NOT NULL AND (lr.at IS NULL OR c.chosen_at > lr.at))
-		        )
-		   )
+		   OR ${personSpokeAtSql('$2')} > COALESCE(
+		        (SELECT max(started_at) FROM heartbeat_runs WHERE task_id = $2 AND member_id = $1),
+		        '-infinity')
 		 ) AS exempt`,
 		[memberId, taskId, wakeupId ?? null],
 	);
@@ -400,14 +406,7 @@ export async function retrospectiveHoldActive(
 		 )
 		 SELECT (
 		   f.at IS NOT NULL
-		   AND NOT EXISTS (
-		     SELECT 1 FROM task_comments h
-		      WHERE h.task_id = $1
-		        AND (
-		          (h.author_user_id IS NOT NULL AND h.created_at > f.at)
-		          OR (h.chosen_at IS NOT NULL AND h.chosen_at > f.at)
-		        )
-		   )
+		   AND COALESCE(${personSpokeAtSql('$1')} <= f.at, true)
 		 ) AS held
 		 FROM finding f`,
 		[taskId, HeartbeatRunKind.Retrospective],
@@ -480,14 +479,7 @@ export async function handoffRoundsExhausted(
 		agent_slugs: string[] | null;
 		notified: boolean;
 	}>(
-		`WITH person AS (
-		   SELECT max(GREATEST(
-		            CASE WHEN c.author_user_id IS NOT NULL THEN c.created_at END,
-		            c.chosen_at)) AS at
-		     FROM task_comments c
-		    WHERE c.task_id = $1
-		      AND (c.author_user_id IS NOT NULL OR c.chosen_at IS NOT NULL)
-		 ),
+		`WITH person AS (SELECT ${personSpokeAtSql('$1')} AS at),
 		 recent AS (
 		   SELECT r.wakeup_id, r.member_id, r.started_at,
 		          r.input_tokens + r.output_tokens AS tokens,
@@ -515,13 +507,7 @@ export async function handoffRoundsExhausted(
 		 SELECT count(DISTINCT ch.wakeup_id) AS rounds,
 		        COALESCE(sum(ch.tokens), 0) AS tokens,
 		        array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL) AS agent_slugs,
-		        EXISTS (
-		          SELECT 1 FROM task_comments n
-		           WHERE n.task_id = $1
-		             AND n.content_type = 'system'::comment_content_type
-		             AND n.content->>'kind' = $5
-		             AND n.created_at > (SELECT max(started_at) FROM chain)
-		        ) AS notified
+		        ${noticePostedSinceSql('$1', '$5', '(SELECT max(started_at) FROM chain)')} AS notified
 		   FROM chain ch
 		   LEFT JOIN member_agents ma ON ma.id = ch.member_id`,
 		[
@@ -540,5 +526,98 @@ export async function handoffRoundsExhausted(
 		tokens: Number(row.tokens),
 		agentSlugs: row.agent_slugs ?? [],
 		notified: row.notified,
+	};
+}
+
+/** SQL: whether a system notice of `kindParam` was posted on the task after `sinceExpr`. */
+function noticePostedSinceSql(taskParam: string, kindParam: string, sinceExpr: string): string {
+	return `EXISTS (
+	   SELECT 1 FROM task_comments n
+	    WHERE n.task_id = ${taskParam}
+	      AND n.content_type = 'system'::comment_content_type
+	      AND n.content->>'kind' = ${kindParam}
+	      AND n.created_at > ${sinceExpr})`;
+}
+
+/** The notice a task held by the handoff limit carries, for `postAdminNotice`. */
+export function handoffLimitNotice(
+	h: HandoffRounds,
+): { kind: string; text: string } & Record<string, unknown> {
+	const agents = h.agentSlugs.map((slug) => `@${slug}`).join(', ');
+	return {
+		kind: HANDOFF_LIMIT_COMMENT_KIND,
+		rounds: h.rounds,
+		tokens: h.tokens,
+		agent_slugs: h.agentSlugs,
+		text: `${agents} handed this task to each other ${h.rounds} times in a row, using ${h.tokens.toLocaleString('en-US')} tokens. No agent will run on it until a person replies.`,
+	};
+}
+
+/**
+ * The most tokens agents may spend on one task - input with cached input, plus
+ * output, across every run - before a person must say to carry on.
+ *
+ * 100 million, from eleven days of production runs: it would have held the
+ * two-agent loop at its eleventh run instead of its forty-sixth. Finished tasks
+ * reached up to 100 million there, so the largest of them would have asked once
+ * near its end.
+ */
+export const TASK_TOKEN_CEILING = 100_000_000;
+
+/** The system comment kind that tells the admin a task reached its token ceiling. */
+export const TASK_TOKEN_CEILING_COMMENT_KIND = 'task_token_ceiling';
+
+/** A task held by {@link taskTokenCeilingReached}, as the notice to the admin states it. */
+export interface TaskTokenUsage {
+	/** Tokens its runs used since a person last spoke on it. */
+	tokens: number;
+	/** Whether the task already carries a notice for this hold. */
+	notified: boolean;
+}
+
+/**
+ * Have agents spent more on this task than anyone agreed to, with nobody asked?
+ *
+ * Sums the tokens of every run on the task that started after a person last
+ * spoke on it. At {@link TASK_TOKEN_CEILING} the task is held for every agent
+ * and every non-exempt source until a person speaks, and that reply grants a
+ * fresh ceiling - the count starts again from it. A bound on total work rather
+ * than on a shape of it, so it holds whatever the loop looks like: a handoff
+ * chain broken by a heartbeat, one agent re-running itself, a review that never
+ * converges.
+ *
+ * Returns the usage when the task is held, and null otherwise. One round trip,
+ * reading runs through `idx_runs_task_started`.
+ */
+export async function taskTokenCeilingReached(
+	db: Db,
+	taskId: string | null | undefined,
+	exempt: boolean,
+): Promise<TaskTokenUsage | null> {
+	if (!taskId || exempt) return null;
+	const r = await db.query<{ tokens: number; notified: boolean }>(
+		`WITH person AS (SELECT ${personSpokeAtSql('$1')} AS at)
+		 SELECT COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
+		        ${noticePostedSinceSql('$1', '$2', "COALESCE((SELECT at FROM person), '-infinity')")} AS notified
+		   FROM heartbeat_runs r CROSS JOIN person p
+		  WHERE r.task_id = $1
+		    AND r.started_at IS NOT NULL
+		    AND (p.at IS NULL OR r.started_at > p.at)`,
+		[taskId, TASK_TOKEN_CEILING_COMMENT_KIND],
+	);
+	const row = r.rows[0];
+	if (!row || row.tokens < TASK_TOKEN_CEILING) return null;
+	return { tokens: row.tokens, notified: row.notified };
+}
+
+/** The notice a task held by its token ceiling carries, for `postAdminNotice`. */
+export function taskTokenCeilingNotice(
+	u: TaskTokenUsage,
+): { kind: string; text: string } & Record<string, unknown> {
+	return {
+		kind: TASK_TOKEN_CEILING_COMMENT_KIND,
+		tokens: u.tokens,
+		ceiling: TASK_TOKEN_CEILING,
+		text: `Agents have used ${u.tokens.toLocaleString('en-US')} tokens on this task since a person last replied, past its ceiling of ${TASK_TOKEN_CEILING.toLocaleString('en-US')}. No agent will run on it until a person replies.`,
 	};
 }

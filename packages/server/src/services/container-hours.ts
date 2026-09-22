@@ -162,7 +162,7 @@ export async function containerHoursSeries(
  * The instance-wide series split by project, for the stacked chart.
  *
  * A deleted project's hours survive as a null `project_id` (the FK is ON DELETE
- * SET NULL, mirroring `cost_entries`) and are reported under one "Deleted
+ * SET NULL, mirroring `usage_entries`) and are reported under one "Deleted
  * projects" heading rather than dropped - they were billed either way, and
  * silently losing them makes the chart disagree with the invoice.
  */

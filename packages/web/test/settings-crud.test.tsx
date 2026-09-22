@@ -68,10 +68,8 @@ test('general section displays team info', async () => {
 	await within(general).findByText(team.name);
 	await within(general).findByText('Build great things');
 
-	// The Budget section says how token costs are priced. No longer a
-	// conservative-estimate disclosure: cache traffic has its own rates now, so
-	// the figure is the figure.
-	await findByText(/cache reads and writes at their own rates/);
+	// The Budget section says what a budget counts.
+	await findByText(/input, cached input included, plus output/);
 });
 
 test('automations section exposes the wake-mentioner toggle and persists the change', async () => {

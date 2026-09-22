@@ -239,7 +239,7 @@ export const kimiAdapter: RuntimeAdapter = {
 		if (key === 'KIMI_MODEL_MAX_CONTEXT_SIZE') return String(kimiModelContextSize(ctx.runModel));
 		return value;
 	},
-	async recoverUsage({ files, price, onError }) {
+	async recoverUsage({ files, onError }) {
 		const logPaths = await files.findByName(
 			'sessions',
 			KIMI_SESSION_LOG_BASENAME,
@@ -251,7 +251,7 @@ export const kimiAdapter: RuntimeAdapter = {
 			// Concatenating tolerates a resumed or sub-agent session without
 			// double-counting: the extractor dedupes by record identity, not by file.
 			const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
-			return extractKimiUsageFromSessionLog(contents, price);
+			return extractKimiUsageFromSessionLog(contents);
 		} catch (e) {
 			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
 			return null;

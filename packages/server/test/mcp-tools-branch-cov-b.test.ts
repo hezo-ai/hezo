@@ -217,11 +217,11 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 		const r = (await call(at, 'update_hire_proposal', {
 			approval_id: approvalId,
 			reports_to: 'engineer',
-			monthly_budget_cents: 12300,
+			monthly_budget_tokens: 12300,
 			touches_code: true,
 		})) as { payload: Record<string, unknown> };
 		expect(r.payload.reports_to).toBe('engineer');
-		expect(r.payload.monthly_budget_cents).toBe(12300);
+		expect(r.payload.monthly_budget_tokens).toBe(12300);
 	});
 });
 

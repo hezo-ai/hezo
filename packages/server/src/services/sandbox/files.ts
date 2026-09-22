@@ -58,6 +58,12 @@ export function dropPartialFirstLine(text: string): string {
 	return nl === -1 ? '' : text.slice(nl + 1);
 }
 
+/** The head-read counterpart: a read that stops mid-line keeps only whole lines. */
+export function dropPartialLastLine(text: string): string {
+	const nl = text.lastIndexOf('\n');
+	return nl === -1 ? '' : text.slice(0, nl + 1);
+}
+
 /** Does `name` satisfy `match`? */
 export function matchesName(name: string, match: NameMatch): boolean {
 	if (typeof match === 'string') return name === match;
@@ -118,6 +124,15 @@ export interface SandboxFiles {
 	 * `maxBytes` comes back whole, with no line dropped.
 	 */
 	readTail(relPath: string, maxBytes: number): Promise<string>;
+	/**
+	 * The first `maxBytes` of a file, decoded as UTF-8, ending at a line boundary.
+	 *
+	 * For what a large file states once at its start and never again, such as
+	 * the model a session opened on. The last partial line is dropped for the
+	 * reason {@link readTail} drops its first one. A file shorter than `maxBytes`
+	 * comes back whole.
+	 */
+	readHead(relPath: string, maxBytes: number): Promise<string>;
 	/**
 	 * Write a whole file, creating its parent directories.
 	 *
@@ -247,6 +262,18 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 				const buf = Buffer.alloc(maxBytes);
 				readSync(fd, buf, 0, maxBytes, total - maxBytes);
 				return dropPartialFirstLine(buf.toString('utf8'));
+			} finally {
+				closeSync(fd);
+			}
+		},
+		readHead: async (relPath, maxBytes) => {
+			const full = resolveWithin(hostRoot, relPath);
+			if (statSync(full).size <= maxBytes) return readFileSync(full, 'utf8');
+			const fd = openSync(full, 'r');
+			try {
+				const buf = Buffer.alloc(maxBytes);
+				readSync(fd, buf, 0, maxBytes, 0);
+				return dropPartialLastLine(buf.toString('utf8'));
 			} finally {
 				closeSync(fd);
 			}

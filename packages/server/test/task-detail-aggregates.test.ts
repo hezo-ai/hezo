@@ -59,7 +59,7 @@ async function getTask(taskId: string) {
 	return (await res.json()).data;
 }
 
-it('aggregates run count, finished-run duration and cost onto the task detail', async () => {
+it('aggregates run count, finished-run duration and tokens onto the task detail', async () => {
 	const taskId = await createTask('Aggregate me', agentId);
 
 	// Two finished runs (120s + 41s of wall-clock) plus a queued run that never
@@ -71,25 +71,25 @@ it('aggregates run count, finished-run duration and cost onto the task detail', 
 		        ($1,$2,$3,'queued'::heartbeat_run_status,NULL,NULL)`,
 		[agentId, teamId, taskId],
 	);
-	// Two cost entries totalling $2.97 (cost_entries lost its team dimension in 004).
+	// Two usage entries, input and output both counted.
 	await db.query(
-		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents)
-		 VALUES ($1,$2,$3,186),($1,$2,$3,111)`,
+		`INSERT INTO usage_entries (member_id, task_id, project_id, input_tokens, output_tokens)
+		 VALUES ($1,$2,$3,186,14),($1,$2,$3,111,0)`,
 		[agentId, taskId, projectId],
 	);
 
 	const task = await getTask(taskId);
 	expect(task.run_count).toBe(2);
 	expect(task.total_duration_seconds).toBe(161);
-	expect(task.total_cost_cents).toBe(297);
+	expect(task.total_tokens).toBe(311);
 	expect(task.assignee_slug).toBe(agentSlug);
 });
 
-it('returns zeroed aggregates for a task with no runs or costs', async () => {
+it('returns zeroed aggregates for a task with no runs or usage', async () => {
 	const taskId = await createTask('Fresh task', agentId);
 	const task = await getTask(taskId);
 	expect(task.run_count).toBe(0);
 	expect(task.total_duration_seconds).toBe(0);
-	expect(task.total_cost_cents).toBe(0);
+	expect(task.total_tokens).toBe(0);
 	expect(task.assignee_slug).toBe(agentSlug);
 });

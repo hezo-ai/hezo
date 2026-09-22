@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { AlertTriangle } from 'lucide-react';
-import { useBudgetStatus } from '../hooks/use-costs';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
+import { useBudgetStatus } from '../hooks/use-usage';
 import { bannerInnerClass } from '../lib/banner-classes';
 
 const BANNER_OUTER = 'sticky top-0 z-30 bg-surface';
@@ -9,7 +9,7 @@ const BANNER_OUTER = 'sticky top-0 z-30 bg-surface';
 /**
  * Warns at the top of a project when the project or one or more of its agents has
  * exceeded a budget window. Links to the Budgets page. Paused agents resume only
- * once spend falls back under the limit (the next window) or limits are raised.
+ * once usage falls back under the limit (the next window) or limits are raised.
  */
 export function BudgetBanner({ projectId }: { projectId: string }) {
 	const { data: status } = useBudgetStatus(projectId);

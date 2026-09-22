@@ -2,7 +2,7 @@
 
 How a run is stopped, judged and made to deliver what it promised: the completeness judge and
 its per-runtime wiring, the deterministic handoff-delivery net, the two structural signals
-that need no vocabulary, prompt delivery, and how a run's cost is recovered. For the
+that need no vocabulary, prompt delivery, and how a run's usage is recovered. For the
 architectural view see `architecture.md` § 6; the rules that bind before you get here are in
 `AGENTS.md` § *AI runtime hooks*.
 
@@ -34,7 +34,7 @@ Wiring lives in `services/runtime-adapters/<runtime>.ts`, specs in `JUDGE_SPECS`
 
 **When this area needs strengthening again, reach for a structural signal before a phrase.** A new regex branch is the last resort, not the first: prefer reporting what the system did (the receipt), or asking a question answerable from its own state (the exit check). If a phrase genuinely is needed, it belongs as one row in whichever shared vocabulary already covers it — `DIRECTED_ASK_RES` for an ask, every gate in `lib/mentions.ts` reading it; `RUNTIME_ERROR_FAMILIES` for a provider's own failure text, all six stream parsers reading it — never as a new positional branch on a detector.
 
-A newly selected judge model needs a `model_pricing` row or its runs price to $0. For the file-mount subscription provider (Codex) the helper script has no API key and fails open silently. **Anthropic subscription is the exception** — it runs via `CLAUDE_CODE_OAUTH_TOKEN`, so the native prompt judge still fires.
+For the file-mount subscription provider (Codex) the judge helper script has no API key and fails open silently. **Anthropic subscription is the exception** — it runs via `CLAUDE_CODE_OAUTH_TOKEN`, so the native prompt judge still fires.
 
 A runtime is reachable by any credential configured onto it, not only by the providers that *default* to it (`ai_provider_configs.runtime` — see the provider-runtime rule in **Mirrored surfaces**). So a Moonshot credential reaches Claude Code or Kimi Code depending on the operator's choice, and anything deciding judge behaviour from the provider must take the **resolved** runtime — `claudeCodeProviderUsesCustomEndpoint` and `judgeModelForProvider` both accept it for exactly this reason.
 
@@ -52,22 +52,22 @@ A runtime is reachable by any credential configured onto it, not only by the pro
 
 **`RUNTIME_SYSTEM_PROMPT_FILE`** names, per runtime, an instructions file inside the per-run home that the CLI auto-loads; when set, the resolved system prompt is written there by that runtime's MCP injector and the prompt carries the task body alone. Only Kimi Code uses it (`$KIMI_CODE_HOME/AGENTS.md`), because it is the only runtime with no file or stdin route for the prompt. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
 
-## Recovering usage and cost
+## Recovering usage
 
-Per-run cost is computed in `agent-stream-parser.ts` **always** from the `model_pricing` table (`price()` via `PricingService`), using the token buckets each runtime reports (regular input, cache read, cache creation, output). Runtimes' own dollar figures (`total_cost_usd` and similar) are **ignored in every parser** — they are client-side estimates from the CLI's built-in rate card, which for third-party Anthropic-compatible endpoints belongs to the wrong provider entirely. The CLIs' only job in cost accounting is accurate token counts. An unknown model prices to $0 — fail-low, never fail-high. The local providers (Ollama, LM Studio) have no pricing rows by design; $0 is correct there.
+A run's usage is the token buckets each runtime reports (regular input, cache read, cache creation, output), normalized in `agent-stream-parser.ts`. Budgets count input (cache included) plus output for every run; Hezo holds no price list. Runtimes' own dollar figures (`total_cost_usd` and similar) are **ignored in every parser** — they are client-side estimates from the CLI's built-in rate card, which for third-party Anthropic-compatible endpoints belongs to the wrong provider entirely. The CLIs' only job here is accurate token counts.
 
 **Grok, Kimi Code and Codex report no usable token usage on stdout**, so the runner recovers it from a file in the per-run home and **scrubs that file after parsing** — each can carry the provider credential, and a Codex rollout is the whole verbatim transcript. Everything downstream is identical to any other runtime.
 
-**Recovery runs on the failure path too, not only on a clean exit.** It used to be called once, after a successful exec, so a run of any of these three killed by the wall clock, a cancel or a handback recorded zero tokens for work that really happened — twelve such runs on one instance made 2,927 tool calls between them and were all accounted as $0. The call is memoised, because it scrubs what it reads, and the abort path flags what it writes as `usage_partial`.
+**Recovery runs on the failure path too, not only on a clean exit.** It used to be called once, after a successful exec, so a run of any of these three killed by the wall clock, a cancel or a handback recorded zero tokens for work that really happened — twelve such runs on one instance made 2,927 tool calls between them and were all accounted as nothing. The call is memoised, because it scrubs what it reads, and the abort path flags what it writes as `usage_partial`.
 
-**Codex is also where the run's model comes from.** Its `exec --json` stream names no model anywhere, and a subscription credential is given no `default_model` by design, so those runs priced at $0 with no warning at all. The rollout's `turn_context` names the model per turn.
+**Codex is also where the run's model comes from.** Its `exec --json` stream names no model anywhere, and a subscription credential is given no `default_model` by design. The rollout's `turn_context` names the model once per turn.
 
-Rules for that parsing, each a trap that otherwise prices runs silently wrong:
+Rules for that parsing, each a trap that otherwise counts runs silently wrong:
 
 - **Dedup by request id** where the log has one — Grok's and Kimi's repeat records per turn. **Codex's `token_count` carries no id**, so the cumulative rule below is what saves it.
 - **Cumulative vs turn-scoped.** Where a log carries session-scoped totals, sum the turn-scoped records when they exist and otherwise take the *last* session record — never the sum. Codex re-emits `token_count` more often than there are requests: on a real 1,105-record session, summing the per-request deltas gave 144,209,906 against a true 140,210,822. For per-model attribution, difference *consecutive cumulative* records — they telescope back to the last total exactly — and clamp at zero, so a fork or compaction costs one segment instead of going negative.
-- **Know whether the input bucket already excludes cache.** Kimi's does, so unlike Codex/Grok the cached portion is **not** subtracted out. Codex's includes *both* cache buckets. Probe field names in both camelCase and snake_case: upstream ships two engine generations with duplicated logging paths, and a spelling change would price every run at $0.
-- **Reasoning is inside output, never beside it.** Codex reports `reasoning_output_tokens` as a subset of `output_tokens` — its own `total_tokens` is input + output with reasoning already counted. Adding the two inflated the bucket that prices highest, by 42% on a real session.
-- **These files are enormous** — the largest rollout observed locally was 232 MB. Read the tail (`SandboxFiles.readTail`), never the whole file: the figures wanted are cumulative and the model is restated per turn, so a bounded tail carries everything, while a whole-file read at ten concurrent runs is an out-of-memory fault rather than a slow path.
+- **Know whether the input bucket already excludes cache.** Kimi's does, so unlike Codex/Grok the cached portion is **not** subtracted out. Codex's includes *both* cache buckets. Probe field names in both camelCase and snake_case: upstream ships two engine generations with duplicated logging paths, and a spelling change would record no usage for any run.
+- **Reasoning is inside output, never beside it.** Codex reports `reasoning_output_tokens` as a subset of `output_tokens` — its own `total_tokens` is input + output with reasoning already counted. Adding the two inflated the output bucket by 42% on a real session.
+- **These files are enormous** — the largest rollout observed locally was 232 MB. Read the tail (`SandboxFiles.readTail`), never the whole file: the token figures are cumulative, so a bounded tail carries them, while a whole-file read at ten concurrent runs is an out-of-memory fault rather than a slow path. **The tail does not carry the model.** `turn_context` is restated per turn, not per request, and a single-turn run writes its only one about 140 KB in, so a rollout past the tail budget recorded no model. Read the head too (`SandboxFiles.readHead`, `codexRolloutModel`) and seed the parse with it.
 - **`codex exec --ephemeral`** would leave no rollout and silently disable all of this. Hezo does not pass it.
 

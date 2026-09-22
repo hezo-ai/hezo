@@ -13,7 +13,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
-import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import { RUN_TOKEN_CEILING, type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
@@ -309,33 +309,72 @@ describe('run timeout classification (runAgent)', () => {
 		expect(run.rows[0].error ?? '').not.toContain('tool-call ceiling');
 	});
 
-	it('says so in the run log when a run burned tokens and still priced at $0', async () => {
-		// The two cases this makes visible are otherwise indistinguishable from a
-		// genuinely free run: a runtime that named no model, and a model the pricing
-		// table has never heard of. Both leave the spend page empty while the
-		// allowance drains, and the server-log warning is not somewhere an operator
-		// looks. No pricing service is wired into these deps, so every model misses.
+	/** A Claude Code assistant turn reporting the tokens it used. */
+	const turnUsing = (inputTokens: number) =>
+		`${JSON.stringify({
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				usage: { input_tokens: inputTokens, output_tokens: 0 },
+				content: [{ type: 'text', text: 'working' }],
+			},
+		})}\n`;
+
+	it('stops a run whose tokens cross the per-run ceiling, and fails it', async () => {
+		// Counted from the running usage the runtime streams, so the stop lands
+		// mid-run rather than after the run has finished spending.
+		const turns = 10;
+		const perTurn = Math.ceil(RUN_TOKEN_CEILING / (turns - 2));
+		let turnsSent = 0;
 		const deps = makeDeps({
-			execStart: async (_execId: string, opts?: { onChunk?: (c: any) => void | Promise<void> }) => {
-				await opts?.onChunk?.({
-					stream: 'stdout',
-					text: `${JSON.stringify({
-						type: 'result',
-						usage: { input_tokens: 5000, output_tokens: 400 },
-					})}\n`,
-				});
+			execStart: async (
+				_execId: string,
+				opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+			) => {
+				for (let i = 0; i < turns; i++) {
+					await opts?.onChunk?.({ stream: 'stdout', text: turnUsing(perTurn) });
+					turnsSent++;
+					if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+				}
 				return { stdout: '', stderr: '' };
 			},
 		});
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
 
-		const log = await db.query<{ content: string }>(
-			`SELECT string_agg(content, '' ORDER BY seq) AS content
-			 FROM heartbeat_run_log_chunks WHERE run_id = $1`,
+		expect(turnsSent).toBe(turns - 2);
+		expect(result.timedOut).toBeFalsy();
+		const run = await db.query<{ status: string; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
 			[result.heartbeatRunId],
 		);
-		expect(log.rows[0]?.content ?? '').toContain('priced at $0');
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].error).toContain(
+			`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
+		);
+	});
+
+	it('leaves a run under the token ceiling alone', async () => {
+		let aborted = false;
+		const deps = makeDeps({
+			execStart: async (
+				_execId: string,
+				opts?: { onChunk?: (c: any) => void | Promise<void>; signal?: AbortSignal },
+			) => {
+				await opts?.onChunk?.({ stream: 'stdout', text: turnUsing(RUN_TOKEN_CEILING - 1) });
+				if (opts?.signal?.aborted) aborted = true;
+				return { stdout: '', stderr: '' };
+			},
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject(), undefined);
+
+		expect(aborted).toBe(false);
+		const run = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].error ?? '').not.toContain(RUN_TOKEN_CEILING.toLocaleString('en-US'));
 	});
 
 	it('finalizes a bare abort (user cancel) as cancelled, not timed_out', async () => {

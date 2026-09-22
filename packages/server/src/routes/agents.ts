@@ -10,9 +10,10 @@ import {
 	checkInjectedTextCap,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
+	describeTokenBudget,
 	ERRORED_RUN_STATUSES,
 	HeartbeatRunStatus,
 	hasFixedReportsTo,
@@ -45,7 +46,7 @@ import {
 } from '../lib/agent-identity';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { budgetWindowsError } from '../lib/budget-validation';
+import { budgetWindowsError, retiredBudgetFieldError } from '../lib/budget-validation';
 import { signEntityIconUrl, verifyEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { buildMeta, parsePagination } from '../lib/pagination';
@@ -116,7 +117,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.human_name, ma.human_name_slug, ma.gender, ma.avatar_spec,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.run_timeout_min,
-	ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+	ma.daily_budget_tokens, ma.weekly_budget_tokens, ma.monthly_budget_tokens,
 	ma.touches_code,
 	ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at,
@@ -137,10 +138,9 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	-- created_at, not just started_at: a run that ended before it ever started has
 	-- no started_at, and created_at is the only clock it has to be placed by.
 	hr.status, hr.queued_reason, hr.cancel_reason, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
-	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
-	-- Both narrow, and both needed to read the cost honestly: the model says what
-	-- it was priced from, cost_billed whether anyone is actually charged for it.
-	hr.model, hr.cost_billed,
+	hr.input_tokens, hr.output_tokens, hr.usage_partial,
+	-- The model that did the work, so a reader can tell which one used the tokens.
+	hr.model,
 	hr.invocation_command, hr.working_dir,
 	hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS task_identifier, i.title AS task_title,
@@ -312,9 +312,9 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 		reports_to?: string;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
-		daily_budget_cents?: number;
-		weekly_budget_cents?: number;
-		monthly_budget_cents?: number;
+		daily_budget_tokens?: number;
+		weekly_budget_tokens?: number;
+		monthly_budget_tokens?: number;
 		touches_code?: boolean;
 		mcp_servers?: unknown[];
 	}>();
@@ -322,6 +322,8 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	if (!body.title?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'title is required', 400);
 	}
+	const retiredField = retiredBudgetFieldError(body);
+	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
@@ -343,9 +345,9 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	}
 
 	const budgetError = budgetWindowsError({
-		daily_budget_cents: body.daily_budget_cents ?? 0,
-		weekly_budget_cents: body.weekly_budget_cents ?? 0,
-		monthly_budget_cents: body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+		daily_budget_tokens: body.daily_budget_tokens ?? 0,
+		weekly_budget_tokens: body.weekly_budget_tokens ?? 0,
+		monthly_budget_tokens: body.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 	});
 	if (budgetError) {
 		return err(c, 'INVALID_REQUEST', budgetError, 400);
@@ -389,8 +391,8 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 			await db.query(
 				`INSERT INTO member_agents (id, title, slug, human_name, human_name_slug, gender,
                                    avatar_spec, role_description, reports_to, default_effort,
-                                   heartbeat_interval_min, daily_budget_cents, weekly_budget_cents,
-                                   monthly_budget_cents, touches_code, mcp_servers)
+                                   heartbeat_interval_min, daily_budget_tokens, weekly_budget_tokens,
+                                   monthly_budget_tokens, touches_code, mcp_servers)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::agent_effort, $11, $12, $13, $14, $15, $16::jsonb)`,
 				[
 					newMemberId,
@@ -411,9 +413,9 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 					body.reports_to ?? null,
 					body.default_effort ?? DEFAULT_EFFORT,
 					body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
-					body.daily_budget_cents ?? 0,
-					body.weekly_budget_cents ?? 0,
-					body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+					body.daily_budget_tokens ?? 0,
+					body.weekly_budget_tokens ?? 0,
+					body.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 					body.touches_code ?? false,
 					JSON.stringify(body.mcp_servers ?? []),
 				],
@@ -509,7 +511,7 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 				`INSERT INTO member_agents (id, title, slug, human_name, human_name_slug, gender,
 				                            avatar_spec, role_description, reports_to,
 				                            default_effort, heartbeat_interval_min,
-				                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
+				                            daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens,
 				                            touches_code, admin_status)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::agent_effort, $11, $12, $13, $14, $15,
 				         $16::agent_admin_status)`,
@@ -532,9 +534,9 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 					reportsToId,
 					proposal.default_effort,
 					proposal.heartbeat_interval_min,
-					proposal.daily_budget_cents,
-					proposal.weekly_budget_cents,
-					proposal.monthly_budget_cents,
+					proposal.daily_budget_tokens,
+					proposal.weekly_budget_tokens,
+					proposal.monthly_budget_tokens,
 					proposal.touches_code,
 					AgentAdminStatus.Enabled,
 				],
@@ -598,7 +600,7 @@ The admin has requested a new agent. Expand the draft prompt if needed, post the
 **Draft title**: ${proposal.title}
 **Draft slug**: \`${proposal.slug}\`
 **Role description**: ${proposal.role_description || 'Not provided'}
-**Heartbeat**: every ${proposal.heartbeat_interval_min} min — **Budget**: $${(proposal.monthly_budget_cents / 100).toFixed(2)}/mo — **Touches code**: ${proposal.touches_code ? 'yes' : 'no'}
+**Heartbeat**: every ${proposal.heartbeat_interval_min} min — **Monthly budget**: ${describeTokenBudget(proposal.monthly_budget_tokens)} — **Touches code**: ${proposal.touches_code ? 'yes' : 'no'}
 
 **Approval ID**: \`${approvalId}\`
 Use \`update_hire_proposal\` to revise the draft.
@@ -951,15 +953,17 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		default_effort?: string;
 		heartbeat_interval_min?: number;
 		run_timeout_min?: number;
-		daily_budget_cents?: number;
-		weekly_budget_cents?: number;
-		monthly_budget_cents?: number;
+		daily_budget_tokens?: number;
+		weekly_budget_tokens?: number;
+		monthly_budget_tokens?: number;
 		touches_code?: boolean;
 		mcp_servers?: unknown[];
 		model_override_provider?: string | null;
 		model_override_model?: string | null;
 	}>();
 
+	const retiredField = retiredBudgetFieldError(body);
+	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
 	}
@@ -1069,24 +1073,24 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 	// since a PATCH may touch only one window — per-field integer ≥ 0 plus the
 	// cross-window consistency rules (shared with the web forms).
 	if (
-		body.daily_budget_cents !== undefined ||
-		body.weekly_budget_cents !== undefined ||
-		body.monthly_budget_cents !== undefined
+		body.daily_budget_tokens !== undefined ||
+		body.weekly_budget_tokens !== undefined ||
+		body.monthly_budget_tokens !== undefined
 	) {
 		const current = await db.query<{
-			daily_budget_cents: number;
-			weekly_budget_cents: number;
-			monthly_budget_cents: number;
+			daily_budget_tokens: number;
+			weekly_budget_tokens: number;
+			monthly_budget_tokens: number;
 		}>(
-			`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
+			`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
 			 FROM member_agents WHERE id = $1`,
 			[agentId],
 		);
 		const stored = current.rows[0];
 		const budgetError = budgetWindowsError({
-			daily_budget_cents: body.daily_budget_cents ?? stored.daily_budget_cents,
-			weekly_budget_cents: body.weekly_budget_cents ?? stored.weekly_budget_cents,
-			monthly_budget_cents: body.monthly_budget_cents ?? stored.monthly_budget_cents,
+			daily_budget_tokens: body.daily_budget_tokens ?? stored.daily_budget_tokens,
+			weekly_budget_tokens: body.weekly_budget_tokens ?? stored.weekly_budget_tokens,
+			monthly_budget_tokens: body.monthly_budget_tokens ?? stored.monthly_budget_tokens,
 		});
 		if (budgetError) {
 			return err(c, 'INVALID_REQUEST', budgetError, 400);
@@ -1143,9 +1147,9 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		{ column: 'default_effort', value: body.default_effort, cast: 'agent_effort' },
 		{ column: 'heartbeat_interval_min', value: body.heartbeat_interval_min },
 		{ column: 'run_timeout_min', value: body.run_timeout_min },
-		{ column: 'daily_budget_cents', value: body.daily_budget_cents },
-		{ column: 'weekly_budget_cents', value: body.weekly_budget_cents },
-		{ column: 'monthly_budget_cents', value: body.monthly_budget_cents },
+		{ column: 'daily_budget_tokens', value: body.daily_budget_tokens },
+		{ column: 'weekly_budget_tokens', value: body.weekly_budget_tokens },
+		{ column: 'monthly_budget_tokens', value: body.monthly_budget_tokens },
 		{ column: 'touches_code', value: body.touches_code },
 		{ column: 'mcp_servers', value: body.mcp_servers, cast: 'jsonb' },
 		{ column: 'model_override_provider', value: overrideProvider, cast: 'ai_provider' },

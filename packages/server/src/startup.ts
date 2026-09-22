@@ -56,7 +56,6 @@ import { commentsRoutes } from './routes/comments';
 import { connectorsRoutes } from './routes/connectors';
 import { containerHoursRoutes } from './routes/container-hours';
 import { buildContainerRoutes } from './routes/containers';
-import { costsRoutes } from './routes/costs';
 import { customPromptRoutes } from './routes/custom-prompt';
 import { buildDatabaseInfoRoutes } from './routes/database-info';
 import { documentReviewRoutes } from './routes/document-review';
@@ -68,7 +67,6 @@ import { instanceSettingsRoutes } from './routes/instance-settings';
 import { marketplaceRoutes } from './routes/marketplace';
 import { meRoutes } from './routes/me';
 import { mentionsRoutes } from './routes/mentions';
-import { modelPricingRoutes } from './routes/model-pricing';
 import { oauthRoutes } from './routes/oauth';
 import { previewRoutes } from './routes/preview';
 import { projectChatRoutes } from './routes/project-chat';
@@ -86,6 +84,7 @@ import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
+import { usageRoutes } from './routes/usage';
 import { publicUsersRoutes, usersRoutes } from './routes/users';
 import { AuthChallengeStore } from './services/auth-challenges';
 import {
@@ -105,7 +104,6 @@ import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
-import { PricingService } from './services/pricing';
 import {
 	completeSandboxBackendOnUnlock,
 	type StartupBackendResolution,
@@ -262,14 +260,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		assetStorageUrl: config.assetStorage.url,
 	});
 
-	// Runtime model pricing: load the table into memory (migrations bake in a
-	// catalog snapshot, so it's never empty) and, unless disabled, refresh from
-	// the live pricepertoken.com catalog in the background. Drives per-run cost
-	// across every runtime; the job manager re-refreshes daily.
-	setStartupPhase('pricing');
-	const pricing = new PricingService(db);
-	await pricing.init({ refresh: !process.env.HEZO_SKIP_PRICING_REFRESH });
-
 	// Register the single generic host-side OAuth refresh fn. It makes
 	// `refreshExpiringTokens` real for any oauth_connection carrying token_url +
 	// client_id in metadata (broker connections), refreshing the short-lived
@@ -418,7 +408,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
-		pricing,
 		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
 		autoInstallUpdates: config.updates.autoInstall,
@@ -484,6 +473,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		await applySeedLocale(db);
 	} catch (err) {
 		log.error('Failed to apply the seeded locale:', err);
+	}
+	// After HQ exists: the notice for budgets an upgrade converted to tokens is
+	// posted on an HQ task.
+	try {
+		const { postBudgetConversionNotice } = await import('./services/budget-conversion-notice.js');
+		await postBudgetConversionNotice(db, wsManager);
+	} catch (err) {
+		log.error('Failed to post the budget conversion notice:', err);
 	}
 
 	// Before the app serves a request, and regardless of lock state: the API must
@@ -596,7 +593,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 		events,
 		chatSessionManager,
-		pricing,
 		assetStore,
 		chatChannelRegistry,
 	);
@@ -633,7 +629,6 @@ export function buildApp(
 	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 	events: DomainEventBus = new DomainEventBus(),
 	chatSessionManager?: ChatSessionManager,
-	pricing?: PricingService,
 	assetStore?: AssetStore,
 	chatChannelRegistry?: ChatChannelRegistry,
 ): Hono<Env> {
@@ -705,7 +700,6 @@ export function buildApp(
 		c.set('webUrl', config.webUrl);
 		c.set('sshAgentServer', sshAgentServer);
 		c.set('egressProxy', egressProxy);
-		if (pricing) c.set('pricing', pricing);
 		return next();
 	});
 
@@ -851,7 +845,7 @@ export function buildApp(
 	app.route('/api', secretsRoutes);
 	app.route('/api', approvalsRoutes);
 	app.route('/api', inboxRoutes);
-	app.route('/api', costsRoutes);
+	app.route('/api', usageRoutes);
 	app.route('/api', apiKeysRoutes);
 	app.route('/api', skillsRoutes);
 	app.route('/api', customPromptRoutes);
@@ -889,7 +883,6 @@ export function buildApp(
 				}),
 		),
 	);
-	app.route('/api', modelPricingRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', queuedWakeupsRoutes);

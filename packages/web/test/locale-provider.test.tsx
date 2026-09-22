@@ -205,10 +205,10 @@ describe('I18nProvider', () => {
 		expect(result.current.plural('thread.group.events', 3)).not.toContain('thread.group');
 	});
 
-	test('formatMoney follows the chosen currency convention', () => {
+	test('formatCompact shortens a token count in the chosen language', () => {
 		installLanguages(['de-DE']);
 		const { result } = renderHook(() => useI18n(), { wrapper });
-		expect(normalizeSpaces(result.current.formatMoney(123456))).toBe('1.234,56 $');
+		expect(normalizeSpaces(result.current.formatCompact(4_200_000))).toBe('4,2 Mio.');
 	});
 
 	test('formatDate follows the chosen field order', () => {

@@ -22,7 +22,7 @@ async function seedHireProposal(
 		title: input.title,
 		slug: input.title.toLowerCase().replace(/\s+/g, '-'),
 		role_description: input.roleDescription ?? '',
-		monthly_budget_cents: 3000,
+		monthly_budget_tokens: 30_000_000,
 		heartbeat_interval_min: 60,
 		touches_code: false,
 	};

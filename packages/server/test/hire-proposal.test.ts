@@ -99,14 +99,14 @@ describe('MCP tool update_hire_proposal', () => {
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'You are the Support Lead. Own all customer support channels.',
-			monthly_budget_cents: 4200,
+			monthly_budget_tokens: 4200,
 		})) as { payload: Record<string, unknown> } | { error: string };
 
 		expect('error' in result).toBe(false);
 		expect((result as { payload: Record<string, unknown> }).payload.system_prompt).toContain(
 			'Own all customer support channels',
 		);
-		expect((result as { payload: Record<string, unknown> }).payload.monthly_budget_cents).toBe(
+		expect((result as { payload: Record<string, unknown> }).payload.monthly_budget_tokens).toBe(
 			4200,
 		);
 

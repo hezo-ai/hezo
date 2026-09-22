@@ -648,7 +648,7 @@ List the agents on a project's team, by title. Each row carries `reports_to` (th
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
+**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_tokens`, `weekly_budget_tokens`, `monthly_budget_tokens`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
 
 ### `update_hire_proposal`
 
@@ -668,7 +668,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | No | Updated heartbeat interval. How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
-| `monthly_budget_cents` | `number` | No | Updated monthly budget in cents |
+| `monthly_budget_tokens` | `number` | No | Updated monthly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 
 **Returns:** The updated approval row, or `{ error }` if no field changed or the approval is invalid.
@@ -693,9 +693,9 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
 | `default_effort` | `string` | No | Default reasoning effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | Yes | How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
-| `daily_budget_cents` | `number` | No | Daily budget in cents |
-| `weekly_budget_cents` | `number` | No | Weekly budget in cents |
-| `monthly_budget_cents` | `number` | No | Monthly budget in cents |
+| `daily_budget_tokens` | `number` | No | Daily budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `weekly_budget_tokens` | `number` | No | Weekly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
+| `monthly_budget_tokens` | `number` | No | Monthly budget, in tokens. A budget counts every token a run sent and received: input, cached input included, plus output. 0 is unlimited. |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 | `task_id` | `string` | No | Optional originating task to link the proposal to - a task identifier (e.g. "HM-1") or UUID |
 
@@ -1565,24 +1565,24 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 
 **Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.
 
-## Costs
+## Usage
 
-### `get_costs`
+### `get_usage`
 
 _Read-only._
 
-Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false. Every shape reports two figures: `total_cents` is real money, and `notional_cents` is what runs on a subscription would have cost at the provider's published rates. A subscription is not billed per token, so the second counts towards no budget and never pauses anyone - read it as effort, not spend.
+Get the token usage summary for a project: every token its runs and chat turns sent and received, input (cached input included) and output, which is what budgets count. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false. Every shape reports `input_tokens`, `output_tokens` and their sum `total_tokens`.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `group_by` | `agent` \| `day` | No | Group costs by |
+| `group_by` | `agent` \| `day` | No | Group usage by |
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents, notional_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents, notional_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, notional_cents, entry_count }`.
+**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, input_tokens, output_tokens, total_tokens }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, input_tokens, output_tokens, total_tokens }` newest first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false; that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ input_tokens, output_tokens, total_tokens, entry_count }`.
 
 ## Onboarding
 

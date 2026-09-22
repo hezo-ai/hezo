@@ -1,4 +1,4 @@
-import type { AgentEffort, AiProvider, CostTokens } from '@hezo/shared';
+import type { AgentEffort, AiProvider } from '@hezo/shared';
 import type { AgentRunUsage } from '../agent-stream-parser';
 import type { EffortRuntimeApplication } from '../effort';
 import type { SandboxFiles } from '../sandbox/types';
@@ -230,7 +230,6 @@ export interface RuntimeArgsContext {
 export interface RuntimeUsageContext {
 	/** Reads and removals are scoped to the per-run home mount. */
 	files: SandboxFiles;
-	price: ((model: string | undefined, tokens: CostTokens) => number) | undefined;
 	onError: (msg: string) => void;
 }
 

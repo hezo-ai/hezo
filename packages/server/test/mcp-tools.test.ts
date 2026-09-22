@@ -168,7 +168,8 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('get_skill');
 		expect(toolNames).toContain('create_skill');
 		expect(toolNames).toContain('propose_skill');
-		expect(toolNames).toContain('get_costs');
+		expect(toolNames).toContain('get_usage');
+		expect(toolNames).not.toContain('get_costs');
 		expect(toolNames).toContain('get_agent_system_prompt');
 		expect(toolNames).toContain('update_agent_system_prompt');
 		expect(toolNames).toContain('list_project_docs');
@@ -876,12 +877,12 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect((r.rows[0] as any).resolution_note).toBe('LGTM');
 	});
 
-	it('get_costs query returns cost summary', async () => {
-		const r = await db.query<{ total_cents: number }>(
-			'SELECT COALESCE(SUM(amount_cents), 0)::int AS total_cents FROM cost_entries WHERE project_id = $1',
+	it('get_usage query returns a token summary', async () => {
+		const r = await db.query<{ total_tokens: number }>(
+			'SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::int AS total_tokens FROM usage_entries WHERE project_id = $1',
 			[projectId],
 		);
-		expect(r.rows[0].total_cents).toBeDefined();
+		expect(r.rows[0].total_tokens).toBeDefined();
 	});
 
 	it('get_agent_system_prompt query returns prompt from documents', async () => {

@@ -1,7 +1,8 @@
 import {
 	CEO_AGENT_SLUG,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	DEFAULT_MONTHLY_BUDGET_CENTS,
+	DEFAULT_MONTHLY_BUDGET_TOKENS,
+	retiredBudgetFieldError,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -40,13 +41,15 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 		system_prompt_template?: string;
 		heartbeat_interval_min?: number;
 		run_timeout_min?: number;
-		monthly_budget_cents?: number;
+		monthly_budget_tokens?: number;
 		touches_code?: boolean;
 	}>();
 
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
+	const retiredField = retiredBudgetFieldError(body);
+	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
 
 	const slug = body.slug?.trim() || toSlug(body.name);
 	if (!slug) {
@@ -56,7 +59,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 	const db = c.get('db');
 	const result = await db.query(
 		`INSERT INTO agent_types (name, slug, description, role_description, system_prompt_template,
-		                          heartbeat_interval_min, run_timeout_min, monthly_budget_cents, touches_code,
+		                          heartbeat_interval_min, run_timeout_min, monthly_budget_tokens, touches_code,
 		                          source)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'custom'::agent_type_source)
 		 RETURNING *`,
@@ -68,7 +71,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 			body.system_prompt_template ?? '',
 			body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			body.run_timeout_min ?? 60,
-			body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+			body.monthly_budget_tokens ?? DEFAULT_MONTHLY_BUDGET_TOKENS,
 			body.touches_code ?? false,
 		],
 	);
@@ -106,9 +109,11 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 		system_prompt_template?: string;
 		heartbeat_interval_min?: number;
 		run_timeout_min?: number;
-		monthly_budget_cents?: number;
+		monthly_budget_tokens?: number;
 	}>();
 
+	const retiredField = retiredBudgetFieldError(body);
+	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
 	const isBuiltin = existing.rows[0].is_builtin;
 
 	const sets: string[] = [];
@@ -130,7 +135,7 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 	if (!isBuiltin) {
 		addField('heartbeat_interval_min', body.heartbeat_interval_min);
 		addField('run_timeout_min', body.run_timeout_min);
-		addField('monthly_budget_cents', body.monthly_budget_cents);
+		addField('monthly_budget_tokens', body.monthly_budget_tokens);
 	}
 
 	if (sets.length === 0) {

@@ -201,9 +201,9 @@ function HoursChart({
  * containers were up. Task runs and chat turns share the same containers, so
  * uptime is one series, not a per-workload split.
  *
- * **Not the same question as the Spend tab, and not the same as run time.** Spend
- * answers what the agents cost in tokens; this answers what the containers cost
- * in uptime, which is billed per hour on a managed backend whether an agent is
+ * **Not the same question as the Budget tab, and not the same as run time.** That
+ * tab answers what the agents used in tokens; this answers what the containers
+ * cost in uptime, which is billed per hour on a managed backend whether an agent is
  * mid-run, mid-build or warm and idle between runs.
  */
 export function ProjectContainerHoursPanel({ projectId }: { projectId: string }) {

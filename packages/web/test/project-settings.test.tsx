@@ -210,7 +210,7 @@ test('edits the project budget limits from settings and persists them', async ()
 		params: { projectId: projectSlug },
 	});
 
-	// The budget editor lives in its own "Edit caps" affordance, distinct from the
+	// The budget editor lives in its own "Edit limits" affordance, distinct from the
 	// General section's "Edit".
 	await user.click(await findByTestId('edit-project-budget'));
 	await user.click(await findByTestId('budget-daily-toggle'));
@@ -221,17 +221,18 @@ test('edits the project budget limits from settings and persists them', async ()
 
 	await waitFor(
 		async () => {
-			const row = await ctx.db.query<{ daily_budget_cents: number }>(
-				'SELECT daily_budget_cents FROM projects WHERE id = $1',
+			const row = await ctx.db.query<{ daily_budget_tokens: number }>(
+				'SELECT daily_budget_tokens FROM projects WHERE id = $1',
 				[projectId],
 			);
-			expect(row.rows[0]?.daily_budget_cents).toBe(1500);
+			// Typed in millions of tokens.
+			expect(row.rows[0]?.daily_budget_tokens).toBe(15_000_000);
 		},
 		{ timeout: 8_000 },
 	);
 
-	// Returns to the read-only view (the "Edit caps" button reappears).
-	await findByRole('button', { name: 'Edit caps' });
+	// Returns to the read-only view (the "Edit limits" button reappears).
+	await findByRole('button', { name: 'Edit limits' });
 });
 
 test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {

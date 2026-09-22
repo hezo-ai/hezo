@@ -777,6 +777,8 @@ export class DaytonaEngine implements ContainerEngine {
 				(await bound()).findByName(relDir, name, maxDepth),
 			readTail: async (relPath: string, maxBytes: number) =>
 				(await bound()).readTail(relPath, maxBytes),
+			readHead: async (relPath: string, maxBytes: number) =>
+				(await bound()).readHead(relPath, maxBytes),
 			write: async (
 				relPath: string,
 				contents: string,

@@ -157,9 +157,9 @@ handed back after. Two things keep that from showing:
   this entirely - and if the budget or the hours allowance is full, it does not
   happen.
 
-## What a chat turn costs
+## What a chat turn uses
 
-Chat is metered like everything else. Each turn's model spend lands on the agent's
+Chat is metered like everything else. Each turn's tokens count against the agent's
 project (the CEO's on HQ), and the containers chat runs in count toward the monthly
 container-hours allowance - the CEO's included. If a budget or the hours allowance
 runs out, the conversation says so in place; send again once there is room and it

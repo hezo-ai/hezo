@@ -121,10 +121,10 @@ afterEach(async () => {
 	await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [captainId]);
 	await ctx.db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [captainId]);
 	await ctx.db.query('DELETE FROM goals WHERE project_id = $1', [projectId]);
-	await ctx.db.query('DELETE FROM cost_entries WHERE member_id = $1', [captainId]);
+	await ctx.db.query('DELETE FROM usage_entries WHERE member_id = $1', [captainId]);
 	await ctx.db.query(
 		`UPDATE member_agents SET runtime_status = $1::agent_runtime_status,
-		        admin_status = 'enabled', daily_budget_cents = 0, slug = 'captain',
+		        admin_status = 'enabled', daily_budget_tokens = 0, slug = 'captain',
 		        last_heartbeat_at = now()
 		 WHERE id = $2`,
 		[AgentRuntimeStatus.Idle, captainId],
@@ -360,11 +360,11 @@ describe('JobManager progress-update flows', () => {
 				'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
 				[projectId],
 			);
-			await ctx.db.query('UPDATE member_agents SET daily_budget_cents = 100 WHERE id = $1', [
+			await ctx.db.query('UPDATE member_agents SET daily_budget_tokens = 100 WHERE id = $1', [
 				captainId,
 			]);
 			await ctx.db.query(
-				'INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)',
+				'INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 500)',
 				[captainId, projectId],
 			);
 			const result = await internals(manager).tryDispatchProgressUpdate(
@@ -381,11 +381,11 @@ describe('JobManager progress-update flows', () => {
 		it('returns over_budget when the Captain has breached a budget window', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Over-budget goal');
-			await ctx.db.query('UPDATE member_agents SET daily_budget_cents = 100 WHERE id = $1', [
+			await ctx.db.query('UPDATE member_agents SET daily_budget_tokens = 100 WHERE id = $1', [
 				captainId,
 			]);
 			await ctx.db.query(
-				'INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)',
+				'INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 500)',
 				[captainId, projectId],
 			);
 			const result = await internals(manager).tryDispatchProgressUpdate(
@@ -667,11 +667,11 @@ describe('JobManager progress-update flows', () => {
 				'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
 				[projectId],
 			);
-			await ctx.db.query('UPDATE member_agents SET daily_budget_cents = 100 WHERE id = $1', [
+			await ctx.db.query('UPDATE member_agents SET daily_budget_tokens = 100 WHERE id = $1', [
 				captainId,
 			]);
 			await ctx.db.query(
-				'INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)',
+				'INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 500)',
 				[captainId, projectId],
 			);
 			const wakeupId = await insertClaimedWakeup({ trigger: 'progress_update_now' });

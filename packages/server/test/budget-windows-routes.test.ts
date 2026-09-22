@@ -52,11 +52,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await db.query(
-		'UPDATE member_agents SET daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0 WHERE id = $1',
+		'UPDATE member_agents SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0 WHERE id = $1',
 		[agentId],
 	);
 	await db.query(
-		'UPDATE projects SET daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0 WHERE id = $1',
+		'UPDATE projects SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0 WHERE id = $1',
 		[projectId],
 	);
 });
@@ -80,9 +80,9 @@ function patchAgent(body: Record<string, number>) {
 describe('project budget PATCH cross-window validation', () => {
 	it('rejects a weekly budget below daily × 7', async () => {
 		const res = await patchProject({
-			daily_budget_cents: 2000,
-			weekly_budget_cents: 5000, // < 14000
-			monthly_budget_cents: 0,
+			daily_budget_tokens: 2000,
+			weekly_budget_tokens: 5000, // < 14000
+			monthly_budget_tokens: 0,
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toMatch(/weekly budget must be at least/i);
@@ -90,21 +90,21 @@ describe('project budget PATCH cross-window validation', () => {
 
 	it('accepts the trio when the offending window is disabled (0)', async () => {
 		const res = await patchProject({
-			daily_budget_cents: 2000,
-			weekly_budget_cents: 0, // unlimited → no constraint
-			monthly_budget_cents: 70000,
+			daily_budget_tokens: 2000,
+			weekly_budget_tokens: 0, // unlimited → no constraint
+			monthly_budget_tokens: 70000,
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('validates against the stored value when a single window is patched', async () => {
 		// Store a daily budget first.
-		expect((await patchProject({ daily_budget_cents: 2000 })).status).toBe(200);
+		expect((await patchProject({ daily_budget_tokens: 2000 })).status).toBe(200);
 		// Now patch only weekly to an incoherent value — must merge with stored daily.
-		const bad = await patchProject({ weekly_budget_cents: 5000 });
+		const bad = await patchProject({ weekly_budget_tokens: 5000 });
 		expect(bad.status).toBe(400);
 		// A coherent weekly against the stored daily passes.
-		const good = await patchProject({ weekly_budget_cents: 20000 });
+		const good = await patchProject({ weekly_budget_tokens: 20000 });
 		expect(good.status).toBe(200);
 	});
 });
@@ -112,9 +112,9 @@ describe('project budget PATCH cross-window validation', () => {
 describe('agent budget PATCH cross-window validation', () => {
 	it('rejects an incoherent monthly budget', async () => {
 		const res = await patchAgent({
-			daily_budget_cents: 2000,
-			weekly_budget_cents: 0,
-			monthly_budget_cents: 5000, // < ceil(2000*365/12)=60834
+			daily_budget_tokens: 2000,
+			weekly_budget_tokens: 0,
+			monthly_budget_tokens: 5000, // < ceil(2000*365/12)=60834
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toMatch(/monthly budget must be at least/i);
@@ -122,16 +122,16 @@ describe('agent budget PATCH cross-window validation', () => {
 
 	it('persists a coherent trio', async () => {
 		const res = await patchAgent({
-			daily_budget_cents: 2000,
-			weekly_budget_cents: 20000,
-			monthly_budget_cents: 90000,
+			daily_budget_tokens: 2000,
+			weekly_budget_tokens: 20000,
+			monthly_budget_tokens: 90000,
 		});
 		expect(res.status).toBe(200);
-		const row = await db.query<{ daily_budget_cents: number; weekly_budget_cents: number }>(
-			'SELECT daily_budget_cents, weekly_budget_cents FROM member_agents WHERE id = $1',
+		const row = await db.query<{ daily_budget_tokens: number; weekly_budget_tokens: number }>(
+			'SELECT daily_budget_tokens, weekly_budget_tokens FROM member_agents WHERE id = $1',
 			[agentId],
 		);
-		expect(row.rows[0]).toEqual({ daily_budget_cents: 2000, weekly_budget_cents: 20000 });
+		expect(row.rows[0]).toEqual({ daily_budget_tokens: 2000, weekly_budget_tokens: 20000 });
 	});
 });
 
@@ -142,8 +142,8 @@ describe('agent create persists + validates all three windows', () => {
 			headers: jsonHeaders(),
 			body: JSON.stringify({
 				title: 'Bad Budget Hire',
-				daily_budget_cents: 2000,
-				weekly_budget_cents: 5000,
+				daily_budget_tokens: 2000,
+				weekly_budget_tokens: 5000,
 			}),
 		});
 		expect(res.status).toBe(400);
@@ -155,16 +155,16 @@ describe('agent create persists + validates all three windows', () => {
 			headers: jsonHeaders(),
 			body: JSON.stringify({
 				title: 'Good Budget Hire',
-				daily_budget_cents: 1000,
-				weekly_budget_cents: 20000,
-				monthly_budget_cents: 90000,
+				daily_budget_tokens: 1000,
+				weekly_budget_tokens: 20000,
+				monthly_budget_tokens: 90000,
 			}),
 		});
 		expect(res.status).toBe(201);
 		const created = (await res.json()).data;
-		expect(created.daily_budget_cents).toBe(1000);
-		expect(created.weekly_budget_cents).toBe(20000);
-		expect(created.monthly_budget_cents).toBe(90000);
+		expect(created.daily_budget_tokens).toBe(1000);
+		expect(created.weekly_budget_tokens).toBe(20000);
+		expect(created.monthly_budget_tokens).toBe(90000);
 	});
 });
 
@@ -175,8 +175,8 @@ describe('agent onboard threads all three windows', () => {
 			headers: jsonHeaders(),
 			body: JSON.stringify({
 				title: 'Onboard Bad',
-				daily_budget_cents: 2000,
-				weekly_budget_cents: 5000,
+				daily_budget_tokens: 2000,
+				weekly_budget_tokens: 5000,
 			}),
 		});
 		expect(res.status).toBe(400);
@@ -188,17 +188,17 @@ describe('agent onboard threads all three windows', () => {
 			headers: jsonHeaders(),
 			body: JSON.stringify({
 				title: 'Onboard Good',
-				daily_budget_cents: 1000,
-				weekly_budget_cents: 20000,
-				monthly_budget_cents: 90000,
+				daily_budget_tokens: 1000,
+				weekly_budget_tokens: 20000,
+				monthly_budget_tokens: 90000,
 			}),
 		});
 		expect(res.status).toBe(201);
 		const result = (await res.json()).data;
 		if (result.bootstrap) {
 			// No coordination: the agent was created directly.
-			expect(result.agent.daily_budget_cents).toBe(1000);
-			expect(result.agent.weekly_budget_cents).toBe(20000);
+			expect(result.agent.daily_budget_tokens).toBe(1000);
+			expect(result.agent.weekly_budget_tokens).toBe(20000);
 		} else {
 			// Coordinated: the windows ride in the pending hire approval payload, to be
 			// materialised by approval-handlers/hire.ts on approval.
@@ -206,8 +206,8 @@ describe('agent onboard threads all three windows', () => {
 				`SELECT payload FROM approvals WHERE team_id = $1 AND payload->>'slug' = 'onboard-good'`,
 				[teamId],
 			);
-			expect(payload.rows[0].payload.daily_budget_cents).toBe(1000);
-			expect(payload.rows[0].payload.weekly_budget_cents).toBe(20000);
+			expect(payload.rows[0].payload.daily_budget_tokens).toBe(1000);
+			expect(payload.rows[0].payload.weekly_budget_tokens).toBe(20000);
 		}
 	});
 });

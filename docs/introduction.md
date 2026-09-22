@@ -74,8 +74,9 @@ from hurting you. A few guarantees sit underneath everything:
   Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode. You can also run
   **entirely on your own hardware** with Ollama or LM Studio, at no per-token cost. You can
   give any individual agent its own model. See [AI model support](/docs/ai-models).
-- **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost
-  tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over.
+- **Put a hard ceiling on usage.** Per-agent and per-project token budgets *pause* runs
+  when a limit is hit and *auto-resume* when the window rolls over, and loops that no
+  budget would catch stop and wait for you.
   See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 - **See where a project stands at a glance.** Every project's **Dashboard** opens on a
   high-level summary the Captain keeps current, covering the work in flight, what needs

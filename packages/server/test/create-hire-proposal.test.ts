@@ -122,7 +122,7 @@ describe('MCP tool create_hire_proposal', () => {
 			title: 'Data Scientist',
 			role_description: 'Owns the analytics models',
 			system_prompt: 'You are the Data Scientist. Build and maintain the models.',
-			monthly_budget_cents: 5000,
+			monthly_budget_tokens: 5000,
 		});
 
 		expect(result.error).toBeUndefined();
@@ -130,7 +130,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const payload = result.payload as Record<string, unknown>;
 		expect(payload.title).toBe('Data Scientist');
 		expect(payload.slug).toBe('data-scientist');
-		expect(payload.monthly_budget_cents).toBe(5000);
+		expect(payload.monthly_budget_tokens).toBe(5000);
 
 		// It is a real pending hire approval on the team.
 		const row = await db.query<{ type: string; status: string; team_id: string }>(

@@ -13,7 +13,7 @@
  * `taskComments(...)` key beneath it, by design.
  */
 
-/** Opaque filter/param object embedded in a key (tasks filters, cost params, …). */
+/** Opaque filter/param object embedded in a key (tasks filters, usage params, …). */
 type KeyParam = unknown;
 
 export const queryKeys = {
@@ -391,7 +391,7 @@ export const queryKeys = {
 			file,
 			'review-comments',
 		],
-		costs: (slug: string, params: KeyParam) => ['projects', slug, 'costs', params],
+		usage: (slug: string, params: KeyParam) => ['projects', slug, 'usage', params],
 		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
 		agentHours: (slug: string, bucket: string) => ['projects', slug, 'agent-hours', bucket],
 		containerHours: (slug: string, bucket: string) => ['projects', slug, 'container-hours', bucket],

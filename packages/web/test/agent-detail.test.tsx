@@ -73,7 +73,7 @@ test('agent settings tab shows budget, heartbeat, title, and save controls', asy
 		params: { projectId: teamSlug, agentId },
 	});
 
-	await findByText('Monthly spend');
+	await findByText('Tokens this month');
 	await findByText(`Every ${DEFAULT_HEARTBEAT_INTERVAL_MIN} min`);
 	await findByLabelText('Title');
 	await findByLabelText('Run timeout (min)');

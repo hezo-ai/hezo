@@ -1,47 +1,13 @@
-import {
-	AgentRuntime,
-	AiProvider,
-	type CostTokens,
-	costCentsFromRate,
-	type ModelRate,
-} from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
+	codexRolloutModel,
 	createAgentStreamParser,
 	extractCodexUsageFromRollout,
 	extractGrokUsageFromDebugLog,
 	extractKimiUsageFromSessionLog,
-	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
 import { RunFailureClass } from '../src/services/run-failure-classification';
-
-/** A price function backed by a fixed rate table, mirroring PricingService. */
-const RATES: Record<string, ModelRate> = {
-	'claude-x': {
-		inputPerToken: 0.001,
-		outputPerToken: 0.002,
-		cacheReadPerToken: 0.0001,
-		cacheCreationPerToken: 0.002,
-	},
-	'codex-x': { inputPerToken: 0.00001, outputPerToken: 0.00003, cacheReadPerToken: 0.000001 },
-	'gemini-2.5-pro': {
-		inputPerToken: 0.00001,
-		outputPerToken: 0.00003,
-		cacheReadPerToken: 0.000001,
-	},
-	'gemini-2.5-flash': { inputPerToken: 0.000005, outputPerToken: 0.00001 },
-	'grok-4.5': { inputPerToken: 0.00001, outputPerToken: 0.00003, cacheReadPerToken: 0.000001 },
-	'kimi-k2.7-code': {
-		inputPerToken: 0.0000074,
-		outputPerToken: 0.0000035,
-		cacheReadPerToken: 0.0000002,
-		cacheCreationPerToken: 0.000001,
-	},
-};
-const price: PriceModelFn = (model: string | undefined, tokens: CostTokens) => {
-	const rate = model ? RATES[model] : undefined;
-	return rate ? costCentsFromRate(rate, tokens) : 0;
-};
 
 describe('agent-stream-parser', () => {
 	it('buffers partial lines and parses when a newline arrives', () => {
@@ -98,9 +64,8 @@ describe('agent-stream-parser', () => {
 		expect(out).toContain('[tool-error] ENOENT: missing file');
 	});
 
-	it('ignores the runtime-reported total_cost_usd and prices from the table', () => {
-		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
-		// The model arrives on the init event; the parser needs it to price the run.
+	it('ignores the runtime-reported total_cost_usd and keeps the token counts', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
@@ -124,19 +89,19 @@ describe('agent-stream-parser', () => {
 		expect(usage).not.toBeNull();
 		expect(usage?.inputTokens).toBe(150);
 		expect(usage?.outputTokens).toBe(50);
-		// The reported 0.4567 is a client-side estimate and is discarded; the table
-		// prices the buckets: 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24c.
-		expect(usage?.costCents).toBe(24);
-		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50 cost=$0.2400');
+		expect(usage?.model).toBe('claude-x');
+		// The reported dollar figure is a client-side estimate and is not kept.
+		expect(usage).not.toHaveProperty('costCents');
+		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50');
 	});
 
-	it('prices from the table when Claude Code reports no total_cost_usd', () => {
-		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+	it('counts the tokens when Claude Code reports no total_cost_usd', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
-		// No total_cost_usd on the terminal event (e.g. an interrupted run) — pricing
-		// is unchanged, since only the token buckets matter.
+		// No total_cost_usd on the terminal event, as on an interrupted run. Only the
+		// token buckets matter.
 		const event = {
 			type: 'result',
 			subtype: 'success',
@@ -152,17 +117,15 @@ describe('agent-stream-parser', () => {
 		};
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
 
-		const usage = parser.getUsage();
-		expect(usage?.costCents).toBe(24);
-		expect(out).toContain('tokens=150/50 cost=$0.2400');
+		expect(parser.getUsage()?.inputTokens).toBe(150);
+		expect(out).toContain('tokens=150/50');
 	});
 
-	it('discards a third-party endpoint total_cost_usd — an unpriced model records $0', () => {
+	it('discards a third-party endpoint total_cost_usd and keeps its tokens', () => {
 		// Event shape captured from a real DeepSeek-via-Claude-Code run: the
 		// Anthropic-compatible endpoint returns a total_cost_usd computed with the
-		// CLI's own (wrong-provider) rate card. It must be ignored; with no table
-		// rate for the model the run prices to $0 (fail-low), never to the estimate.
-		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		// CLI's own (wrong-provider) rate card.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'deepseek-v4-flash', tools: [] })}\n`,
 		);
@@ -185,15 +148,15 @@ describe('agent-stream-parser', () => {
 		const usage = parser.getUsage();
 		expect(usage?.inputTokens).toBe(20096);
 		expect(usage?.outputTokens).toBe(15);
-		expect(usage?.costCents).toBe(0);
-		expect(out).toContain('tokens=20096/15 cost=$0.0000');
+		expect(usage?.model).toBe('deepseek-v4-flash');
+		expect(out).toContain('tokens=20096/15');
 	});
 
 	it('accumulates running usage from assistant turns before the terminal result', () => {
 		// A run interrupted before its `result` event (e.g. a server restart) must
 		// still report the tokens it burned. The parser sums each assistant turn's
 		// usage so getUsage() is non-null mid-stream.
-		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
@@ -221,11 +184,10 @@ describe('agent-stream-parser', () => {
 		// Aggregate keeps every input bucket: (100 + 10 + 5) summed across two turns.
 		expect(usage?.inputTokens).toBe(230);
 		expect(usage?.outputTokens).toBe(40);
-		expect(usage?.costCents).toBeGreaterThan(0);
 	});
 
 	it('the terminal result replaces the running usage with the authoritative total', () => {
-		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
@@ -322,11 +284,10 @@ describe('agent-stream-parser', () => {
 			expect(usage?.inputTokens).toBe(24763);
 			expect(usage?.outputTokens).toBe(122);
 			expect((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)).toBe(event.usage.total_tokens);
-			expect(usage?.costCents).toBe(0);
 		});
 
-		it('splits the input buckets so cache reads are not priced as fresh input', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'codex-x');
+		it('splits the input buckets so cache reads stay apart from fresh input', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, 'codex-x');
 			parser.onStdout(
 				`${JSON.stringify({
 					type: 'turn.completed',
@@ -338,8 +299,8 @@ describe('agent-stream-parser', () => {
 					},
 				})}\n`,
 			);
-			// The whole point of the split: an agent run is cache-read dominated, so
-			// folding the cached bucket into fresh input overstates it many times over.
+			// An agent run is dominated by cache reads, so the usage breakdown shows
+			// them apart from fresh input.
 			expect(parser.getUsage()?.buckets).toEqual({
 				inputTokens: 50,
 				cacheReadTokens: 900,
@@ -348,8 +309,8 @@ describe('agent-stream-parser', () => {
 			});
 		});
 
-		it('ignores a runtime-reported cost and prices from the table', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
+		it('ignores a runtime-reported cost', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
 			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`);
 			parser.onStdout(
 				`${JSON.stringify({
@@ -358,9 +319,12 @@ describe('agent-stream-parser', () => {
 					usage: { input_tokens: 1000, output_tokens: 100 },
 				})}\n`,
 			);
-			// The reported 0.5 USD is discarded; the table prices the tokens:
-			// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
-			expect(parser.getUsage()?.costCents).toBe(1);
+			expect(parser.getUsage()).toMatchObject({
+				inputTokens: 1000,
+				outputTokens: 100,
+				model: 'codex-x',
+			});
+			expect(parser.getUsage()).not.toHaveProperty('costCents');
 		});
 
 		it('marks a failed turn as error', () => {
@@ -502,10 +466,10 @@ describe('agent-stream-parser', () => {
 			expect(out).not.toContain('tools=');
 		});
 
-		it('prices from the run model when the stream names none', () => {
-			// Codex never names a model, so without the run-model floor every Codex run
-			// priced at $0.
-			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'codex-x');
+		it('records the run model when the stream names none', () => {
+			// Codex never names a model on its stream, so the run model is the only
+			// record of which model ran.
+			const parser = createAgentStreamParser(AgentRuntime.Codex, 'codex-x');
 			const out = parser.onStdout(
 				`${JSON.stringify({ type: 'thread.started', thread_id: 't1' })}\n`,
 			);
@@ -516,12 +480,11 @@ describe('agent-stream-parser', () => {
 					usage: { input_tokens: 1000, output_tokens: 100 },
 				})}\n`,
 			);
-			// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
-			expect(parser.getUsage()?.costCents).toBe(1);
+			expect(parser.getUsage()?.model).toBe('codex-x');
 		});
 
 		it('lets a model named on the stream win over the run model', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'stale-model');
+			const parser = createAgentStreamParser(AgentRuntime.Codex, 'stale-model');
 			const out = parser.onStdout(
 				`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`,
 			);
@@ -556,7 +519,6 @@ describe('agent-stream-parser', () => {
 			expect(parser.getUsage()).toEqual({
 				inputTokens: 5,
 				outputTokens: 7,
-				costCents: 0,
 				model: null,
 				buckets: {
 					inputTokens: 5,
@@ -603,11 +565,10 @@ describe('agent-stream-parser', () => {
 			const usage = parser.getUsage();
 			expect(usage?.inputTokens).toBe(46202);
 			expect(usage?.outputTokens).toBe(174);
-			expect(usage?.costCents).toBe(0);
 		});
 
 		it('takes only the result usage, ignoring per-step usage frames', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 			parser.onStdout(init('gemini-2.5-pro'));
 			// A step_update carries its own (partial) usage; the parser must ignore it
 			// and read the terminal result, whose usage is the cumulative sum.
@@ -621,12 +582,11 @@ describe('agent-stream-parser', () => {
 				}),
 			);
 			// pro: 1e6*1e-5 + 2e5*3e-5 = 16 → 1600c. Not 999-derived.
-			expect(parser.getUsage()?.costCents).toBe(1600);
 			expect(parser.getUsage()?.inputTokens).toBe(1_000_000);
 		});
 
 		it('charges cache_read at the cache-read rate, disjoint from input', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 			parser.onStdout(init('gemini-2.5-pro'));
 			parser.onStdout(
 				result({
@@ -646,7 +606,6 @@ describe('agent-stream-parser', () => {
 			// here as it does for every other runtime.
 			expect(usage?.inputTokens).toBe(52921 + 40586);
 			expect(usage?.outputTokens).toBe(602);
-			expect(usage?.costCents).toBeGreaterThan(0);
 		});
 
 		it('takes the final message from the result response', () => {
@@ -683,9 +642,9 @@ describe('agent-stream-parser', () => {
 		});
 	});
 
-	describe('cost from the pricing table', () => {
-		it('prices a codex run, charging cached input at the cache-read rate', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
+	describe('token buckets', () => {
+		it('counts cached codex input as input and reports it in its own bucket', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
 			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`);
 			parser.onStdout(
 				`${JSON.stringify({
@@ -698,13 +657,21 @@ describe('agent-stream-parser', () => {
 					},
 				})}\n`,
 			);
-			// regular=315@1e-5, cacheRead=24448@1e-6, output=130@3e-5
-			//   = 0.00315 + 0.024448 + 0.0039 = 0.031498 → 3 cents
-			expect(parser.getUsage()?.costCents).toBe(3);
+			// Reasoning is already inside the output count, so it is not added on top.
+			expect(parser.getUsage()).toMatchObject({
+				inputTokens: 24763,
+				outputTokens: 122,
+				buckets: {
+					inputTokens: 315,
+					cacheReadTokens: 24448,
+					cacheCreationTokens: 0,
+					outputTokens: 122,
+				},
+			});
 		});
 
-		it('prices an antigravity run at the init model rate', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+		it('records an antigravity run against the init model', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 			parser.onStdout(`${JSON.stringify({ event: 'init', init: { model: 'gemini-2.5-pro' } })}\n`);
 			parser.onStdout(
 				`${JSON.stringify({
@@ -718,17 +685,20 @@ describe('agent-stream-parser', () => {
 			const usage = parser.getUsage();
 			expect(usage?.inputTokens).toBe(1_000_000);
 			expect(usage?.outputTokens).toBe(200_000);
-			// pro: 1e6*1e-5 + 2e5*3e-5 = 16.0 → 1600c
-			expect(usage?.costCents).toBe(1600);
+			expect(usage?.model).toBe('gemini-2.5-pro');
 		});
 
-		it('records 0 cost for an unpriced model', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
+		it('records the tokens of a model Hezo has never seen', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
 			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'unknown-xyz' })}\n`);
 			parser.onStdout(
 				`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 9999, output_tokens: 9999 } })}\n`,
 			);
-			expect(parser.getUsage()?.costCents).toBe(0);
+			expect(parser.getUsage()).toMatchObject({
+				inputTokens: 9999,
+				outputTokens: 9999,
+				model: 'unknown-xyz',
+			});
 		});
 	});
 });
@@ -759,8 +729,8 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(out).toContain('command=ls -la');
 	});
 
-	it('captures token usage and prices it from a terminal event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
+	it('captures token usage from a terminal event', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
 		const out = parser.onStdout(
 			`${JSON.stringify({
@@ -772,12 +742,11 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		const usage = parser.getUsage();
 		expect(usage?.inputTokens).toBe(1000);
 		expect(usage?.outputTokens).toBe(200);
-		// 1000 * 0.000005 + 200 * 0.00001 = 0.005 + 0.002 = 0.007 USD = 0.7 cents → round 1.
-		expect(usage?.costCents).toBe(1);
+		expect(usage?.model).toBe('gemini-2.5-flash');
 	});
 
-	it('ignores a provider-reported usd cost in favor of computed pricing', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
+	it('ignores a provider-reported usd cost', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(
 			`${JSON.stringify({
 				type: 'turn.completed',
@@ -786,9 +755,7 @@ describe('agent-stream-parser — generic (opencode)', () => {
 			})}\n`,
 		);
 		expect(out).toBe('[done] success tokens=10/5\n');
-		// No model was announced, so the table prices to 0 — the reported figure
-		// never substitutes for it.
-		expect(parser.getUsage()?.costCents).toBe(0);
+		expect(parser.getUsage()).not.toHaveProperty('costCents');
 	});
 
 	it('drops unrecognized structured events instead of dumping raw JSON', () => {
@@ -799,7 +766,7 @@ describe('agent-stream-parser — generic (opencode)', () => {
 
 	// The shape a real run emits: per-step counts nested under `part`, with the
 	// cache halves in their own object. Probing only the event root found nothing,
-	// so every OpenCode run priced at $0.
+	// so every OpenCode run recorded no tokens.
 	const STEP_FINISHES = [
 		{
 			type: 'step_finish',
@@ -841,19 +808,19 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(usage?.outputTokens).toBe(51);
 	});
 
-	it('prices from the run model when the stream names none', () => {
-		// OpenCode announces no model anywhere, so without the run's own model
-		// there is nothing to look up and the run prices at $0 whatever it spent.
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price, 'gemini-2.5-flash');
+	it('records the run model when the stream names none', () => {
+		// OpenCode announces no model anywhere, so the run model is the only record
+		// of which model ran.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, 'gemini-2.5-flash');
 		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
-		expect(parser.getUsage()?.costCents).toBeGreaterThan(0);
+		expect(parser.getUsage()?.model).toBe('gemini-2.5-flash');
 	});
 
 	it('ignores the run model once the stream names one', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price, 'not-in-the-table');
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, 'stale-model');
 		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
 		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
-		expect(parser.getUsage()?.costCents).toBeGreaterThan(0);
+		expect(parser.getUsage()?.model).toBe('gemini-2.5-flash');
 	});
 
 	// A completed tool call as OpenCode reports it: one event per call, arriving
@@ -1145,7 +1112,7 @@ describe('getFinalAssistantMessage', () => {
 
 describe('grok stream parser', () => {
 	it('renders thought/text/end and reports no stream usage (usage comes from the debug log)', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Grok, price);
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
 		let out = '';
 		out += parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'let me ' })}\n`);
 		out += parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'reason' })}\n`);
@@ -1174,7 +1141,7 @@ describe('extractGrokUsageFromDebugLog', () => {
 	const span = (reqId: string, input: number, output: number, cacheRead: number) =>
 		`2026-07-09T08:38:38Z DEBUG session.process_conversation_turn{session_id=s agent.name="grok-build-plan" model_id="grok-4.5" request_id="${reqId}" ttft_ms=951 input_tokens=${input} output_tokens=${output} cache_read_tokens=${cacheRead} stop_reason="stop" response.has_tool_call=false}: record`;
 
-	it('sums usage across turns, dedups by request_id, and prices codex-style', () => {
+	it('sums usage across turns and dedups by request_id', () => {
 		// req-a is echoed on two lines within its span (must not double-count).
 		const log = [
 			span('req-a', 10586, 9, 4352),
@@ -1183,19 +1150,18 @@ describe('extractGrokUsageFromDebugLog', () => {
 			'some other unrelated debug line without tokens',
 		].join('\n');
 
-		const usage = extractGrokUsageFromDebugLog(log, price);
+		const usage = extractGrokUsageFromDebugLog(log);
 		expect(usage).not.toBeNull();
 		// input_tokens is inclusive: 10586 + 200 = 10786; output 9 + 50 = 59.
 		expect(usage?.inputTokens).toBe(10786);
 		expect(usage?.outputTokens).toBe(59);
-		// Cost: input priced as (input - cacheRead) at full rate + cacheRead at
-		// cache-read rate + output. cacheRead total = 4352.
-		const expected = costCentsFromRate(RATES['grok-4.5'], {
+		// Input is inclusive of cache reads, so the fresh bucket is what remains.
+		expect(usage?.buckets).toEqual({
 			inputTokens: 10786 - 4352,
 			cacheReadTokens: 4352,
 			outputTokens: 59,
 		});
-		expect(usage?.costCents).toBeCloseTo(expected, 8);
+		expect(usage?.model).toBe('grok-4.5');
 	});
 
 	it('returns null when the log has no usable span', () => {
@@ -1208,7 +1174,7 @@ describe('kimi stream parser', () => {
 	const line = (o: unknown) => `${JSON.stringify(o)}\n`;
 
 	it('renders assistant text and tool calls, and reports no stream usage', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi, price);
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
 		let out = '';
 		out += parser.onStdout(line({ role: 'assistant', content: 'Looking at the repo.' }));
 		out += parser.onStdout(
@@ -1272,7 +1238,7 @@ describe('kimi stream parser', () => {
 describe('extractKimiUsageFromSessionLog', () => {
 	const rec = (o: Record<string, unknown>) => JSON.stringify(o);
 
-	it('sums per-turn records and prices each bucket at its own rate', () => {
+	it('sums per-turn records into their own buckets', () => {
 		const log = [
 			rec({
 				type: 'usage.record',
@@ -1291,20 +1257,20 @@ describe('extractKimiUsageFromSessionLog', () => {
 			'not json at all',
 		].join('\n');
 
-		const usage = extractKimiUsageFromSessionLog(log, price);
+		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage).not.toBeNull();
 		// inputTokens is the full input side: other + cache read + cache creation.
 		expect(usage?.inputTokens).toBe(1300 + 500 + 100);
 		expect(usage?.outputTokens).toBe(250);
 		// `inputOther` is already the non-cached remainder, so unlike Codex/Grok the
 		// cached portion is NOT subtracted out of the input bucket.
-		const expected = costCentsFromRate(RATES['kimi-k2.7-code'], {
+		expect(usage?.buckets).toEqual({
 			inputTokens: 1300,
 			cacheReadTokens: 500,
 			cacheCreationTokens: 100,
 			outputTokens: 250,
 		});
-		expect(usage?.costCents).toBeCloseTo(expected, 8);
+		expect(usage?.model).toBe('kimi-k2.7-code');
 	});
 
 	it('dedups repeated records by request id', () => {
@@ -1314,7 +1280,7 @@ describe('extractKimiUsageFromSessionLog', () => {
 			model: 'kimi-k2.7-code',
 			usage: { inputOther: 100, output: 10 },
 		});
-		const usage = extractKimiUsageFromSessionLog([dup, dup].join('\n'), price);
+		const usage = extractKimiUsageFromSessionLog([dup, dup].join('\n'));
 		expect(usage?.inputTokens).toBe(100);
 		expect(usage?.outputTokens).toBe(10);
 	});
@@ -1335,7 +1301,7 @@ describe('extractKimiUsageFromSessionLog', () => {
 				usage: { inputOther: 300, output: 30 },
 			}),
 		].join('\n');
-		const usage = extractKimiUsageFromSessionLog(log, price);
+		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage?.inputTokens).toBe(300);
 		expect(usage?.outputTokens).toBe(30);
 	});
@@ -1361,7 +1327,7 @@ describe('extractKimiUsageFromSessionLog', () => {
 				usage: { inputOther: 300, output: 30 },
 			}),
 		].join('\n');
-		const usage = extractKimiUsageFromSessionLog(log, price);
+		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage?.inputTokens).toBe(300);
 		expect(usage?.outputTokens).toBe(30);
 	});
@@ -1374,12 +1340,12 @@ describe('extractKimiUsageFromSessionLog', () => {
 			model_id: 'kimi-k2.7-code',
 			token_usage: { input_other: 400, output: 40, input_cache_read: 60 },
 		});
-		const usage = extractKimiUsageFromSessionLog(log, price);
+		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage?.inputTokens).toBe(460);
 		expect(usage?.outputTokens).toBe(40);
 	});
 
-	it('returns null when the log carries no usage record (⇒ $0, fail-low)', () => {
+	it('returns null when the log carries no usage record', () => {
 		expect(extractKimiUsageFromSessionLog('')).toBeNull();
 		expect(extractKimiUsageFromSessionLog('{"role":"assistant","content":"hi"}')).toBeNull();
 		// An object with a `usage` key but no recognised bucket must not contribute
@@ -1387,16 +1353,16 @@ describe('extractKimiUsageFromSessionLog', () => {
 		expect(extractKimiUsageFromSessionLog('{"usage":{"something_else":1}}')).toBeNull();
 	});
 
-	it('prices to $0 for a model with no pricing row rather than guessing', () => {
+	it('records the tokens of a model Hezo has never seen', () => {
 		const log = rec({
 			scope: 'turn',
 			request_id: 'r1',
-			model: 'kimi-unpriced',
+			model: 'kimi-unknown',
 			usage: { inputOther: 1000, output: 100 },
 		});
-		const usage = extractKimiUsageFromSessionLog(log, price);
+		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage?.inputTokens).toBe(1000);
-		expect(usage?.costCents).toBe(0);
+		expect(usage?.model).toBe('kimi-unknown');
 	});
 });
 
@@ -1415,35 +1381,20 @@ const UNRECOGNIZED_TITLE =
 
 describe('claude-code unrecognized-model stderr', () => {
 	it('drops the diagnostic on a third-party Anthropic-compatible provider', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		expect(parser.onStderr(`${UNRECOGNIZED_TITLE}\n`)).toBe('');
 		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe('');
 		expect(parser.flush()).toBe('');
 	});
 
 	it('keeps every other stderr line, including neighbours of a dropped one', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		const chunk = `before\n${UNRECOGNIZED_RUN}\nafter\n`;
 		expect(parser.onStderr(chunk)).toBe('before\nafter\n');
 	});
 
 	it('keeps the diagnostic on Anthropic, where it means a model the CLI cannot resolve', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.Anthropic,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.Anthropic);
 		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe(`${UNRECOGNIZED_RUN}\n`);
 	});
 
@@ -1453,81 +1404,46 @@ describe('claude-code unrecognized-model stderr', () => {
 	});
 
 	it('drops it for a Moonshot credential running on Claude Code, not on its own CLI', () => {
-		const onClaudeCode = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.Kimi,
-		);
+		const onClaudeCode = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.Kimi);
 		expect(onClaudeCode.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe('');
 
 		// The kimi runtime has its own parser and never sees this line; its stderr
 		// stays a straight passthrough.
-		const onKimi = createAgentStreamParser(AgentRuntime.Kimi, undefined, null, AiProvider.Kimi);
+		const onKimi = createAgentStreamParser(AgentRuntime.Kimi, null, AiProvider.Kimi);
 		expect(onKimi.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe(`${UNRECOGNIZED_RUN}\n`);
 	});
 
 	it('drops it for a local provider, whose ids are off-registry too', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.Ollama,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.Ollama);
 		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe('');
 	});
 
 	it('matches a line split across chunks rather than leaking half of it', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		const half = Math.floor(UNRECOGNIZED_RUN.length / 2);
 		expect(parser.onStderr(UNRECOGNIZED_RUN.slice(0, half))).toBe('');
 		expect(parser.onStderr(`${UNRECOGNIZED_RUN.slice(half)}\n`)).toBe('');
 	});
 
 	it('flush() releases a held partial line, and drops it when it is the diagnostic', () => {
-		const kept = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const kept = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		expect(kept.onStderr('tail with no newline')).toBe('');
 		expect(kept.flush()).toBe('tail with no newline');
 
-		const dropped = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const dropped = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		expect(dropped.onStderr(UNRECOGNIZED_RUN)).toBe('');
 		expect(dropped.flush()).toBe('');
 	});
 
 	it('flush() still renders the buffered stdout event alongside the stderr tail', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		parser.onStdout('{"type":"system","subtype":"init","model":"deepseek-v4-pro","tools":[]}');
 		parser.onStderr('partial');
 		expect(parser.flush()).toBe('[session] model=deepseek-v4-pro tools=0\npartial');
 	});
 
 	it('releases an over-long partial line instead of buffering it without bound', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			undefined,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		const huge = 'x'.repeat(64 * 1024 + 1);
 		expect(parser.onStderr(huge)).toBe(huge);
 		// Released early, so the fragment completing it arrives next - concatenated,
@@ -1537,12 +1453,7 @@ describe('claude-code unrecognized-model stderr', () => {
 	});
 
 	it('leaves stdout rendering untouched', () => {
-		const parser = createAgentStreamParser(
-			AgentRuntime.ClaudeCode,
-			price,
-			null,
-			AiProvider.DeepSeek,
-		);
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, null, AiProvider.DeepSeek);
 		expect(
 			parser.onStdout('{"type":"system","subtype":"init","model":"claude-x","tools":["Bash"]}\n'),
 		).toBe('[session] model=claude-x tools=1\n');
@@ -1616,22 +1527,32 @@ describe('extractCodexUsageFromRollout', () => {
 		expect(usage?.outputTokens).toBe(40);
 	});
 
-	it('reads the model off turn_context and splits a mid-session switch', () => {
-		const price: PriceModelFn = (model) => (model === 'expensive' ? 100 : 1);
+	it('sums a mid-session model switch and reports the model that moved the most tokens', () => {
 		const usage = extractCodexUsageFromRollout(
 			[
-				turnContext('cheap'),
-				tokenCount({ input: 100, output: 10 }),
-				turnContext('expensive'),
+				turnContext('heavy'),
 				tokenCount({ input: 1000, output: 100 }),
+				turnContext('light'),
+				tokenCount({ input: 1100, output: 110 }),
 			].join(''),
-			price,
 		);
-		// Priced per model and summed - pricing the whole session at whichever model
-		// happened to be last would be wrong in both directions.
-		expect(usage?.costCents).toBe(101);
-		// The heavier model is the one reported.
-		expect(usage?.model).toBe('expensive');
+		expect(usage?.inputTokens).toBe(1100);
+		expect(usage?.outputTokens).toBe(110);
+		// The last model named is not the one reported: it moved a tenth of the tokens.
+		expect(usage?.model).toBe('heavy');
+	});
+
+	it('seeds the model from the head when the tail carries no turn_context', () => {
+		const usage = extractCodexUsageFromRollout(tokenCount({ input: 5, output: 1 }), 'gpt-5-codex');
+		expect(usage?.model).toBe('gpt-5-codex');
+	});
+
+	it('lets a turn_context in the tail win over the model read from the head', () => {
+		const usage = extractCodexUsageFromRollout(
+			turnContext('gpt-5.1-codex') + tokenCount({ input: 5, output: 1 }),
+			'gpt-5-codex',
+		);
+		expect(usage?.model).toBe('gpt-5.1-codex');
 	});
 
 	it('clamps a counter that goes backwards instead of subtracting', () => {
@@ -1658,5 +1579,27 @@ describe('extractCodexUsageFromRollout', () => {
 	it('returns null when the rollout carries no usage at all', () => {
 		expect(extractCodexUsageFromRollout('')).toBeNull();
 		expect(extractCodexUsageFromRollout(turnContext('gpt-5-codex'))).toBeNull();
+	});
+});
+
+describe('codexRolloutModel', () => {
+	const turnContext = (model: string): string =>
+		`${JSON.stringify({ type: 'turn_context', payload: { turn_id: 1, model } })}\n`;
+
+	it('returns the first model named in the head of a rollout', () => {
+		const head = `${JSON.stringify({ type: 'session_meta', payload: {} })}\n${turnContext('gpt-5-codex')}${turnContext('later')}`;
+		expect(codexRolloutModel(head)).toBe('gpt-5-codex');
+	});
+
+	it('skips a torn record at the end of the head read', () => {
+		const head = `${turnContext('gpt-5-codex').slice(0, 30)}`;
+		expect(codexRolloutModel(head)).toBeUndefined();
+		expect(codexRolloutModel(`${turnContext('gpt-5-codex')}{"type":"turn_context","pay`)).toBe(
+			'gpt-5-codex',
+		);
+	});
+
+	it('returns undefined when the head names no model', () => {
+		expect(codexRolloutModel('')).toBeUndefined();
 	});
 });

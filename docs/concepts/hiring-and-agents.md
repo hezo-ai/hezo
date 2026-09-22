@@ -54,7 +54,7 @@ When you hire an agent you set:
   you for the cadence before filing rather than choosing one for you. The agent's page
   shows a live countdown to its next heartbeat (hidden while the agent is disabled or
   paused).
-- **Budget** - optional spending limits (see
+- **Budget** - optional token limits (see
   [Budgets & cost control](/docs/concepts/budgets-and-costs)).
 - **Code access** - whether the agent works in the project's code workspace.
 

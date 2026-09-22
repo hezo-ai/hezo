@@ -112,10 +112,10 @@ export const grokAdapter: RuntimeAdapter = {
 		if (!ctx.containerHomeDir) return [];
 		return ['--debug-file', join(ctx.containerHomeDir, GROK_DEBUG_BASENAME)];
 	},
-	async recoverUsage({ files, price, onError }) {
+	async recoverUsage({ files, onError }) {
 		try {
 			if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
-			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME), price);
+			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME));
 		} catch (e) {
 			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
 			return null;

@@ -49,7 +49,6 @@ function runResponse(
 		error: null,
 		input_tokens: 0,
 		output_tokens: 0,
-		cost_cents: 0,
 		log_text: 'run output line',
 		created_tasks: [],
 	};

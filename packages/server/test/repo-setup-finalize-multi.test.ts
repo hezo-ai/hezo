@@ -28,7 +28,7 @@ async function seedAgent(db: Db, teamId: string, title: string): Promise<string>
 	);
 	await db.query(
 		`INSERT INTO member_agents (id, title, slug, role_description, default_effort,
-		                            heartbeat_interval_min, monthly_budget_cents, touches_code, admin_status)
+		                            heartbeat_interval_min, monthly_budget_tokens, touches_code, admin_status)
 		 VALUES ($1, $2, $3, '', 'medium', 60, 3000, true, 'enabled')`,
 		[member.rows[0].id, title, title.toLowerCase().replace(/\s+/g, '-')],
 	);

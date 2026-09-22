@@ -1,4 +1,10 @@
-import { AgentRuntimeStatus, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
+import {
+	AgentRuntimeStatus,
+	HeartbeatRunStatus,
+	TaskStatus,
+	WakeupSkipReason,
+	WakeupStatus,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -9,7 +15,7 @@ import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { HANDOFF_ROUND_LIMIT } from '../src/services/no-work-backoff';
+import { HANDOFF_ROUND_LIMIT, TASK_TOKEN_CEILING } from '../src/services/no-work-backoff';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -728,6 +734,102 @@ describe('JobManager workflow methods', () => {
 				opener.rows[0].id,
 			]);
 			await db.query('DELETE FROM tasks WHERE id = $1', [loopTaskId]);
+		});
+
+		it('holds a task past its token ceiling for every agent until a person replies', async () => {
+			const manager = createJobManager();
+			await db.query(
+				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'cancelled')",
+				[agentId],
+			);
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const heavy = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, 'Expensive task', '', $6::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					TaskStatus.InProgress,
+				],
+			);
+			const heavyTaskId = heavy.rows[0].id;
+			// One run of the agent's own, started by a heartbeat: no handoff at all, so
+			// only the token ceiling can hold it.
+			await db.query(
+				`INSERT INTO heartbeat_runs
+				   (team_id, member_id, task_id, status, started_at, finished_at, input_tokens, output_tokens)
+				 VALUES ($1, $2, $3, 'succeeded', now() - interval '10 minutes',
+				         now() - interval '5 minutes', $4, 0)`,
+				[teamId, agentId, heavyTaskId, TASK_TOKEN_CEILING],
+			);
+
+			const queueHeartbeat = async () => {
+				const w = await db.query<{ id: string }>(
+					`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status)
+					 VALUES ($1, $2, 'heartbeat', $3::jsonb, 'claimed') RETURNING id`,
+					[agentId, teamId, JSON.stringify({ task_id: heavyTaskId })],
+				);
+				const id = w.rows[0].id;
+				await (manager as any).activateAgent(
+					agentId,
+					teamId,
+					id,
+					{ task_id: heavyTaskId },
+					'heartbeat',
+				);
+				const row = await db.query<{ last_skipped_reason: string | null }>(
+					'SELECT last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+					[id],
+				);
+				return row.rows[0];
+			};
+			const notices = async () =>
+				db.query<{ id: string; content: Record<string, unknown> }>(
+					`SELECT id, content FROM task_comments
+					 WHERE task_id = $1 AND content->>'kind' = 'task_token_ceiling'`,
+					[heavyTaskId],
+				);
+
+			expect((await queueHeartbeat()).last_skipped_reason).toBe(WakeupSkipReason.TaskTokenCeiling);
+			const posted = await notices();
+			expect(posted.rows).toHaveLength(1);
+			expect(posted.rows[0].content.tokens).toBe(TASK_TOKEN_CEILING);
+			const inbox = await db.query('SELECT 1 FROM admin_mentions WHERE comment_id = $1', [
+				posted.rows[0].id,
+			]);
+			expect(inbox.rows.length).toBeGreaterThan(0);
+
+			// Held again, and the admin is told once per hold.
+			expect((await queueHeartbeat()).last_skipped_reason).toBe(WakeupSkipReason.TaskTokenCeiling);
+			expect((await notices()).rows).toHaveLength(1);
+
+			// A person's reply grants a fresh ceiling.
+			const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+			await db.query(
+				`INSERT INTO task_comments (task_id, author_user_id, content_type, content)
+				 VALUES ($1, $2, 'text', '{"text":"Worth it, carry on."}'::jsonb)`,
+				[heavyTaskId, user.rows[0].id],
+			);
+			expect((await queueHeartbeat()).last_skipped_reason).not.toBe(
+				WakeupSkipReason.TaskTokenCeiling,
+			);
+			await waitForBackground();
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE payload->>$1 = $2', [
+				'task_id',
+				heavyTaskId,
+			]);
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [heavyTaskId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [heavyTaskId]);
 		});
 
 		it('launches (lazy-starting the container) when the project has no container', async () => {
@@ -2051,12 +2153,12 @@ describe('JobManager workflow methods', () => {
 	describe('processBudgetResumes', () => {
 		it('lifts a budget pause back to idle once spend is within budget', async () => {
 			const manager = createJobManager();
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			// Paused for budget, but no spend and no limits → reconcile resumes it.
 			await db.query(
 				`UPDATE member_agents
 				 SET runtime_status = 'out_of_agent_budget',
-				     daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0
+				     daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0
 				 WHERE id = $1`,
 				[agentId],
 			);
@@ -2073,13 +2175,13 @@ describe('JobManager workflow methods', () => {
 
 		it('keeps an agent paused while still over budget', async () => {
 			const manager = createJobManager();
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			await db.query(
-				`UPDATE member_agents SET runtime_status = 'out_of_agent_budget', daily_budget_cents = 100 WHERE id = $1`,
+				`UPDATE member_agents SET runtime_status = 'out_of_agent_budget', daily_budget_tokens = 100 WHERE id = $1`,
 				[agentId],
 			);
 			await db.query(
-				`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 250)`,
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens) VALUES ($1, $2, 250)`,
 				[agentId, projectId],
 			);
 
@@ -2091,9 +2193,9 @@ describe('JobManager workflow methods', () => {
 			);
 			expect(status.rows[0].runtime_status).toBe('out_of_agent_budget');
 
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			await db.query(
-				"UPDATE member_agents SET runtime_status = 'idle', daily_budget_cents = 0 WHERE id = $1",
+				"UPDATE member_agents SET runtime_status = 'idle', daily_budget_tokens = 0 WHERE id = $1",
 				[agentId],
 			);
 			manager.shutdown();
@@ -2155,17 +2257,17 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 		});
 
-		it('preserves a stranded run’s partial usage and charges its cost to the budget', async () => {
+		it('preserves a stranded run’s partial usage and counts it against the budget', async () => {
 			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 
 			// A run the server killed mid-flight: its periodic flush left a non-zero
 			// usage snapshot flagged partial, but it never completed.
 			const inserted = await db.query<{ id: string }>(
 				`INSERT INTO heartbeat_runs
 				   (team_id, member_id, task_id, status, started_at,
-				    input_tokens, output_tokens, cost_cents, usage_partial)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 1000, 200, 37, true)
+				    input_tokens, output_tokens, usage_partial)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 1000, 200, true)
 				 RETURNING id`,
 				[teamId, agentId, taskId, HeartbeatRunStatus.Running],
 			);
@@ -2192,13 +2294,12 @@ describe('JobManager workflow methods', () => {
 			expect(Number(run.rows[0].output_tokens)).toBe(200);
 			expect(run.rows[0].usage_partial).toBe(true);
 
-			// …and the surviving cost reached cost_entries (so budgets count it).
-			const cost = await db.query<{ amount_cents: number }>(
-				`SELECT amount_cents FROM cost_entries WHERE member_id = $1 AND description = $2`,
+			// …and the surviving usage reached usage_entries (so budgets count it).
+			const usage = await db.query<{ input_tokens: number; output_tokens: number }>(
+				`SELECT input_tokens, output_tokens FROM usage_entries WHERE member_id = $1 AND description = $2`,
 				[agentId, `Agent run ${runId}`],
 			);
-			expect(cost.rows.length).toBe(1);
-			expect(Number(cost.rows[0].amount_cents)).toBe(37);
+			expect(usage.rows).toEqual([{ input_tokens: 1000, output_tokens: 200 }]);
 
 			manager.shutdown();
 		});

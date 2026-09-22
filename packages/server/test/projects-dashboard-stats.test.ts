@@ -37,19 +37,21 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-it('projects index carries running-agent count, today spend, and last activity', async () => {
+it('projects index carries running-agent count, today tokens, and last activity', async () => {
 	// One running agent on the team.
 	await db.query(
 		`UPDATE member_agents SET runtime_status = 'active'::agent_runtime_status WHERE id = $1`,
 		[agentId],
 	);
-	// $2.50 spent today, plus $9.99 two days ago that must not count toward today.
+	// 250 tokens today (input and output), plus 999 two days ago that must not count
+	// toward today.
 	await db.query(
-		`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 250)`,
+		`INSERT INTO usage_entries (member_id, project_id, input_tokens, output_tokens)
+		 VALUES ($1, $2, 200, 50)`,
 		[agentId, projectId],
 	);
 	await db.query(
-		`INSERT INTO cost_entries (member_id, project_id, amount_cents, created_at)
+		`INSERT INTO usage_entries (member_id, project_id, input_tokens, created_at)
 		 VALUES ($1, $2, 999, now() - interval '2 days')`,
 		[agentId, projectId],
 	);
@@ -59,17 +61,17 @@ it('projects index carries running-agent count, today spend, and last activity',
 	const projects = (await res.json()).data as Array<{
 		id: string;
 		running_agents_count: number;
-		today_spend_cents: number;
+		today_tokens: number;
 		last_activity_at: string | null;
 	}>;
 	const p = projects.find((x) => x.id === projectId);
 	if (!p) throw new Error('project missing from index');
 	expect(p.running_agents_count).toBe(1);
-	expect(p.today_spend_cents).toBe(250);
+	expect(p.today_tokens).toBe(250);
 	expect(p.last_activity_at).toBeTruthy();
 });
 
-it('a project with no active agents and no spend reports zeros', async () => {
+it('a project with no active agents and no usage reports zeros', async () => {
 	await db.query(
 		`UPDATE member_agents SET runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
 		[agentId],
@@ -83,12 +85,12 @@ it('a project with no active agents and no spend reports zeros', async () => {
 	const projects = (await res.json()).data as Array<{
 		id: string;
 		running_agents_count: number;
-		today_spend_cents: number;
+		today_tokens: number;
 	}>;
 	const quiet = projects.find((x) => x.id === quietId);
 	if (!quiet) throw new Error('quiet project missing');
 	expect(quiet.running_agents_count).toBe(0);
-	expect(quiet.today_spend_cents).toBe(0);
+	expect(quiet.today_tokens).toBe(0);
 });
 
 // `code_agent_count` is how the web client learns whether a team does git work at

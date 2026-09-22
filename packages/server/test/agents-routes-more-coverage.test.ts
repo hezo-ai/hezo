@@ -685,7 +685,7 @@ describe('PATCH /agents/:agentId', () => {
 		const cap = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: json(ctx.token),
-			body: JSON.stringify({ monthly_budget_cents: 3000 }),
+			body: JSON.stringify({ monthly_budget_tokens: 3000 }),
 		});
 		expect(cap.status).toBe(200);
 
@@ -693,7 +693,7 @@ describe('PATCH /agents/:agentId', () => {
 		const bad = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: json(ctx.token),
-			body: JSON.stringify({ daily_budget_cents: 999999 }),
+			body: JSON.stringify({ daily_budget_tokens: 999999 }),
 		});
 		expect(bad.status).toBe(400);
 
@@ -701,10 +701,10 @@ describe('PATCH /agents/:agentId', () => {
 		const good = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: json(ctx.token),
-			body: JSON.stringify({ daily_budget_cents: 90 }),
+			body: JSON.stringify({ daily_budget_tokens: 90 }),
 		});
 		expect(good.status).toBe(200);
-		expect((await good.json()).data.daily_budget_cents).toBe(90);
+		expect((await good.json()).data.daily_budget_tokens).toBe(90);
 	});
 
 	it('returns the current row unchanged for an empty PATCH body', async () => {

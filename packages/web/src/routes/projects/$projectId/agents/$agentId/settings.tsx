@@ -4,7 +4,7 @@ import {
 	AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
-	type BudgetWindowsCents,
+	type BudgetWindowsTokens,
 	CAPTAIN_AGENT_SLUG,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
@@ -44,12 +44,13 @@ import {
 	useUpdateAgent,
 } from '../../../../../hooks/use-agents';
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
-import { useBudgetStatus } from '../../../../../hooks/use-costs';
 import { useScrollToHash } from '../../../../../hooks/use-scroll-to-hash';
+import { useBudgetStatus } from '../../../../../hooks/use-usage';
 import {
 	buildDocVersionHistory,
 	type DocVersionEntry,
 } from '../../../../../lib/doc-version-history';
+import { useI18n } from '../../../../../lib/i18n';
 
 function AgentSettingsPage() {
 	const { projectId, agentId } = Route.useParams();
@@ -62,6 +63,7 @@ function AgentSettingsPage() {
 	const disableAgent = useDisableAgent(projectId);
 	const enableAgent = useEnableAgent(projectId);
 	const { data: budgetStatus } = useBudgetStatus(projectId);
+	const { t, formatCompact } = useI18n();
 	// Deep link from the Budget page's per-agent "Edit" button lands on Budget limits.
 	const budgetSectionRef = useScrollToHash('budget');
 
@@ -75,10 +77,10 @@ function AgentSettingsPage() {
 		promptMode === 'preview',
 	);
 	const [reportsTo, setReportsTo] = useState('');
-	const [budget, setBudget] = useState<BudgetWindowsCents>({
-		daily_budget_cents: 0,
-		weekly_budget_cents: 0,
-		monthly_budget_cents: 0,
+	const [budget, setBudget] = useState<BudgetWindowsTokens>({
+		daily_budget_tokens: 0,
+		weekly_budget_tokens: 0,
+		monthly_budget_tokens: 0,
 	});
 	const [heartbeat, setHeartbeat] = useState('');
 	const [runTimeout, setRunTimeout] = useState('');
@@ -94,9 +96,9 @@ function AgentSettingsPage() {
 		setRoleDesc(agent.role_description ?? '');
 		setReportsTo(agent.reports_to ?? '');
 		setBudget({
-			daily_budget_cents: agent.daily_budget_cents,
-			weekly_budget_cents: agent.weekly_budget_cents,
-			monthly_budget_cents: agent.monthly_budget_cents,
+			daily_budget_tokens: agent.daily_budget_tokens,
+			weekly_budget_tokens: agent.weekly_budget_tokens,
+			monthly_budget_tokens: agent.monthly_budget_tokens,
 		});
 		setHeartbeat(String(agent.heartbeat_interval_min));
 		setRunTimeout(String(agent.run_timeout_min));
@@ -144,9 +146,9 @@ function AgentSettingsPage() {
 			role_description: roleDesc || undefined,
 			system_prompt: promptChanged ? systemPrompt : undefined,
 			reports_to: reportsTo || null,
-			daily_budget_cents: budget.daily_budget_cents,
-			weekly_budget_cents: budget.weekly_budget_cents,
-			monthly_budget_cents: budget.monthly_budget_cents,
+			daily_budget_tokens: budget.daily_budget_tokens,
+			weekly_budget_tokens: budget.weekly_budget_tokens,
+			monthly_budget_tokens: budget.monthly_budget_tokens,
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 			run_timeout_min: Number.parseInt(runTimeout, 10),
 			touches_code: touchesCode,
@@ -168,12 +170,12 @@ function AgentSettingsPage() {
 			{/* Budget & Heartbeat */}
 			<div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div className="rounded-lg border border-border-subtle bg-surface p-4">
-					<div className="text-xs text-text-2 mb-2">Monthly spend</div>
+					<div className="text-xs text-text-2 mb-2">{t('agent.settings.monthlyUsage')}</div>
 					{(() => {
 						const entry = budgetStatus?.agents.find((a) => a.agent_id === agent.id);
-						const spent = entry?.monthly.spentCents ?? 0;
-						const limit = agent.monthly_budget_cents;
-						const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+						const used = entry?.monthly.usedTokens ?? 0;
+						const limit = agent.monthly_budget_tokens;
+						const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
 						return (
 							<>
 								{limit > 0 && (
@@ -185,15 +187,20 @@ function AgentSettingsPage() {
 									</div>
 								)}
 								<div className="text-sm font-medium">
-									${(spent / 100).toFixed(2)}
-									{limit > 0 ? ` / $${(limit / 100).toFixed(2)} (${pct}%)` : ' (unlimited)'}
+									{limit > 0
+										? t('agent.settings.usageOfLimit', {
+												used: formatCompact(used),
+												limit: formatCompact(limit),
+												percent: pct,
+											})
+										: t('agent.settings.usageUnlimited', { used: formatCompact(used) })}
 								</div>
 								<Link
 									to="/projects/$projectId/budget"
 									params={{ projectId }}
 									className="mt-1 inline-block text-xs text-info-soft-fg hover:underline"
 								>
-									View budgets & charts
+									{t('agent.settings.viewBudgets')}
 								</Link>
 							</>
 						);

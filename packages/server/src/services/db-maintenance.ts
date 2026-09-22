@@ -28,7 +28,7 @@ export const ANALYZE_TABLES = [
 	'task_comments',
 	'audit_log',
 	'agent_wakeup_requests',
-	'cost_entries',
+	'usage_entries',
 ] as const;
 
 /**

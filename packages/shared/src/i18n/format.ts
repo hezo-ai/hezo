@@ -73,9 +73,9 @@ const DATE_FORMAT_DESCRIPTORS: Record<DateFormat, DateFormatDescriptor> = {
 interface NumberFormatDescriptor {
 	/**
 	 * A locale whose own `Intl` output already punctuates numbers this way. Safe
-	 * to drive money off a representative locale (rather than the language)
-	 * because a USD amount carries no language-dependent words — with
-	 * `narrowSymbol` the symbol is always "$", so only the separators vary.
+	 * to drive a plain number off a representative locale (rather than the
+	 * language) because it carries no language-dependent words, so only the
+	 * separators vary.
 	 */
 	readonly representativeLocale: string;
 }
@@ -108,33 +108,18 @@ const LANGUAGE_FORMAT_DEFAULTS: Record<
 	ko: { date_format: DateFormat.Ymd, number_format: NumberFormat.DotComma },
 };
 
-// ---------------------------------------------------------------------------
-// Money
-// ---------------------------------------------------------------------------
-
 /**
- * Render USD cents. `currencyDisplay: 'narrowSymbol'` pins the symbol to "$" so
- * the chosen format governs punctuation only — without it, `fr-FR` would render
- * "$US" and `sv-SE` "US$", which is a different decision than the one the
- * operator made.
+ * A large number shortened for a glance - "20M", "20 Mio.", "2000万" - in the
+ * reader's language, whose words the suffix is. For token counts on charts and
+ * budget bars; an exact figure uses {@link formatNumber}.
  */
-export function formatMoneyUsd(
-	cents: number,
-	numberFormat: NumberFormat = DEFAULT_LOCALE_SETTINGS.number_format,
-	options: { maximumFractionDigits?: number; minimumFractionDigits?: number } = {},
-): string {
-	const { representativeLocale } = NUMBER_FORMAT_DESCRIPTORS[numberFormat];
-	const amount = (Number.isFinite(cents) ? cents : 0) / 100;
-	return new Intl.NumberFormat(representativeLocale, {
-		style: 'currency',
-		currency: 'USD',
-		currencyDisplay: 'narrowSymbol',
-		minimumFractionDigits: options.minimumFractionDigits ?? 2,
-		maximumFractionDigits: options.maximumFractionDigits ?? 2,
-	}).format(amount);
+export function formatCompactNumber(value: number, language: string): string {
+	return new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 }).format(
+		Number.isFinite(value) ? value : 0,
+	);
 }
 
-/** Plain localized number (no currency) — used for token counts and the like. */
+/** Plain localized number - used for token counts and the like. */
 export function formatNumber(value: number, numberFormat: NumberFormat): string {
 	const { representativeLocale } = NUMBER_FORMAT_DESCRIPTORS[numberFormat];
 	return new Intl.NumberFormat(representativeLocale).format(Number.isFinite(value) ? value : 0);

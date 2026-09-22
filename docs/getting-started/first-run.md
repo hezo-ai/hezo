@@ -12,7 +12,7 @@ to a working instance: create your master key, set an admin password, and connec
 Hezo's web app runs in twelve languages, and every setup screen is already in yours: Hezo
 reads it from your browser, and a language button in the top right lets you pick another
 one at any point. The language showing when you create your master key becomes the
-instance's language, along with a date format and a currency format that fit it. Change
+instance's language, along with a date format and a number format that fit it. Change
 any of the three later in **Settings -> Languages & formats**. See
 [Languages & formats](/docs/concepts/languages-and-formats).
 

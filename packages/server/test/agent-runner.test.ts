@@ -29,7 +29,6 @@ import {
 	shellQuoteArg,
 } from '../src/services/agent-runner';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -2770,16 +2769,8 @@ describe('runAgent', () => {
 				},
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
-			// Wire a deterministic table path (a manual override, independent of the
-			// bundled snapshot). This run also reports total_cost_usd, which must be
-			// ignored — cost is always computed from the table over the token buckets.
-			const pricing = new PricingService(db);
-			await upsertManualRate(db, {
-				model_id: 'claude-opus-4-7',
-				input_per_token: 0.0001,
-				output_per_token: 0.0002,
-			});
-			await pricing.reload();
+			// This run also reports total_cost_usd, which is ignored: only the token
+			// counts are recorded.
 			const deps: RunnerDeps = {
 				db,
 				docker,
@@ -2787,7 +2778,6 @@ describe('runAgent', () => {
 				serverPort: 3000,
 				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
-				pricing,
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
@@ -2796,9 +2786,8 @@ describe('runAgent', () => {
 				log_text: string;
 				input_tokens: number;
 				output_tokens: number;
-				cost_cents: number;
 			}>(
-				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens, cost_cents FROM heartbeat_runs WHERE id = $1`,
+				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens FROM heartbeat_runs WHERE id = $1`,
 				[result.heartbeatRunId],
 			);
 			const log = row.rows[0].log_text;
@@ -2811,9 +2800,6 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			// The reported total_cost_usd (0.1234 → 12c) is discarded; the table prices
-			// the tokens: 1200*0.0001 + 350*0.0002 = 0.19 → 19 cents.
-			expect(row.rows[0].cost_cents).toBe(19);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {

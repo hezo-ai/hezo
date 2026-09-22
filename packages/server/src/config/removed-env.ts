@@ -68,7 +68,6 @@ const JOB_CRONS: Record<string, string> = {
 	HEZO_WAKEUP_CRON: 'jobs.wakeupCron',
 	HEZO_HEARTBEAT_CRON: 'jobs.heartbeatCron',
 	HEZO_INBOX_ARCHIVE_CRON: 'jobs.inboxArchiveCron',
-	HEZO_PRICING_REFRESH_CRON: 'jobs.pricingRefreshCron',
 	HEZO_MODEL_PIN_REFRESH_CRON: 'jobs.modelPinRefreshCron',
 	HEZO_UPDATE_CHECK_CRON: 'jobs.updateCheckCron',
 	HEZO_AUTO_INSTALL_CRON: 'jobs.autoInstallCron',
@@ -166,6 +165,9 @@ export const REMOVED_ENV_VARS: Record<string, RemovedEnvVar> = {
 	GITHUB_OAUTH_CLIENT_ID: warnOnly('the `github.oauthClientId` config-file key'),
 	HEZO_CHAT_HEALTH_INTERVAL_MS: warnOnly(
 		'nothing - the pinned chat container and its health check were removed; chat turns claim pool containers per turn',
+	),
+	HEZO_PRICING_REFRESH_CRON: warnOnly(
+		'nothing - model pricing was removed; budgets count tokens, so there is no price list to refresh',
 	),
 
 	...Object.fromEntries(

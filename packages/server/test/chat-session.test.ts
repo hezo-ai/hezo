@@ -25,7 +25,6 @@ import { acquireCredentialLock } from '../src/services/agent-runner';
 import { type CeoSessionDeps, ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import type { PricingService } from '../src/services/pricing/pricing-service';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
@@ -281,9 +280,9 @@ describe('ChatSessionManager', () => {
 		const chat = makeChatDocker(ctx.dataDir, projectId);
 		const { manager } = makeManager(ctx, chat.docker);
 		const ceo = await ceoId();
-		await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 1 WHERE id = $1`, [ceo]);
+		await ctx.db.query(`UPDATE member_agents SET daily_budget_tokens = 1 WHERE id = $1`, [ceo]);
 		await ctx.db.query(
-			`INSERT INTO cost_entries (member_id, amount_cents, description) VALUES ($1, 5, 'prior')`,
+			`INSERT INTO usage_entries (member_id, input_tokens, description) VALUES ($1, 5, 'prior')`,
 			[ceo],
 		);
 		try {
@@ -300,12 +299,12 @@ describe('ChatSessionManager', () => {
 			);
 			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
 			expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
-			expect(rows.rows[1].content).toContain('daily budget');
+			expect(rows.rows[1].content).toContain('daily token budget');
 			expect(res.assistantMessageId).toBe(rows.rows[1].id);
 			expect(chat.scenario.entered).toBe(false);
 		} finally {
-			await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 0 WHERE id = $1`, [ceo]);
-			await ctx.db.query(`DELETE FROM cost_entries WHERE member_id = $1`, [ceo]);
+			await ctx.db.query(`UPDATE member_agents SET daily_budget_tokens = 0 WHERE id = $1`, [ceo]);
+			await ctx.db.query(`DELETE FROM usage_entries WHERE member_id = $1`, [ceo]);
 			await manager.stop();
 		}
 	});
@@ -351,10 +350,11 @@ describe('ChatSessionManager', () => {
 		}
 	});
 
-	test('bills a completed turn to cost_entries under the CEO and HQ', async () => {
+	test('records a completed turn in usage_entries under the CEO and HQ', async () => {
+		// Every chat turn records its tokens, so earlier turns in this file left rows.
+		await ctx.db.query(`DELETE FROM usage_entries WHERE description = 'Chat turn'`);
 		const chat = makeChatDocker(ctx.dataDir, projectId);
-		const pricing = { costCents: () => 3 } as unknown as PricingService;
-		const { manager } = makeManager(ctx, chat.docker, { pricing });
+		const { manager } = makeManager(ctx, chat.docker);
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
@@ -365,7 +365,7 @@ describe('ChatSessionManager', () => {
 		});
 		await poll(async () => {
 			const r = await ctx.db.query<{ n: number }>(
-				`SELECT COUNT(*)::int AS n FROM cost_entries WHERE description = 'Chat turn'`,
+				`SELECT COUNT(*)::int AS n FROM usage_entries WHERE description = 'Chat turn'`,
 			);
 			return r.rows[0].n === 1;
 		});
@@ -373,15 +373,17 @@ describe('ChatSessionManager', () => {
 			member_id: string;
 			project_id: string | null;
 			task_id: string | null;
-			amount_cents: number;
-		}>(`SELECT member_id, project_id, task_id, amount_cents FROM cost_entries
+			input_tokens: number;
+			output_tokens: number;
+		}>(`SELECT member_id, project_id, task_id, input_tokens, output_tokens FROM usage_entries
 		    WHERE description = 'Chat turn'`);
 		expect(entry.rows[0].member_id).toBe(await ceoId());
 		expect(entry.rows[0].project_id).toBe(projectId);
 		expect(entry.rows[0].task_id).toBeNull();
-		expect(entry.rows[0].amount_cents).toBe(3);
+		expect(entry.rows[0].input_tokens).toBe(10);
+		expect(entry.rows[0].output_tokens).toBe(5);
 		await manager.stop();
-		await ctx.db.query(`DELETE FROM cost_entries`);
+		await ctx.db.query(`DELETE FROM usage_entries`);
 	});
 
 	test('points a file-delivery runtime at the turn its prompt was written for', async () => {
@@ -1059,8 +1061,7 @@ describe('ChatSessionManager', () => {
 		test('runs a DM turn end to end in the worker’s own scope', async () => {
 			const w = await seedWorker();
 			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
-			const pricing = { costCents: () => 2 } as unknown as PricingService;
-			const { manager } = makeManager(ctx, chat.docker, { pricing });
+			const { manager } = makeManager(ctx, chat.docker);
 			const res = await manager.sendWorkerTurn({
 				memberId: w.memberId,
 				teamId: w.teamId,
@@ -1123,12 +1124,14 @@ describe('ChatSessionManager', () => {
 				return r.rows[0]?.state === 'idle';
 			});
 
-			// The spend landed under the worker and its project.
-			const cost = await ctx.db.query<{ member_id: string; project_id: string }>(
-				`SELECT member_id, project_id FROM cost_entries WHERE description = 'Chat turn'`,
+			// The usage landed under the worker and its project.
+			const usage = await ctx.db.query<{ member_id: string; project_id: string }>(
+				`SELECT member_id, project_id FROM usage_entries
+				 WHERE description = 'Chat turn' AND member_id = $1`,
+				[w.memberId],
 			);
-			expect(cost.rows).toHaveLength(1);
-			expect(cost.rows[0]).toEqual({ member_id: w.memberId, project_id: w.projectId });
+			expect(usage.rows).toHaveLength(1);
+			expect(usage.rows[0]).toEqual({ member_id: w.memberId, project_id: w.projectId });
 
 			await manager.stop();
 			// stop() closes the worker session row so its JWTs stop validating.
@@ -1137,18 +1140,18 @@ describe('ChatSessionManager', () => {
 				[w.memberId],
 			);
 			expect(after.rows[0].status).toBe(ChatSessionStatus.Stopped);
-			await ctx.db.query(`DELETE FROM cost_entries`);
+			await ctx.db.query(`DELETE FROM usage_entries`);
 		});
 
 		test('gates the turn on the worker’s own budget, not HQ’s', async () => {
 			const w = await seedWorker();
 			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
 			const { manager } = makeManager(ctx, chat.docker);
-			await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 1 WHERE id = $1`, [
+			await ctx.db.query(`UPDATE member_agents SET daily_budget_tokens = 1 WHERE id = $1`, [
 				w.memberId,
 			]);
 			await ctx.db.query(
-				`INSERT INTO cost_entries (member_id, amount_cents, description) VALUES ($1, 5, 'prior')`,
+				`INSERT INTO usage_entries (member_id, input_tokens, description) VALUES ($1, 5, 'prior')`,
 				[w.memberId],
 			);
 			try {
@@ -1167,7 +1170,7 @@ describe('ChatSessionManager', () => {
 				expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
 				expect(chat.scenario.entered).toBe(false);
 			} finally {
-				await ctx.db.query(`DELETE FROM cost_entries WHERE member_id = $1`, [w.memberId]);
+				await ctx.db.query(`DELETE FROM usage_entries WHERE member_id = $1`, [w.memberId]);
 				await manager.stop();
 			}
 		});

@@ -1,32 +1,24 @@
-import type { BudgetWindowsCents } from '@hezo/shared';
+import type { BudgetWindowsTokens } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Clock, Loader2, Pencil, TriangleAlert } from 'lucide-react';
 import { type Ref, useState } from 'react';
-import {
-	type EntityBudgetStatus,
-	monthToDateNotionalCents,
-	useBudgetStatus,
-	useDailyCostSeries,
-	type WindowStatus,
-} from '../../hooks/use-costs';
 import { useProject, useUpdateProject } from '../../hooks/use-projects';
-import { useI18n } from '../../lib/i18n';
-import { dollars } from '../charts/chart-format';
-import { NotionalFigure } from '../cost-figures';
+import { type EntityBudgetStatus, useBudgetStatus, type WindowStatus } from '../../hooks/use-usage';
+import { type MessageKey, useI18n } from '../../lib/i18n';
 import { Button } from '../ui/button';
 import { SectionHeader } from '../ui/section-header';
 import { BudgetWindowsEditor } from './budget-windows-editor';
 
 type WindowKey = 'daily' | 'weekly' | 'monthly';
-const WINDOW_LABELS: Record<WindowKey, string> = {
-	daily: 'Today',
-	weekly: 'This week',
-	monthly: 'This month',
+const WINDOW_LABELS: Record<WindowKey, MessageKey> = {
+	daily: 'budget.usage.today',
+	weekly: 'budget.usage.thisWeek',
+	monthly: 'budget.usage.thisMonth',
 };
 
 function pctUsed(s: WindowStatus): number {
-	if (s.limitCents <= 0) return 0;
-	return Math.min(Math.round((s.spentCents / s.limitCents) * 100), 999);
+	if (s.limitTokens <= 0) return 0;
+	return Math.min(Math.round((s.usedTokens / s.limitTokens) * 100), 999);
 }
 
 function toneFor(s: WindowStatus): 'success' | 'warning' | 'danger' {
@@ -43,39 +35,45 @@ const TONE_TEXT = {
 } as const;
 const TONE_BAR = { success: 'bg-success', warning: 'bg-warning', danger: 'bg-danger' } as const;
 
-/** Each window resets on a UTC boundary; compute the caption client-side. */
-function resetCaption(w: WindowKey): string {
-	const now = new Date();
-	if (w === 'daily') {
-		const reset = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
-		const ms = reset - now.getTime();
-		const h = Math.floor(ms / 3_600_000);
-		const m = Math.floor((ms % 3_600_000) / 60_000);
-		return `resets in ${h}h ${String(m).padStart(2, '0')}m`;
-	}
-	if (w === 'weekly') return 'resets Mon';
-	const nm = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-	return `resets ${nm.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} 1`;
+/** Each window resets on a UTC boundary; the caption is computed client-side. */
+function useResetCaption(): (w: WindowKey) => string {
+	const { t, formatDate } = useI18n();
+	return (w) => {
+		const now = new Date();
+		if (w === 'daily') {
+			const reset = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+			const ms = reset - now.getTime();
+			return t('budget.usage.resetsIn', {
+				hours: Math.floor(ms / 3_600_000),
+				minutes: String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, '0'),
+			});
+		}
+		if (w === 'weekly') return t('budget.usage.resetsMonday');
+		const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+		return t('budget.usage.resetsOn', { date: formatDate(next) });
+	};
 }
 
 function WindowColumn({ status, windowKey }: { status: WindowStatus; windowKey: WindowKey }) {
-	const unlimited = status.limitCents <= 0;
+	const { t, formatCompact } = useI18n();
+	const resetCaption = useResetCaption();
+	const unlimited = status.limitTokens <= 0;
 	const tone = toneFor(status);
 	const p = pctUsed(status);
 	return (
 		<div className="flex flex-1 flex-col gap-2 p-5" data-testid={`budget-window-${windowKey}`}>
 			<div className="flex items-center justify-between">
-				<span className="text-eyebrow text-text-3">{WINDOW_LABELS[windowKey]}</span>
+				<span className="text-eyebrow text-text-3">{t(WINDOW_LABELS[windowKey])}</span>
 				{!unlimited && (
 					<span className={`font-mono text-[12px] font-medium ${TONE_TEXT[tone]}`}>{p}%</span>
 				)}
 			</div>
 			<div className="flex items-center gap-1.5">
 				<span className="font-mono text-[18px] font-semibold tabular-nums text-text-1">
-					{dollars(status.spentCents)}
+					{formatCompact(status.usedTokens)}
 				</span>
 				<span className="font-mono text-[13px] text-text-3">
-					/ {unlimited ? 'no cap' : dollars(status.limitCents)}
+					/ {unlimited ? t('budget.usage.noLimit') : formatCompact(status.limitTokens)}
 				</span>
 			</div>
 			{!unlimited && (
@@ -87,82 +85,70 @@ function WindowColumn({ status, windowKey }: { status: WindowStatus; windowKey: 
 				</div>
 			)}
 			<span className="text-[11px] text-text-3">
-				{unlimited ? 'unlimited' : resetCaption(windowKey)}
+				{unlimited ? t('budget.usage.unlimited') : resetCaption(windowKey)}
 			</span>
 		</div>
 	);
 }
 
-function Hero({
-	projectId,
-	monthly,
-	runsThisMonth,
-}: {
-	projectId: string;
-	monthly: WindowStatus;
-	runsThisMonth: number;
-}) {
-	// Month-to-date spend nobody was billed for. It sits beside the headline
-	// figure and touches neither the cap nor the bars below: the enforcement
-	// story is unchanged, only what the reader is told about it.
-	const { data: series } = useDailyCostSeries(projectId);
-	const notionalCents = monthToDateNotionalCents(series?.summary);
+function Hero({ monthly, runsThisMonth }: { monthly: WindowStatus; runsThisMonth: number }) {
+	const { t, plural, formatCompact, formatDate } = useI18n();
 	const now = new Date();
-	const monthLong = now.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
-	const monthShort = now.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+	const monthLong = new Intl.DateTimeFormat(undefined, { month: 'long', timeZone: 'UTC' }).format(
+		now,
+	);
 	const dayOfMonth = now.getUTCDate();
-	const daysInMonth = new Date(
-		Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
-	).getUTCDate();
-	const spent = monthly.spentCents;
-	const projected = dayOfMonth > 0 ? Math.round((spent / dayOfMonth) * daysInMonth) : spent;
-	const avg = runsThisMonth > 0 ? spent / runsThisMonth : 0;
+	const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+	const daysInMonth = monthEnd.getUTCDate();
+	const used = monthly.usedTokens;
+	const projected = dayOfMonth > 0 ? Math.round((used / dayOfMonth) * daysInMonth) : used;
+	const avg = runsThisMonth > 0 ? used / runsThisMonth : 0;
 	return (
 		<div className="flex flex-col gap-3 p-5 lg:w-[300px]">
-			<span className="text-eyebrow text-text-3">This month · to date</span>
+			<span className="text-eyebrow text-text-3">{t('budget.usage.monthToDate')}</span>
 			<div className="flex items-baseline gap-2">
 				<span
 					className="font-mono text-[40px] font-semibold leading-none tracking-[-0.03em] tabular-nums text-text-1"
-					data-testid="budget-month-spend"
+					data-testid="budget-month-usage"
 				>
-					{dollars(spent)}
+					{formatCompact(used)}
 				</span>
-				<span className="text-[13px] text-text-3">of {monthLong}</span>
+				<span className="text-[13px] text-text-3">
+					{t('budget.usage.tokensOfMonth', { month: monthLong })}
+				</span>
 			</div>
-			{notionalCents > 0 && (
-				<NotionalFigure
-					cents={notionalCents}
-					className="text-[12px] text-text-3"
-					testId="budget-month-notional"
-				/>
-			)}
 			<span className="text-[12px] text-text-3">
-				{runsThisMonth} {runsThisMonth === 1 ? 'run' : 'runs'} · ≈ {dollars(Math.round(avg))} / run
+				{plural('budget.usage.runs', runsThisMonth, {
+					count: runsThisMonth,
+					avg: formatCompact(Math.round(avg)),
+				})}
 			</span>
 			<span className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] text-text-2">
 				<span className="h-1.5 w-1.5 rounded-full bg-info" />
-				projected ≈ {dollars(projected)} by {monthShort} {daysInMonth}
+				{t('budget.usage.projected', {
+					amount: formatCompact(projected),
+					date: formatDate(monthEnd),
+				})}
 			</span>
 		</div>
 	);
 }
 
 function BindingBanner({ project, projectId }: { project: EntityBudgetStatus; projectId: string }) {
+	const { t, formatCompact } = useI18n();
 	const windows = (
 		[
 			{ key: 'daily', s: project.daily },
 			{ key: 'weekly', s: project.weekly },
 			{ key: 'monthly', s: project.monthly },
 		] as { key: WindowKey; s: WindowStatus }[]
-	).filter((w) => w.s.limitCents > 0);
+	).filter((w) => w.s.limitTokens > 0);
 	if (windows.length === 0) return null;
 	const binding = windows.reduce((a, b) => (pctUsed(b.s) > pctUsed(a.s) ? b : a));
 	const p = pctUsed(binding.s);
 	if (p < 70) return null;
 	const over = binding.s.overBudget || p >= 100;
-	const remaining = Math.max(binding.s.limitCents - binding.s.spentCents, 0);
-	const scope =
-		binding.key === 'daily' ? 'today' : binding.key === 'weekly' ? 'this week' : 'this month';
+	const remaining = Math.max(binding.s.limitTokens - binding.s.usedTokens, 0);
 	const fg = over ? 'text-danger-soft-fg' : 'text-warning-soft-fg';
 	return (
 		<div
@@ -175,10 +161,13 @@ function BindingBanner({ project, projectId }: { project: EntityBudgetStatus; pr
 				<TriangleAlert className={`mt-0.5 h-4 w-4 shrink-0 ${fg}`} aria-hidden />
 				<p className={fg}>
 					<strong className="font-semibold">
-						{WINDOW_LABELS[binding.key]} is the binding window
+						{t('budget.usage.binding.title', { window: t(WINDOW_LABELS[binding.key]) })}
 					</strong>{' '}
-					- at {p}% of the {dollars(binding.s.limitCents)} {binding.key} cap. Runs pause at the cap;
-					about {dollars(remaining)} left {scope}.
+					{t('budget.usage.binding.body', {
+						percent: p,
+						limit: formatCompact(binding.s.limitTokens),
+						remaining: formatCompact(remaining),
+					})}
 				</p>
 			</div>
 			<Link
@@ -188,20 +177,23 @@ function BindingBanner({ project, projectId }: { project: EntityBudgetStatus; pr
 				className="shrink-0"
 			>
 				<Button variant="secondary" size="sm" className="w-full sm:w-auto">
-					Raise {binding.key} cap
+					{t('budget.usage.binding.raise')}
 				</Button>
 			</Link>
 		</div>
 	);
 }
 
-/** A compact "label: value" cap cell for the settings (no-spend) variant. */
-function LimitCell({ label, cents }: { label: string; cents: number }) {
+/** A compact "label: value" limit cell for the settings (no-usage) variant. */
+function LimitCell({ label, tokens }: { label: string; tokens: number }) {
+	const { t, formatNumber } = useI18n();
 	return (
 		<div className="flex flex-col gap-1">
 			<span className="text-eyebrow text-text-3">{label}</span>
 			<span className="font-mono text-[15px] text-text-1">
-				{cents === 0 ? 'No cap' : dollars(cents)}
+				{tokens === 0
+					? t('budget.usage.noLimit')
+					: t('usage.figure.short', { count: formatNumber(tokens) })}
 			</span>
 		</div>
 	);
@@ -230,10 +222,10 @@ export function ProjectBudgetPanel({
 	const { data: status } = useBudgetStatus(projectId, { enabled: variant === 'spend' });
 	const updateProject = useUpdateProject(projectId);
 	const [editing, setEditing] = useState(false);
-	const [budget, setBudget] = useState<BudgetWindowsCents>({
-		daily_budget_cents: 0,
-		weekly_budget_cents: 0,
-		monthly_budget_cents: 0,
+	const [budget, setBudget] = useState<BudgetWindowsTokens>({
+		daily_budget_tokens: 0,
+		weekly_budget_tokens: 0,
+		monthly_budget_tokens: 0,
 	});
 
 	if (!project) return null;
@@ -241,9 +233,9 @@ export function ProjectBudgetPanel({
 	function startEditing() {
 		if (!project) return;
 		setBudget({
-			daily_budget_cents: project.daily_budget_cents,
-			weekly_budget_cents: project.weekly_budget_cents,
-			monthly_budget_cents: project.monthly_budget_cents,
+			daily_budget_tokens: project.daily_budget_tokens,
+			weekly_budget_tokens: project.weekly_budget_tokens,
+			monthly_budget_tokens: project.monthly_budget_tokens,
 		});
 		setEditing(true);
 	}
@@ -257,7 +249,7 @@ export function ProjectBudgetPanel({
 		<section ref={sectionRef} id={sectionId} className={sectionId ? 'scroll-mt-20' : undefined}>
 			<SectionHeader
 				icon={Clock}
-				title="Project budget"
+				title={t('budget.panel.title')}
 				action={
 					variant === 'spend' ? (
 						// The Budget page is read-only for caps; editing lives in project
@@ -265,7 +257,7 @@ export function ProjectBudgetPanel({
 						<Link to="/projects/$projectId/settings" params={{ projectId }} hash="budget">
 							<Button variant="ghost" size="sm" data-testid="edit-project-budget-link">
 								<Pencil className="h-3.5 w-3.5" aria-hidden />
-								Edit
+								{t('common.edit')}
 							</Button>
 						</Link>
 					) : (
@@ -277,7 +269,7 @@ export function ProjectBudgetPanel({
 								data-testid="edit-project-budget"
 							>
 								<Pencil className="h-3.5 w-3.5" aria-hidden />
-								Edit caps
+								{t('budget.panel.editLimits')}
 							</Button>
 						)
 					)
@@ -307,7 +299,7 @@ export function ProjectBudgetPanel({
 							)}
 						</Button>
 						<Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
-							Cancel
+							{t('common.cancel')}
 						</Button>
 					</div>
 				</form>
@@ -315,11 +307,7 @@ export function ProjectBudgetPanel({
 				status ? (
 					<>
 						<div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface shadow-xs lg:flex-row lg:divide-x lg:divide-y-0">
-							<Hero
-								projectId={projectId}
-								monthly={status.project.monthly}
-								runsThisMonth={status.runsThisMonth}
-							/>
+							<Hero monthly={status.project.monthly} runsThisMonth={status.runsThisMonth} />
 							<div className="flex flex-1 flex-col divide-y divide-border sm:flex-row sm:divide-x sm:divide-y-0">
 								<WindowColumn windowKey="daily" status={status.project.daily} />
 								<WindowColumn windowKey="weekly" status={status.project.weekly} />
@@ -334,9 +322,9 @@ export function ProjectBudgetPanel({
 			) : (
 				<div className="rounded-lg border border-border bg-surface p-4 shadow-xs">
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-						<LimitCell label="Daily" cents={project.daily_budget_cents} />
-						<LimitCell label="Weekly" cents={project.weekly_budget_cents} />
-						<LimitCell label="Monthly" cents={project.monthly_budget_cents} />
+						<LimitCell label={t('budget.window.daily')} tokens={project.daily_budget_tokens} />
+						<LimitCell label={t('budget.window.weekly')} tokens={project.weekly_budget_tokens} />
+						<LimitCell label={t('budget.window.monthly')} tokens={project.monthly_budget_tokens} />
 					</div>
 				</div>
 			)}

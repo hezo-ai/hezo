@@ -27,9 +27,9 @@ interface RosterAgent {
 	default_effort: string;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	monthly_budget_cents: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
+	monthly_budget_tokens: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
 	touches_code: boolean;
 }
 
@@ -58,7 +58,7 @@ async function materializeCustomAgentType(
 	const res = await db.query<{ id: string }>(
 		`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 		                          default_team_context, system_prompt_template, default_effort,
-		                          heartbeat_interval_min, run_timeout_min, monthly_budget_cents,
+		                          heartbeat_interval_min, run_timeout_min, monthly_budget_tokens,
 		                          touches_code, is_builtin, source)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, false, 'custom'::agent_type_source)
 		 ON CONFLICT (slug) DO UPDATE SET updated_at = now()
@@ -74,7 +74,7 @@ async function materializeCustomAgentType(
 			agent.default_effort,
 			agent.heartbeat_interval_min,
 			agent.run_timeout_min,
-			agent.monthly_budget_cents,
+			agent.monthly_budget_tokens,
 			agent.touches_code,
 		],
 	);
@@ -104,8 +104,8 @@ export async function snapshotTeamAsTemplate(
 		const agentsRes = await db.query<RosterAgent>(
 			`SELECT ma.id, ma.slug, ma.title, ma.agent_type_id, ma.reports_to,
 			        ma.role_description, ma.summary, ma.team_context, ma.default_effort::text,
-			        ma.heartbeat_interval_min, ma.run_timeout_min, ma.monthly_budget_cents,
-			        ma.daily_budget_cents, ma.weekly_budget_cents, ma.touches_code
+			        ma.heartbeat_interval_min, ma.run_timeout_min, ma.monthly_budget_tokens,
+			        ma.daily_budget_tokens, ma.weekly_budget_tokens, ma.touches_code
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND m.member_type = $2
@@ -210,9 +210,9 @@ export async function snapshotTeamAsTemplate(
 					agentTypeId,
 					reportsToSlug,
 					a.heartbeat_interval_min,
-					a.monthly_budget_cents,
-					a.daily_budget_cents,
-					a.weekly_budget_cents,
+					a.monthly_budget_tokens,
+					a.daily_budget_tokens,
+					a.weekly_budget_tokens,
 					sortOrder,
 				],
 			);

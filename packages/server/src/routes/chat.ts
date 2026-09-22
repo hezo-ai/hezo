@@ -27,7 +27,7 @@ import { buildCreateTaskCaller } from './tasks';
 export const chatRoutes = new Hono<Env>();
 
 export const MESSAGE_COLUMNS = `id, conversation_id, role, channel, status, content, author_user_id,
-	author_member_id, suggested_replies, input_tokens, output_tokens, cost_cents, error, system_kind,
+	author_member_id, suggested_replies, input_tokens, output_tokens, error, system_kind,
 	created_at, completed_at`;
 
 /**

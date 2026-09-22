@@ -10,16 +10,14 @@ import { waitForBackground } from '../src/lib/background';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import type { PricingService } from '../src/services/pricing';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // Startup reconciliation and the periodic maintenance sweeps of JobManager:
-// stranded-run recovery (incl. partial-usage cost charging), the three startup
+// stranded-run recovery (incl. partial-usage recording), the three startup
 // container passes (restart, stale-mount repair, self-heal), the HQ warm-up,
 // stale-dispatch reaping, container status sync + failure transitions, inbox
-// archiving, and the small maintenance jobs (update check, pricing refresh,
-// telemetry).
+// archiving, and the small maintenance jobs (update check, telemetry).
 
 let ctx: ServerTestContext;
 let teamId: string;
@@ -39,7 +37,6 @@ interface JmInternals {
 	syncContainerStatuses(): Promise<void>;
 	archiveInboxItems(): Promise<void>;
 	checkForUpdate(): Promise<void>;
-	refreshPricing(): Promise<void>;
 	runTelemetry(): Promise<void>;
 	guarded(name: string, fn: () => Promise<void>): Promise<void>;
 	activeTaskRuns: Set<string>;
@@ -186,13 +183,13 @@ describe('JobManager recovery & maintenance', () => {
 			manager.shutdown();
 		});
 
-		it('charges a stranded run’s surviving partial usage to cost_entries', async () => {
+		it('records a stranded run’s surviving partial usage in usage_entries', async () => {
 			const { db } = ctx;
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			const inserted = await db.query<{ id: string }>(
 				`INSERT INTO heartbeat_runs
-				   (team_id, member_id, task_id, status, started_at, input_tokens, output_tokens, cost_cents, usage_partial)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 2000, 400, 53, true)
+				   (team_id, member_id, task_id, status, started_at, input_tokens, output_tokens, usage_partial)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 2000, 400, true)
 				 RETURNING id`,
 				[teamId, agentId, taskId, HeartbeatRunStatus.Running],
 			);
@@ -201,22 +198,20 @@ describe('JobManager recovery & maintenance', () => {
 			const manager = createJobManager();
 			await manager.reconcileOnStartup();
 
-			const run = await db.query<{ status: string; input_tokens: number; cost_cents: number }>(
-				'SELECT status::text AS status, input_tokens, cost_cents FROM heartbeat_runs WHERE id = $1',
+			const run = await db.query<{ status: string; input_tokens: number }>(
+				'SELECT status::text AS status, input_tokens FROM heartbeat_runs WHERE id = $1',
 				[runId],
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 			expect(Number(run.rows[0].input_tokens)).toBe(2000);
-			expect(Number(run.rows[0].cost_cents)).toBe(53);
 
-			const cost = await db.query<{ amount_cents: number }>(
-				'SELECT amount_cents FROM cost_entries WHERE member_id = $1 AND description = $2',
+			const usage = await db.query<{ input_tokens: number; output_tokens: number }>(
+				'SELECT input_tokens, output_tokens FROM usage_entries WHERE member_id = $1 AND description = $2',
 				[agentId, `Agent run ${runId}`],
 			);
-			expect(cost.rows.length).toBe(1);
-			expect(Number(cost.rows[0].amount_cents)).toBe(53);
+			expect(usage.rows).toEqual([{ input_tokens: 2000, output_tokens: 400 }]);
 
-			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 			manager.shutdown();
 		});
 
@@ -1050,26 +1045,6 @@ describe('JobManager recovery & maintenance', () => {
 			const { readdirSync } = await import('node:fs');
 			expect(readdirSync(ctx.dataDir).filter((f) => f.includes('update'))).toEqual([]);
 			manager.shutdown();
-		});
-
-		it('refreshPricing refreshes via the pricing service and no-ops without one', async () => {
-			let refreshes = 0;
-			const withPricing = createJobManager({
-				pricing: {
-					refresh: async () => {
-						refreshes++;
-						return 7;
-					},
-				} as unknown as PricingService,
-			});
-			await (withPricing as unknown as JmInternals).refreshPricing();
-			expect(refreshes).toBe(1);
-			withPricing.shutdown();
-
-			const without = createJobManager();
-			await (without as unknown as JmInternals).refreshPricing();
-			expect(refreshes).toBe(1);
-			without.shutdown();
 		});
 
 		it('runTelemetry posts the anonymous snapshot when enabled and skips when disabled', async () => {

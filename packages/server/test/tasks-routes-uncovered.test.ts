@@ -305,8 +305,8 @@ describe('GET /tasks/:taskId + resolve + latest-run', () => {
 		const runId = await createAgentRun(db, agentId, teamId, task.id);
 		await finalizeAgentRun(db, runId, 'succeeded');
 		await db.query(
-			`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description)
-			 VALUES ($1, $2, $3, 42, 'test cost')`,
+			`INSERT INTO usage_entries (member_id, task_id, project_id, input_tokens, description)
+			 VALUES ($1, $2, $3, 42, 'test usage')`,
 			[agentId, task.id, projectId],
 		);
 
@@ -320,7 +320,7 @@ describe('GET /tasks/:taskId + resolve + latest-run', () => {
 		expect(data.project_slug).toBe(projectSlug);
 		expect(data.assignee_name).toBe('Uncov Agent');
 		expect(data.run_count).toBe(1);
-		expect(data.total_cost_cents).toBe(42);
+		expect(data.total_tokens).toBe(42);
 		expect(data.last_run_status).toBe('succeeded');
 		expect(data.has_active_run).toBe(false);
 	});

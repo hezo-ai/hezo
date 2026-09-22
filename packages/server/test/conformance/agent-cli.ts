@@ -306,7 +306,7 @@ function providerEnv(mp: LiveModelProvider, runtime: AgentRuntime): string[] {
  * the effort args.
  *
  * Grok's `--debug-file` is included rather than dropped: it is the *only* place
- * that runtime states what a run cost, so a suite that omitted it could not
+ * that runtime states the tokens a run used, so a suite that omitted it could not
  * assert usage at all and recorded the runtime's real behaviour as a failure.
  */
 function cliArgv(
@@ -746,13 +746,12 @@ function describeOneAgentCliRun(
 			exitCode = (await engine.execInspect(execId)).ExitCode;
 			// Two runtimes stream no usage at all and have it recovered from a file
 			// afterwards. Production does that in `agent-runner.ts`; a suite that
-			// stopped at the stream recorded a correct run as a $0 one, which is the
-			// very failure the usage assertion exists to catch. Same helper, so what
-			// is asserted here is what the runner would actually have charged.
+			// stopped at the stream recorded a correct run as one with no tokens, which
+			// is the very failure the usage assertion exists to catch. Same helper, so
+			// what is asserted here is what the runner would actually have counted.
 			usage ??= await recoverOffStreamRunUsage(
 				runtime,
 				homeMount ? engine.files(containerId, homeMount.containerDir) : null,
-				undefined,
 				(msg) => {
 					offStreamUsageError = msg;
 				},
@@ -844,10 +843,10 @@ function describeOneAgentCliRun(
 			expect(`${finalMessage ?? ''}\n${renderedLog}`).toContain(SENTINEL);
 		});
 
-		it('reports token usage the pricing table can charge against', () => {
-			// Runs price only from `model_pricing`, using the buckets the CLI reports -
-			// so a runtime that streams no usage prices every run at $0. That failure
-			// is invisible in production (a $0 run looks like a cheap run), and this is
+		it('reports token usage the budgets can count', () => {
+			// Budgets and ceilings count only the tokens the CLI reports, so a runtime
+			// that streams no usage escapes every one of them. That failure is invisible
+			// in production (a run with no tokens looks like a small run), and this is
 			// the only place it surfaces.
 			expect(`usage=${JSON.stringify(usage)} recovery=${offStreamUsageError ?? 'none'}`).toContain(
 				'"inputTokens"',

@@ -28,7 +28,6 @@ import {
 } from '../src/services/agent-runner';
 import type { ConnectorRunRejection, RunProxyScope } from '../src/services/egress/proxy';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -1052,29 +1051,20 @@ describe('runAgent — domain events', () => {
 	});
 });
 
-describe('runAgent — cost recording + budget enforcement', () => {
-	it('records the run cost as a cost_entries row and broadcasts it', async () => {
-		const pricing = new PricingService(db);
-		await upsertManualRate(db, {
-			model_id: 'claude-opus-4-7',
-			input_per_token: 0.0001,
-			output_per_token: 0.0002,
-		});
-		await pricing.reload();
-
-		// Ensure this run uses the priced model and a generous budget so it is not
-		// paused. Clear prior cost rows to assert on exactly this run's entry.
+describe('runAgent — usage recording + budget enforcement', () => {
+	it('records the run tokens as a usage_entries row and broadcasts it', async () => {
+		// An unlimited budget keeps the run from pausing. Clearing prior rows lets
+		// the test assert on exactly this run's entry.
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 		await db.query(
-			`UPDATE member_agents SET daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0 WHERE id = $1`,
+			`UPDATE member_agents SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0 WHERE id = $1`,
 			[agentId],
 		);
 
-		// The Claude Code parser sources the model id from the system/init event;
-		// cost is only computed when a priced model is known.
+		// The Claude Code parser sources the model id from the system/init event.
 		const initEvent = JSON.stringify({
 			type: 'system',
 			subtype: 'init',
@@ -1111,20 +1101,19 @@ describe('runAgent — cost recording + budget enforcement', () => {
 		} as any;
 		const logs = new LogStreamBroker();
 		logs.setWsManager(wsManager);
-		const deps = baseDeps(docker, { pricing, wsManager, logs });
+		const deps = baseDeps(docker, { wsManager, logs });
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
 
-		// 1000*0.0001 + 500*0.0002 = 0.10 + 0.10 = 0.20 → 20 cents.
-		const entry = await db.query<{ amount_cents: number }>(
-			'SELECT amount_cents FROM cost_entries WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1',
+		const entry = await db.query<{ input_tokens: number; output_tokens: number }>(
+			'SELECT input_tokens, output_tokens FROM usage_entries WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1',
 			[agentId],
 		);
-		expect(entry.rows[0].amount_cents).toBe(20);
+		expect(entry.rows[0]).toEqual({ input_tokens: 1000, output_tokens: 500 });
 
-		// A cost_entries INSERT was broadcast.
-		expect(broadcasts.some((b) => b?.table === 'cost_entries' && b?.action === 'INSERT')).toBe(
+		// A usage_entries INSERT was broadcast.
+		expect(broadcasts.some((b) => b?.table === 'usage_entries' && b?.action === 'INSERT')).toBe(
 			true,
 		);
 
@@ -1133,22 +1122,14 @@ describe('runAgent — cost recording + budget enforcement', () => {
 		);
 	});
 
-	it('pauses the agent when the run pushes it over its daily budget', async () => {
-		const pricing = new PricingService(db);
-		await upsertManualRate(db, {
-			model_id: 'claude-opus-4-7',
-			input_per_token: 0.0001,
-			output_per_token: 0.0002,
-		});
-		await pricing.reload();
-
+	it('pauses the agent and @-mentions the admin when the run pushes it over its daily budget', async () => {
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
-		// A 1-cent daily cap that this ~20c run will blow past.
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
+		// A daily cap below the run's 1,500 tokens.
 		await db.query(
-			`UPDATE member_agents SET daily_budget_cents = 1, weekly_budget_cents = 0, monthly_budget_cents = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
+			`UPDATE member_agents SET daily_budget_tokens = 1000, weekly_budget_tokens = 0, monthly_budget_tokens = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
 			[agentId],
 		);
 
@@ -1176,10 +1157,26 @@ describe('runAgent — cost recording + budget enforcement', () => {
 			},
 			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		});
-		const deps = baseDeps(docker, { pricing });
+		const deps = baseDeps(docker);
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
+
+		const notice = await db.query<{ content: Record<string, unknown>; mentions: number }>(
+			`SELECT tc.content,
+			        (SELECT count(*)::int FROM admin_mentions am WHERE am.comment_id = tc.id) AS mentions
+			 FROM task_comments tc
+			 WHERE tc.task_id = $1 AND tc.content->>'kind' = 'budget_paused'`,
+			[taskId],
+		);
+		expect(notice.rows).toHaveLength(1);
+		expect(notice.rows[0].content).toMatchObject({
+			scope: 'agent',
+			period: 'daily',
+			used_tokens: 1500,
+			limit_tokens: 1000,
+		});
+		expect(notice.rows[0].mentions).toBeGreaterThan(0);
 
 		const agentRow = await db.query<{ runtime_status: string }>(
 			'SELECT runtime_status FROM member_agents WHERE id = $1',
@@ -1190,13 +1187,13 @@ describe('runAgent — cost recording + budget enforcement', () => {
 
 		// Reset for any later tests.
 		await db.query(
-			`UPDATE member_agents SET daily_budget_cents = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
+			`UPDATE member_agents SET daily_budget_tokens = 0, runtime_status = 'idle'::agent_runtime_status WHERE id = $1`,
 			[agentId],
 		);
 		await db.query(
 			`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
 		);
-		await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 	});
 });
 

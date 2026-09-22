@@ -26,7 +26,13 @@
  */
 
 import { logger } from '../../../logger';
-import { dropPartialFirstLine, matchesName, type NameMatch, type SandboxFiles } from '../files';
+import {
+	dropPartialFirstLine,
+	dropPartialLastLine,
+	matchesName,
+	type NameMatch,
+	type SandboxFiles,
+} from '../files';
 import { shellQuote } from '../proc-scripts';
 import type { DaytonaApi, DaytonaSandbox } from './client';
 
@@ -175,6 +181,15 @@ export function daytonaSandboxFiles(
 			return Buffer.byteLength(res.output, 'utf8') < maxBytes
 				? res.output
 				: dropPartialFirstLine(res.output);
+		},
+
+		async readHead(relPath, maxBytes) {
+			// `head -c` for the same reason `readTail` uses `tail -c`.
+			const res = await api.execute(sandbox, `head -c ${maxBytes} ${shellQuote(abs(relPath))}`);
+			if (res.exitCode !== 0) return '';
+			return Buffer.byteLength(res.output, 'utf8') < maxBytes
+				? res.output
+				: dropPartialLastLine(res.output);
 		},
 
 		async write(relPath, contents, opts = {}) {

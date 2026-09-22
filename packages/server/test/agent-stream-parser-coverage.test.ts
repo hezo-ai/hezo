@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	classifyRuntimeError,
 	createAgentStreamParser,
-	type PriceModelFn,
 	parseCodexRetryAt,
 } from '../src/services/agent-stream-parser';
 import { RunFailureClass } from '../src/services/run-failure-classification';
@@ -289,23 +288,8 @@ describe('antigravity renderEvent branches', () => {
 		expect(parser.getTerminalError()).toContain('AI provider authentication failed');
 	});
 
-	it('prices the run model with disjoint input/cache-read/output buckets', () => {
-		const seen: Array<{
-			model: string | undefined;
-			input: number;
-			cacheRead: number;
-			output: number;
-		}> = [];
-		const price: PriceModelFn = (model, t) => {
-			seen.push({
-				model,
-				input: t.inputTokens ?? 0,
-				cacheRead: t.cacheReadTokens ?? 0,
-				output: t.outputTokens ?? 0,
-			});
-			return 5;
-		};
-		const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+	it('records the run model with disjoint input/cache-read/output buckets', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 		parser.onStdout(init('gemini-pro'));
 		parser.onStdout(
 			result({
@@ -315,9 +299,9 @@ describe('antigravity renderEvent branches', () => {
 		);
 		const usage = parser.getUsage();
 		// Two different figures, and the gap between them is the point of this test.
-		// PRICING takes agy's buckets as stated - `input_tokens` is already the
-		// non-cached input, so there is nothing to subtract out (unlike Codex).
-		expect(seen).toEqual([{ model: 'gemini-pro', input: 60, cacheRead: 40, output: 25 }]);
+		// The buckets are agy's as stated - `input_tokens` is already the non-cached
+		// input, so there is nothing to subtract out (unlike Codex).
+		expect(usage?.model).toBe('gemini-pro');
 		expect(usage?.buckets).toEqual({ inputTokens: 60, cacheReadTokens: 40, outputTokens: 25 });
 		// The REPORTED total is cache-inclusive, matching every other runtime and the
 		// `heartbeat_runs.input_tokens` column.
@@ -346,16 +330,7 @@ describe('generic parser (opencode) branches', () => {
 	});
 
 	it('captures usage with reasoning tokens and a cached subset', () => {
-		const seen: Array<{ input: number; cacheRead: number; output: number }> = [];
-		const price: PriceModelFn = (_m, t) => {
-			seen.push({
-				input: t.inputTokens ?? 0,
-				cacheRead: t.cacheReadTokens ?? 0,
-				output: t.outputTokens ?? 0,
-			});
-			return 7;
-		};
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [
 			{
 				type: 'usage',
@@ -371,14 +346,19 @@ describe('generic parser (opencode) branches', () => {
 		const usage = parser.getUsage();
 		expect(usage?.inputTokens).toBe(50);
 		expect(usage?.outputTokens).toBe(10); // completion 8 + reasoning 2
-		expect(seen.at(-1)).toEqual({ input: 40, cacheRead: 10, output: 10 });
+		expect(usage?.buckets).toMatchObject({
+			inputTokens: 40,
+			cacheReadTokens: 10,
+			outputTokens: 10,
+		});
 	});
 
-	it('ignores a provider-reported usd cost in favor of computed pricing', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 999);
+	it('ignores a provider-reported usd cost and records the tokens', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [
 			{ type: 'result', total_cost_usd: 0.25, usage: { input_tokens: 1, output_tokens: 1 } },
 		]);
-		expect(parser.getUsage()?.costCents).toBe(999);
+		expect(parser.getUsage()).toMatchObject({ inputTokens: 1, outputTokens: 1 });
+		expect(parser.getUsage()).not.toHaveProperty('costCents');
 	});
 });

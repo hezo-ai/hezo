@@ -9,7 +9,7 @@ import { logger } from '../logger';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import { resolvedDockerSocketPath } from './docker-socket';
 import { ExecStreamLostError } from './sandbox/errors';
-import { dropPartialFirstLine, type SandboxFiles } from './sandbox/files';
+import { dropPartialFirstLine, dropPartialLastLine, type SandboxFiles } from './sandbox/files';
 import {
 	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
@@ -1184,6 +1184,15 @@ export class DockerClient implements ContainerEngine {
 				return Buffer.byteLength(res.stdout, 'utf8') < maxBytes
 					? res.stdout
 					: dropPartialFirstLine(res.stdout);
+			},
+
+			readHead: async (relPath, maxBytes) => {
+				// `head -c` for the same reason `readTail` uses `tail -c`.
+				const res = await run(`head -c ${maxBytes} ${shellQuote(abs(relPath))}`);
+				if (res.exitCode !== 0) return '';
+				return Buffer.byteLength(res.stdout, 'utf8') < maxBytes
+					? res.stdout
+					: dropPartialLastLine(res.stdout);
 			},
 
 			findByName: async (relDir, match, maxDepth) => {

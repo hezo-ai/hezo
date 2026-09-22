@@ -64,11 +64,11 @@ async function agentBudgets(
 	slug: string,
 ): Promise<{ daily: number; weekly: number; monthly: number } | undefined> {
 	const res = await db.query<{
-		daily_budget_cents: number;
-		weekly_budget_cents: number;
-		monthly_budget_cents: number;
+		daily_budget_tokens: number;
+		weekly_budget_tokens: number;
+		monthly_budget_tokens: number;
 	}>(
-		`SELECT ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents
+		`SELECT ma.daily_budget_tokens, ma.weekly_budget_tokens, ma.monthly_budget_tokens
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $2`,
@@ -77,9 +77,9 @@ async function agentBudgets(
 	const row = res.rows[0];
 	return row
 		? {
-				daily: row.daily_budget_cents,
-				weekly: row.weekly_budget_cents,
-				monthly: row.monthly_budget_cents,
+				daily: row.daily_budget_tokens,
+				weekly: row.weekly_budget_tokens,
+				monthly: row.monthly_budget_tokens,
 			}
 		: undefined;
 }
@@ -147,7 +147,7 @@ describe('POST /projects — clone an existing team (source_team_id)', () => {
 
 		// Tune the captain's three budget windows on the source team.
 		await db.query(
-			`UPDATE member_agents ma SET daily_budget_cents = 111, weekly_budget_cents = 222, monthly_budget_cents = 333
+			`UPDATE member_agents ma SET daily_budget_tokens = 111, weekly_budget_tokens = 222, monthly_budget_tokens = 333
 			 FROM members m WHERE m.id = ma.id AND m.team_id = $1 AND ma.slug = 'captain'`,
 			[source.team_id],
 		);

@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 25,
+			"notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
+		},
+		{
 			"version": 24,
 			"notes": "Every agent now writes to one register - Simplified Technical English plus Zinsser's four principles, and succinct by default. It reaches every role on every run, so the Captain no longer carries its own copy of the rule. The register covers what an agent writes in Hezo - comments, task descriptions, progress summaries, project docs - and deliberately leaves content deliverables to the brand voice they are written for."
 		},
@@ -175,9 +179,9 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 0,
-			"daily_budget_cents": 0,
-			"weekly_budget_cents": 0,
+			"monthly_budget_tokens": 0,
+			"daily_budget_tokens": 0,
+			"weekly_budget_tokens": 0,
 			"touches_code": false
 		},
 		{
@@ -197,9 +201,9 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 0,
-			"daily_budget_cents": 0,
-			"weekly_budget_cents": 0,
+			"monthly_budget_tokens": 0,
+			"daily_budget_tokens": 0,
+			"weekly_budget_tokens": 0,
 			"touches_code": false
 		},
 		{
@@ -219,9 +223,9 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 0,
-			"daily_budget_cents": 0,
-			"weekly_budget_cents": 0,
+			"monthly_budget_tokens": 0,
+			"daily_budget_tokens": 0,
+			"weekly_budget_tokens": 0,
 			"touches_code": false
 		},
 		{
@@ -241,9 +245,9 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 0,
-			"daily_budget_cents": 0,
-			"weekly_budget_cents": 0,
+			"monthly_budget_tokens": 0,
+			"daily_budget_tokens": 0,
+			"weekly_budget_tokens": 0,
 			"touches_code": false
 		},
 		{
@@ -263,9 +267,9 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 0,
-			"daily_budget_cents": 0,
-			"weekly_budget_cents": 0,
+			"monthly_budget_tokens": 0,
+			"daily_budget_tokens": 0,
+			"weekly_budget_tokens": 0,
 			"touches_code": false
 		},
 		{
@@ -285,9 +289,9 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 0,
-			"daily_budget_cents": 0,
-			"weekly_budget_cents": 0,
+			"monthly_budget_tokens": 0,
+			"daily_budget_tokens": 0,
+			"weekly_budget_tokens": 0,
 			"touches_code": false
 		}
 	]

@@ -85,7 +85,6 @@ function runResponse(
 		error: failed ? 'boom' : null,
 		input_tokens: 0,
 		output_tokens: 0,
-		cost_cents: 0,
 		log_text: 'output',
 		created_tasks: [],
 	};

@@ -47,7 +47,7 @@ export const MCP_REFERENCE_CATEGORY_ORDER: readonly string[] = [
 	'Credentials & connectors',
 	'MCP connections',
 	'Project docs & assets',
-	'Costs',
+	'Usage',
 	'Onboarding',
 ];
 
@@ -236,7 +236,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_agents: {
 		category: 'Agents & hiring',
 		returns:
-			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
+			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_tokens`, `weekly_budget_tokens`, `monthly_budget_tokens`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
 	},
 	create_hire_proposal: {
 		category: 'Agents & hiring',
@@ -520,11 +520,11 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 
-	// Costs
-	get_costs: {
-		category: 'Costs',
+	// Usage
+	get_usage: {
+		category: 'Usage',
 		returns:
-			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents, notional_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents, notional_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, notional_cents, entry_count }`.',
+			'With `group_by: "agent"`, an array of `{ member_id, agent_title, input_tokens, output_tokens, total_tokens }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, input_tokens, output_tokens, total_tokens }` newest first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false; that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ input_tokens, output_tokens, total_tokens, entry_count }`.',
 	},
 
 	// Onboarding

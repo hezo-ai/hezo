@@ -3,8 +3,10 @@ import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
-import { Trans, useI18n } from '../../lib/i18n';
+import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
 import type {
+	SystemBudgetConversionContent,
+	SystemBudgetPausedContent,
 	SystemContent,
 	SystemDescriptionChangeContent,
 	SystemHandoffLimitContent,
@@ -14,6 +16,7 @@ import type {
 	SystemRunFailedContent,
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
+	SystemTaskTokenCeilingContent,
 } from '../comment-content';
 import { ActorBadge } from '../ui/actor-badge';
 import type { CommentDataOf } from './comment-data';
@@ -38,6 +41,15 @@ function isRunAbandoned(c: SystemContent): c is SystemRunAbandonedContent {
 }
 function isHandoffLimit(c: SystemContent): c is SystemHandoffLimitContent {
 	return c.kind === 'handoff_limit';
+}
+function isTaskTokenCeiling(c: SystemContent): c is SystemTaskTokenCeilingContent {
+	return c.kind === 'task_token_ceiling';
+}
+function isBudgetPaused(c: SystemContent): c is SystemBudgetPausedContent {
+	return c.kind === 'budget_paused';
+}
+function isBudgetConversion(c: SystemContent): c is SystemBudgetConversionContent {
+	return c.kind === 'budget_conversion';
 }
 function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
@@ -88,6 +100,18 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isHandoffLimit(content)) {
 		return <HandoffLimitBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isTaskTokenCeiling(content)) {
+		return <TaskTokenCeilingBody content={content} timestamp={timestamp} />;
+	}
+
+	if (content && isBudgetPaused(content)) {
+		return <BudgetPausedBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isBudgetConversion(content)) {
+		return <BudgetConversionBody content={content} timestamp={timestamp} />;
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -485,6 +509,140 @@ function HandoffLimitBody({
 					}}
 				/>
 			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+/** The per-task token ceiling notice: what was used against the ceiling. */
+function TaskTokenCeilingBody({
+	content,
+	timestamp,
+}: {
+	content: SystemTaskTokenCeilingContent;
+	timestamp: React.ReactNode;
+}) {
+	const { t, formatNumber } = useI18n();
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="task-token-ceiling-comment"
+		>
+			<span className="text-xs text-text-2">
+				{t('comment.taskTokenCeiling', {
+					tokens: formatNumber(Number(content.tokens ?? 0)),
+					ceiling: formatNumber(Number(content.ceiling ?? 0)),
+				})}
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+const BUDGET_PAUSED_KEYS: Record<
+	'agent' | 'project',
+	Record<'daily' | 'weekly' | 'monthly', MessageKey>
+> = {
+	agent: {
+		daily: 'comment.budgetPaused.agent.daily',
+		weekly: 'comment.budgetPaused.agent.weekly',
+		monthly: 'comment.budgetPaused.agent.monthly',
+	},
+	project: {
+		daily: 'comment.budgetPaused.project.daily',
+		weekly: 'comment.budgetPaused.project.weekly',
+		monthly: 'comment.budgetPaused.project.monthly',
+	},
+};
+
+/** A budget paused an agent: whose budget, which window, and what was used. */
+function BudgetPausedBody({
+	content,
+	projectId,
+	timestamp,
+}: {
+	content: SystemBudgetPausedContent;
+	projectId?: string;
+	timestamp: React.ReactNode;
+}) {
+	const { t, formatNumber } = useI18n();
+	const slug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
+	const agentNode =
+		slug && projectId ? (
+			<Link
+				to="/projects/$projectId/agents/$agentId"
+				params={{ projectId, agentId: slug }}
+				className="text-xs text-info-soft-fg hover:underline"
+				data-testid="budget-paused-agent"
+			>
+				@{slug}
+			</Link>
+		) : (
+			<span>{slug ? `@${slug}` : t('comment.runAgentFallback')}</span>
+		);
+	const key =
+		BUDGET_PAUSED_KEYS[content.scope === 'project' ? 'project' : 'agent'][
+			content.period === 'daily' || content.period === 'weekly' ? content.period : 'monthly'
+		];
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="budget-paused-comment"
+		>
+			<span className="text-xs text-text-2">
+				<Trans
+					k={key}
+					vars={{
+						agent: agentNode,
+						limit: formatNumber(Number(content.limit_tokens ?? 0)),
+						used: formatNumber(Number(content.used_tokens ?? 0)),
+					}}
+				/>
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+const CONVERSION_LINE_KEYS: Record<'daily' | 'weekly' | 'monthly', MessageKey> = {
+	daily: 'comment.budgetConversion.line.daily',
+	weekly: 'comment.budgetConversion.line.weekly',
+	monthly: 'comment.budgetConversion.line.monthly',
+};
+
+/** The upgrade's conversion of dollar budgets to tokens, one line per budget. */
+function BudgetConversionBody({
+	content,
+	timestamp,
+}: {
+	content: SystemBudgetConversionContent;
+	timestamp: React.ReactNode;
+}) {
+	const { t, formatNumber, language } = useI18n();
+	const dollars = new Intl.NumberFormat(language, { style: 'currency', currency: 'USD' });
+	const rate = formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100));
+	const conversions = Array.isArray(content.conversions) ? content.conversions : [];
+	return (
+		<div className="flex flex-col gap-1 leading-[22px]" data-testid="budget-conversion-comment">
+			<span className="text-xs text-text-2">
+				{t(
+					content.basis === 'fallback'
+						? 'comment.budgetConversion.introFallback'
+						: 'comment.budgetConversion.intro',
+					{ rate },
+				)}
+			</span>
+			<ul className="ml-4 list-disc text-xs text-text-2">
+				{conversions.map((c) => (
+					<li key={`${c.id}-${c.window}`}>
+						{t(CONVERSION_LINE_KEYS[c.window] ?? CONVERSION_LINE_KEYS.monthly, {
+							name: c.name,
+							dollars: dollars.format(c.cents / 100),
+							tokens: formatNumber(c.tokens),
+						})}
+					</li>
+				))}
+			</ul>
 			{timestamp}
 		</div>
 	);

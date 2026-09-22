@@ -19,6 +19,9 @@ import {
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
 	TASK_ATTEMPT_WINDOW_HOURS,
+	TASK_TOKEN_CEILING,
+	taskTokenCeilingNotice,
+	taskTokenCeilingReached,
 } from '../src/services/no-work-backoff';
 import { safeClose } from './helpers';
 import {
@@ -867,5 +870,80 @@ describe('handoffRoundsExhausted', () => {
 		await alternate(HANDOFF_ROUND_LIMIT);
 		expect(await handoffRoundsExhausted(db, taskId, true)).toBeNull();
 		expect(await handoffRoundsExhausted(db, null, false)).toBeNull();
+	});
+});
+
+describe('taskTokenCeilingReached', () => {
+	/** A finished run on the shared task that used `tokens`, `minutesAgo` back. */
+	async function insertRunUsing(tokens: number, minutesAgo: number): Promise<void> {
+		await db.query(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, task_id, status, started_at, finished_at, input_tokens, output_tokens)
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status,
+			         now() - ($4 || ' minutes')::interval,
+			         now() - ($4 || ' minutes')::interval + interval '30 seconds', $5, $6)`,
+			[teamId, agentId, taskId, String(minutesAgo), tokens - 1_000, 1_000],
+		);
+	}
+
+	it('holds a task once its runs pass the ceiling, counting input and output', async () => {
+		await clearRuns();
+		await insertRunUsing(TASK_TOKEN_CEILING / 2, 30);
+		await insertRunUsing(TASK_TOKEN_CEILING / 2 - 1, 20);
+		expect(await taskTokenCeilingReached(db, taskId, false)).toBeNull();
+
+		await insertRunUsing(1, 10);
+		expect(await taskTokenCeilingReached(db, taskId, false)).toEqual({
+			tokens: TASK_TOKEN_CEILING,
+			notified: false,
+		});
+	});
+
+	it('grants a fresh ceiling when a person speaks, and an agent reply grants none', async () => {
+		await clearRuns();
+		await insertRunUsing(TASK_TOKEN_CEILING, 30);
+		await insertAgentComment({ minutesAgo: 20 });
+		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
+
+		await insertHumanReply(15);
+		expect(await taskTokenCeilingReached(db, taskId, false)).toBeNull();
+		// Only runs after the reply count toward the fresh ceiling.
+		await insertRunUsing(TASK_TOKEN_CEILING - 1, 10);
+		expect(await taskTokenCeilingReached(db, taskId, false)).toBeNull();
+		await insertRunUsing(1, 5);
+		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
+	});
+
+	it('reports a notice already posted for this hold, and not one from before a person spoke', async () => {
+		await clearRuns();
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content, created_at)
+			 VALUES ($1, 'system'::comment_content_type, $2::jsonb, now() - interval '40 minutes')`,
+			[taskId, JSON.stringify({ kind: 'task_token_ceiling', text: 'held' })],
+		);
+		await insertHumanReply(35);
+		await insertRunUsing(TASK_TOKEN_CEILING, 30);
+		expect((await taskTokenCeilingReached(db, taskId, false))?.notified).toBe(false);
+
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content)
+			 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
+			[taskId, JSON.stringify({ kind: 'task_token_ceiling', text: 'held' })],
+		);
+		expect((await taskTokenCeilingReached(db, taskId, false))?.notified).toBe(true);
+	});
+
+	it('never holds an exempt wakeup or a task-less one', async () => {
+		await clearRuns();
+		await insertRunUsing(TASK_TOKEN_CEILING, 10);
+		expect(await taskTokenCeilingReached(db, taskId, true)).toBeNull();
+		expect(await taskTokenCeilingReached(db, null, false)).toBeNull();
+	});
+
+	it('states the usage and the ceiling in the notice', () => {
+		const notice = taskTokenCeilingNotice({ tokens: 123_456_789, notified: false });
+		expect(notice.kind).toBe('task_token_ceiling');
+		expect(notice.text).toContain('123,456,789 tokens');
+		expect(notice.text).toContain(TASK_TOKEN_CEILING.toLocaleString('en-US'));
 	});
 });

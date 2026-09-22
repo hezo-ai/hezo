@@ -96,19 +96,19 @@ describe('projects routes — read + intake + icon-validation branches', () => {
 				method: 'PATCH',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					daily_budget_cents: 1000,
-					weekly_budget_cents: 8000,
-					monthly_budget_cents: 40000,
+					daily_budget_tokens: 1000,
+					weekly_budget_tokens: 8000,
+					monthly_budget_tokens: 40000,
 				}),
 			});
 			// Now PATCH only the daily window — the merge picks up the stored weekly/monthly.
 			const res = await app.request(`/api/projects/${projectSlug}`, {
 				method: 'PATCH',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ daily_budget_cents: 1100 }),
+				body: JSON.stringify({ daily_budget_tokens: 1100 }),
 			});
 			expect(res.status).toBe(200);
-			expect((await res.json()).data.daily_budget_cents).toBe(1100);
+			expect((await res.json()).data.daily_budget_tokens).toBe(1100);
 		});
 
 		it('rejects a single-window PATCH that makes the merged trio inconsistent', async () => {
@@ -116,7 +116,7 @@ describe('projects routes — read + intake + icon-validation branches', () => {
 			const res = await app.request(`/api/projects/${projectSlug}`, {
 				method: 'PATCH',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ daily_budget_cents: 9000 }),
+				body: JSON.stringify({ daily_budget_tokens: 9000 }),
 			});
 			expect(res.status).toBe(400);
 			expect((await res.json()).error.code).toBe('INVALID_REQUEST');

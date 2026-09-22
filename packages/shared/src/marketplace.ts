@@ -85,11 +85,32 @@ export interface MarketplaceRosterAgent {
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	monthly_budget_cents: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
+	monthly_budget_tokens: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	/**
+	 * Always 0. An instance on a release before budgets counted tokens fetches
+	 * this catalog live and requires these three numbers, so the build keeps
+	 * emitting them; this release reads the token fields above and ignores them.
+	 */
+	monthly_budget_cents: 0;
+	daily_budget_cents: 0;
+	weekly_budget_cents: 0;
 	touches_code: boolean;
 }
+
+/**
+ * The retired dollar budget fields every roster entry still carries, always 0.
+ * See {@link MarketplaceRosterAgent}.
+ */
+export const LEGACY_ROSTER_BUDGET_CENTS = {
+	monthly_budget_cents: 0,
+	daily_budget_cents: 0,
+	weekly_budget_cents: 0,
+} as const;
+
+/** The legacy budget field names, which a roster's author never writes. */
+export type LegacyRosterBudgetField = keyof typeof LEGACY_ROSTER_BUDGET_CENTS;
 
 /**
  * The Captain override carried by a marketplace team. Applied via the builtin

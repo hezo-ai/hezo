@@ -6,7 +6,6 @@ import {
 	detectLocaleDefaults,
 	formatDateIn,
 	formatDateTimeIn,
-	formatMoneyUsd,
 	formatNumber,
 	LANGUAGE_LABELS,
 	LANGUAGES,
@@ -31,36 +30,6 @@ function settings(overrides: Partial<LocaleSettings> = {}): LocaleSettings {
 
 /** Local-time construction, since formatDateIn reads local date fields. */
 const JULY_29 = new Date(2026, 6, 29, 14, 5);
-
-describe('formatMoneyUsd', () => {
-	it('punctuates by the chosen convention and always uses a bare $', () => {
-		expect(normalizeSpaces(formatMoneyUsd(123456, NumberFormat.DotComma))).toBe('$1,234.56');
-		expect(normalizeSpaces(formatMoneyUsd(123456, NumberFormat.CommaDot))).toBe('1.234,56 $');
-		expect(normalizeSpaces(formatMoneyUsd(123456, NumberFormat.SpaceComma))).toBe('1 234,56 $');
-	});
-
-	it('never renders a locale-specific symbol like US$ or $US', () => {
-		for (const format of Object.values(NumberFormat)) {
-			const rendered = formatMoneyUsd(123456, format);
-			expect(rendered).not.toContain('US');
-			expect(rendered).toContain('$');
-		}
-	});
-
-	it('defaults to the default convention when none is given', () => {
-		expect(formatMoneyUsd(500)).toBe(formatMoneyUsd(500, DEFAULT_LOCALE_SETTINGS.number_format));
-	});
-
-	it('renders sub-dollar and zero amounts to two decimals', () => {
-		expect(normalizeSpaces(formatMoneyUsd(7, NumberFormat.DotComma))).toBe('$0.07');
-		expect(normalizeSpaces(formatMoneyUsd(0, NumberFormat.DotComma))).toBe('$0.00');
-	});
-
-	it('treats a non-finite amount as zero rather than emitting NaN', () => {
-		expect(formatMoneyUsd(Number.NaN, NumberFormat.DotComma)).toBe('$0.00');
-		expect(formatMoneyUsd(Number.POSITIVE_INFINITY, NumberFormat.DotComma)).toBe('$0.00');
-	});
-});
 
 describe('formatNumber', () => {
 	it('follows the chosen separator convention', () => {

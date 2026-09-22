@@ -109,6 +109,41 @@ export interface SystemHandoffLimitContent {
 	text?: string;
 }
 
+/** Agents used more than a task's token ceiling since a person last spoke; held until one does. */
+export interface SystemTaskTokenCeilingContent {
+	kind: 'task_token_ceiling';
+	tokens?: number;
+	ceiling?: number;
+	text?: string;
+}
+
+/** A budget paused an agent. Posted once per pause, with an inbox row. */
+export interface SystemBudgetPausedContent {
+	kind: 'budget_paused';
+	agent_slug?: string;
+	scope?: 'agent' | 'project';
+	period?: 'daily' | 'weekly' | 'monthly';
+	used_tokens?: number;
+	limit_tokens?: number;
+	text?: string;
+}
+
+/** The dollar budgets an upgrade converted to tokens, posted once on an HQ task. */
+export interface SystemBudgetConversionContent {
+	kind: 'budget_conversion';
+	tokens_per_cent?: number;
+	basis?: 'history' | 'fallback';
+	conversions?: Array<{
+		scope: string;
+		id: string;
+		name: string;
+		window: 'daily' | 'weekly' | 'monthly';
+		cents: number;
+		tokens: number;
+	}>;
+	text?: string;
+}
+
 export interface SystemRepoDesignatedContent {
 	kind: 'repo_designated';
 	repo_identifier?: string;
@@ -136,6 +171,9 @@ export type SystemContent =
 	| SystemRunFailedContent
 	| SystemRunAbandonedContent
 	| SystemHandoffLimitContent
+	| SystemTaskTokenCeilingContent
+	| SystemBudgetPausedContent
+	| SystemBudgetConversionContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;
 
@@ -155,7 +193,7 @@ export interface ActionContent {
 	title?: string;
 	slug?: string;
 	role_description?: string;
-	monthly_budget_cents?: number;
+	monthly_budget_tokens?: number;
 	heartbeat_interval_min?: number | null;
 	touches_code?: boolean;
 	// goal_suggestion snapshot (kind === 'goal_suggestion')

@@ -124,13 +124,13 @@ describe('approvals CRUD', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				system_prompt: 'You are the Analyst. Own all reporting.',
-				monthly_budget_cents: 7000,
+				monthly_budget_tokens: 7000,
 			}),
 		});
 		expect(patchRes.status).toBe(200);
 		const patched = (await patchRes.json()).data;
 		expect(patched.payload.system_prompt).toContain('Own all reporting');
-		expect(patched.payload.monthly_budget_cents).toBe(7000);
+		expect(patched.payload.monthly_budget_tokens).toBe(7000);
 		// Untouched fields and the fixed slug are preserved.
 		expect(patched.payload.slug).toBe('analyst');
 		expect(patched.payload.title).toBe('Analyst');

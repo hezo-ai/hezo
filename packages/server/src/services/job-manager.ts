@@ -43,7 +43,7 @@ import {
 	type ProgressUpdateContext,
 	type RunnerDeps,
 	type RunResult,
-	recordRunCostAndEnforce,
+	recordRunUsageAndEnforce,
 	runAgent,
 	type TaskLessRunContext,
 } from './agent-runner';
@@ -89,14 +89,16 @@ import { refreshModelPins } from './model-pins';
 import {
 	attemptsExhaustedOnTask,
 	dispatchSuppressionExempt,
-	HANDOFF_LIMIT_COMMENT_KIND,
-	type HandoffRounds,
+	handoffLimitNotice,
 	handoffRoundsExhausted,
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
 	TASK_ATTEMPT_WINDOW_HOURS,
+	TASK_TOKEN_CEILING,
+	taskTokenCeilingNotice,
+	taskTokenCeilingReached,
 } from './no-work-backoff';
 import {
 	detectOrphans,
@@ -104,7 +106,6 @@ import {
 	healStaleRunState,
 	STALE_STATE_GRACE_SECONDS,
 } from './orphan-detector';
-import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { buildProgressActivityCandidates } from './project-activity';
 import { buildRetrospectiveSignals } from './project-retrospective';
@@ -338,7 +339,6 @@ export interface JobManagerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
-	pricing?: PricingService;
 	/**
 	 * Storage backend, so the log-compaction drain knows whether it may VACUUM
 	 * FULL to reclaim disk (embedded only). Defaults to 'embedded' when omitted.
@@ -370,11 +370,8 @@ export interface JobManagerDeps {
  * statement. Comfortably above what a single repo setup can strand.
  */
 const DEFERRAL_RELEASE_LIMIT = 20;
-// Daily model-pricing refresh from the pricepertoken.com catalog. Failures
-// log and leave the existing rows — the boot-time refresh / next tick retries.
 // Daily re-read of each configured provider's model catalog, moving the pinned
-// default a NEW credential starts on. Existing configs are never touched. An
-// hour after the pricing refresh so a newly pinned model already has a rate row.
+// default a NEW credential starts on. Existing configs are never touched.
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
 // Frequent because it is cheap (reads the local state file; no network) — it exists so a
@@ -791,13 +788,6 @@ export class JobManager {
 				onTick: () => this.guarded('auto-install-update', () => this.autoInstallStagedUpdate()),
 			});
 		}
-		if (this.deps.pricing) {
-			this.cron.createJob('pricing-refresh', {
-				cron: jobs.pricingRefreshCron,
-				log: cronLog,
-				onTick: () => this.guarded('pricing-refresh', () => this.refreshPricing()),
-			});
-		}
 		this.cron.createJob('model-pin-refresh', {
 			cron: jobs.modelPinRefreshCron,
 			log: cronLog,
@@ -1043,7 +1033,6 @@ export class JobManager {
 			team_id: string;
 			task_id: string | null;
 			project_id: string | null;
-			cost_cents: number;
 			input_tokens: number;
 			output_tokens: number;
 		}>(
@@ -1053,7 +1042,8 @@ export class JobManager {
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens,
+			 RETURNING id, member_id, team_id, task_id,
+			           input_tokens::float8 AS input_tokens, output_tokens::float8 AS output_tokens,
 			           (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id`,
 			[
 				HeartbeatRunStatus.Failed,
@@ -1126,30 +1116,27 @@ export class JobManager {
 		}
 
 		// A run the server killed mid-flight still burned tokens; its surviving
-		// usage snapshot (flushed during the run, preserved by the UPDATE above) is
-		// real spend that never reached cost_entries. Charge it to the provider
-		// budget now so an interrupted run isn't free. recordRunCostAndEnforce is
-		// guarded on cost_cents > 0 and these runs never completed, so it can't
-		// double-insert. task_id-less runs (rare, non-task coordination) are skipped
-		// since cost attribution is task/project-scoped.
+		// usage snapshot (flushed during the run, preserved by the UPDATE above)
+		// never reached usage_entries. Count it now so an interrupted run isn't
+		// free. These runs never completed, so no usage row exists for them yet.
+		// task_id-less runs (rare, non-task coordination) are skipped since usage
+		// attribution is task/project-scoped.
 		for (const run of stranded.rows) {
-			if (!run.task_id || run.cost_cents <= 0) continue;
+			if (!run.task_id || run.input_tokens + run.output_tokens <= 0) continue;
 			const projectRow = await db.query<{ project_id: string | null }>(
 				`SELECT project_id FROM tasks WHERE id = $1`,
 				[run.task_id],
 			);
 			const projectId = projectRow.rows[0]?.project_id ?? undefined;
-			await recordRunCostAndEnforce(
+			await recordRunUsageAndEnforce(
 				db,
 				run.id,
 				{
 					inputTokens: run.input_tokens,
 					outputTokens: run.output_tokens,
-					costCents: run.cost_cents,
 					// No split to report: this is a snapshot read back off the row, and
-					// only the cost is used from here anyway. Reconstructing buckets that
-					// were never flushed would be inventing them. Same for the model -
-					// the row already carries whatever was known.
+					// reconstructing buckets that were never flushed would be inventing
+					// them. Same for the model - the row already carries whatever was known.
 					buckets: null,
 					model: null,
 				},
@@ -1885,7 +1872,12 @@ export class JobManager {
 		memberId: string,
 		task: { id: string; identifier: string },
 		exempt: boolean,
-	): Promise<{ reason: WakeupSkipReason; detail: string; handoff?: HandoffRounds } | null> {
+	): Promise<{
+		reason: WakeupSkipReason;
+		detail: string;
+		/** A notice for the admin, when this hold has not posted one yet. */
+		notice?: { kind: string; text: string } & Record<string, unknown>;
+	} | null> {
 		const { db } = this.deps;
 		const at = ref(task.identifier, task.id);
 		if (await noWorkCooldownActive(db, memberId, task.id, exempt)) {
@@ -1917,36 +1909,18 @@ export class JobManager {
 			return {
 				reason: WakeupSkipReason.HandoffRoundsExhausted,
 				detail: `is held on ${at} after ${handoff.rounds} agent-to-agent handoffs with no person speaking`,
-				handoff,
+				notice: handoff.notified ? undefined : handoffLimitNotice(handoff),
+			};
+		}
+		const usage = await taskTokenCeilingReached(db, task.id, exempt);
+		if (usage) {
+			return {
+				reason: WakeupSkipReason.TaskTokenCeiling,
+				detail: `is held on ${at} after ${usage.tokens} tokens since a person last spoke (ceiling ${TASK_TOKEN_CEILING})`,
+				notice: usage.notified ? undefined : taskTokenCeilingNotice(usage),
 			};
 		}
 		return null;
-	}
-
-	/**
-	 * Tell the admin a task is held by the handoff limit, once per hold. The
-	 * notice names the agents, the rounds and the tokens they used, and it is
-	 * what the admin replies to: their reply lifts the hold.
-	 */
-	private async postHandoffLimitNotice(
-		teamId: string,
-		taskId: string,
-		handoff: HandoffRounds,
-	): Promise<void> {
-		const agents = handoff.agentSlugs.map((slug) => `@${slug}`).join(', ');
-		await postAdminNotice({
-			db: this.deps.db,
-			teamId,
-			taskId,
-			content: {
-				kind: HANDOFF_LIMIT_COMMENT_KIND,
-				rounds: handoff.rounds,
-				tokens: handoff.tokens,
-				agent_slugs: handoff.agentSlugs,
-				text: `${agents} handed this task to each other ${handoff.rounds} times in a row, using ${handoff.tokens.toLocaleString('en-US')} tokens. No agent will run on it until a person replies.`,
-			},
-			wsManager: this.deps.wsManager,
-		});
 	}
 
 	private async resolveProjectForTask(
@@ -2606,18 +2580,21 @@ export class JobManager {
 				suppression.reason !== WakeupSkipReason.AttemptsExhausted &&
 				suppression.reason !== WakeupSkipReason.RetrospectiveHold &&
 				suppression.reason !== WakeupSkipReason.HandoffRoundsExhausted &&
+				suppression.reason !== WakeupSkipReason.TaskTokenCeiling &&
 				(wakeupSource === WakeupSource.Heartbeat || wakeupSource === WakeupSource.Timer);
 			const line = `Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping ${wakeupSource} wakeup (${suppression.reason})`;
 			if (quiet) log.debug(line);
 			else log.warn(line);
 			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
-			const handoff = suppression.handoff;
-			if (handoff && !handoff.notified) {
-				await this.postHandoffLimitNotice(teamId, task.id, handoff).catch((e) =>
-					log.error(
-						`Failed to post the handoff-limit notice on ${ref(task.identifier, task.id)}:`,
-						e,
-					),
+			if (suppression.notice) {
+				await postAdminNotice({
+					db,
+					teamId,
+					taskId: task.id,
+					content: suppression.notice,
+					wsManager: this.deps.wsManager,
+				}).catch((e) =>
+					log.error(`Failed to post the hold notice on ${ref(task.identifier, task.id)}:`, e),
 				);
 			}
 			// Stamp the check for the same reason the "no actionable tasks" branch
@@ -2720,7 +2697,9 @@ export class JobManager {
 			log.debug(
 				`Agent ${ref(agent.rows[0].slug, memberId)} over ${budgetBlock.scope} ${budgetBlock.period} budget — pausing and skipping wakeup`,
 			);
-			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager);
+			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager, {
+				taskId: task.id,
+			});
 			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, teamId, null);
 			return;
 		}
@@ -2849,7 +2828,6 @@ export class JobManager {
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 			containerLogStreamer: this.deps.containerLogStreamer,
-			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
 
@@ -3505,7 +3483,6 @@ export class JobManager {
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 			containerLogStreamer: this.deps.containerLogStreamer,
-			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agentRow.run_timeout_min * 60 * 1000;
 		const key = `${memberId}:${projectRow.id}:${opts.keySuffix}`;
@@ -4580,12 +4557,6 @@ export class JobManager {
 		}
 		log.info(`Auto-installing staged update ${state.targetVersion}; restarting`);
 		await (this.deps.requestUpdateRestart ?? exitToApplyUpdate)();
-	}
-
-	private async refreshPricing(): Promise<void> {
-		if (!this.deps.pricing) return;
-		const count = await this.deps.pricing.refresh();
-		log.info(`Model pricing refreshed from pricepertoken.com (${count} models)`);
 	}
 
 	/**

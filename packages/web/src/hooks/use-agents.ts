@@ -17,9 +17,9 @@ export interface Agent {
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
-	daily_budget_cents: number;
-	weekly_budget_cents: number;
-	monthly_budget_cents: number;
+	daily_budget_tokens: number;
+	weekly_budget_tokens: number;
+	monthly_budget_tokens: number;
 	touches_code: boolean;
 	runtime_status: string;
 	admin_status: string;
@@ -105,9 +105,9 @@ interface UpdateAgentVars {
 	system_prompt?: string;
 	system_prompt_change_summary?: string;
 	reports_to?: string | null;
-	daily_budget_cents?: number;
-	weekly_budget_cents?: number;
-	monthly_budget_cents?: number;
+	daily_budget_tokens?: number;
+	weekly_budget_tokens?: number;
+	monthly_budget_tokens?: number;
 	heartbeat_interval_min?: number;
 	run_timeout_min?: number;
 	touches_code?: boolean;
@@ -243,9 +243,9 @@ export function useOnboardAgent(projectId: string) {
 			role_description?: string;
 			system_prompt?: string;
 			reports_to?: string;
-			daily_budget_cents?: number;
-			weekly_budget_cents?: number;
-			monthly_budget_cents?: number;
+			daily_budget_tokens?: number;
+			weekly_budget_tokens?: number;
+			monthly_budget_tokens?: number;
 			heartbeat_interval_min?: number;
 			touches_code?: boolean;
 		}) =>

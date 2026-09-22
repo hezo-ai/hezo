@@ -111,7 +111,7 @@ export interface RuntimeHomeLayout {
  * runs on more than one CLI — a Moonshot key on Kimi Code was handed
  * `HEZO_CLAUDE_CONFIG_DIR` and never got `KIMI_CODE_HOME`, so its MCP config was
  * never read, the Stop-hook judge could not find the session log, and the usage
- * scrape found nothing and priced the run at $0.
+ * scrape found nothing and recorded no usage for the run.
  *
  * Pass the RESOLVED runtime (`effectiveRuntime`), never the provider default.
  */

@@ -227,8 +227,9 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 		footer: (
 			<>
 				Ollama serves Anthropic's Messages API, so agents run on the <strong>Claude Code</strong>{' '}
-				CLI. Runs on your own hardware cost nothing per token, so they record <code>$0</code>. Pick
-				a model with strong tool-calling - weaker local models struggle with agentic work.
+				CLI. Runs on your own hardware cost nothing per token, though their tokens still count
+				towards budgets. Pick a model with strong tool-calling - weaker local models struggle with
+				agentic work.
 			</>
 		),
 	},
@@ -252,9 +253,9 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 		footer: (
 			<>
 				LM Studio serves Anthropic's Messages API from version 0.4.1, so agents run on the{' '}
-				<strong>Claude Code</strong> CLI. Runs on your own hardware cost nothing per token, so they
-				record <code>$0</code>. Pick a model with strong tool-calling - weaker local models struggle
-				with agentic work.
+				<strong>Claude Code</strong> CLI. Runs on your own hardware cost nothing per token, though
+				their tokens still count towards budgets. Pick a model with strong tool-calling - weaker
+				local models struggle with agentic work.
 			</>
 		),
 	},

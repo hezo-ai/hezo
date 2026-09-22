@@ -42,7 +42,7 @@ async function seedTaskWithStatus(
 	return task;
 }
 
-test('the dashboard carries the summary, metrics, goals, spend and in-progress work', async () => {
+test('the dashboard carries the summary, metrics, goals, usage and in-progress work', async () => {
 	const ref = { slug: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -66,8 +66,8 @@ test('the dashboard carries the summary, metrics, goals, spend and in-progress w
 			);
 			await seedGoalRow(project.slug, 'Hit launch date', GoalHealth.AtRisk, 55);
 			await db.query(
-				`INSERT INTO cost_entries (member_id, project_id, amount_cents)
-				 SELECT $1, id, 999 FROM projects WHERE slug = $2`,
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens)
+				 SELECT $1, id, 9900000 FROM projects WHERE slug = $2`,
 				[agent.id, project.slug],
 			);
 		},
@@ -87,7 +87,7 @@ test('the dashboard carries the summary, metrics, goals, spend and in-progress w
 	expect(dashboard.textContent).toContain('Shipping');
 	expect(dashboard.textContent).toContain('Hit launch date');
 	expect(dashboard.textContent).toContain('Active work');
-	await waitFor(() => expect(dashboard.textContent).toContain('$9.99'));
+	await waitFor(() => expect(dashboard.textContent).toContain('9.9M'));
 
 	const taskRow = dashboard.querySelector(
 		'[data-testid="dashboard-task-row"]',
@@ -97,7 +97,7 @@ test('the dashboard carries the summary, metrics, goals, spend and in-progress w
 	expect(taskRow!.getAttribute('href')).toMatch(/\/tasks\/[a-z0-9]+-\d+$/i);
 });
 
-test('the spend card draws a sparkline once there is more than one day of history', async () => {
+test('the usage card draws a sparkline once there is more than one day of history', async () => {
 	const ref = { slug: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -105,15 +105,15 @@ test('the spend card draws a sparkline once there is more than one day of histor
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Spendy' });
 			ref.slug = project.slug;
-			// Five days of spend, so the series has enough points to plot. Costs are bucketed by
+			// Five days of usage, so the series has enough points to plot. Usage is bucketed by
 			// `created_at::date` server-side, which is why each row is stamped a day apart rather
 			// than inserted five times over.
 			for (let daysAgo = 4; daysAgo >= 0; daysAgo--) {
 				await getTestContext().db.query(
-					`INSERT INTO cost_entries (member_id, project_id, amount_cents, created_at)
+					`INSERT INTO usage_entries (member_id, project_id, input_tokens, created_at)
 					 SELECT $1, id, $2, now() - ($3 || ' days')::interval
 					 FROM projects WHERE slug = $4`,
-					[ws.agents[0].id, 100 * (daysAgo + 1), String(daysAgo), project.slug],
+					[ws.agents[0].id, 1_000_000 * (daysAgo + 1), String(daysAgo), project.slug],
 				);
 			}
 		},
@@ -138,10 +138,10 @@ test('the spend card draws a sparkline once there is more than one day of histor
 	}
 	// All-time total comes from the same request as the series.
 	const card = document.body.querySelector('[data-testid="dashboard-spend"]')!;
-	await waitFor(() => expect(card.textContent).toContain('$15.00'));
+	await waitFor(() => expect(card.textContent).toContain('15M'));
 });
 
-test('the spend card omits the sparkline with a single day of history', async () => {
+test('the usage card omits the sparkline with a single day of history', async () => {
 	const ref = { slug: '' };
 	const { findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -150,8 +150,8 @@ test('the spend card omits the sparkline with a single day of history', async ()
 			const project = await seedProject(ws, { name: 'One Day' });
 			ref.slug = project.slug;
 			await getTestContext().db.query(
-				`INSERT INTO cost_entries (member_id, project_id, amount_cents)
-				 SELECT $1, id, 500 FROM projects WHERE slug = $2`,
+				`INSERT INTO usage_entries (member_id, project_id, input_tokens)
+				 SELECT $1, id, 5000000 FROM projects WHERE slug = $2`,
 				[ws.agents[0].id, project.slug],
 			);
 		},
@@ -162,10 +162,10 @@ test('the spend card omits the sparkline with a single day of history', async ()
 		params: { projectId: ref.slug },
 	});
 
-	// One day is a dot, not a trend: a line drawn from a single value reads as "no spend" when it
+	// One day is a dot, not a trend: a line drawn from a single value reads as "no usage" when it
 	// means "one day of history", so the card shows the numbers alone.
 	const card = await findByTestId('dashboard-spend', undefined, { timeout: 15_000 });
-	await waitFor(() => expect(card.textContent).toContain('$5.00'));
+	await waitFor(() => expect(card.textContent).toContain('5M'));
 	expect(queryByTestId('dashboard-spend-sparkline')).toBeNull();
 });
 

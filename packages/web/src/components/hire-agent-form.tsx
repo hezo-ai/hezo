@@ -1,5 +1,5 @@
 import {
-	type BudgetWindowsCents,
+	type BudgetWindowsTokens,
 	HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT,
 	SYSTEM_PROMPT_TEMPLATE_VARS,
 } from '@hezo/shared';
@@ -18,7 +18,7 @@ export interface HireFormValues {
 	systemPrompt: string;
 	/** Manager's slug this agent reports to ('' = no manager). */
 	reportsTo: string;
-	budget: BudgetWindowsCents;
+	budget: BudgetWindowsTokens;
 	heartbeat: string;
 	touchesCode: boolean;
 }
