@@ -19,7 +19,8 @@ import {
 	MARKETPLACE_SCHEMA_VERSION,
 	type MarketplaceIndexEntry,
 	type MarketplaceTeamDef,
-	RETIRED_BUDGET_FIELDS,
+	type RETIRED_BUDGET_FIELDS,
+	retiredBudgetFieldMessage,
 	toMarketplaceIndexEntry,
 } from '@hezo/shared';
 import { z } from 'zod';
@@ -35,11 +36,7 @@ const FETCH_TIMEOUT_MS = 8000;
 
 /** A retired dollar field: 0 passes, anything else is refused with its token replacement. */
 function retiredBudgetCents(field: keyof typeof RETIRED_BUDGET_FIELDS) {
-	return z
-		.literal(0, {
-			error: `Budgets are counted in tokens, not dollars. Set ${RETIRED_BUDGET_FIELDS[field]} instead of ${field}.`,
-		})
-		.optional();
+	return z.literal(0, { error: retiredBudgetFieldMessage([field]) }).optional();
 }
 const rosterAgentSchema = z.object({
 	slug: z.string().min(1),

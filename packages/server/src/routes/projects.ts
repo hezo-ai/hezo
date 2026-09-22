@@ -24,14 +24,14 @@ import {
 	broadcastProjectsChanged,
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
-import { budgetWriteError, retiredBudgetFieldError } from '../lib/budget-validation';
+import { budgetWriteError } from '../lib/budget-validation';
 import { buildContainerDeps } from '../lib/container-deps';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
-import { terminalStatusParams } from '../lib/sql';
+import { terminalStatusParams, utcWindowStartSql } from '../lib/sql';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -134,7 +134,7 @@ projectsRoutes.get('/projects', async (c) => {
           AS code_agent_count,
        (SELECT COALESCE(sum(ue.input_tokens + ue.output_tokens), 0) FROM usage_entries ue
           WHERE ue.project_id = p.id
-            AND ue.created_at >= date_trunc('day', now(), 'UTC'))::float8
+            AND ue.created_at >= ${utcWindowStartSql("'day'")})::float8
           AS today_tokens,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,
@@ -593,9 +593,6 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		monthly_budget_tokens?: number;
 	}>();
 
-	const retiredField = retiredBudgetFieldError(body);
-	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
-
 	const sets: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
@@ -685,13 +682,11 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		params.push(body.container_disk_gb);
 		idx++;
 	}
-	// Budget limits: 0 = unlimited. A PATCH may touch only one window, so the trio
-	// it leaves is checked, merged over the stored one.
+	// Budget limits: 0 = unlimited. One check for the whole write - a retired dollar
+	// field by name, and the trio a partial PATCH leaves, merged over the stored one.
+	const budgetError = budgetWriteError(body, existing.rows[0]);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 	if (BUDGET_WINDOW_FIELDS.some((column) => body[column] !== undefined)) {
-		const budgetError = budgetWriteError(body, existing.rows[0]);
-		if (budgetError) {
-			return err(c, 'INVALID_REQUEST', budgetError, 400);
-		}
 		for (const column of BUDGET_WINDOW_FIELDS) {
 			if (body[column] === undefined) continue;
 			sets.push(`${column} = $${idx}`);

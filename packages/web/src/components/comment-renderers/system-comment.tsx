@@ -4,6 +4,11 @@ import { ChevronDown } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
 import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
+import {
+	budgetConversionIntroKey,
+	handoffAgentSlugs,
+	noticeParts,
+} from '../../lib/system-notice-text';
 import { AgentLink } from '../agent-link';
 import type {
 	BudgetConversionScope,
@@ -23,7 +28,6 @@ import type {
 import { ActorBadge } from '../ui/actor-badge';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
-import { budgetConversionIntroKey, budgetPausedKey, handoffAgentSlugs } from './system-notice-text';
 
 interface Props {
 	comment: CommentDataOf<'system'>;
@@ -465,12 +469,13 @@ function HandoffLimitBody({
 	projectId?: string;
 	timestamp: React.ReactNode;
 }) {
-	const { t, formatNumber, language } = useI18n();
+	const i18n = useI18n();
+	const parts = noticeParts(content, i18n);
 	const slugs = handoffAgentSlugs(content);
 	let element = 0;
 	const agentsNode =
 		slugs.length > 0 ? (
-			new Intl.ListFormat(language, { type: 'conjunction' })
+			new Intl.ListFormat(i18n.language, { type: 'conjunction' })
 				.formatToParts(slugs.map((slug) => `@${slug}`))
 				.map((part) => {
 					// A separator always follows the element before it, whose slug is unique.
@@ -493,22 +498,16 @@ function HandoffLimitBody({
 					);
 				})
 		) : (
-			<span>{t('comment.runAgentFallback')}</span>
+			<span>{i18n.t('comment.runAgentFallback')}</span>
 		);
+	if (!parts) return null;
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
 			data-testid="handoff-limit-comment"
 		>
 			<span className="text-xs text-text-2">
-				<Trans
-					k="comment.handoffLimit"
-					vars={{
-						agents: agentsNode,
-						rounds: formatNumber(Number(content.rounds ?? 0)),
-						tokens: formatNumber(Number(content.tokens ?? 0)),
-					}}
-				/>
+				<Trans k={parts.key} vars={{ ...parts.vars, agents: agentsNode }} />
 			</span>
 			{timestamp}
 		</div>
@@ -523,18 +522,15 @@ function TaskTokenCeilingBody({
 	content: SystemTaskTokenCeilingContent;
 	timestamp: React.ReactNode;
 }) {
-	const { t, formatNumber } = useI18n();
+	const i18n = useI18n();
+	const parts = noticeParts(content, i18n);
+	if (!parts) return null;
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
 			data-testid="task-token-ceiling-comment"
 		>
-			<span className="text-xs text-text-2">
-				{t('comment.taskTokenCeiling', {
-					tokens: formatNumber(Number(content.tokens ?? 0)),
-					ceiling: formatNumber(Number(content.ceiling ?? 0)),
-				})}
-			</span>
+			<span className="text-xs text-text-2">{i18n.t(parts.key, parts.vars)}</span>
 			{timestamp}
 		</div>
 	);
@@ -550,8 +546,9 @@ function BudgetPausedBody({
 	projectId?: string;
 	timestamp: React.ReactNode;
 }) {
-	const { t, formatNumber } = useI18n();
-	const slug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
+	const i18n = useI18n();
+	const parts = noticeParts(content, i18n);
+	const slug = parts?.agentSlugs[0];
 	const agentNode =
 		slug && projectId ? (
 			<AgentLink
@@ -563,23 +560,16 @@ function BudgetPausedBody({
 				@{slug}
 			</AgentLink>
 		) : (
-			<span>{slug ? `@${slug}` : t('comment.runAgentFallback')}</span>
+			<span>{parts?.vars.agent}</span>
 		);
-	const key = budgetPausedKey(content);
+	if (!parts) return null;
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
 			data-testid="budget-paused-comment"
 		>
 			<span className="text-xs text-text-2">
-				<Trans
-					k={key}
-					vars={{
-						agent: agentNode,
-						limit: formatNumber(Number(content.limit_tokens ?? 0)),
-						used: formatNumber(Number(content.used_tokens ?? 0)),
-					}}
-				/>
+				<Trans k={parts.key} vars={{ ...parts.vars, agent: agentNode }} />
 			</span>
 			{timestamp}
 		</div>
@@ -596,6 +586,15 @@ const INVALID_BUDGET_KEYS: Record<'daily' | 'weekly' | 'monthly', MessageKey> = 
 	daily: 'comment.budgetConversion.invalid.daily',
 	weekly: 'comment.budgetConversion.invalid.weekly',
 	monthly: 'comment.budgetConversion.invalid.monthly',
+};
+
+/** The same subjects where the row names no project or team to place them in. */
+const CONVERSION_SUBJECT_PLAIN_KEYS: Record<BudgetConversionScope, MessageKey> = {
+	agent: 'comment.budgetConversion.subject.agentPlain',
+	project: 'comment.budgetConversion.subject.project',
+	agent_type: 'comment.budgetConversion.subject.agentType',
+	team_type: 'comment.budgetConversion.subject.agentType',
+	hire_proposal: 'comment.budgetConversion.subject.hireProposalPlain',
 };
 
 /** How each converted budget names itself, so two lines with one name read apart. */
@@ -619,11 +618,12 @@ function BudgetConversionBody({
 	const rate = formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100));
 	const conversions = Array.isArray(content.conversions) ? content.conversions : [];
 	const invalid = Array.isArray(content.invalid) ? content.invalid : [];
+	// Without a context there is nothing for "in {context}" to name, so the line
+	// falls back to the plain subject rather than ending on a dangling preposition.
 	const subject = (scope: BudgetConversionScope, name: string, context?: string | null) =>
-		t(CONVERSION_SUBJECT_KEYS[scope] ?? CONVERSION_SUBJECT_KEYS.agent, {
-			name,
-			context: context ?? '',
-		});
+		context
+			? t(CONVERSION_SUBJECT_KEYS[scope] ?? CONVERSION_SUBJECT_KEYS.agent, { name, context })
+			: t(CONVERSION_SUBJECT_PLAIN_KEYS[scope] ?? CONVERSION_SUBJECT_PLAIN_KEYS.agent, { name });
 	return (
 		<div className="flex flex-col gap-1 leading-[22px]" data-testid="budget-conversion-comment">
 			<span className="text-xs text-text-2">{t(budgetConversionIntroKey(content), { rate })}</span>

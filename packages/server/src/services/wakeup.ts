@@ -80,6 +80,10 @@ export async function createWakeup(
 	if (coalesceResult.rows.length > 0) {
 		const existingRow = coalesceResult.rows[0];
 		const mergedPayload = mergePayloads(existingRow.payload, payload);
+		// A person's press is spent on the work that was queued when they pressed it.
+		// An agent folding its own wake into that row would otherwise inherit the
+		// override, and a hold that waits for a person would let the agent through.
+		if (createdByRunId) delete mergedPayload.triggered_by;
 
 		// A coalesce must never downgrade how the merged row is dispatched. The row
 		// now carries the work of every trigger folded into it, but the dispatcher
@@ -144,6 +148,17 @@ export async function createWakeup(
 }
 
 /**
+ * Who pressed an operator control, stamped on a wakeup as `triggered_by`: the name
+ * the run card shows, and the user or API key the holds judge the press by.
+ */
+export interface WakeupTriggeredBy {
+	member_id: string | null;
+	name: string;
+	user_id: string | null;
+	api_key_id: string | null;
+}
+
+/**
  * Idempotently create the Captain's manual ("Run now") progress-update wakeup.
  *
  * Unlike a task wakeup, a progress-update wakeup is task-less, so `createWakeup`
@@ -158,17 +173,6 @@ export async function createWakeup(
  * idempotency key both dedups and lets the list/cancel routes target the row
  * precisely.
  */
-/**
- * Who pressed an operator control, stamped on a wakeup as `triggered_by`: the name
- * the run card shows, and the user or API key the holds judge the press by.
- */
-export interface WakeupTriggeredBy {
-	member_id: string | null;
-	name: string;
-	user_id: string | null;
-	api_key_id: string | null;
-}
-
 export async function createProgressUpdateWakeup(
 	db: Db,
 	captainMemberId: string,
@@ -262,13 +266,6 @@ export async function assignmentWakeupAlreadyServed(
 }
 
 /**
- * How a finished run wants its driving wakeup settled.
- *
- * A discriminated union rather than booleans: the four outcomes are mutually
- * exclusive and `handback` is the only one carrying data, so a caller cannot
- * spell "put it back" without saying why it is going back.
- */
-/**
  * Why work goes back to the queue, and when it may be claimed again. A provider
  * usage hold names the credential whose hold it waits on and when that lifts -
  * both required, so a handback cannot leave the paced release unable to find
@@ -286,6 +283,13 @@ export type HandbackCause =
 			heldConfigId?: never;
 	  };
 
+/**
+ * How a finished run wants its driving wakeup settled.
+ *
+ * A discriminated union rather than booleans: the four outcomes are mutually
+ * exclusive and `handback` is the only one carrying data, so a caller cannot
+ * spell "put it back" without saying why it is going back.
+ */
 export type SettlementIntent =
 	/**
 	 * The work was not done and is owed. Put it back for the dispatcher, which may

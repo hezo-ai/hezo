@@ -1068,6 +1068,7 @@ export class JobManager {
 			project_id: string | null;
 			input_tokens: number;
 			output_tokens: number;
+			started_at: string | null;
 		}>(
 			`UPDATE heartbeat_runs hr
 			 SET status = $1::heartbeat_run_status,
@@ -1075,7 +1076,7 @@ export class JobManager {
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, task_id,
+			 RETURNING id, member_id, team_id, task_id, started_at,
 			           input_tokens::float8 AS input_tokens, output_tokens::float8 AS output_tokens,
 			           (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id`,
 			[
@@ -1179,6 +1180,9 @@ export class JobManager {
 					projectId,
 					taskId: run.task_id,
 					memberId: run.member_id,
+					// The tokens were spent when the run ran, which may be before an
+					// upgrade that changed what budgets count.
+					occurredAt: run.started_at,
 				},
 			);
 		}
@@ -2268,12 +2272,25 @@ export class JobManager {
 			          AND hr.finished_at IS NOT NULL
 			          AND hr.finished_at > now() - ($4::int || ' seconds')::interval
 			   )
+			   -- An agent whose queued wakeup is waiting out a hold is left to the
+			   -- release that owns it. Selecting it here would coalesce onto the held
+			   -- row on every tick, writing a version that changes nothing.
+			   AND NOT EXISTS (
+			        SELECT 1 FROM agent_wakeup_requests w
+			        WHERE w.member_id = ma.id
+			          AND w.status = $5::wakeup_status
+			          AND w.not_before > now()
+			   )
+			 -- Longest-waiting first, so a slow agent cannot be crowded out of the
+			 -- window by whatever order the planner returns.
+			 ORDER BY ma.last_heartbeat_at NULLS FIRST
 			 LIMIT 5`,
 			[
 				AgentAdminStatus.Enabled,
 				BUDGET_PAUSE_STATUSES_PG,
 				heartbeatIntervalFloorMin(),
 				runtimeConfig().jobs.heartbeatCooldownSec,
+				WakeupStatus.Queued,
 			],
 		);
 
@@ -2305,7 +2322,16 @@ export class JobManager {
 				  RETURNING id`,
 				[WakeupStatus.Claimed, wakeupId, WakeupStatus.Queued],
 			);
-			if (claimed.rows.length === 0) continue;
+			if (claimed.rows.length === 0) {
+				// The wakeup this heartbeat merged into is held. Advance the clock so the
+				// sweep leaves this agent alone until its next interval rather than
+				// re-merging every tick and filling the window.
+				await this.deps.db.query(
+					'UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1',
+					[agent.id],
+				);
+				continue;
+			}
 			await this.activateAgent(agent.id, agent.team_id, wakeupId, payload, WakeupSource.Heartbeat);
 		}
 	}

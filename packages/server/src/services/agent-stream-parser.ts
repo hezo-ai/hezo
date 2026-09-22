@@ -1678,6 +1678,13 @@ function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStr
 	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
 	let doneEmitted = false;
+	/**
+	 * A terminal event that also said why it ended. The ceiling reads this rather
+	 * than `doneEmitted`: a usage-carrying event whose type merely looks terminal
+	 * still renders the summary, but it may not switch the per-run stop off for
+	 * the rest of a run that is in fact still going.
+	 */
+	let endedWithReason = false;
 	let terminalError: RuntimeErrorVerdict | null = null;
 
 	// The running total rather than the terminal step's own counts: the line reads
@@ -1739,6 +1746,7 @@ function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStr
 				? firstString(part, ['reason', 'finish_reason', 'stop_reason'])
 				: undefined;
 			if (reason === 'tool-calls') return [];
+			if (reason !== undefined) endedWithReason = true;
 			return [doneLine(tokens ?? captured, reason === 'error' ? 'error' : 'success')];
 		}
 		return [];
@@ -1749,7 +1757,7 @@ function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStr
 		getTerminalVerdict: () => terminalError,
 		getFinalAssistantMessage: () => finalMessage,
 		tally: toolTally,
-		hasEnded: () => doneEmitted,
+		hasEnded: () => endedWithReason,
 	});
 
 	return {

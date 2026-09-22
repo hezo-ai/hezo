@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { buildCursorPage, encodeCursor, parseCursorPagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
+import { utcWindowStartSql } from '../lib/sql';
 import type { Env } from '../lib/types';
 import {
 	type BudgetLimits,
@@ -11,6 +12,7 @@ import {
 	USAGE_WINDOW_SUMS_SQL,
 } from '../services/budget';
 import {
+	isUsageDay,
 	parseUsageFilters,
 	type UsageDaySplit,
 	usageByAgent,
@@ -57,7 +59,7 @@ usageRoutes.get('/projects/:projectId/usage', async (c) => {
 	if (groupBy === 'day') {
 		const split = DAY_SPLIT_BY_BREAKDOWN[c.req.query('breakdown') ?? ''] ?? 'none';
 		const cursor = c.req.query('cursor') ?? null;
-		if (cursor !== null && !/^\d{4}-\d{2}-\d{2}$/.test(cursor)) {
+		if (cursor !== null && !isUsageDay(cursor)) {
 			return err(c, 'invalid_cursor', 'The pagination cursor is malformed.', 400);
 		}
 		const { limit } = parseCursorPagination(c);
@@ -128,7 +130,7 @@ usageRoutes.get('/projects/:projectId/budget-status', async (c) => {
 	// Budget hero's "{N} runs" line. Same UTC month boundary the windowed sums use.
 	const runsRow = await db.query<{ runs: number }>(
 		`SELECT count(*)::int AS runs FROM usage_entries
-		 WHERE project_id = $1 AND created_at >= date_trunc('month', now(), 'UTC')`,
+		 WHERE project_id = $1 AND created_at >= ${utcWindowStartSql("'month'")}`,
 		[projectId],
 	);
 	const runsThisMonth = runsRow.rows[0]?.runs ?? 0;

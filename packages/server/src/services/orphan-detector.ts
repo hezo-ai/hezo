@@ -486,24 +486,51 @@ export async function retryOrEscalateLostRun(
 		const tailText =
 			knownLogTail ?? (await readRunLogTail(db, run.runId, ORPHAN_LOG_TAIL_CHARS)).text;
 
-		await createWakeup(db, run.memberId, run.teamId, WakeupSource.Timer, {
-			reason: 'orphan_retry',
-			// Naming the task is what makes this a retry rather than a nudge. A
-			// task-less wakeup coalesces onto the agent's queued heartbeat and
-			// `activateAgent` then picks a task by its own ordering, so the retry
-			// could land on different work than was lost - and `retry_of_run_id`
-			// would record lineage across two unrelated tasks. It also brings the
-			// pre-dispatch busy and capacity guards into play, since every one of
-			// them is inside `if (wakeupTaskId)`.
-			...(run.taskId ? { task_id: run.taskId } : {}),
-			retry_count: run.priorRetries + 1,
-			max_retries: MAX_RETRIES,
-			previous_failure: {
-				run_id: run.runId,
-				exit_code: failedRun.rows[0]?.exit_code ?? null,
-				log_tail: tailText.length > 0 ? tailText : null,
+		// An infrastructure retry carries the lost run's own attribution: the work
+		// is the same handoff, and a retry that looked like nobody's would restart
+		// the handoff chain the lost run was already counted in.
+		const lost = await db.query<{
+			created_by_run_id: string | null;
+			attribution: Record<string, unknown>;
+		}>(
+			`SELECT w.created_by_run_id,
+			        jsonb_strip_nulls(jsonb_build_object(
+			          'triggered_by', w.payload->'triggered_by',
+			          'decided_by', w.payload->'decided_by')) AS attribution
+			   FROM agent_wakeup_requests w
+			   JOIN heartbeat_runs hr ON hr.wakeup_id = w.id
+			  WHERE hr.id = $1`,
+			[run.runId],
+		);
+		const origin = lost.rows[0];
+
+		await createWakeup(
+			db,
+			run.memberId,
+			run.teamId,
+			WakeupSource.Timer,
+			{
+				reason: 'orphan_retry',
+				// Naming the task is what makes this a retry rather than a nudge. A
+				// task-less wakeup coalesces onto the agent's queued heartbeat and
+				// `activateAgent` then picks a task by its own ordering, so the retry
+				// could land on different work than was lost - and `retry_of_run_id`
+				// would record lineage across two unrelated tasks. It also brings the
+				// pre-dispatch busy and capacity guards into play, since every one of
+				// them is inside `if (wakeupTaskId)`.
+				...(run.taskId ? { task_id: run.taskId } : {}),
+				retry_count: run.priorRetries + 1,
+				max_retries: MAX_RETRIES,
+				previous_failure: {
+					run_id: run.runId,
+					exit_code: failedRun.rows[0]?.exit_code ?? null,
+					log_tail: tailText.length > 0 ? tailText : null,
+				},
+				...(origin?.attribution ?? {}),
 			},
-		});
+			undefined,
+			origin?.created_by_run_id ?? null,
+		);
 		return 'retried';
 	}
 

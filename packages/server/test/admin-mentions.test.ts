@@ -440,6 +440,35 @@ describe('postAdminNotice', () => {
 		});
 	});
 
+	it('gives the project dashboard the same notice fields as the inbox', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Dashboard notice test');
+		const commentId = await postAdminNotice({
+			db,
+			teamId,
+			taskId: taskIdLocal,
+			content: {
+				kind: 'task_token_ceiling',
+				tokens: 123_456_789,
+				ceiling: 100_000_000,
+				text: 'English fallback.',
+			},
+		});
+		if (!commentId) throw new Error('expected the notice to be posted');
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/needs-you`, {
+			headers: authHeader(token),
+		});
+		const { items } = (await res.json()).data as {
+			items: Array<{ kind: string; mention?: { notice: Record<string, unknown> | null } }>;
+		};
+		const row = items.find((r) => r.mention?.notice?.kind === 'task_token_ceiling');
+		expect(row?.mention?.notice).toEqual({
+			kind: 'task_token_ceiling',
+			tokens: 123_456_789,
+			ceiling: 100_000_000,
+		});
+	});
+
 	it('gives no notice fields to a row anchored on an ordinary comment', async () => {
 		const taskIdLocal = await insertTask(captainId, 'Ordinary mention test');
 		const comment = await db.query<{ id: string }>(

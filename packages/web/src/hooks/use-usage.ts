@@ -1,24 +1,7 @@
+import type { AgentUsageRow, EntityBudgetStatus, UsageTotals, WindowStatus } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
-
-/**
- * Every usage read reports tokens: input (cached input included), output, and
- * their sum, which is the figure budgets count.
- */
-export interface UsageTotals {
-	input_tokens: number;
-	output_tokens: number;
-	total_tokens: number;
-}
-
-/** One agent's usage, as `group_by: 'agent'` returns it. */
-export interface AgentUsageRow extends UsageTotals {
-	agent_id: string;
-	agent_title: string | null;
-	/** The agent's own name, when it has one. Null means it goes by its role. */
-	agent_name: string | null;
-}
 
 /**
  * How many days of history a usage chart asks for: the newest page of the day
@@ -40,6 +23,8 @@ export interface UsageSummary extends UsageTotals {
 	has_more?: boolean;
 }
 
+export type { AgentUsageRow, EntityBudgetStatus, UsageTotals, WindowStatus };
+
 export function useUsage(
 	projectId: string,
 	params?: {
@@ -55,20 +40,6 @@ export function useUsage(
 		queryFn: () =>
 			api.get<UsageSummary>(`/api/projects/${projectId}/usage`, params as Record<string, string>),
 	});
-}
-
-/** Usage vs. limit for a single rolling window, in tokens. Mirrors the server WindowStatus. */
-export interface WindowStatus {
-	usedTokens: number;
-	limitTokens: number;
-	overBudget: boolean;
-}
-
-export interface EntityBudgetStatus {
-	daily: WindowStatus;
-	weekly: WindowStatus;
-	monthly: WindowStatus;
-	overBudget: boolean;
 }
 
 export interface AgentBudgetStatus extends EntityBudgetStatus {

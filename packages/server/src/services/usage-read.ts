@@ -1,19 +1,14 @@
+import type { AgentUsageRow, UsageTotals } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { isUuid } from '../lib/resolve';
+import { utcDaySql } from '../lib/sql';
 import { USAGE_TOKEN_SUMS_SQL } from './budget';
 
 /**
  * The project usage reads, shared by `GET /usage` and the `get_usage` tool so the
  * two return the same columns for the same question.
  */
-
-/** A token sum as every usage read reports it. */
-export interface UsageTotals {
-	input_tokens: number;
-	output_tokens: number;
-	total_tokens: number;
-}
 
 /** What a usage read may be narrowed by. Ids are uuids; `from`/`to` are dates or instants. */
 export interface UsageFilters {
@@ -91,13 +86,6 @@ const AGENT_JOINS_SQL = `LEFT JOIN members m ON m.id = ue.member_id
 const AGENT_GROUP_SQL = 'ue.member_id, ma.title, ma.human_name, m.display_name';
 
 /** One usage row per agent, bounded by the roster. */
-export interface AgentUsageRow extends UsageTotals {
-	agent_id: string;
-	agent_title: string | null;
-	/** The agent's own name, when it has one. Null means it goes by its role. */
-	agent_name: string | null;
-}
-
 export async function usageByAgent(db: Db, filters: UsageFilters): Promise<AgentUsageRow[]> {
 	const { where, params } = usageWhere(filters);
 	const r = await db.query<AgentUsageRow>(
@@ -128,7 +116,20 @@ const DAY_SPLITS: Record<UsageDaySplit, { columns: string; joins: string; group:
 };
 
 /** A UTC calendar day of a usage entry, as the date the budget windows also count in. */
-const USAGE_DAY_SQL = `date_trunc('day', ue.created_at, 'UTC')::date`;
+const USAGE_DAY_SQL = utcDaySql('ue.created_at');
+
+/** A day cursor as the series emits it. Anything else would reach a typed comparison. */
+export function isUsageDay(value: string): boolean {
+	return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+/** Thrown when a caller pages the day series with a cursor that is not a day. */
+export class InvalidUsageCursorError extends Error {
+	constructor() {
+		super('The pagination cursor is malformed.');
+		this.name = 'InvalidUsageCursorError';
+	}
+}
 
 /**
  * A page of a per-day series: the newest `limit` days before `beforeDay` (all days
@@ -145,12 +146,17 @@ export async function usageByDay<Row extends UsageTotals & { day: string }>(
 	split: UsageDaySplit,
 	page: { limit: number; beforeDay: string | null },
 ): Promise<{ rows: Row[]; nextBeforeDay: string | null }> {
+	if (page.beforeDay !== null && !isUsageDay(page.beforeDay)) {
+		throw new InvalidUsageCursorError();
+	}
 	const { where, params } = usageWhere(filters);
 	const pageParams = [...params];
 	let before = '';
 	if (page.beforeDay) {
 		pageParams.push(page.beforeDay);
-		before = ` AND ${USAGE_DAY_SQL} < $${pageParams.length}::date`;
+		// Bound the column, not the bucket: a wrapped column cannot range-scan the
+		// `(project_id, created_at)` index, and the bucket is monotonic in it.
+		before = ` AND ue.created_at < ($${pageParams.length}::date::timestamp AT TIME ZONE 'UTC')`;
 	}
 	pageParams.push(page.limit + 1);
 	const { columns, joins, group } = DAY_SPLITS[split];
@@ -164,7 +170,7 @@ export async function usageByDay<Row extends UsageTotals & { day: string }>(
 		   FROM usage_entries ue
 		   JOIN days d ON d.day = ${USAGE_DAY_SQL}
 		   ${joins}
-		  WHERE ${where}
+		  WHERE ${where}${before}
 		  GROUP BY d.day${group}
 		  ORDER BY d.day`,
 		pageParams,

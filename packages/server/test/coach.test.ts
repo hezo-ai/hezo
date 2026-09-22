@@ -416,12 +416,10 @@ describe('Coach review prompt builder', () => {
 		expect(template).toContain('where you add, merge and remove entries');
 		// One clean task cannot condemn a preventive rule: the first miss marks it,
 		// a second miss on a different task removes it, and a catch clears the mark.
-		expect(template).toContain(
-			'Remove such a rule when it already carries a mark from a different task',
-		);
-		expect(template).toContain('end it with a mark naming this task');
-		expect(template).toContain('Delete the mark from a rule that caught a defect on this task');
-		expect(template).toContain('the two tasks that showed its cost');
+		expect(template).toContain('Remove a rule already marked from a different task');
+		expect(template).toContain('Mark the rest with this task');
+		expect(template).toContain('Clear the mark from any rule that caught a defect on this task');
+		expect(template).toContain('the task or tasks that showed its cost');
 		expect(template).toContain('A rule that adds a check names what the check costs');
 		expect(template).toContain('Keep `## Learned Rules` to 20 entries at most');
 		// Only additions wait on a struggle; a removal can follow a smooth task.

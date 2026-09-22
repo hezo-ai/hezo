@@ -977,6 +977,21 @@ export class ChatSessionManager {
 	}
 
 	/**
+	 * Usage a CLI left in the session's home rather than on its stream, plus the
+	 * scrub that follows. Grok and Kimi Code report nothing on stdout, so an exec
+	 * that skips this records zero for work that happened - and leaves its records
+	 * for the next exec's read to bill twice. Null for every other runtime.
+	 */
+	private async recoverSessionUsage(session: TurnSession): Promise<AgentRunUsage | null> {
+		if (!session.homeMount) return null;
+		return recoverOffStreamRunUsage(
+			session.runtimeType,
+			this.deps.docker.files(session.containerId, session.homeMount.containerDir),
+			(msg) => log.error(`chat exec usage recovery: ${msg}`),
+		).catch(() => null);
+	}
+
+	/**
 	 * One chat exec's tokens, recorded in the ledger as a run's are - a
 	 * `usage_entries` row under the session's member and project, broadcast to the
 	 * session's own team. A turn's budget is enforced before it starts
@@ -2442,14 +2457,7 @@ export class ChatSessionManager {
 		// including interrupted and failed ones, where the usage is discarded but
 		// the scrub still matters. Scrubbing per turn also keeps the next turn's
 		// parse from re-billing this one's records. Null for every other runtime.
-		const recoverUsage = async (): Promise<AgentRunUsage | null> => {
-			if (!session.homeMount) return null;
-			return recoverOffStreamRunUsage(
-				session.runtimeType,
-				this.deps.docker.files(session.containerId, session.homeMount.containerDir),
-				(msg) => log.error(`CEO chat turn usage recovery: ${msg}`),
-			).catch(() => null);
-		};
+		const recoverUsage = (): Promise<AgentRunUsage | null> => this.recoverSessionUsage(session);
 		let finalized = false;
 		const finalize = async (
 			status: ChatMessageStatus,
@@ -2977,7 +2985,11 @@ export class ChatSessionManager {
 				}),
 			);
 			parser.flush();
-			await this.recordChatUsage(session, parser.getUsage(), 'Chat memory compaction');
+			await this.recordChatUsage(
+				session,
+				parser.getUsage() ?? (await this.recoverSessionUsage(session)),
+				'Chat memory compaction',
+			);
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
@@ -3104,7 +3116,11 @@ export class ChatSessionManager {
 				}),
 			);
 			for (const ev of parser.flush()) if (ev.text) text += ev.text;
-			await this.recordChatUsage(session, parser.getUsage(), 'Chat auto-title');
+			await this.recordChatUsage(
+				session,
+				parser.getUsage() ?? (await this.recoverSessionUsage(session)),
+				'Chat auto-title',
+			);
 		} catch (e) {
 			// A new user turn preempts title generation — a clean stop, retried later.
 			if (abort.signal.aborted) {

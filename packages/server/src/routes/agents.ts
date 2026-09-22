@@ -44,7 +44,7 @@ import {
 } from '../lib/agent-identity';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { budgetWriteError, retiredBudgetFieldError } from '../lib/budget-validation';
+import { budgetWriteError } from '../lib/budget-validation';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
@@ -65,6 +65,7 @@ import {
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
+import { NO_LIMITS } from '../services/budget';
 import {
 	getChatMemory,
 	listChatMemoryRevisions,
@@ -945,8 +946,15 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		model_override_model?: string | null;
 	}>();
 
-	const retiredField = retiredBudgetFieldError(body);
-	if (retiredField) return err(c, 'INVALID_REQUEST', retiredField, 400);
+	// Budget limits: 0 = unlimited. One check for the whole write - a retired dollar
+	// field by name, and the trio a partial PATCH leaves, merged over the stored one.
+	const storedBudget = await db.query<BudgetWindowsTokens>(
+		`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
+		 FROM member_agents WHERE id = $1`,
+		[agentId],
+	);
+	const budgetError = budgetWriteError(body, storedBudget.rows[0] ?? NO_LIMITS);
+	if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
 	}
@@ -1044,18 +1052,6 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 				400,
 			);
 		}
-	}
-
-	// Budget limits: 0 = unlimited. A PATCH may touch only one window, so the trio
-	// it leaves is checked, merged over the stored one.
-	if (BUDGET_WINDOW_FIELDS.some((field) => body[field] !== undefined)) {
-		const stored = await db.query<BudgetWindowsTokens>(
-			`SELECT daily_budget_tokens, weekly_budget_tokens, monthly_budget_tokens
-			 FROM member_agents WHERE id = $1`,
-			[agentId],
-		);
-		const budgetError = budgetWriteError(body, stored.rows[0]);
-		if (budgetError) return err(c, 'INVALID_REQUEST', budgetError, 400);
 	}
 
 	// A rename or a regenerated face, applied inside the same transaction as the

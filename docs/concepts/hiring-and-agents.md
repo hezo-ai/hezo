@@ -196,8 +196,8 @@ at all.)
 
 ## Other settings
 
-You can also adjust an agent's heartbeat interval, its run time limit and its budgets over
-time, and pause or resume agents when you need to. The **run time limit** is how long one
-run of that agent may take before Hezo stops it and hands the work back to the queue; raise
-it for an agent whose work is genuinely long, and lower it for one you want to keep short. Standing preferences you give the CEO in chat are
+You can also adjust an agent's heartbeat interval, its run time limit and its budgets
+over time, and pause or resume agents when you need to. The **run time limit** is how long
+one run of that agent may take before Hezo stops it and hands the work back to the queue.
+Raise it for an agent whose work is long, and lower it for one you want kept short. Standing preferences you give the CEO in chat are
 remembered and applied going forward.

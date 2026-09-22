@@ -2259,6 +2259,45 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 		});
 
+		it('writes nothing per tick for an agent whose wakeup is waiting out a hold', async () => {
+			const manager = createJobManager();
+			await db.query(
+				"UPDATE member_agents SET admin_status = 'enabled', runtime_status = 'idle', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
+				[agentId],
+			);
+			await db.query(
+				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
+				[agentId],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests');
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			const held = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests
+				   (member_id, team_id, source, payload, status, not_before, last_skipped_reason)
+				 VALUES ($1, $2, 'heartbeat', '{}'::jsonb, 'queued', now() + interval '1 hour', $3)
+				 RETURNING id`,
+				[agentId, teamId, WakeupSkipReason.ProviderUsageLimit],
+			);
+
+			// Two ticks, as the 5-second cron would deliver them.
+			await (manager as any).processScheduledHeartbeats();
+			await (manager as any).processScheduledHeartbeats();
+
+			// The held row is untouched: no coalesce, so its count stays where it was.
+			const row = await db.query<{ coalesced: number }>(
+				'SELECT coalesced_count AS coalesced FROM agent_wakeup_requests WHERE id = $1',
+				[held.rows[0].id],
+			);
+			expect(row.rows[0].coalesced).toBe(0);
+			// And only one wakeup exists for the agent - the sweep queued no second row.
+			const count = await db.query<{ n: number }>(
+				'SELECT count(*)::int AS n FROM agent_wakeup_requests WHERE member_id = $1',
+				[agentId],
+			);
+			expect(count.rows[0].n).toBe(1);
+			manager.shutdown();
+		});
+
 		it('creates a Heartbeat wakeup row before activating a due agent', async () => {
 			const manager = createJobManager();
 

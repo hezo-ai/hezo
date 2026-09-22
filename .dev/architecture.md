@@ -765,7 +765,9 @@ records the model that did the work. Budgets are **windowed and computed on dema
 live as `daily_/weekly_/monthly_budget_tokens` on `member_agents` and `projects` (0 = unlimited;
 there is **no team budget**), and usage is summed from `usage_entries` over UTC calendar windows
 through `services/budget.ts` - no counter, no reset event (§ 5). The windows truncate with the
-three-argument `date_trunc(..., 'UTC')`, so the session time zone never shifts them, and every
+`utcWindowStartSql` (`lib/sql.ts`), which truncates the UTC wall clock and reads it back as
+UTC, so the session time zone never shifts them and no server above the supported PostgreSQL
+floor is required; every
 sum is bounded below by `USAGE_WINDOW_FLOOR_SQL`: the start of the longer window, or the
 `budget_usage_counted_from` instant 081 records, whichever is later. Budgets count usage from the
 upgrade on; earlier usage stays in the ledger for the charts. The dispatch gate
@@ -778,10 +780,11 @@ reboot (shared `recordRunUsageAndEnforce`). A run drained at shutdown is handed 
 failed, and `finalizeRequeue` records what it used, flagged partial, before the work returns
 to the queue. A budget pause posts a `budget_paused` notice through `postAdminNotice` on the
 run's task, or its project's planning task (`PLANNING_TASK_LABEL`) for a task-less run, on the
-task's own team, once per agent, scope and window: `member_agents.budget_notice_key` records
-the window the last notice covered, claimed by a conditional UPDATE, so the CEO's and the
-Coach's project-scoped pause, which the resume sweep lifts and the next dispatch sets again,
-tells the admin once.
+task's own team, once per agent, scope and window: `member_agents.budget_notice_keys` records
+the window each scope's last notice covered, claimed by a conditional UPDATE, so the CEO's and
+the Coach's project-scoped pause, which the resume sweep lifts and the next dispatch sets
+again, tells the admin once - and an agent that trips its own budget in between does not erase
+the record of the project's.
 
 **Migration 081 converts, it never resets.** It prices the instance's last 30 days of runs
 from `model_pricing` with a frozen copy of the service's lookup (exact, normalized, then
@@ -2974,7 +2977,7 @@ person's mention or reply, or "Run now", always does. A teammate's mention does 
 
 **The handoff limit.** The fifth applied after task resolution, and the one that bounds a loop of
 *successful* runs, which every other bound misses because each keys on a failure signal.
-`handoffRoundsExhausted` (`services/no-work-backoff.ts`) reads the task's newest runs through
+`loadTaskSpend` + `handoffHold` (`services/no-work-backoff.ts`) read the task's newest runs through
 `idx_runs_task_started` and counts, by distinct wakeup, the consecutive ones whose wakeup is
 conversational, has `created_by_run_id` set and carries no admin `triggered_by`. A handed-back
 run is skipped; the count restarts at a run anything else started and whenever the admin speaks
@@ -2992,6 +2995,13 @@ logged quietly. Marked with `last_skipped_reason = handoff_rounds_exhausted`.
 definition: a superuser, or a member of the team whose role is admin. `fireAdminMention` sends
 to exactly those users, and the holds' speaker predicates (`no-work-backoff.ts`) count a comment
 by one of them or by an API key (admin-equivalent), and a card whose `chosen_by_user_id` is one.
+A card answered before this release carries `chosen_at` and no answerer, and the release that
+wrote it counted every such answer as a person's word, so anything before the
+`choice_attribution_from` instant migration 081 records still reads that way - otherwise an
+upgrade would re-hold a task its admin had already released. The same holds for an operator
+stamp of the old `{member_id, name}` shape, which only a wakeup queued across the upgrade can
+carry. An admin's word - a comment, or a card they answer - also wakes the held task's assignee
+(`resumeHeldTaskOnAdminReply`), because a reply to a system notice addresses nobody.
 Every path that settles a card or an approval records who did: the card-answering routes stamp
 `chosen_by_user_id`, `resolveApproval` stamps `approvals.resolved_by_user_id`/`_api_key_id`, and
 the wakeup it raises carries `decided_by`; operator controls stamp `triggered_by.user_id` or

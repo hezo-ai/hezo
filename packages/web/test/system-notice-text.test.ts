@@ -1,12 +1,9 @@
 import { Language } from '@hezo/shared';
 import { expect, test } from 'vitest';
 import type { SystemContent } from '../src/components/comment-content';
-import {
-	type NoticeTextLocale,
-	systemNoticeText,
-} from '../src/components/comment-renderers/system-notice-text';
 import { CATALOGS } from '../src/lib/i18n/catalogs';
 import { inboxRowSnippet } from '../src/lib/inbox-row-kind';
+import { type NoticeTextLocale, systemNoticeText } from '../src/lib/system-notice-text';
 
 /** A reader's locale built straight from a catalog, as the provider builds it. */
 function localeFor(language: Language): NoticeTextLocale {

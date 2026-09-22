@@ -54,20 +54,39 @@ function mentionAuthorName(
 }
 
 /**
+ * The fields a notice's one-line reading needs, named rather than filtered: a row
+ * on a list endpoint is bounded in width, so a payload that later gains a list or
+ * a long string cannot start riding every inbox row. Anything not named here is
+ * read from the comment itself, on the task.
+ */
+const NOTICE_SNIPPET_FIELDS = [
+	'kind',
+	'rounds',
+	'tokens',
+	'ceiling',
+	'agent_slug',
+	'agent_slugs',
+	'scope',
+	'period',
+	'used_tokens',
+	'limit_tokens',
+	'tokens_per_cent',
+	'basis',
+] as const;
+
+/**
  * A system notice's fields, for the row to read in the viewer's language through
- * the thread's own catalog sentences. The English `text` is already the snippet,
- * and a notice's lists (the budgets an upgrade converted) are left out: the one
- * line needs none of them and they would unbound the row.
+ * the thread's own catalog sentences. The English `text` stays the snippet, which
+ * is what a reader gets for a notice this does not cover.
  */
 function noticeFields(contentType: string, content: unknown): Record<string, unknown> | null {
 	if (contentType !== CommentContentType.System) return null;
 	if (!content || typeof content !== 'object') return null;
-	const {
-		text: _text,
-		conversions: _conversions,
-		invalid: _invalid,
-		...fields
-	} = content as Record<string, unknown>;
+	const source = content as Record<string, unknown>;
+	const fields: Record<string, unknown> = {};
+	for (const name of NOTICE_SNIPPET_FIELDS) {
+		if (source[name] !== undefined) fields[name] = source[name];
+	}
 	return fields;
 }
 
@@ -406,6 +425,7 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 				content_type: m.content_type,
 				credential_name: credentialName(m.content_type, m.content),
 				snippet: buildSnippet(m.content),
+				notice: noticeFields(m.content_type, m.content),
 				author_display_name: mentionAuthorName(m, 'Agent'),
 				created_at: m.created_at,
 			},

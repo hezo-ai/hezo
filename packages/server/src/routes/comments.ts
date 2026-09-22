@@ -33,8 +33,13 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireAdminEquivalent } from '../middleware/auth';
 import { checkProjectAssetIds } from '../services/asset-ownership';
-import { commentTooLongError, postComment } from '../services/comment-wakeups';
+import {
+	commentTooLongError,
+	postComment,
+	resumeHeldTaskOnAdminReply,
+} from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { invalidateSecretsVault } from '../services/egress';
 import {
@@ -46,6 +51,9 @@ import { insertSystemComment } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
+
+/** Every kind the `comment_content_type` enum holds, so an unknown one is a 400. */
+const COMMENT_CONTENT_TYPES: ReadonlySet<string> = new Set(Object.values(CommentContentType));
 
 /** Comment kinds only the server writes, refused on the create route. */
 const SERVER_WRITTEN_CONTENT_TYPES: ReadonlySet<string> = new Set([
@@ -449,6 +457,11 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	if (SERVER_WRITTEN_CONTENT_TYPES.has(contentType)) {
 		return err(c, 'INVALID_REQUEST', `content_type ${contentType} is written by Hezo only`, 400);
 	}
+	// A kind the enum does not hold would otherwise fail at the cast, as a 500 the
+	// caller cannot act on.
+	if (!COMMENT_CONTENT_TYPES.has(contentType)) {
+		return err(c, 'INVALID_REQUEST', `Unknown content_type: ${contentType}`, 400);
+	}
 	// The web composer sends a text comment's words as a bare string; stored, every
 	// text comment has the one shape agents also write.
 	const content: Record<string, unknown> | null =
@@ -466,6 +479,11 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		if (!commentTextFits(text)) {
 			return err(c, 'COMMENT_TOO_LONG', commentTooLongError(text.length), 400);
 		}
+	} else if (!commentTextFits(JSON.stringify(content))) {
+		// A structured comment comes back whole in a thread read, so one oversized
+		// card would push every page carrying it past the reader's cap. The whole
+		// serialized row is held to the text limit rather than only its prose.
+		return err(c, 'COMMENT_TOO_LONG', commentTooLongError(JSON.stringify(content).length), 400);
 	}
 
 	// Optional per-comment effort override. Admin users set this to dial up/down
@@ -511,6 +529,10 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 commentsRoutes.post(
 	'/projects/:projectId/tasks/:taskId/comments/:commentId/fulfill-credential',
 	async (c) => {
+		// This writes the instance's secrets table, as `POST /secrets` does, so it
+		// asks for the same principal rather than project access alone.
+		const denied = requireAdminEquivalent(c);
+		if (denied) return denied;
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
 		const masterKeyManager = c.get('masterKeyManager');
@@ -523,6 +545,7 @@ commentsRoutes.post(
 			confirmed?: boolean;
 			allowed_hosts?: string[];
 			allow_body_substitution?: boolean;
+			replace_existing?: boolean;
 		}>();
 
 		const existing = await db.query<{
@@ -591,9 +614,22 @@ commentsRoutes.post(
 			return err(c, 'LOCKED', 'Master key not available', 503);
 		}
 
-		const { secretId, updatedComment } = await withTransaction(db, async () => {
+		const result = await withTransaction(db, async () => {
 			const encryptedValue = isConfirmation ? '' : encrypt(storedValue as string, encryptionKey);
 			const category = pickSecretCategory(kind);
+
+			// The agent chose this name. A name that already holds a secret is a
+			// different credential's row, so the write only replaces one when the
+			// person says so - and it never lets the request card decide where an
+			// existing credential may be sent.
+			const standing = await db.query<{ id: string; allowed_hosts: string[] }>(
+				'SELECT id, allowed_hosts FROM secrets WHERE name = $1 FOR UPDATE',
+				[name],
+			);
+			const existingSecret = standing.rows[0];
+			if (existingSecret && body.replace_existing !== true) return { conflict: name } as const;
+			const hosts =
+				existingSecret && overrideHosts.length === 0 ? existingSecret.allowed_hosts : allowedHosts;
 
 			const upsert = await db.query<{ id: string }>(
 				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_body_substitution)
@@ -605,7 +641,7 @@ commentsRoutes.post(
 				               allow_body_substitution = EXCLUDED.allow_body_substitution,
 				               updated_at = now()
 				 RETURNING id`,
-				[name, encryptedValue, category, allowedHosts, allowBodySubstitution],
+				[name, encryptedValue, category, hosts, allowBodySubstitution],
 			);
 			const secretId = upsert.rows[0].id;
 			invalidateSecretsVault();
@@ -633,8 +669,18 @@ commentsRoutes.post(
 			return {
 				secretId,
 				updatedComment: updated.rows[0] as Record<string, unknown>,
-			};
+			} as const;
 		});
+
+		if ('conflict' in result) {
+			return err(
+				c,
+				'SECRET_EXISTS',
+				`A secret named ${result.conflict} already exists. Send replace_existing: true to overwrite it, or ask for a different name.`,
+				409,
+			);
+		}
+		const { secretId, updatedComment } = result;
 
 		// Clear the request's inbox rows — providing the value IS acting on them,
 		// for every admin, not only whoever happened to open the form.
@@ -651,6 +697,12 @@ commentsRoutes.post(
 		} catch (e) {
 			log.error('Failed to mark credential-request mentions read:', e);
 		}
+
+		// The answer is the admin's word on the task too, so a hold waiting for it
+		// lifts and the task's own assignee runs, whoever asked for the credential.
+		await resumeHeldTaskOnAdminReply({ db, taskId, teamId, commentId }).catch((e) =>
+			log.error('Failed to resume a held task after a credential answer:', e),
+		);
 
 		if (requestingAgentId) {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
@@ -839,6 +891,10 @@ commentsRoutes.post(
 		} catch (e) {
 			log.error('Failed to mark asset-deletion mentions read:', e);
 		}
+
+		await resumeHeldTaskOnAdminReply({ db, taskId, teamId, commentId }).catch((e) =>
+			log.error('Failed to resume a held task after an asset-deletion answer:', e),
+		);
 
 		// Wake the requesting agent with the outcome (mirrors fulfill-credential).
 		if (requestingAgentId) {

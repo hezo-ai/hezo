@@ -130,14 +130,14 @@ goalsRoutes.post('/projects/:projectId/progress/run-now', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 
+	// The person is recorded whether or not they hold a member row on this team -
+	// a superuser outside it still presses this, and the holds read the person.
 	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
-	const triggeredBy = actorMemberId
-		? {
-				member_id: actorMemberId,
-				name: await resolveActorName(db, actorMemberId),
-				...actingPersonFromAuth(c.get('auth')),
-			}
-		: null;
+	const triggeredBy = {
+		member_id: actorMemberId,
+		name: actorMemberId ? await resolveActorName(db, actorMemberId) : 'Admin',
+		...actingPersonFromAuth(c.get('auth')),
+	};
 
 	const result = await c.get('jobManager').dispatchProgressUpdateNow(projectId, triggeredBy);
 	if ('dispatched' in result && result.dispatched) return ok(c, { dispatched: true });

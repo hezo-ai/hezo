@@ -14,6 +14,24 @@ export async function withTransaction<T>(db: Db, fn: () => Promise<T>): Promise<
 	return db.transaction(() => fn());
 }
 
+/**
+ * The start of the current UTC calendar window, as a `timestamptz`.
+ *
+ * `unit` is a `date_trunc` field: a quoted literal, or a bind placeholder. The
+ * truncation runs on the UTC wall clock and the result is read back as UTC, so
+ * the session time zone never shifts a window. The three-argument `date_trunc`
+ * would say the same thing in one call, but it arrived in PostgreSQL 16 and the
+ * supported floor is {@link MIN_SERVER_VERSION_NUM}.
+ */
+export function utcWindowStartSql(unit: string): string {
+	return `(date_trunc(${unit}, now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
+}
+
+/** The UTC calendar day a `timestamptz` expression falls in, as a `date`. */
+export function utcDaySql(expr: string): string {
+	return `date_trunc('day', ${expr} AT TIME ZONE 'UTC')::date`;
+}
+
 export interface TerminalStatusParams {
 	placeholders: string;
 	values: string[];

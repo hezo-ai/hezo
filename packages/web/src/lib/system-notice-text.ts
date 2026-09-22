@@ -1,11 +1,11 @@
-import type { MessageKey } from '../../lib/i18n';
 import type {
 	SystemBudgetConversionContent,
 	SystemBudgetPausedContent,
 	SystemContent,
 	SystemHandoffLimitContent,
 	SystemTaskTokenCeilingContent,
-} from '../comment-content';
+} from '../components/comment-content';
+import type { MessageKey } from './i18n';
 
 /** What a notice's plain-text reading needs from the reader's locale. */
 export interface NoticeTextLocale {
@@ -58,41 +58,72 @@ type NoticeContent = {
 	budget_conversion: SystemBudgetConversionContent;
 };
 
-const NOTICE_TEXT: {
-	[K in keyof NoticeContent]: (content: NoticeContent[K], locale: NoticeTextLocale) => string;
+/** A notice as its catalog sentence plus the values that fill it. */
+export interface NoticeParts {
+	key: MessageKey;
+	vars: Record<string, string>;
+	/** Agent slugs the sentence names, which a renderer may draw as links. */
+	agentSlugs: string[];
+}
+
+const NOTICE_PARTS: {
+	[K in keyof NoticeContent]: (content: NoticeContent[K], locale: NoticeTextLocale) => NoticeParts;
 } = {
 	handoff_limit: (content, { t, formatNumber, language }) => {
 		const slugs = handoffAgentSlugs(content);
-		return t('comment.handoffLimit', {
-			agents:
-				slugs.length > 0
-					? new Intl.ListFormat(language, { type: 'conjunction' }).format(
-							slugs.map((slug) => `@${slug}`),
-						)
-					: t('comment.runAgentFallback'),
-			rounds: formatNumber(Number(content.rounds ?? 0)),
-			tokens: formatNumber(Number(content.tokens ?? 0)),
-		});
+		return {
+			key: 'comment.handoffLimit',
+			vars: {
+				agents:
+					slugs.length > 0
+						? new Intl.ListFormat(language, { type: 'conjunction' }).format(
+								slugs.map((slug) => `@${slug}`),
+							)
+						: t('comment.runAgentFallback'),
+				rounds: formatNumber(Number(content.rounds ?? 0)),
+				tokens: formatNumber(Number(content.tokens ?? 0)),
+			},
+			agentSlugs: slugs,
+		};
 	},
-	task_token_ceiling: (content, { t, formatNumber }) =>
-		t('comment.taskTokenCeiling', {
+	task_token_ceiling: (content, { formatNumber }) => ({
+		key: 'comment.taskTokenCeiling',
+		vars: {
 			tokens: formatNumber(Number(content.tokens ?? 0)),
 			ceiling: formatNumber(Number(content.ceiling ?? 0)),
-		}),
-	budget_paused: (content, { t, formatNumber }) =>
-		t(budgetPausedKey(content), {
-			agent:
-				typeof content.agent_slug === 'string' && content.agent_slug
-					? `@${content.agent_slug}`
-					: t('comment.runAgentFallback'),
-			limit: formatNumber(Number(content.limit_tokens ?? 0)),
-			used: formatNumber(Number(content.used_tokens ?? 0)),
-		}),
-	budget_conversion: (content, { t, formatNumber }) =>
-		t(budgetConversionIntroKey(content), {
-			rate: formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100)),
-		}),
+		},
+		agentSlugs: [],
+	}),
+	budget_paused: (content, { t, formatNumber }) => {
+		const slug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
+		return {
+			key: budgetPausedKey(content),
+			vars: {
+				agent: slug ? `@${slug}` : t('comment.runAgentFallback'),
+				limit: formatNumber(Number(content.limit_tokens ?? 0)),
+				used: formatNumber(Number(content.used_tokens ?? 0)),
+			},
+			agentSlugs: slug ? [slug] : [],
+		};
+	},
+	budget_conversion: (content, { formatNumber }) => ({
+		key: budgetConversionIntroKey(content),
+		vars: { rate: formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100)) },
+		agentSlugs: [],
+	}),
 };
+
+/**
+ * The sentence a notice reads as, and its values: one home for the thread, which
+ * draws the agents as links, and every surface that shows the line as text. Null
+ * for any other system comment.
+ */
+export function noticeParts(content: SystemContent, locale: NoticeTextLocale): NoticeParts | null {
+	const build = NOTICE_PARTS[content.kind as keyof NoticeContent] as
+		| ((content: SystemContent, locale: NoticeTextLocale) => NoticeParts)
+		| undefined;
+	return build ? build(content, locale) : null;
+}
 
 /**
  * A notice Hezo raises for the admin, as one plain line in the reader's language:
@@ -101,8 +132,6 @@ const NOTICE_TEXT: {
  * item. Null for any other system comment.
  */
 export function systemNoticeText(content: SystemContent, locale: NoticeTextLocale): string | null {
-	const render = NOTICE_TEXT[content.kind as keyof NoticeContent] as
-		| ((content: SystemContent, locale: NoticeTextLocale) => string)
-		| undefined;
-	return render ? render(content, locale) : null;
+	const parts = noticeParts(content, locale);
+	return parts ? locale.t(parts.key, parts.vars) : null;
 }

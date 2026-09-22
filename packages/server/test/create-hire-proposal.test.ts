@@ -13,7 +13,7 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
-import { callMcpTool } from './helpers/mcp-call';
+import { callMcpTool, callMcpToolRaw } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -43,17 +43,7 @@ async function callToolRaw(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<string> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name, arguments: args },
-			id: 1,
-		}),
-	});
-	return JSON.stringify(await res.json());
+	return JSON.stringify((await callMcpToolRaw(app, agentToken, name, args)).body);
 }
 
 async function captainToken(): Promise<string> {

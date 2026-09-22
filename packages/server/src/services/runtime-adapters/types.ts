@@ -226,7 +226,14 @@ export interface RuntimeArgsContext {
 	containerHomeDir: string | null;
 }
 
-/** What a runtime needs to recover usage a CLI left on disk rather than on stdout. */
+/**
+ * The most a whole-file usage read may buffer. A log past it is left unread: the
+ * process holding it is also the API, the proxy and, by default, the database,
+ * and a read repeats for the life of the run. An adapter whose figures survive a
+ * tail reads the tail instead and needs no budget.
+ */
+export const MAX_OFF_STREAM_USAGE_BYTES = 32 * 1024 * 1024;
+
 /**
  * Reading a CLI's usage file, and scrubbing it. Two steps because the runner
  * reads the file while the run goes on, to enforce the per-run token ceiling,
@@ -245,6 +252,7 @@ export interface OffStreamUsage {
 	scrub(files: SandboxFiles): Promise<void>;
 }
 
+/** What a runtime needs to read usage a CLI left on disk rather than on stdout. */
 export interface RuntimeUsageContext {
 	/** Reads and removals are scoped to the per-run home mount. */
 	files: SandboxFiles;

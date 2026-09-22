@@ -13,7 +13,7 @@ import {
 	mintAgentToken,
 	projectSlugForTeamSlug,
 } from './helpers/app';
-import { callMcpTool } from './helpers/mcp-call';
+import { callMcpTool, callMcpToolRaw } from './helpers/mcp-call';
 
 let app: Hono<Env>;
 let db: Db;
@@ -287,19 +287,15 @@ describe('API key is instance-wide (MCP surface)', () => {
 	let apiKey: string;
 
 	async function listAgentsViaMcp(authToken: string, projectSlug: string): Promise<unknown> {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name: 'list_agents', arguments: { project: projectSlug } },
-				id: 1,
-			}),
-		});
-		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		const { body } = await callMcpToolRaw(
+			app,
+			'',
+			'list_agents',
+			{ project: projectSlug },
+			`Bearer ${authToken}`,
+		);
 		// list_agents pages: the roster rows live under `items`.
-		const page = JSON.parse(body.result.content[0].text) as { items?: unknown };
+		const page = JSON.parse(body.result?.content?.[0]?.text ?? '{}') as { items?: unknown };
 		return page.items ?? page;
 	}
 

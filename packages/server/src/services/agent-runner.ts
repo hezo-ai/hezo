@@ -1670,6 +1670,8 @@ export async function runAgent(
 	// so far survives a crash — reconcileOnStartup never overwrites these
 	// columns, so the last snapshot is what a restart-failed run reports.
 	let currentUsage: AgentRunUsage | null = null;
+	/** The usage snapshot last written to the run row, so a flush never rewrites it unchanged. */
+	let lastPersistedUsage: string | null = null;
 
 	deps.logs.begin({
 		streamId,
@@ -1702,7 +1704,15 @@ export async function runAgent(
 			// usage must land all-or-nothing to stay exactly-once, and every
 			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await appendRunLogChunks(deps.db, heartbeatRunId, delta, toUsageSnapshot(currentUsage));
+			// A polled figure changes once a minute while the log flushes every half
+			// second, so the snapshot is sent only when it moved: the column update
+			// has no change guard, and a row rewritten for nothing is a dead tuple on
+			// a database that does not vacuum.
+			const snapshot = toUsageSnapshot(currentUsage);
+			const moved = JSON.stringify(snapshot) !== lastPersistedUsage;
+			if (delta.length === 0 && !moved) return;
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, moved ? snapshot : null);
+			if (moved) lastPersistedUsage = JSON.stringify(snapshot);
 		},
 	});
 
@@ -3368,8 +3378,10 @@ export async function runAgent(
 
 			// Codex, Grok and Kimi report usage in a file (runUsage); every other
 			// runtime reports it on the stream. The file wins where both exist: for
-			// Codex it is the only source that also names the model.
-			const finalUsage = runUsage ?? parser.getUsage();
+			// Codex it is the only source that also names the model. A failed read
+			// falls back to the last figure a poll held, so a run that used tokens is
+			// never recorded as free.
+			const finalUsage = runUsage ?? parser.getUsage() ?? currentUsage;
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -3516,7 +3528,7 @@ export async function runAgent(
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
-			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage();
+			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage() ?? currentUsage;
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
 				deps.db,
@@ -5588,6 +5600,11 @@ export interface HeartbeatRunBroadcast {
 	/** Null for progress-update runs, which are not tied to a task. */
 	taskId: string | null;
 	memberId: string;
+	/**
+	 * When the work happened, for usage recorded after the fact: a run reconciled
+	 * on startup counts at its own start, not at the reboot.
+	 */
+	occurredAt?: string | null;
 }
 
 function broadcastHeartbeatRunChange(
@@ -5930,6 +5947,7 @@ export async function recordRunUsageAndEnforce(
 				description: `Agent run ${runId}`,
 				aiProviderConfigId: adapter?.ai_provider_config_id ?? null,
 				provider: adapter?.provider ?? null,
+				occurredAt: broadcast.occurredAt ?? null,
 			},
 		);
 

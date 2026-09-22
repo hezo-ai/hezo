@@ -5,6 +5,7 @@ import { AgentRuntime } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { recoverOffStreamRunUsage } from '../src/services/agent-runner';
 import { RUNTIME_ADAPTERS } from '../src/services/runtime-adapters';
+import { MAX_OFF_STREAM_USAGE_BYTES } from '../src/services/runtime-adapters/types';
 import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 /**
@@ -312,6 +313,17 @@ describe('recoverOffStreamRunUsage', () => {
 
 		it('returns null when the debug file is absent', async () => {
 			expect(await recoverOffStreamRunUsage(AgentRuntime.Grok, mount(), onError)).toBeNull();
+		});
+
+		it('leaves a log past the read budget unread and says so', async () => {
+			// The figures are counted by request id, so a tail would undercount. A log
+			// this size is skipped instead: the read repeats for the life of the run,
+			// in the process that is also the API and the database.
+			const path = join(home, 'debug.log');
+			writeFileSync(path, 'x'.repeat(MAX_OFF_STREAM_USAGE_BYTES + 1));
+			const reader = RUNTIME_ADAPTERS[AgentRuntime.Grok].offStreamUsage;
+			expect(await reader?.read({ files: mount(), onError })).toBeNull();
+			expect(errors.join(' ')).toContain('read budget');
 		});
 	});
 

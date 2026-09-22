@@ -2,6 +2,7 @@ import { type ApprovalStatus, CommentContentType, WakeupSource } from '@hezo/sha
 import type { Db } from '../db/database';
 import { broadcastCommentFamilyChange } from '../lib/broadcast';
 import { logger } from '../logger';
+import { resumeHeldTaskOnAdminReply } from './comment-wakeups';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -173,6 +174,12 @@ export async function resolveProposalCommentAndWake(
 			for (const row of updated.rows) {
 				broadcastCommentFamilyChange(wsManager, teamId, projectId, 'task_comments', 'UPDATE', row);
 			}
+		}
+
+		// The answer is also the admin's word on the task, so a hold waiting for it
+		// lifts and the assignee runs - which need not be the agent that asked.
+		for (const row of updated.rows) {
+			await resumeHeldTaskOnAdminReply({ db, taskId, teamId, commentId: row.id as string });
 		}
 
 		const targetMemberId = await resolveWakeTarget(

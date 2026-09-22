@@ -15,12 +15,13 @@ import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import type { SandboxFiles } from '../sandbox/types';
 import { buildJudgeScriptForRuntime } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString } from './toml';
-import type {
-	McpHttpDescriptor,
-	McpInjection,
-	McpInjectionFile,
-	McpStdioDescriptor,
-	RuntimeAdapter,
+import {
+	MAX_OFF_STREAM_USAGE_BYTES,
+	type McpHttpDescriptor,
+	type McpInjection,
+	type McpInjectionFile,
+	type McpStdioDescriptor,
+	type RuntimeAdapter,
 } from './types';
 
 /**
@@ -252,7 +253,16 @@ export const kimiAdapter: RuntimeAdapter = {
 				// The home dir is per-run, so in practice there is exactly one session.
 				// Concatenating tolerates a resumed or sub-agent session without
 				// double-counting: the extractor dedupes by record identity, not by file,
-				// which is also why the logs are read whole rather than by their tail.
+				// which is also why the logs are read whole rather than by their tail -
+				// and why a session past the budget is skipped rather than tailed.
+				const sizes = await Promise.all(logPaths.map((p) => files.size(p)));
+				const total = sizes.reduce((sum: number, size) => sum + (size ?? 0), 0);
+				if (total > MAX_OFF_STREAM_USAGE_BYTES) {
+					onError(
+						`kimi session logs are ${total} bytes, past the ${MAX_OFF_STREAM_USAGE_BYTES}-byte read budget; usage not counted from them`,
+					);
+					return null;
+				}
 				const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
 				return extractKimiUsageFromSessionLog(contents);
 			} catch (e) {

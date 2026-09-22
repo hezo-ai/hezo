@@ -324,7 +324,7 @@ describe('budget pause / resume', () => {
 		]);
 		await db.query(
 			`UPDATE member_agents
-			 SET runtime_status = 'idle', budget_notice_key = NULL,
+			 SET runtime_status = 'idle', budget_notice_keys = '{}'::jsonb,
 			     daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0
 			 WHERE id = $1`,
 			[agentId],
@@ -394,6 +394,12 @@ describe('budget pause / resume', () => {
 			taskId,
 			projectId,
 		});
+		expect((await pauseNotices(taskId)).rows).toHaveLength(2);
+
+		// And the second scope did not erase the record of the first: the project
+		// pause, returning inside the same window, still says nothing new.
+		await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
+		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId, projectId });
 		expect((await pauseNotices(taskId)).rows).toHaveLength(2);
 	});
 

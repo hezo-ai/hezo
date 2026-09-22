@@ -19,7 +19,12 @@ import {
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { insertCommentAttachments } from './asset-ownership';
-import { ADMIN_HOLD_NOTICE_KINDS, adminCommentSql, adminSpokeAtSql } from './no-work-backoff';
+import {
+	ADMIN_HOLD_NOTICE_KINDS,
+	adminChoiceSql,
+	adminCommentSql,
+	adminSpokeAtSql,
+} from './no-work-backoff';
 import { insertSystemComment, recordTaskLinks, TASK_COMMENT_ROW_COLUMNS } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -233,36 +238,45 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
  *
  * The handoff limit and the token ceiling hold a task until the admin replies,
  * and their notices say so. A reply to a system notice addresses nobody, so the
- * reply lifted the hold and nothing ran. When the admin comments on a task that
- * carries a hold notice newer than their previous reply, its assignee is woken
- * with this comment: a conversational wakeup no agent raised, which the admin's
- * reply exempts from both holds. An ordinary admin comment wakes nobody new.
+ * reply lifted the hold and nothing ran. When the admin comments on a task - or
+ * answers a card on it - and a hold notice stands since their previous word, its
+ * assignee is woken: a conversational wakeup no agent raised, which the admin's
+ * word exempts from both holds. An ordinary admin comment wakes nobody new.
  *
- * Returns the slug woken, or null.
+ * `commentId` is the admin's comment, or the card they answered. Returns the
+ * slug woken, or null.
  */
-async function resumeHeldTaskOnAdminReply(params: {
+export async function resumeHeldTaskOnAdminReply(params: {
 	db: Db;
 	taskId: string;
 	teamId: string;
 	commentId: string;
-	alreadyWokenAgentIds: ReadonlySet<string>;
-	effortPayload: Record<string, unknown>;
+	alreadyWokenAgentIds?: ReadonlySet<string>;
+	effortPayload?: Record<string, unknown>;
 }): Promise<string | null> {
-	const { db, taskId, teamId, commentId, alreadyWokenAgentIds, effortPayload } = params;
+	const {
+		db,
+		taskId,
+		teamId,
+		commentId,
+		alreadyWokenAgentIds = new Set<string>(),
+		effortPayload = {},
+	} = params;
 	const held = await db.query<{ assignee_id: string; slug: string }>(
 		`SELECT t.assignee_id, ma.slug
 		   FROM task_comments c
 		   JOIN tasks t ON t.id = c.task_id
 		   JOIN member_agents ma ON ma.id = t.assignee_id
 		  WHERE c.id = $1
-		    AND ${adminCommentSql('c', 't.team_id')}
+		    AND (${adminCommentSql('c', 't.team_id')} OR ${adminChoiceSql('c', 't.team_id')})
 		    AND EXISTS (
 		      SELECT 1 FROM task_comments n
 		       WHERE n.task_id = t.id
 		         AND n.content_type = $2::comment_content_type
 		         AND n.content->>'kind' = ANY($3::text[])
-		         AND n.created_at <= c.created_at
-		         AND n.created_at > COALESCE(${adminSpokeAtSql('t.id', 'c.created_at')}, '-infinity'))`,
+		         AND n.created_at <= COALESCE(c.chosen_at, c.created_at)
+		         AND n.created_at > COALESCE(
+		               ${adminSpokeAtSql('t.id', 'COALESCE(c.chosen_at, c.created_at)')}, '-infinity'))`,
 		[commentId, CommentContentType.System, [...ADMIN_HOLD_NOTICE_KINDS]],
 	);
 	const target = held.rows[0];
@@ -785,11 +799,20 @@ type AdminMentionRow = Record<string, unknown>;
  */
 async function insertAdminMentions(params: FireAdminMentionParams): Promise<AdminMentionRow[]> {
 	const { db, teamId, taskId, commentId, authorUserId } = params;
+	// Driven off the two indexed sources rather than a scan of `users`: the team's
+	// own admins, plus every superuser. `isAdminUserSql` stays the definition of
+	// what an admin is; this only says where to look for them.
 	const inserted = await db.query<AdminMentionRow>(
 		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
 		 SELECT $1::uuid, $2::uuid, $3::uuid, u.id
 		   FROM users u
-		  WHERE ${isAdminUserSql('u.id', '$1::uuid')}
+		  WHERE u.id IN (
+		          SELECT mu.user_id FROM member_users mu
+		            JOIN members m ON m.id = mu.id
+		           WHERE m.team_id = $1::uuid
+		          UNION
+		          SELECT su.id FROM users su WHERE su.is_superuser = true)
+		    AND ${isAdminUserSql('u.id', '$1::uuid')}
 		    AND u.id IS DISTINCT FROM $4::uuid
 		 ON CONFLICT (comment_id, user_id) DO NOTHING
 		 RETURNING *`,

@@ -6,6 +6,7 @@ import {
 	WakeupSource,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { CHOICE_ATTRIBUTION_FROM_META_KEY } from '../db/migrations/code/081_token_budgets';
 import { isAdminUserSql } from '../lib/admin-sql';
 import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
@@ -65,18 +66,30 @@ export function adminCommentSql(c: string, teamExpr: string): string {
 }
 
 /**
+ * SQL predicate: card `c` was answered before this release recorded answerers,
+ * when every answer counted as a person's word. Without it an upgraded instance
+ * re-holds a task whose only human input was a card.
+ */
+function preAttributionChoiceSql(c: string): string {
+	return `(${c}.chosen_at IS NOT NULL AND ${c}.chosen_at < COALESCE(
+		(SELECT value::timestamptz FROM system_meta WHERE key = '${CHOICE_ATTRIBUTION_FROM_META_KEY}'),
+		'-infinity'))`;
+}
+
+/**
  * SQL predicate: card `c` was answered by a person. The answer stamps
  * `chosen_at` on the card's own row, usually an agent's, so authorship alone
  * would miss it; `chosen_by_user_id` says who answered. A card settled by an
  * agent or by the system has none.
  */
 function personChoiceSql(c: string): string {
-	return `${c}.chosen_by_user_id IS NOT NULL`;
+	return `(${c}.chosen_by_user_id IS NOT NULL OR ${preAttributionChoiceSql(c)})`;
 }
 
 /** SQL predicate: card `c` was answered by the admin of the team at `teamExpr`. */
-function adminChoiceSql(c: string, teamExpr: string): string {
-	return `(${c}.chosen_by_user_id IS NOT NULL AND ${isAdminUserSql(`${c}.chosen_by_user_id`, teamExpr)})`;
+export function adminChoiceSql(c: string, teamExpr: string): string {
+	return `((${c}.chosen_by_user_id IS NOT NULL AND ${isAdminUserSql(`${c}.chosen_by_user_id`, teamExpr)})
+	  OR ${preAttributionChoiceSql(c)})`;
 }
 
 /**
@@ -132,15 +145,33 @@ function spokeSinceSql(taskParam: string, sinceExpr: string, teamExpr?: string):
  * API key; an object with neither was not a person's act.
  */
 function actorIsPersonSql(actorExpr: string): string {
-	return `(jsonb_typeof(${actorExpr}) = 'object' AND (
+	return `((jsonb_typeof(${actorExpr}) = 'object' AND (
 	           NULLIF(${actorExpr}->>'user_id', '') IS NOT NULL
-	           OR NULLIF(${actorExpr}->>'api_key_id', '') IS NOT NULL))`;
+	           OR NULLIF(${actorExpr}->>'api_key_id', '') IS NOT NULL))
+	         OR ${legacyActorSql(actorExpr)})`;
 }
 
 function actorIsAdminSql(actorExpr: string, teamExpr: string): string {
-	return `(jsonb_typeof(${actorExpr}) = 'object' AND (
+	return `((jsonb_typeof(${actorExpr}) = 'object' AND (
 	           NULLIF(${actorExpr}->>'api_key_id', '') IS NOT NULL
-	           OR ${isAdminUserSql(`NULLIF(${actorExpr}->>'user_id', '')::uuid`, teamExpr)}))`;
+	           OR ${isAdminUserSql(`NULLIF(${actorExpr}->>'user_id', '')::uuid`, teamExpr)}))
+	         OR ${legacyActorSql(actorExpr, teamExpr)})`;
+}
+
+/**
+ * The actor shape the previous release wrote: a member id and a name, with no
+ * user or API key. Only a row queued before the upgrade can carry it, so the
+ * fallback closes itself; without it an operator's press that was still queued
+ * across a restart is judged as nobody's act, by the stops it was pressed to
+ * lift. `teamExpr` given, the member must be an admin, as it had to be then.
+ */
+function legacyActorSql(actorExpr: string, teamExpr?: string): string {
+	const admin = teamExpr ? ` AND ${isAdminUserSql('mu.user_id', teamExpr)}` : '';
+	return `(jsonb_typeof(${actorExpr}) = 'object'
+	         AND NULLIF(${actorExpr}->>'user_id', '') IS NULL
+	         AND NULLIF(${actorExpr}->>'api_key_id', '') IS NULL
+	         AND EXISTS (SELECT 1 FROM member_users mu
+	                      WHERE mu.id = NULLIF(${actorExpr}->>'member_id', '')::uuid${admin}))`;
 }
 
 /** SQL: whether the wakeup payload at `payloadExpr` carries the admin's "Run now" or Retry. */
@@ -599,7 +630,7 @@ const HANDOFF_SCAN_RUNS = HANDOFF_ROUND_LIMIT * 8;
 /** The system comment kind that tells the admin a task is held by the handoff limit. */
 export const HANDOFF_LIMIT_COMMENT_KIND = 'handoff_limit';
 
-/** A task held by {@link handoffRoundsExhausted}, as the notice to the admin states it. */
+/** A task held by {@link handoffHold}, as the notice to the admin states it. */
 export interface HandoffRounds {
 	/** Consecutive agent-to-agent rounds since the admin last spoke. */
 	rounds: number;
@@ -663,7 +694,7 @@ export interface TaskUsageSoFar {
 	 * part an agent weighs.
 	 */
 	sinceAdminReply: { runs: number; tokens: number } | null;
-	/** Consecutive agent-to-agent handoff rounds, the count {@link handoffRoundsExhausted} holds at. */
+	/** Consecutive agent-to-agent handoff rounds, the count {@link handoffHold} holds at. */
 	handoffRounds: number;
 }
 
@@ -765,15 +796,6 @@ export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUs
  * Returns the rounds when the task is held, and null otherwise. One round trip,
  * reading runs through `idx_runs_task_started`.
  */
-export async function handoffRoundsExhausted(
-	db: Db,
-	taskId: string | null | undefined,
-	exempt: boolean,
-): Promise<HandoffRounds | null> {
-	if (!taskId || exempt) return null;
-	return handoffHold(await loadTaskSpend(db, taskId));
-}
-
 /** The handoff limit's verdict on a task's spend: the rounds when it is held, else null. */
 export function handoffHold(spend: TaskSpend): HandoffRounds | null {
 	const { rounds, tokens, agentSlugs, newest } = spend.handoff;
@@ -809,7 +831,7 @@ export const TASK_TOKEN_CEILING = 100_000_000;
 /** The system comment kind that tells the admin a task reached its token ceiling. */
 export const TASK_TOKEN_CEILING_COMMENT_KIND = 'task_token_ceiling';
 
-/** A task held by {@link taskTokenCeilingReached}, as the notice to the admin states it. */
+/** A task held by {@link tokenCeilingHold}, as the notice to the admin states it. */
 export interface TaskTokenUsage {
 	/** Tokens its runs used since the admin last spoke on it. */
 	tokens: number;
@@ -834,15 +856,6 @@ export interface TaskTokenUsage {
  * Returns the usage when the task is held, and null otherwise. One round trip,
  * reading runs through `idx_runs_task_started`.
  */
-export async function taskTokenCeilingReached(
-	db: Db,
-	taskId: string | null | undefined,
-	exempt: boolean,
-): Promise<TaskTokenUsage | null> {
-	if (!taskId || exempt) return null;
-	return tokenCeilingHold(await loadTaskSpend(db, taskId));
-}
-
 /** The token ceiling's verdict on a task's spend: the usage when it is held, else null. */
 export function tokenCeilingHold(spend: TaskSpend): TaskTokenUsage | null {
 	if (spend.sinceAdmin.tokens < TASK_TOKEN_CEILING) return null;

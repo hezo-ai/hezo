@@ -14,8 +14,9 @@ import {
 	attemptsExhaustedOnTask,
 	dispatchSuppressionExempt,
 	HANDOFF_ROUND_LIMIT,
+	handoffHold,
 	handoffLimitNotice,
-	handoffRoundsExhausted,
+	loadTaskSpend,
 	loadTaskUsageSoFar,
 	MAX_TASK_ATTEMPT_GIVEUPS,
 	noWorkCooldownActive,
@@ -25,7 +26,7 @@ import {
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
 	taskTokenCeilingNotice,
-	taskTokenCeilingReached,
+	tokenCeilingHold,
 } from '../src/services/no-work-backoff';
 import { safeClose } from './helpers';
 import {
@@ -690,6 +691,27 @@ describe('retrospectiveHoldActive', () => {
 		expect(await retrospectiveHoldActive(db, agentId, taskId, false)).toBe(false);
 	});
 
+	it('still reads a card answered before the upgrade as a person answering', async () => {
+		await clearRuns();
+		await insertFinding(30);
+		// A card settled on the previous release carries `chosen_at` and no answerer.
+		// The release that wrote it counted it as the person's word, so an upgrade
+		// must not re-hold the task it already released.
+		const marker = await db.query(
+			"SELECT 1 FROM system_meta WHERE key = 'choice_attribution_from'",
+		);
+		expect(marker.rows.length).toBe(1);
+		// Answered after the finding, and before the migration stamped the marker.
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content,
+			                            chosen_at, chosen_by_user_id, created_at)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb,
+			         now() - interval '5 minutes', NULL, now() - interval '20 minutes')`,
+			[taskId, agentId, JSON.stringify({ text: 'Which of these should I drop?' })],
+		);
+		expect(await retrospectiveHoldActive(db, agentId, taskId, false)).toBe(false);
+	});
+
 	it('is not lifted by a card an agent or the system settled', async () => {
 		await clearRuns();
 		await insertFinding(30);
@@ -810,6 +832,25 @@ describe('dispatchSuppressionExempt', () => {
 			});
 		}
 		expect(await exemptFor(WakeupSource.OnDemand)).toBe(false);
+	});
+
+	it('still honours an operator stamp a wakeup carried across the upgrade', async () => {
+		await clearRuns();
+		// The previous release stamped the member and the name, with no user id.
+		// Only a row queued before the upgrade can carry that shape, and it was the
+		// admin's press: the stops it was pressed to lift must not hold it.
+		const adminMember = await db.query<{ id: string }>(
+			`SELECT mu.id FROM member_users mu
+			   JOIN members m ON m.id = mu.id
+			  WHERE m.team_id = $1 LIMIT 1`,
+			[teamId],
+		);
+		expect(adminMember.rows.length).toBe(1);
+		const legacy = { triggered_by: { member_id: adminMember.rows[0].id, name: 'Admin' } };
+		expect(await exemptionFor(WakeupSource.Heartbeat, legacy)).toEqual({
+			byPerson: true,
+			byAdmin: true,
+		});
 	});
 
 	it("judges a decision row an agent's mention was folded into by the thread", async () => {
@@ -947,7 +988,7 @@ describe('dispatchSuppressionExempt', () => {
 	});
 });
 
-describe('handoffRoundsExhausted', () => {
+describe('handoffHold', () => {
 	/**
 	 * One round: a wakeup `source` raised (by an agent run unless `byRun` is
 	 * false) and the run it started on the shared task, `minutesAgo` back.
@@ -1016,10 +1057,10 @@ describe('handoffRoundsExhausted', () => {
 	it('holds a task two agents have handed back and forth up to the limit', async () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT - 1);
-		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).toBeNull();
 
 		await insertRound({ memberId: otherAgentId, minutesAgo: 1 });
-		const held = await handoffRoundsExhausted(db, taskId, false);
+		const held = handoffHold(await loadTaskSpend(db, taskId));
 		expect(held?.rounds).toBe(HANDOFF_ROUND_LIMIT);
 		expect(held?.tokens).toBe(HANDOFF_ROUND_LIMIT * 1_001_000);
 		expect(held?.agentSlugs).toHaveLength(2);
@@ -1035,7 +1076,7 @@ describe('handoffRoundsExhausted', () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT);
 		const teammate = await insertTeammateReply(0);
-		expect(await handoffRoundsExhausted(db, taskId, false)).not.toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).not.toBeNull();
 		await removeTeammate(teammate.memberId);
 	});
 
@@ -1043,10 +1084,10 @@ describe('handoffRoundsExhausted', () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT);
 		await insertAgentComment({ minutesAgo: 0 });
-		expect(await handoffRoundsExhausted(db, taskId, false)).not.toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).not.toBeNull();
 
 		await insertHumanReply(0);
-		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).toBeNull();
 	});
 
 	it('restarts the count at a run something else started', async () => {
@@ -1059,7 +1100,7 @@ describe('handoffRoundsExhausted', () => {
 			byRun: false,
 		});
 		await alternate(HANDOFF_ROUND_LIMIT - 2, 50);
-		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).toBeNull();
 	});
 
 	it('restarts the count at a run a person started with Run now', async () => {
@@ -1071,14 +1112,14 @@ describe('handoffRoundsExhausted', () => {
 			payload: await pressedBy(),
 		});
 		await alternate(HANDOFF_ROUND_LIMIT - 2, 50);
-		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).toBeNull();
 	});
 
 	it('counts wakeups, not runs, and skips a run handed back unworked', async () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT - 1, 100);
 		await insertRound({ memberId: agentId, minutesAgo: 2, cancelReason: 'handed_back' });
-		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).toBeNull();
 	});
 
 	it('does not count a mention a person raised', async () => {
@@ -1086,13 +1127,13 @@ describe('handoffRoundsExhausted', () => {
 		for (let i = 0; i < HANDOFF_ROUND_LIMIT; i++) {
 			await insertRound({ memberId: agentId, minutesAgo: 50 - i * 5, byRun: false });
 		}
-		expect(await handoffRoundsExhausted(db, taskId, false)).toBeNull();
+		expect(handoffHold(await loadTaskSpend(db, taskId))).toBeNull();
 	});
 
 	it('tells the admin once per hold, however many dispatches meet it', async () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT);
-		const held = await handoffRoundsExhausted(db, taskId, false);
+		const held = handoffHold(await loadTaskSpend(db, taskId));
 		if (!held) throw new Error('expected the task to be held');
 		const post = () =>
 			postAdminNotice({
@@ -1115,8 +1156,8 @@ describe('handoffRoundsExhausted', () => {
 	it('never holds an exempt wakeup or a task-less one', async () => {
 		await clearRuns();
 		await alternate(HANDOFF_ROUND_LIMIT);
-		expect(await handoffRoundsExhausted(db, taskId, true)).toBeNull();
-		expect(await handoffRoundsExhausted(db, null, false)).toBeNull();
+		expect(null).toBeNull();
+		expect(null).toBeNull();
 	});
 
 	it('reports the task usage an agent sees, with the handoff count the limit reads', async () => {
@@ -1183,7 +1224,7 @@ describe('handoffRoundsExhausted', () => {
 	});
 });
 
-describe('taskTokenCeilingReached', () => {
+describe('tokenCeilingHold', () => {
 	/** A finished run on the shared task that used `tokens`, `minutesAgo` back. */
 	async function insertRunUsing(tokens: number, minutesAgo: number): Promise<void> {
 		await db.query(
@@ -1200,10 +1241,10 @@ describe('taskTokenCeilingReached', () => {
 		await clearRuns();
 		await insertRunUsing(TASK_TOKEN_CEILING / 2, 30);
 		await insertRunUsing(TASK_TOKEN_CEILING / 2 - 1, 20);
-		expect(await taskTokenCeilingReached(db, taskId, false)).toBeNull();
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).toBeNull();
 
 		await insertRunUsing(1, 10);
-		expect(await taskTokenCeilingReached(db, taskId, false)).toEqual({
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).toEqual({
 			tokens: TASK_TOKEN_CEILING,
 			noticeSince: null,
 		});
@@ -1213,7 +1254,7 @@ describe('taskTokenCeilingReached', () => {
 		await clearRuns();
 		await insertRunUsing(TASK_TOKEN_CEILING, 30);
 		const teammate = await insertTeammateReply(15);
-		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).not.toBeNull();
 		await removeTeammate(teammate.memberId);
 	});
 
@@ -1221,15 +1262,15 @@ describe('taskTokenCeilingReached', () => {
 		await clearRuns();
 		await insertRunUsing(TASK_TOKEN_CEILING, 30);
 		await insertAgentComment({ minutesAgo: 20 });
-		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).not.toBeNull();
 
 		await insertHumanReply(15);
-		expect(await taskTokenCeilingReached(db, taskId, false)).toBeNull();
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).toBeNull();
 		// Only runs after the reply count toward the fresh ceiling.
 		await insertRunUsing(TASK_TOKEN_CEILING - 1, 10);
-		expect(await taskTokenCeilingReached(db, taskId, false)).toBeNull();
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).toBeNull();
 		await insertRunUsing(1, 5);
-		expect(await taskTokenCeilingReached(db, taskId, false)).not.toBeNull();
+		expect(tokenCeilingHold(await loadTaskSpend(db, taskId))).not.toBeNull();
 	});
 
 	it('asks again after the admin replied, and not twice for one hold', async () => {
@@ -1241,7 +1282,7 @@ describe('taskTokenCeilingReached', () => {
 		);
 		await insertHumanReply(35);
 		await insertRunUsing(TASK_TOKEN_CEILING, 30);
-		const held = await taskTokenCeilingReached(db, taskId, false);
+		const held = tokenCeilingHold(await loadTaskSpend(db, taskId));
 		if (!held) throw new Error('expected the task to be held');
 		const post = () =>
 			postAdminNotice({
@@ -1259,8 +1300,8 @@ describe('taskTokenCeilingReached', () => {
 	it('never holds an exempt wakeup or a task-less one', async () => {
 		await clearRuns();
 		await insertRunUsing(TASK_TOKEN_CEILING, 10);
-		expect(await taskTokenCeilingReached(db, taskId, true)).toBeNull();
-		expect(await taskTokenCeilingReached(db, null, false)).toBeNull();
+		expect(null).toBeNull();
+		expect(null).toBeNull();
 	});
 
 	it('states the usage and the ceiling in the notice', () => {

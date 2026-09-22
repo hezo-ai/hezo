@@ -2,6 +2,7 @@ import { type AiProvider, BudgetPeriod, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../db/migrations/code/081_token_budgets';
 import { broadcastRowChange } from '../lib/broadcast';
+import { utcWindowStartSql } from '../lib/sql';
 import type { WebSocketManager } from './ws';
 
 /**
@@ -56,7 +57,8 @@ export interface BudgetLimits {
 
 const ZERO_USAGE: WindowUsage = { daily: 0, weekly: 0, monthly: 0 };
 
-const NO_LIMITS: BudgetLimits = {
+/** No limit in any window: what an entity with nothing configured is checked against. */
+export const NO_LIMITS: BudgetLimits = {
 	daily_budget_tokens: 0,
 	weekly_budget_tokens: 0,
 	monthly_budget_tokens: 0,
@@ -64,15 +66,15 @@ const NO_LIMITS: BudgetLimits = {
 
 /**
  * SQL for the three UTC window sums over `usage_entries`, aliased `ue`, which the
- * caller must bound with {@link USAGE_WINDOW_FLOOR_SQL}. The three-argument
- * `date_trunc` truncates in UTC whatever the session time zone. `::float8` keeps
+ * caller must bound with {@link USAGE_WINDOW_FLOOR_SQL}. {@link utcWindowStartSql}
+ * truncates in UTC whatever the session time zone. `::float8` keeps
  * each a JSON number: a sum of int8 is numeric, which comes back as a string,
  * and a double holds every whole token count below 2^53 exactly.
  */
 export const USAGE_WINDOW_SUMS_SQL = `
-	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= date_trunc('day',   now(), 'UTC')), 0)::float8 AS daily,
-	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= date_trunc('week',  now(), 'UTC')), 0)::float8 AS weekly,
-	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= date_trunc('month', now(), 'UTC')), 0)::float8 AS monthly`;
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= ${utcWindowStartSql("'day'")}), 0)::float8 AS daily,
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= ${utcWindowStartSql("'week'")}), 0)::float8 AS weekly,
+	COALESCE(SUM(ue.input_tokens + ue.output_tokens) FILTER (WHERE ue.created_at >= ${utcWindowStartSql("'month'")}), 0)::float8 AS monthly`;
 
 /**
  * The earliest `usage_entries.created_at` any window sum reads: the start of the
@@ -82,7 +84,7 @@ export const USAGE_WINDOW_SUMS_SQL = `
  * this month instead of an entity's whole history.
  */
 export const USAGE_WINDOW_FLOOR_SQL = `GREATEST(
-	LEAST(date_trunc('week', now(), 'UTC'), date_trunc('month', now(), 'UTC')),
+	LEAST(${utcWindowStartSql("'week'")}, ${utcWindowStartSql("'month'")}),
 	COALESCE((SELECT value::timestamptz FROM system_meta WHERE key = '${BUDGET_USAGE_COUNTED_FROM_META_KEY}'), '-infinity'))`;
 
 /** Input, output and total token sums over `usage_entries`, aliased `ue`, as JSON numbers. */
@@ -256,14 +258,20 @@ export async function recordUsage(
 		/** The credential that did the work, for the per-credential breakdown. */
 		aiProviderConfigId?: string | null;
 		provider?: AiProvider | null;
+		/**
+		 * When the work happened, where that is not now: a run reconciled after a
+		 * restart is counted at its own start, so an upgrade's counted-from floor
+		 * keeps pre-upgrade work out of the new budgets.
+		 */
+		occurredAt?: string | Date | null;
 	},
 ): Promise<Record<string, unknown> | null> {
 	if (entry.inputTokens <= 0 && entry.outputTokens <= 0) return null;
 	const res = await db.query<Record<string, unknown>>(
 		`INSERT INTO usage_entries
 		   (member_id, task_id, project_id, input_tokens, output_tokens, description,
-		    ai_provider_config_id, provider)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::ai_provider)
+		    ai_provider_config_id, provider, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::ai_provider, COALESCE($9::timestamptz, now()))
 		 RETURNING ${USAGE_ENTRY_COLUMNS_SQL}`,
 		[
 			entry.memberId,
@@ -274,6 +282,7 @@ export async function recordUsage(
 			entry.description,
 			entry.aiProviderConfigId ?? null,
 			entry.provider ?? null,
+			entry.occurredAt ?? null,
 		],
 	);
 	const row = res.rows[0] ?? null;

@@ -1011,13 +1011,13 @@ export const WakeupSkipReason = {
 	 * admin silent, so every agent is held off it until the admin replies or runs
 	 * it. The rounds are counted from runs an agent's comment, mention or reply
 	 * started.
-	 * See `handoffRoundsExhausted` in `services/no-work-backoff.ts`.
+	 * See `handoffHold` in `services/no-work-backoff.ts`.
 	 */
 	HandoffRoundsExhausted: 'handoff_rounds_exhausted',
 	/**
 	 * Agents have used more tokens on this task since the admin last spoke than
 	 * its ceiling allows, so every agent is held off it until the admin replies,
-	 * which grants a fresh ceiling, or runs it. See `taskTokenCeilingReached` in
+	 * which grants a fresh ceiling, or runs it. See `tokenCeilingHold` in
 	 * `services/no-work-backoff.ts`.
 	 */
 	TaskTokenCeiling: 'task_token_ceiling',

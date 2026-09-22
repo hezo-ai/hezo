@@ -61,6 +61,7 @@ import {
 	THREAD_ROW_CATEGORIES,
 	type ThreadRowCategory,
 	taskStatusError,
+	type UsageTotals,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -237,7 +238,13 @@ import {
 	applyMarketplaceTeamToTeam,
 } from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
-import { type UsageTotals, usageByAgent, usageByDay } from '../services/usage-read';
+import {
+	parseUsageFilters,
+	usageByAgent,
+	usageByDay,
+	usageTotals,
+	usageWhere,
+} from '../services/usage-read';
 import { createWakeup, wakeAgentIfAssigned } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 import {
@@ -3816,6 +3823,7 @@ export function registerTools(
 				taskId,
 				author: {
 					memberId: authorMemberId,
+					userId: auth.type === AuthType.Admin ? auth.userId : null,
 					apiKeyId: apiKeyIdFromAuth(auth),
 					runId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
 				},
@@ -4655,12 +4663,18 @@ export function registerTools(
 		{
 			project: projectArg(),
 			group_by: z.enum(['agent', 'day']).optional().describe('Group usage by'),
+			agent_id: z.string().optional().describe('Only this agent'),
+			task_id: z.string().optional().describe('Only this task'),
+			from: z.string().optional().describe('Only entries at or after this date or timestamp'),
+			to: z.string().optional().describe('Only entries before this date or timestamp'),
 			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const filters = { projectId: scope.projectId };
+			const parsed = parseUsageFilters(scope.projectId, args);
+			if ('error' in parsed) return parsed;
+			const { filters } = parsed;
 			if (args.group_by === 'agent') return usageByAgent(db, filters);
 			if (args.group_by === 'day') {
 				// Usage rows accumulate for the life of the project, so the day grouping
@@ -4686,12 +4700,12 @@ export function registerTools(
 					{ column: 'day', idKey: 'day' },
 				);
 			}
-			const r = await db.query(
-				`SELECT ${USAGE_TOKEN_SUMS_SQL}, count(*)::int AS entry_count
-				   FROM usage_entries ue WHERE ue.project_id = $1`,
-				[scope.projectId],
+			const totals = await usageTotals(db, filters);
+			const counted = await db.query<{ entry_count: number }>(
+				`SELECT count(*)::int AS entry_count FROM usage_entries ue WHERE ${usageWhere(filters).where}`,
+				usageWhere(filters).params,
 			);
-			return r.rows[0];
+			return { ...totals, entry_count: counted.rows[0]?.entry_count ?? 0 };
 		},
 		db,
 	);

@@ -1,11 +1,8 @@
 import { ApprovalType, CommentContentType } from '@hezo/shared';
 import type { SystemContent } from '../components/comment-content';
-import {
-	type NoticeTextLocale,
-	systemNoticeText,
-} from '../components/comment-renderers/system-notice-text';
 import type { BadgeColor } from '../components/ui/badge';
 import type { MessageKey } from './i18n';
+import { type NoticeTextLocale, systemNoticeText } from './system-notice-text';
 
 /**
  * How one admin-inbox row presents, keyed by the comment it is anchored to.
@@ -56,7 +53,7 @@ export function inboxRowLead(item: {
  * words, as the server trimmed them.
  */
 export function inboxRowSnippet(
-	item: { snippet: string; notice?: Record<string, unknown> | null },
+	item: { snippet: string; notice: Record<string, unknown> | null },
 	locale: NoticeTextLocale,
 ): string {
 	const notice = item.notice ? systemNoticeText(item.notice as SystemContent, locale) : null;

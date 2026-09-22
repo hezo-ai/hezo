@@ -7,6 +7,7 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
+import { utcWindowStartSql } from '../lib/sql';
 import { logger } from '../logger';
 import { checkOverBudget, type OverBudgetBlock } from './budget';
 import { postAdminNotice } from './comment-wakeups';
@@ -100,7 +101,7 @@ const BUDGET_WINDOW_END: Record<OverBudgetBlock['period'], string> = {
  * The pause is also a notice to the admin: the budget, what was used and the
  * window, in their inbox, on the task the agent was working or, for a run with no
  * task, on its project's planning task. It is posted once per agent, scope and
- * window: `budget_notice_key` records the window the last one covered. The CEO
+ * window: `budget_notice_keys` records the window each one covered. The CEO
  * and the Coach have no project of their own, so the resume sweep lifts a
  * project-scoped pause of theirs and the next dispatch sets it again; without the
  * key each round would post another notice.
@@ -133,14 +134,18 @@ export async function pauseAgentForBudget(
 		log.warn(`Budget pause for agent ${memberId} has no task to post its notice on`);
 		return;
 	}
-	const scopeKey = block.scope === 'project' ? `project:${context.projectId ?? ''}` : 'agent';
+	// One entry per scope and window, not one slot: an agent that trips its own
+	// budget between two project pauses would otherwise overwrite the record of
+	// the first and tell the admin about it twice.
+	const scopeKey = `${block.scope === 'project' ? `project:${context.projectId ?? ''}` : 'agent'}:${block.period}`;
 	const claimed = await db.query<{ key: string }>(
 		`UPDATE member_agents
-		    SET budget_notice_key = $2 || ':' || date_trunc($3, now(), 'UTC')::text
+		    SET budget_notice_keys =
+		          jsonb_set(budget_notice_keys, ARRAY[$2], to_jsonb(${utcWindowStartSql('$3')}::text))
 		  WHERE id = $1
-		    AND budget_notice_key IS DISTINCT FROM ($2 || ':' || date_trunc($3, now(), 'UTC')::text)
-		  RETURNING budget_notice_key AS key`,
-		[memberId, `${scopeKey}:${block.period}`, BUDGET_WINDOW_UNIT[block.period]],
+		    AND budget_notice_keys->>$2 IS DISTINCT FROM ${utcWindowStartSql('$3')}::text
+		  RETURNING budget_notice_keys->>$2 AS key`,
+		[memberId, scopeKey, BUDGET_WINDOW_UNIT[block.period]],
 	);
 	const key = claimed.rows[0]?.key;
 	if (!key) return;
@@ -166,8 +171,9 @@ export async function pauseAgentForBudget(
 		// Released, so the next pause in this window tries again.
 		await db
 			.query(
-				'UPDATE member_agents SET budget_notice_key = NULL WHERE id = $1 AND budget_notice_key = $2',
-				[memberId, key],
+				`UPDATE member_agents SET budget_notice_keys = budget_notice_keys - $2
+				  WHERE id = $1 AND budget_notice_keys->>$2 = $3`,
+				[memberId, scopeKey, key],
 			)
 			.catch(() => {});
 	});

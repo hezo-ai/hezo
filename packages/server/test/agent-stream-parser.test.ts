@@ -1695,6 +1695,21 @@ describe('running usage and the end of a run', () => {
 		}
 	});
 
+	it('does not end an OpenCode run on a terminal-shaped event that states no reason', () => {
+		// The type is matched by a substring rule, so an event that merely looks
+		// terminal must not switch the per-run token stop off for the rest of a run
+		// that is still going. The summary line is still written.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'step_finish', part: { tokens: { input: 1, output: 1 } } })}\n`,
+		);
+		expect(parser.hasEnded()).toBe(false);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', tokens: { input: 1, output: 1 } } })}\n`,
+		);
+		expect(parser.hasEnded()).toBe(true);
+	});
+
 	it('never marks a Kimi Code run ended, since its stream states no end', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Kimi);
 		parser.onStdout(`${JSON.stringify({ role: 'assistant', content: 'done' })}\n`);

@@ -41,7 +41,7 @@ import type { CodeMigration } from '../../migrate';
  *    wakeups held on the credential it lifted; **`chosen_by_user_id`** on
  *    comments and **`resolved_by_*`** on approvals, so an answered card or a
  *    settled approval says which person, if any, decided it; and
- *    **`budget_notice_key`** on agents, the budget window an agent's last
+ *    **`budget_notice_keys`** on agents, the budget window an agent's last
  *    budget-pause notice was about, so a pause that lifts and returns inside one
  *    window tells the admin once.
  * 7. **Every dollar column and the price list dropped.**
@@ -67,6 +67,15 @@ export const BUDGET_CONVERSION_META_KEY = 'budget_token_conversion';
  * migration ran. Earlier usage stays in the ledger for the charts.
  */
 export const BUDGET_USAGE_COUNTED_FROM_META_KEY = 'budget_usage_counted_from';
+
+/**
+ * The `system_meta` key holding the instant a card answer began recording who
+ * answered it. A card settled before it has `chosen_at` and no answerer, and the
+ * release that shipped it counted every such answer as a person's word - so the
+ * holds keep reading it that way rather than re-holding an answered task on the
+ * first dispatch after the upgrade.
+ */
+export const CHOICE_ATTRIBUTION_FROM_META_KEY = 'choice_attribution_from';
 
 /**
  * The largest token budget a conversion writes. A budget is validated as a safe
@@ -629,10 +638,11 @@ export const migration081TokenBudgets: CodeMigration = {
 			DROP TABLE cost_entries;
 		`);
 
-		// 4. Budgets count from here on.
-		await db.query(`INSERT INTO system_meta (key, value) VALUES ($1, now()::text)`, [
-			BUDGET_USAGE_COUNTED_FROM_META_KEY,
-		]);
+		// 4. Budgets count from here on, and so does card attribution.
+		await db.query(
+			`INSERT INTO system_meta (key, value) VALUES ($1, now()::text), ($2, now()::text)`,
+			[BUDGET_USAGE_COUNTED_FROM_META_KEY, CHOICE_ATTRIBUTION_FROM_META_KEY],
+		);
 
 		// 6. The credential a provider usage hold was placed for. Released by
 		// credential when the hold lifts, so the lookup is indexed; partial, since
@@ -648,7 +658,12 @@ export const migration081TokenBudgets: CodeMigration = {
 			ALTER TABLE approvals
 				ADD COLUMN resolved_by_user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
 				ADD COLUMN resolved_by_api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL;
-			ALTER TABLE member_agents ADD COLUMN budget_notice_key TEXT;
+			ALTER TABLE member_agents
+				ADD COLUMN budget_notice_keys JSONB NOT NULL DEFAULT '{}'::jsonb;
+			-- Every dispatch asks when a person last spoke on the task. Agents write
+			-- most of a thread, so the person's rows are the few this index keeps.
+			CREATE INDEX idx_comments_task_person ON task_comments (task_id, created_at)
+				WHERE author_user_id IS NOT NULL OR author_api_key_id IS NOT NULL;
 		`);
 
 		// 7. Dollars and prices.

@@ -19,11 +19,14 @@ export const BUDGET_CONVERSION_COMMENT_KIND = 'budget_conversion';
 
 /** How a conversion line names its budget in the notice's plain text. */
 const SUBJECT_TEXT: Record<BudgetConversion['scope'], (name: string, context: string) => string> = {
-	agent: (name, context) => `The ${name} agent in ${context}`,
+	// A line names where it lives only when the row had a project or team to name:
+	// "in " with nothing after it reads as a dropped word rather than as absence.
+	agent: (name, context) => (context ? `The ${name} agent in ${context}` : `The ${name} agent`),
 	project: (name) => `The ${name} project`,
 	agent_type: (name) => `The ${name} role`,
-	team_type: (name, context) => `The ${name} role in ${context}`,
-	hire_proposal: (name, context) => `The proposed ${name} hire in ${context}`,
+	team_type: (name, context) => (context ? `The ${name} role in ${context}` : `The ${name} role`),
+	hire_proposal: (name, context) =>
+		context ? `The proposed ${name} hire in ${context}` : `The proposed ${name} hire`,
 };
 
 /** How the task explains the rate, by where it came from. */

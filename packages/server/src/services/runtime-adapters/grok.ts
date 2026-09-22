@@ -6,7 +6,13 @@ import {
 	DOC_WRITE_GUARD_FILENAME,
 } from '../doc-write-guard';
 import { escapeTomlBasicString, safeName, TOML_KEY_RE, tomlArray } from './toml';
-import type { McpHttpDescriptor, McpInjection, McpStdioDescriptor, RuntimeAdapter } from './types';
+import {
+	MAX_OFF_STREAM_USAGE_BYTES,
+	type McpHttpDescriptor,
+	type McpInjection,
+	type McpStdioDescriptor,
+	type RuntimeAdapter,
+} from './types';
 
 /**
  * xAI Grok Build (`grok`) CLI runtime adapter.
@@ -115,9 +121,17 @@ export const grokAdapter: RuntimeAdapter = {
 	offStreamUsage: {
 		async read({ files, onError }) {
 			// Read whole: the log repeats a request's usage record, so it is counted by
-			// request id and a tail would drop every request before it.
+			// request id and a tail would drop every request before it. That is why a
+			// log past the budget is skipped rather than tailed.
 			try {
 				if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
+				const size = await files.size(GROK_DEBUG_BASENAME);
+				if (size !== null && size > MAX_OFF_STREAM_USAGE_BYTES) {
+					onError(
+						`grok debug log is ${size} bytes, past the ${MAX_OFF_STREAM_USAGE_BYTES}-byte read budget; usage not counted from it`,
+					);
+					return null;
+				}
 				return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME));
 			} catch (e) {
 				onError(`failed to read grok debug log for usage: ${(e as Error).message}`);

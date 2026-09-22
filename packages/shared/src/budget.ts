@@ -49,6 +49,17 @@ export const RETIRED_BUDGET_FIELDS: Readonly<Record<string, keyof BudgetWindowsT
 };
 
 /**
+ * How a retired dollar field is refused, in one sentence - the one wording, for a
+ * body checked field by field and for a schema that refuses one field at a time.
+ */
+export function retiredBudgetFieldMessage(
+	fields: readonly (keyof typeof RETIRED_BUDGET_FIELDS)[],
+): string {
+	const pairs = fields.map((field) => `${field} -> ${RETIRED_BUDGET_FIELDS[field]}`).join(', ');
+	return `Budgets are counted in tokens, not dollars. Send ${pairs} instead.`;
+}
+
+/**
  * The refusal for a body carrying a retired dollar budget field, or null when it
  * carries none. Checked by every route and tool that writes a budget.
  */
@@ -56,8 +67,7 @@ export function retiredBudgetFieldError(body: unknown): string | null {
 	if (!body || typeof body !== 'object') return null;
 	const found = Object.keys(RETIRED_BUDGET_FIELDS).filter((field) => field in body);
 	if (found.length === 0) return null;
-	const pairs = found.map((field) => `${field} -> ${RETIRED_BUDGET_FIELDS[field]}`).join(', ');
-	return `Budgets are counted in tokens, not dollars. Send ${pairs} instead.`;
+	return retiredBudgetFieldMessage(found);
 }
 
 /** A token budget as an English sentence names it: "unlimited" for 0, else the count. */
@@ -255,4 +265,41 @@ export function containerHoursWindow(
 export function previousContainerHoursWindowStart(anchorDay: number | undefined, now: Date): Date {
 	const start = containerHoursWindowStart(anchorDay, now);
 	return containerHoursWindowStart(anchorDay, new Date(start.getTime() - 1));
+}
+
+/**
+ * The shapes a usage read answers with, on both sides of the wire: the server
+ * selects them, the web renders them, and a rename is a compile error in both
+ * rather than a blank column in one.
+ */
+
+/** A token sum as every usage read reports it: input (cache included), output, total. */
+export interface UsageTotals {
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+}
+
+/** One agent's usage, as a read grouped by agent returns it. */
+export interface AgentUsageRow extends UsageTotals {
+	agent_id: string;
+	agent_title: string | null;
+	/** The agent's own name, when it has one. Null means it goes by its role. */
+	agent_name: string | null;
+}
+
+/** Usage against a limit for one window. `overBudget` requires a positive limit. */
+export interface WindowStatus {
+	usedTokens: number;
+	limitTokens: number;
+	overBudget: boolean;
+}
+
+/** Per-window status for one entity (an agent or a project) plus an aggregate flag. */
+export interface EntityBudgetStatus {
+	daily: WindowStatus;
+	weekly: WindowStatus;
+	monthly: WindowStatus;
+	/** True when any window is over budget. */
+	overBudget: boolean;
 }

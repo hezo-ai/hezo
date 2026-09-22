@@ -410,7 +410,7 @@ describe('081_token_budgets migration, on an instance with priced history', () =
 			   ('task_comments', 'chosen_by_user_id'),
 			   ('approvals', 'resolved_by_user_id'),
 			   ('approvals', 'resolved_by_api_key_id'),
-			   ('member_agents', 'budget_notice_key'))`,
+			   ('member_agents', 'budget_notice_keys'))`,
 		);
 		expect(columns.rows).toHaveLength(4);
 	});

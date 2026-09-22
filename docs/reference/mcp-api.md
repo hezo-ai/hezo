@@ -1587,6 +1587,10 @@ Get the token usage summary for a project: every token its runs and chat turns s
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `group_by` | `agent` \| `day` | No | Group usage by |
+| `agent_id` | `string` | No | Only this agent |
+| `task_id` | `string` | No | Only this task |
+| `from` | `string` | No | Only entries at or after this date or timestamp |
+| `to` | `string` | No | Only entries before this date or timestamp |
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 

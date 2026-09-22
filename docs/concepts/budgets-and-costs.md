@@ -49,7 +49,7 @@ a ceiling. The per-run and per-task limits below still apply to every agent.
 When an agent (or the project it belongs to) reaches a budget limit in any window, its
 runs are paused, and a notice in your inbox names the budget, the window and what was
 used. The notice is on the task the agent was working, or on the project's planning task
-when the run had no task, and you get one per agent, budget and window. The agent resumes
+when the run had no task of its own, and you get one per agent, budget and window. The agent resumes
 on its own when that window rolls over (the next day, week, or month), or as soon as you
 raise the limit.
 
@@ -73,7 +73,7 @@ agent, whether or not it has a budget:
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).
 - **Each run has a time limit and a tool-call ceiling.** The time limit is a per-agent
   setting (see [Hiring and agents](/docs/concepts/hiring-and-agents#other-settings)); the
-  tool-call ceiling is instance-wide (see
+  tool-call ceiling is global (see
   [Configuration](/docs/deployment/configuration)).
 
 ## Upgrading from dollar budgets
@@ -82,8 +82,8 @@ Budgets counted dollars before this release, and skipped runs on a subscription.
 instance upgrades, every non-zero dollar budget becomes a token budget at that
 instance's own rate: the list price of its runs over the previous 30 days. An instance
 with no priced runs in that window converts at one million tokens per dollar. A limit of
-zero stays unlimited. Where a daily, weekly and monthly limit are all set, a longer one
-is raised if it would fall below what the shorter ones allow.
+zero stays unlimited. Where more than one window is set, a longer one is raised if it
+would fall below what the shorter ones allow.
 
 Budgets count usage from the upgrade on. Earlier usage stays in the charts but counts
 against no budget, because many of those runs were never counted before. A pending hire

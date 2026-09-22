@@ -49,9 +49,40 @@ export async function callMcpToolContent(
 	toolName: string,
 	args: Record<string, unknown>,
 ): Promise<McpContentBlock[] | { error: string }> {
+	const { status, body } = await callMcpToolRaw(app, token, toolName, args);
+	expect(status).toBe(200);
+	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
+	return body.result.content;
+}
+
+/** The JSON-RPC envelope and the HTTP status, for a test that asserts on either. */
+export interface McpToolEnvelope {
+	status: number;
+	body: {
+		result?: { content: McpContentBlock[] };
+		error?: { message: string; code?: number };
+	};
+}
+
+/**
+ * Call an MCP tool and return the response as it came: the status and the
+ * JSON-RPC envelope. For a test about the protocol or the transport; a test
+ * about a tool's answer reads {@link callMcpTool} instead. `authorization` sends
+ * a header of its own, for a credential that is not an agent token.
+ */
+export async function callMcpToolRaw(
+	app: Hono<Env>,
+	token: string,
+	toolName: string,
+	args: Record<string, unknown>,
+	authorization?: string,
+): Promise<McpToolEnvelope> {
 	const res = await app.request('/mcp', {
 		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		headers: {
+			...(authorization ? { Authorization: authorization } : authHeader(token)),
+			'Content-Type': 'application/json',
+		},
 		body: JSON.stringify({
 			jsonrpc: '2.0',
 			method: 'tools/call',
@@ -59,11 +90,5 @@ export async function callMcpToolContent(
 			id: 1,
 		}),
 	});
-	expect(res.status).toBe(200);
-	const body = (await res.json()) as {
-		result?: { content: McpContentBlock[] };
-		error?: { message: string };
-	};
-	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
-	return body.result.content;
+	return { status: res.status, body: (await res.json()) as McpToolEnvelope['body'] };
 }

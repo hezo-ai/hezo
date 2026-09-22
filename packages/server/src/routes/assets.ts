@@ -4,6 +4,7 @@ import {
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
 	ATTACHMENT_UPLOAD_BODY_MAX_BYTES,
+	AuthType,
 	assetBasename,
 	assetContentDisposition,
 	assetServeCsp,
@@ -237,8 +238,8 @@ export async function storeUploadedAsset(
 		actorApiKeyId: apiKeyIdFromAuth(auth),
 		assetId: asset.id,
 		filename: asset.original_filename,
-		taskId: taskId ?? null,
-		runId: null,
+		taskId: taskId ?? (auth.type === AuthType.Agent ? (auth.taskId ?? null) : null),
+		runId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
 	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'assets', 'INSERT', {
