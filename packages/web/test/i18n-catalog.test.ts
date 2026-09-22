@@ -194,6 +194,12 @@ describe('message catalogs', () => {
 		'assets.files.one': ['it'],
 		// Polish writes the loanword "Folder", capital and all. Every other
 		// language differs (Ordner, Dossier, Carpeta, Cartella, Map, Mapp, ...).
+		// Dutch borrowed "run" whole for an agent run - the catalog writes it that
+		// way throughout (agentruns, taakruns, "die run") - and these two phrases
+		// carry no other word. Every other language differs (exécution, ejecución,
+		// Lauf, körning, ...).
+		'thread.group.runs.one': ['nl'],
+		'thread.group.runs.other': ['nl'],
 		'assets.folderType': ['pl'],
 		// "Budget" genuinely is the word in these five, as `budget.tab.spend` records.
 		'settings.budget.title': ['de', 'fr', 'it', 'nl', 'sv'],
