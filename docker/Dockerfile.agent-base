@@ -55,7 +55,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 # cannot rot unnoticed. `agent-cli-pins.test.ts` fails the suite if an install
 # here loses its pin.
 ARG CLAUDE_CODE_VERSION=2.1.238
-ARG CODEX_VERSION=0.149.0
+ARG CODEX_VERSION=0.156.0
 ARG OPENCODE_VERSION=1.18.32
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     && npm install -g @openai/codex@${CODEX_VERSION} \

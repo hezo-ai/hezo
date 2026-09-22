@@ -124,6 +124,16 @@ describe('parseCodexRetryAt', () => {
 		expect(parseCodexRetryAt(text, now)?.toISOString()).toBe('2026-09-20T10:50:00.000Z');
 	});
 
+	it('reads the typographic apostrophe Codex prints from 0.156.0', () => {
+		// Recorded from Codex 0.156.0, which prints U+2019 where 0.149.0 printed a
+		// straight quote. The matchers key on "usage limit" and "try again at", never
+		// on the apostrophe; this keeps it that way.
+		const text =
+			'You\u2019ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 25th, 2026 10:49 AM.';
+		expect(parseCodexRetryAt(text, now)?.toISOString()).toBe('2026-09-25T10:50:00.000Z');
+		expect(classifyRuntimeError(text)?.family).toBe('usage_limit');
+	});
+
 	it('reads the capitalised form and every ordinal suffix', () => {
 		expect(parseCodexRetryAt('Try again at Oct 1st, 2026 12:05 PM.', now)?.toISOString()).toBe(
 			'2026-10-01T12:06:00.000Z',
