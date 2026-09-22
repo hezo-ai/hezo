@@ -1,4 +1,9 @@
 import { ApprovalType, CommentContentType } from '@hezo/shared';
+import type { SystemContent } from '../components/comment-content';
+import {
+	type NoticeTextLocale,
+	systemNoticeText,
+} from '../components/comment-renderers/system-notice-text';
 import type { BadgeColor } from '../components/ui/badge';
 import type { MessageKey } from './i18n';
 
@@ -43,6 +48,19 @@ export function inboxRowLead(item: {
 }): string | null {
 	if (item.content_type !== CommentContentType.CredentialRequest) return null;
 	return `provide ${item.credential_name ?? 'a credential'}`;
+}
+
+/**
+ * The row's line of prose in the viewer's language. A notice Hezo raised reads
+ * through the thread's own catalog sentence; any other row is the comment's own
+ * words, as the server trimmed them.
+ */
+export function inboxRowSnippet(
+	item: { snippet: string; notice?: Record<string, unknown> | null },
+	locale: NoticeTextLocale,
+): string {
+	const notice = item.notice ? systemNoticeText(item.notice as SystemContent, locale) : null;
+	return notice ?? item.snippet;
 }
 
 /**

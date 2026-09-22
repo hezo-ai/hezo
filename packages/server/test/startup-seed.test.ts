@@ -75,7 +75,7 @@ describe('startup with a seed block', () => {
 	}
 
 	beforeAll(() => {
-		for (const key of ['HEZO_SKIP_DOCKER', 'HEZO_SKIP_PRICING_REFRESH']) {
+		for (const key of ['HEZO_SKIP_DOCKER']) {
 			savedEnv[key] = process.env[key];
 			process.env[key] = '1';
 		}

@@ -46,7 +46,7 @@ widget by the handle that appears at its top-left on hover, and the new order is
 that project.
 
 **HQ** gets a minimal dashboard: action items, in-progress work, and the team snapshot -
-no spend, progress summary, or goals (those belong to ordinary projects).
+no token usage, progress summary, or goals (those belong to ordinary projects).
 
 ## Project icon
 

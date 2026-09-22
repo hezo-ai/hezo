@@ -389,7 +389,7 @@ Update a task. Agents can use this to change status, update progress, set rules,
 
 **Returns:** The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.
 
-**Authorization:** `done` is the final completed state; marking a task `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A run on the task blocks a reassignment only when it belongs to some other agent: an agent can always hand off a task it is running, and a task can always move to whichever agent is already running it. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
+**Authorization:** `done` is the final completed state; marking a task `done` wakes Coach to review it (except a team-coherence review) but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A run on the task blocks a reassignment only when it belongs to some other agent: an agent can always hand off a task it is running, and a task can always move to whichever agent is already running it. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
 
 ### `add_task_blocker`
 
@@ -818,7 +818,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | `new_system_prompt` | `string` | Yes | The full updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Read the current prompt with get_agent_system_prompt(placeholders=false) first so the round-trip is safe. |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
-**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed.
+**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -835,7 +835,7 @@ Apply system prompt changes to MULTIPLE agents in one call - the preferred way w
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `updates` | `object[]` | Yes | Up to 50 prompt updates. |
 
-**Returns:** Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
+**Returns:** Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 

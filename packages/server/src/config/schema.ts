@@ -326,15 +326,10 @@ export const configFileSchema = z
 export type ConfigFile = z.infer<typeof configFileSchema>;
 
 /**
- * Keys that are structurally valid but must never appear in a config file, each
- * with the reason an operator needs to hear. `.strict()` would already reject
- * them as unknown, but "Unrecognized key: masterKey" invites the reader to
- * conclude they spelled it wrong and go looking for the right spelling.
- */
-/**
- * Keys a config file may not set, by dotted path, and why. A removed mechanism
- * is listed rather than left to the strict parse, which would say only
- * "Unrecognized key" and send the operator hunting for a spelling.
+ * Keys a config file may not set, by dotted path, and why. A key that is
+ * structurally valid, and a mechanism that was removed, are both listed here
+ * rather than left to the strict parse, which would say only "Unrecognized key"
+ * and send the operator hunting for a spelling they never got wrong.
  */
 const REJECTED_KEYS: Record<string, string> = {
 	masterKey:

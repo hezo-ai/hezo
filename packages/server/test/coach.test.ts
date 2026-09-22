@@ -250,6 +250,13 @@ describe('Coach review prompt builder', () => {
 		expect(prompt).toMatch(/### Final Step/);
 		expect(prompt).toMatch(/review summary comment/i);
 		expect(prompt).toMatch(/following the format defined in your system prompt/i);
+		// The per-task prompt defers to the role's workflow rather than restating
+		// it, so the two can never disagree about adding or removing rules.
+		expect(prompt).toContain(
+			'Review this completed task by the review workflow in your system prompt',
+		);
+		expect(prompt).not.toContain('no changes are needed');
+		expect(prompt).not.toContain('to add a specific rule');
 	});
 
 	it('includes the task rules and progress summary when present', async () => {
@@ -401,13 +408,20 @@ describe('Coach review prompt builder', () => {
 		expect(template).toContain('Consolidate only `## Learned Rules`');
 	});
 
-	it('lets the coach remove rules that cost more than they caught, within a cap', async () => {
+	it('lets the coach remove a rule that twice cost more than it caught, within a cap', async () => {
 		const res = await db.query<{ system_prompt_template: string }>(
 			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
 		);
 		const template = res.rows[0].system_prompt_template;
 		expect(template).toContain('where you add, merge and remove entries');
-		expect(template).toContain('Remove any that added work on this task without catching a defect');
+		// One clean task cannot condemn a preventive rule: the first miss marks it,
+		// a second miss on a different task removes it, and a catch clears the mark.
+		expect(template).toContain(
+			'Remove such a rule when it already carries a mark from a different task',
+		);
+		expect(template).toContain('end it with a mark naming this task');
+		expect(template).toContain('Delete the mark from a rule that caught a defect on this task');
+		expect(template).toContain('the two tasks that showed its cost');
 		expect(template).toContain('A rule that adds a check names what the check costs');
 		expect(template).toContain('Keep `## Learned Rules` to 20 entries at most');
 		// Only additions wait on a struggle; a removal can follow a smooth task.

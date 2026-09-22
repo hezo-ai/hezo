@@ -66,13 +66,15 @@ agent, whether or not it has a budget:
   stops. A run that has already finished its work is never stopped.
 - **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
-  wakes the task's assignee and allows another 100 million. A teammate who is not an
-  admin cannot release it.
+  wakes the task's assignee and allows another 100 million, and **Run now** starts one
+  agent yourself. A teammate who is not an admin cannot release it either way.
 - **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
   a reply from you, the task waits for you. See
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).
-- **Each run has a time limit and a tool-call ceiling.** See
-  [Configuration](/docs/deployment/configuration).
+- **Each run has a time limit and a tool-call ceiling.** The time limit is a per-agent
+  setting (see [Hiring and agents](/docs/concepts/hiring-and-agents#other-settings)); the
+  tool-call ceiling is instance-wide (see
+  [Configuration](/docs/deployment/configuration)).
 
 ## Upgrading from dollar budgets
 

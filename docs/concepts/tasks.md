@@ -70,9 +70,10 @@ from your reply, so it asks again only when the work since then grows past what 
 do. A reply from a teammate who is not an admin does not count as that answer.
 
 Reviews are bounded the same way. A reviewer checks the work against a list of acceptance
-items fixed at the start, and never adds items partway through. After two failed rounds it
+items set at the start, and never adds items partway through. A concern outside that list
+becomes its own task, where the reviewer asks you whether to act. After two failed rounds it
 asks you what to do, instead of asking for a third. Later rounds re-check only what changed
-since the last passing review.
+since the previous round.
 
 ## Reading a busy thread
 

@@ -82,11 +82,11 @@
 	"changelog": [
 		{
 			"version": 35,
-			"notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-reviews the items that failed rather than the whole task again."
+			"notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-checks only what changed rather than the whole task again."
 		},
 		{
 			"version": 34,
-			"notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
+			"notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team is unlimited by default, the Captain included. A Captain budget set before this release is converted and kept."
 		},
 		{
 			"version": 33,

@@ -53,6 +53,24 @@ function mentionAuthorName(
 	return row.content_type === CommentContentType.System ? 'Hezo' : fallback;
 }
 
+/**
+ * A system notice's fields, for the row to read in the viewer's language through
+ * the thread's own catalog sentences. The English `text` is already the snippet,
+ * and a notice's lists (the budgets an upgrade converted) are left out: the one
+ * line needs none of them and they would unbound the row.
+ */
+function noticeFields(contentType: string, content: unknown): Record<string, unknown> | null {
+	if (contentType !== CommentContentType.System) return null;
+	if (!content || typeof content !== 'object') return null;
+	const {
+		text: _text,
+		conversions: _conversions,
+		invalid: _invalid,
+		...fields
+	} = content as Record<string, unknown>;
+	return fields;
+}
+
 /** The secret being asked for, on a credential-request row only. */
 function credentialName(contentType: string, content: unknown): string | null {
 	if (contentType !== CommentContentType.CredentialRequest) return null;
@@ -139,6 +157,7 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 				content_type: r.content_type,
 				credential_name: credentialName(r.content_type, r.content),
 				snippet: buildSnippet(r.content),
+				notice: noticeFields(r.content_type, r.content),
 				author_member_id: r.author_member_id,
 				author_display_name: mentionAuthorName(r, 'Admin'),
 				author_slug: r.author_slug,

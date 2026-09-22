@@ -83,6 +83,13 @@ const BUDGET_WINDOW_UNIT: Record<OverBudgetBlock['period'], string> = {
 	monthly: 'month',
 };
 
+/** When each window frees the agent again, as the notice says it in English. */
+const BUDGET_WINDOW_END: Record<OverBudgetBlock['period'], string> = {
+	daily: 'before the day ends',
+	weekly: 'before the week ends',
+	monthly: 'before the month ends',
+};
+
 /**
  * Reactively pause an agent for a budget trip - the single entry point shared by
  * the pre-run gate and post-run usage enforcement, so every window
@@ -151,7 +158,7 @@ export async function pauseAgentForBudget(
 			period: block.period,
 			used_tokens: block.usedTokens,
 			limit_tokens: block.limitTokens,
-			text: `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limitTokens)} tokens is used up (${englishCount(block.usedTokens)} used). Raise the budget to let it run again before the window resets.`,
+			text: `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limitTokens)} tokens is used up (${englishCount(block.usedTokens)} used). Raise the budget to let it run again ${BUDGET_WINDOW_END[block.period]}.`,
 		},
 		wsManager,
 	}).catch(async (e) => {

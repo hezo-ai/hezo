@@ -1,4 +1,4 @@
-import type { BudgetWindowsTokens } from '@hezo/shared';
+import { type BudgetWindowsTokens, DEFAULT_LOCALE_SETTINGS, NumberFormat } from '@hezo/shared';
 import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
@@ -98,6 +98,28 @@ test('renders a live minimum hint for a constrained window', async () => {
 		/>,
 	);
 	expect(getByTestId('budget-weekly-hint').textContent).toContain('At least 140 million');
+});
+
+test("punctuates the minimum hint by the reader's number format", async () => {
+	localStorage.setItem(
+		'locale',
+		JSON.stringify({ ...DEFAULT_LOCALE_SETTINGS, number_format: NumberFormat.SpaceComma }),
+	);
+	try {
+		const { getByTestId } = render(
+			<Harness
+				initial={{
+					daily_budget_tokens: 20_500_000,
+					weekly_budget_tokens: 143_500_000,
+					monthly_budget_tokens: 0,
+				}}
+				onChange={vi.fn()}
+			/>,
+		);
+		expect(getByTestId('budget-weekly-hint').textContent).toContain('143,5');
+	} finally {
+		localStorage.removeItem('locale');
+	}
 });
 
 test('converts between the millions a person types and whole tokens', () => {

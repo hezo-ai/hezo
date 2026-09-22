@@ -21,6 +21,7 @@ import {
 	AGENT_ERROR_ROW,
 	inboxRowKind,
 	inboxRowLead,
+	inboxRowSnippet,
 	isAgentErrorApproval,
 } from '../../lib/inbox-row-kind';
 
@@ -218,8 +219,10 @@ function NeedsYouAction({ approval }: { approval: Approval }) {
 }
 
 function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
+	const i18n = useI18n();
 	const kind = inboxRowKind(mention.content_type);
 	const lead = inboxRowLead(mention);
+	const snippet = inboxRowSnippet(mention, i18n);
 	return (
 		<NeedsYouRowShell
 			tag={kind.tag}
@@ -255,12 +258,12 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 					<span className="font-medium">
 						{mention.task_identifier}: {lead}
 					</span>{' '}
-					{mention.snippet}
+					{snippet}
 				</>
 			) : (
 				<>
 					<span className="font-medium">@{mention.author_slug ?? mention.author_display_name}</span>{' '}
-					{mention.snippet}
+					{snippet}
 				</>
 			)}
 		</NeedsYouRowShell>

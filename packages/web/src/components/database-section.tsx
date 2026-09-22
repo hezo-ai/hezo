@@ -10,6 +10,7 @@ import {
 } from '../hooks/use-run-log-compaction';
 import { usePruneSuperseded, useSupersededData } from '../hooks/use-superseded-data';
 import { toast } from '../hooks/use-toast';
+import { Trans, useI18n } from '../lib/i18n';
 import { formatBytes } from './asset-icon';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
@@ -201,6 +202,7 @@ function CompactionControl({
 	retentionDays: number;
 	onRetentionChange: (days: number) => void;
 }) {
+	const { t } = useI18n();
 	const compact = useCompactRunLogs();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -312,23 +314,17 @@ function CompactionControl({
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title={`Compact run logs older than ${retentionDays} days?`}
-				confirmLabel="Compact run logs"
+				title={t('settings.database.compactConfirm.title', { days: retentionDays })}
+				confirmLabel={t('settings.database.compactConfirm.confirm')}
 				description={
 					<>
-						This trims the full logs of agent runs older than{' '}
-						<strong className="font-medium text-text-1">{retentionDays} days</strong> down to their
-						final portion - the agent’s end-of-run summary and outcome. The full command that
-						launched each run is kept, every trimmed log is clearly marked as compacted, and status,
-						timing, tokens and cost are unchanged. Runs newer than the window are untouched. The
-						detailed step-by-step output is permanently discarded and can’t be recovered.
-						{usage.backend === 'embedded' && (
-							<>
-								{' '}
-								It then rewrites the run-logs table to return the freed space - and accumulated
-								storage bloat - to disk, which briefly locks that table.
-							</>
-						)}
+						<Trans
+							k="settings.database.compactConfirm.body"
+							vars={{
+								days: <strong className="font-medium text-text-1">{retentionDays}</strong>,
+							}}
+						/>
+						{usage.backend === 'embedded' && <> {t('settings.database.compactConfirm.embedded')}</>}
 					</>
 				}
 				onConfirm={async () => {

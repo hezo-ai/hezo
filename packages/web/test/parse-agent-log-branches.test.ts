@@ -43,7 +43,6 @@ test('done line with only a status leaves every numeric field null', () => {
 		durationMs: null,
 		inputTokens: null,
 		outputTokens: null,
-		costUsd: null,
 	});
 });
 

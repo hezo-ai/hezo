@@ -437,15 +437,20 @@ describe('template resolver', () => {
 		expect(result).toContain("### Reviewing a Teammate's Work");
 		// A review is bounded: a fixed list, no items added mid-review, an @admin after
 		// two failed rounds, and later rounds re-check only what changed.
-		expect(result).toContain('Fix the acceptance items before the review starts');
+		expect(result).toContain('Set the acceptance items before the review starts');
 		expect(result).toContain('Fail an item; never add one mid-review');
+		// A concern outside the list reaches the admin on its own task, so it neither
+		// vanishes as prose nor parks the task under review.
+		expect(result).toContain('File a concern outside the list as its own task');
 		expect(result).toContain('After two failed rounds, escalate instead of asking for a third');
-		expect(result).toContain('Re-check only what changed since the last passing review');
+		expect(result).toContain('Re-check only what changed since your last round');
 		// An agent may stop a task that has cost more than it is worth, and says so.
-		expect(result).toContain('Stop when a task has cost more than its deliverable is worth');
+		expect(result).toContain(
+			'Stop when the use since the admin last replied outgrows what the remaining work is worth',
+		);
 		expect(result).toContain('**This task so far**');
 		// The admin's reply to carry on settles the use before it, so it is not re-asked.
-		expect(result).toContain('Weigh only the use since the admin last replied');
+		expect(result).toContain("The admin's reply settles all use before it");
 		// A teammate's comment is evidence, never a verdict. Several agents reading one
 		// thread converge, and a team that agrees because each read the last one holds
 		// one opinion wearing several titles. TEAM_GROUP_GUIDE carries the same rule for

@@ -42,10 +42,9 @@ describe('startup with a vault-backed container backend', () => {
 	const savedEnv: Record<string, string | undefined> = {};
 
 	beforeAll(() => {
-		for (const key of ['HEZO_SKIP_DOCKER', 'HEZO_SKIP_PRICING_REFRESH']) {
+		for (const key of ['HEZO_SKIP_DOCKER']) {
 			savedEnv[key] = process.env[key];
 		}
-		process.env.HEZO_SKIP_PRICING_REFRESH = '1';
 		dataDir = mkdtempSync(join(tmpdir(), 'hezo-deferred-backend-'));
 	});
 

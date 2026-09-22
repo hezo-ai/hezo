@@ -23,6 +23,7 @@ import type {
 import { ActorBadge } from '../ui/actor-badge';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
+import { budgetConversionIntroKey, budgetPausedKey, handoffAgentSlugs } from './system-notice-text';
 
 interface Props {
 	comment: CommentDataOf<'system'>;
@@ -465,9 +466,7 @@ function HandoffLimitBody({
 	timestamp: React.ReactNode;
 }) {
 	const { t, formatNumber, language } = useI18n();
-	const slugs = Array.isArray(content.agent_slugs)
-		? content.agent_slugs.filter((s): s is string => typeof s === 'string' && s.length > 0)
-		: [];
+	const slugs = handoffAgentSlugs(content);
 	let element = 0;
 	const agentsNode =
 		slugs.length > 0 ? (
@@ -541,22 +540,6 @@ function TaskTokenCeilingBody({
 	);
 }
 
-const BUDGET_PAUSED_KEYS: Record<
-	'agent' | 'project',
-	Record<'daily' | 'weekly' | 'monthly', MessageKey>
-> = {
-	agent: {
-		daily: 'comment.budgetPaused.agent.daily',
-		weekly: 'comment.budgetPaused.agent.weekly',
-		monthly: 'comment.budgetPaused.agent.monthly',
-	},
-	project: {
-		daily: 'comment.budgetPaused.project.daily',
-		weekly: 'comment.budgetPaused.project.weekly',
-		monthly: 'comment.budgetPaused.project.monthly',
-	},
-};
-
 /** A budget paused an agent: whose budget, which window, and what was used. */
 function BudgetPausedBody({
 	content,
@@ -582,10 +565,7 @@ function BudgetPausedBody({
 		) : (
 			<span>{slug ? `@${slug}` : t('comment.runAgentFallback')}</span>
 		);
-	const key =
-		BUDGET_PAUSED_KEYS[content.scope === 'project' ? 'project' : 'agent'][
-			content.period === 'daily' || content.period === 'weekly' ? content.period : 'monthly'
-		];
+	const key = budgetPausedKey(content);
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
@@ -646,14 +626,7 @@ function BudgetConversionBody({
 		});
 	return (
 		<div className="flex flex-col gap-1 leading-[22px]" data-testid="budget-conversion-comment">
-			<span className="text-xs text-text-2">
-				{t(
-					content.basis === 'fallback'
-						? 'comment.budgetConversion.introFallback'
-						: 'comment.budgetConversion.intro',
-					{ rate },
-				)}
-			</span>
+			<span className="text-xs text-text-2">{t(budgetConversionIntroKey(content), { rate })}</span>
 			<ul className="ml-4 list-disc text-xs text-text-2">
 				{conversions.map((c) => (
 					<li key={`${c.scope}-${c.id}-${c.window}`}>

@@ -405,6 +405,61 @@ describe('postAdminNotice', () => {
 		);
 		expect(row?.author_display_name).toBe('Hezo');
 		expect(row?.snippet).toBe('No agent will run on this task until you reply.');
+		// The row carries the notice's own fields, so the web reads it in the viewer's
+		// language; the English text is the snippet and is not repeated here.
+		expect(row?.notice).toEqual({ kind: 'handoff_limit' });
+	});
+
+	it("gives a notice's fields to the row without its lists or its English text", async () => {
+		const taskIdLocal = await insertTask(captainId, 'Conversion notice test');
+		const commentId = await postAdminNotice({
+			db,
+			teamId,
+			taskId: taskIdLocal,
+			content: {
+				kind: 'budget_conversion',
+				tokens_per_cent: 12.5,
+				basis: 'history',
+				conversions: [{ id: 'a', scope: 'agent', name: 'Engineer', window: 'monthly' }],
+				invalid: [],
+				text: 'Budgets now count tokens.',
+			},
+		});
+		if (!commentId) throw new Error('expected the notice to be posted');
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const row = ((await res.json()).data as Array<Record<string, unknown>>).find(
+			(m) => m.comment_id === commentId,
+		);
+		expect(row?.notice).toEqual({
+			kind: 'budget_conversion',
+			tokens_per_cent: 12.5,
+			basis: 'history',
+		});
+	});
+
+	it('gives no notice fields to a row anchored on an ordinary comment', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Ordinary mention test');
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb) RETURNING id`,
+			[taskIdLocal, captainId, JSON.stringify({ text: '@admin which way?' })],
+		);
+		await db.query(
+			`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)`,
+			[teamId, taskIdLocal, comment.rows[0].id, testAdminUserId],
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const row = ((await res.json()).data as Array<Record<string, unknown>>).find(
+			(m) => m.comment_id === comment.rows[0].id,
+		);
+		expect(row?.snippet).toBe('@admin which way?');
+		expect(row?.notice).toBeNull();
 	});
 });
 

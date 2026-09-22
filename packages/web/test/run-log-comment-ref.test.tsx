@@ -8,7 +8,7 @@ const PUBLIC_ID = '20260618030521';
 const LOG_TEXT = [
 	'[session] model=claude-opus-4 tools=42',
 	`The admin approved at ${PUBLIC_ID} — proceeding to the next stage.`,
-	'[done] success turns=1 duration=500ms tokens=10/20 cost=$0.0001',
+	'[done] success turns=1 duration=500ms tokens=10/20',
 ].join('\n');
 
 test('agent-run formatted view links a comment public_id in the prose to the run task', async () => {

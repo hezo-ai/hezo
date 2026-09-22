@@ -235,7 +235,7 @@ export interface LogCompactionConfig {
 	maxPerTick: number;
 	/**
 	 * Bytes of each old run's log kept when it is compacted - the trailing slice
-	 * holding the agent's end-of-run summary and its `[done] … tokens=… cost=…` line.
+	 * holding the agent's end-of-run summary and its `[done] … tokens=…` line.
 	 */
 	preservedBytes: number;
 }

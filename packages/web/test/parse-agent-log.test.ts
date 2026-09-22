@@ -174,7 +174,7 @@ test('treats a $ line as a command block', () => {
 
 test('parses the done summary', () => {
 	const blocks = parseAgentLog(
-		makeLines(['[done] success turns=12 duration=34000ms tokens=1000/2000 cost=$0.1234']),
+		makeLines(['[done] success turns=12 duration=34000ms tokens=1000/2000']),
 	);
 	expect(blocks[0]).toMatchObject<Partial<DoneBlock>>({
 		type: 'done',
@@ -183,8 +183,15 @@ test('parses the done summary', () => {
 		durationMs: 34000,
 		inputTokens: 1000,
 		outputTokens: 2000,
-		costUsd: 0.1234,
 	});
+});
+
+test('ignores the dollar figure a log written before token budgets carries', () => {
+	const blocks = parseAgentLog(
+		makeLines(['[done] success turns=1 duration=500ms tokens=10/20 cost=$0.1234']),
+	);
+	expect(blocks[0]).toMatchObject<Partial<DoneBlock>>({ inputTokens: 10, outputTokens: 20 });
+	expect(blocks[0]).not.toHaveProperty('costUsd');
 });
 
 test('emits a standalone result block when no tool is pending', () => {

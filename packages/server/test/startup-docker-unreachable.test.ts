@@ -30,9 +30,7 @@ describe('startup refuses an unreachable Docker daemon', () => {
 
 	beforeAll(() => {
 		savedEnv.HEZO_SKIP_DOCKER = process.env.HEZO_SKIP_DOCKER;
-		savedEnv.HEZO_SKIP_PRICING_REFRESH = process.env.HEZO_SKIP_PRICING_REFRESH;
 		delete process.env.HEZO_SKIP_DOCKER;
-		process.env.HEZO_SKIP_PRICING_REFRESH = '1';
 		dataDir = mkdtempSync(join(tmpdir(), 'hezo-docker-down-'));
 	});
 

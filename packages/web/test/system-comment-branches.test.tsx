@@ -193,7 +193,7 @@ test('run_abandoned: agent_slug present but no projectId → span, no link', asy
 
 // ─── handoff_limit ────────────────────────────────────────────────────────
 
-test('handoff_limit: names each agent, the rounds and the tokens, and asks for a reply', async () => {
+test('handoff_limit: names each agent, the rounds and the tokens, and waits on the admin', async () => {
 	const { findByTestId, findAllByTestId } = renderSystem(
 		comment({
 			kind: 'handoff_limit',
@@ -208,7 +208,8 @@ test('handoff_limit: names each agent, the rounds and the tokens, and asks for a
 	expect(wrapper.textContent).toContain('@researcher and @reviewer handed this task');
 	expect(wrapper.textContent).toContain('9 times in a row');
 	expect(wrapper.textContent).toContain('412,345,678 tokens');
-	expect(wrapper.textContent).toContain('until you reply');
+	// Any member can read the thread, but only the admin's reply lifts the hold.
+	expect(wrapper.textContent).toContain('until the admin replies');
 	expect(wrapper.textContent).not.toContain('fallback');
 
 	const links = (await findAllByTestId('handoff-limit-agent')) as HTMLAnchorElement[];

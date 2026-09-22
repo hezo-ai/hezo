@@ -1634,7 +1634,7 @@ export class ChatSessionManager {
 
 	/**
 	 * Everything one chat exec runs on, built fresh: the resolved provider and
-	 * credential, the acting agent's effort (the CEO always at Max), the
+	 * credential, the acting agent's configured effort, the
 	 * session row the JWT validates against, and the host-side half (ssh,
 	 * egress, tunnel) scoped to the acting team. `teardownTurn` gives the
 	 * host-side half back; the container goes back separately, through the

@@ -80,7 +80,7 @@ from hurting you. A few guarantees sit underneath everything:
   See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 - **See where a project stands at a glance.** Every project's **Dashboard** opens on a
   high-level summary the Captain keeps current, covering the work in flight, what needs
-  you, the goals, and the spend. See [Progress & project status](/docs/concepts/progress).
+  you, the goals, and the token usage. See [Progress & project status](/docs/concepts/progress).
 - **Steer by outcome.** Optionally set high-level **goals** and let the Captain
   re-check each one on a schedule (it writes a fresh progress estimate, health, and status). See
   [Goals](/docs/concepts/goals).

@@ -34,7 +34,8 @@ and looks for patterns in it.
 1. **A task is completed.** When a task is marked **Done** - in any project, in any
    team - the Coach is woken automatically with that task's full history. If that wake is ever
    missed, the Coach picks the task up on its own heartbeat, so a completed task is not left
-   unreviewed.
+   unreviewed. The one exception is a team coherence review: it checks the Coach's own prompt
+   changes, so the Coach does not review it.
 2. **It reviews the whole thread.** The Coach reads the comments and the agents' work
    end to end, noting where the work went wrong: work that got sent back, an agent that
    received corrective feedback or made a wrong assumption, an approach that was tried and
@@ -96,9 +97,11 @@ The Coach is deliberately conservative about what it writes:
 - **Only durable, generalisable lessons** - patterns, not isolated incidents.
 - **Learned Rules only** - it adds, merges and removes rules in that section, and never
   rewrites or removes the agent's own instructions.
-- **Rules earn their place** - a rule that adds a check says what the check costs, and a
-  rule that added work to a task without catching a problem is removed. An agent carries
-  at most 20 learned rules.
+- **Rules earn their place** - a rule that adds a check says what the check costs. When a
+  rule adds work to a task without catching a problem, the Coach marks it with that task. It
+  removes the rule when this happens again on a different task, and clears the mark when the
+  rule catches a problem. The Coach keeps each agent to at most 20 learned rules, and merges
+  or removes one before it adds another at the cap.
 - **No duplicates** - it reads an agent's current prompt first and skips anything already
   covered.
 - **When in doubt, it skips** - a false lesson is worse than a missed one, and a task

@@ -102,7 +102,7 @@ function usePinnedBandHeight(navRef: RefObject<HTMLElement | null>, pinned: bool
  * identity or a way back to the list, and taking on the task's name once the
  * heading below has scrolled out of sight - then the title, an inline mono
  * metadata row (status ·
- * priority · assignee) with a runs · duration · cost summary, the queued-wakeup
+ * priority · assignee) with a runs · duration · tokens summary, the queued-wakeup
  * chip, and the description card. The title renames in place and the description
  * edits in place; both are recorded on the task thread as meta comments by the
  * server. Nothing status-mutating lives here — assignee / close / reopen are in
@@ -225,7 +225,7 @@ export function TaskHeader({
 
 			{/* Wire spec - status / priority / assignee render as quiet-tint badges
 			    (treatment A, the default), color-coding state at a glance the same way
-			    the task list does, with a mono runs / duration / cost summary pushed
+			    the task list does, with a mono runs / duration / tokens summary pushed
 			    right. Assignee carries no semantic state, so it stays neutral. */}
 			<div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 				<TaskStatusBadge status={task.status} testId="task-status-inline" />

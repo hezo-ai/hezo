@@ -849,6 +849,12 @@ export interface AdminMentionItem {
 	credential_name: string | null;
 	/** One line of the comment body, Markdown stripped - render it as plain text. */
 	snippet: string;
+	/**
+	 * A system notice's own fields (its `kind` and figures, without its lists), so
+	 * the row reads in the viewer's language; `snippet` is its English fallback.
+	 * Null on every other kind.
+	 */
+	notice: Record<string, unknown> | null;
 	author_member_id: string | null;
 	author_display_name: string;
 	author_slug: string | null;
@@ -1001,16 +1007,17 @@ export const WakeupSkipReason = {
 	 */
 	RetrospectiveHold: 'retrospective_hold',
 	/**
-	 * Agents have handed this task to each other too many times in a row with no
-	 * person speaking, so every agent is held off it until a person replies. The
-	 * rounds are counted from runs an agent's comment, mention or reply started.
+	 * Agents have handed this task to each other too many times in a row with the
+	 * admin silent, so every agent is held off it until the admin replies or runs
+	 * it. The rounds are counted from runs an agent's comment, mention or reply
+	 * started.
 	 * See `handoffRoundsExhausted` in `services/no-work-backoff.ts`.
 	 */
 	HandoffRoundsExhausted: 'handoff_rounds_exhausted',
 	/**
-	 * Agents have used more tokens on this task since a person last spoke than
-	 * its ceiling allows, so every agent is held off it until a person replies,
-	 * which grants a fresh ceiling. See `taskTokenCeilingReached` in
+	 * Agents have used more tokens on this task since the admin last spoke than
+	 * its ceiling allows, so every agent is held off it until the admin replies,
+	 * which grants a fresh ceiling, or runs it. See `taskTokenCeilingReached` in
 	 * `services/no-work-backoff.ts`.
 	 */
 	TaskTokenCeiling: 'task_token_ceiling',

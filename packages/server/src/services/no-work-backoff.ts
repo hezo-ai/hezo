@@ -581,7 +581,7 @@ export async function retrospectiveHoldActive(
 
 /**
  * How many rounds in a row agents may hand one task to each other before every
- * agent is held off it until a person speaks.
+ * agent is held off it until the admin speaks.
  *
  * Eight, from eleven days of production runs: it holds the two-agent loop that
  * spent most of a week's provider allowance on one task, and it interrupts no
@@ -601,7 +601,7 @@ export const HANDOFF_LIMIT_COMMENT_KIND = 'handoff_limit';
 
 /** A task held by {@link handoffRoundsExhausted}, as the notice to the admin states it. */
 export interface HandoffRounds {
-	/** Consecutive agent-to-agent rounds since a person last spoke. */
+	/** Consecutive agent-to-agent rounds since the admin last spoke. */
 	rounds: number;
 	/** Input (cache included) plus output across those rounds' runs. */
 	tokens: number;
@@ -863,6 +863,6 @@ export function taskTokenCeilingNotice(
 		kind: TASK_TOKEN_CEILING_COMMENT_KIND,
 		tokens: u.tokens,
 		ceiling: TASK_TOKEN_CEILING,
-		text: `Agents have used ${englishCount(u.tokens)} tokens on this task since the admin last replied, past its ceiling of ${englishCount(TASK_TOKEN_CEILING)}. No agent will run on it until the admin replies.`,
+		text: `Agents have used ${englishCount(u.tokens)} tokens on this task since the admin last replied, past its limit of ${englishCount(TASK_TOKEN_CEILING)}. No agent will run on it until the admin replies.`,
 	};
 }

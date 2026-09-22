@@ -69,7 +69,7 @@
 		},
 		{
 			"version": 25,
-			"notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team stays unlimited, as before."
+			"notes": "Role budgets now count tokens rather than dollars: every token a run sends and receives, cached input included. Every role in this team is unlimited by default, the Captain included. A Captain budget set before this release is converted and kept."
 		},
 		{
 			"version": 24,

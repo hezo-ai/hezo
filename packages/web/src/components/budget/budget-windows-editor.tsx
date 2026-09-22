@@ -11,9 +11,14 @@ import { Input } from '../ui/input';
 /** Budgets are typed in millions of tokens: a raw token count is too long to read. */
 const TOKENS_PER_UNIT = 1_000_000;
 
-/** Tokens -> the millions string an input shows, e.g. 20500000 -> "20.5". */
+/** Tokens as millions, e.g. 20500000 -> 20.5, for text a number format punctuates. */
+export function tokensInMillions(tokens: number): number {
+	return Math.round((tokens / TOKENS_PER_UNIT) * 1000) / 1000;
+}
+
+/** Tokens -> the millions string an input shows, always machine-punctuated. */
 export function tokensToMillions(tokens: number): string {
-	return String(Math.round((tokens / TOKENS_PER_UNIT) * 1000) / 1000);
+	return String(tokensInMillions(tokens));
 }
 
 /** A typed millions string -> whole tokens. Empty, negative or not a number -> 0. */
@@ -80,7 +85,7 @@ export function BudgetWindowsEditor({
 	onChange: (next: BudgetWindowsTokens) => void;
 	className?: string;
 }) {
-	const { t } = useI18n();
+	const { t, formatNumber } = useI18n();
 	const [fields, setFields] = useState<FieldState>(() => seed(value));
 	// Last value we emitted, so an echoed-back `value` prop doesn't clobber edits.
 	const lastEmitted = useRef<BudgetWindowsTokens>(value);
@@ -235,7 +240,7 @@ export function BudgetWindowsEditor({
 											row.key === 'weekly'
 												? 'budget.window.minimumFromDaily'
 												: 'budget.window.minimumFromShorter',
-											{ amount: tokensToMillions(row.floor) },
+											{ amount: formatNumber(tokensInMillions(row.floor)) },
 										)}
 									</span>
 								)}

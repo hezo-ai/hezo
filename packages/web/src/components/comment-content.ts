@@ -99,7 +99,7 @@ export interface SystemRunAbandonedContent {
 
 /**
  * Agents handed a task to each other too many times in a row, so every agent is
- * held off it until a person replies. Posted once per hold, with an inbox row.
+ * held off it until the admin replies. Posted once per hold, with an inbox row.
  */
 export interface SystemHandoffLimitContent {
 	kind: 'handoff_limit';
@@ -109,7 +109,7 @@ export interface SystemHandoffLimitContent {
 	text?: string;
 }
 
-/** Agents used more than a task's token ceiling since a person last spoke; held until one does. */
+/** Agents used more than a task's token ceiling since the admin last spoke; held until the admin does. */
 export interface SystemTaskTokenCeilingContent {
 	kind: 'task_token_ceiling';
 	tokens?: number;

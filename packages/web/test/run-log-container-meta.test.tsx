@@ -14,7 +14,7 @@ const LOG_TEXT = [
 		diskCeilingBytes: 4 * 1024 ** 3,
 	})}`,
 	'Refactored the parser.',
-	'[done] success turns=1 duration=500ms tokens=10/20 cost=$0.0001',
+	'[done] success turns=1 duration=500ms tokens=10/20',
 ].join('\n');
 
 test('a run log links its container to that container’s page and states what it was built with', async () => {

@@ -2615,9 +2615,8 @@ still-held container, and gives everything back.
 **One turn pipeline** (`runChatTurn`): the CEO's turns and a worker DM's share the
 `TurnSession` shape, so `runTurn`, compaction, prompt composition, the credential lock,
 the no-wake check (per acting member) and cost recording never ask which kind they
-serve. What differs rides on `kind`: the CEO resolves the docs-embedded prompt and
-`AgentEffort.Max` with a cross-project/cross-team JWT; a worker gets the chat-slim
-prompt, its configured effort, and a 24h JWT with `cross_project/cross_team` false,
+serve. What differs rides on `kind`: the CEO resolves the docs-embedded prompt with a
+cross-project/cross-team JWT; a worker gets the chat-slim prompt and a 24h JWT with `cross_project/cross_team` false,
 asserted at mint against team membership + `admin_status = 'enabled'`. Between turns
 only the `chat_sessions` row survives (one non-terminal row per member, the singleton
 index). The DM stream is one open web conversation per (member, project), created

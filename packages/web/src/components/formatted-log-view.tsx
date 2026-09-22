@@ -447,7 +447,6 @@ function DoneView({ block }: { block: DoneBlock }) {
 					{(block.outputTokens ?? 0).toLocaleString()} out
 				</span>
 			)}
-			{block.costUsd != null && <span className="text-text-2">${block.costUsd.toFixed(2)}</span>}
 		</div>
 	);
 }

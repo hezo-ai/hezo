@@ -42,11 +42,9 @@ describe('startup real-Docker branch (no daemon required)', () => {
 
 	beforeAll(() => {
 		savedEnv.HEZO_SKIP_DOCKER = process.env.HEZO_SKIP_DOCKER;
-		savedEnv.HEZO_SKIP_PRICING_REFRESH = process.env.HEZO_SKIP_PRICING_REFRESH;
 		savedEnv.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK =
 			process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK;
 		delete process.env.HEZO_SKIP_DOCKER;
-		process.env.HEZO_SKIP_PRICING_REFRESH = '1';
 		process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK = '1';
 		setRuntimeConfig({
 			...DEFAULT_CONFIG,

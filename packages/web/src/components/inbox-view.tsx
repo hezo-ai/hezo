@@ -5,8 +5,10 @@ import { useAllAdminMentions, useMarkAllMentionsRead } from '../hooks/use-admin-
 import { type Approval, useAllApprovals } from '../hooks/use-approvals';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useI18n } from '../lib/i18n';
+import { inboxRowSnippet } from '../lib/inbox-row-kind';
 import { compareInboxRowsForSort, InboxSortOrder } from '../lib/inbox-sort';
 import { ApprovalCard } from './approval-card';
+import type { NoticeTextLocale } from './comment-renderers/system-notice-text';
 import { InboxFilterDialog } from './inbox-filter-dialog';
 import { MentionCard } from './mention-card';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
@@ -44,14 +46,14 @@ type InboxRow =
 			mention: AdminMentionItem;
 	  };
 
-function mentionSearch(m: AdminMentionItem): string {
+function mentionSearch(m: AdminMentionItem, locale: NoticeTextLocale): string {
 	return [
 		m.task_identifier,
 		m.task_title,
 		m.author_slug,
 		m.author_display_name,
 		m.credential_name,
-		m.snippet,
+		inboxRowSnippet(m, locale),
 	]
 		.filter(Boolean)
 		.join(' ')
@@ -72,7 +74,8 @@ function approvalSearch(a: Approval): string {
 }
 
 export function InboxView({ projectSlugs, scope, sort, onSortChange }: InboxViewProps) {
-	const { t } = useI18n();
+	const i18n = useI18n();
+	const { t } = i18n;
 	const [readFilter, setReadFilter] = useState<ReadFilter>(DEFAULT_READ_FILTER);
 	const archivedView = readFilter === 'archived';
 	const { data: approvals, isLoading: approvalsLoading } = useAllApprovals(projectSlugs, {
@@ -124,11 +127,11 @@ export function InboxView({ projectSlugs, scope, sort, onSortChange }: InboxView
 			created_at: m.created_at,
 			key: `mention:${m.id}`,
 			read: !!m.read_at,
-			search: mentionSearch(m),
+			search: mentionSearch(m, i18n),
 			mention: m,
 		}));
 		return [...approvalRows, ...mentionRows].sort((a, b) => compareInboxRowsForSort(a, b, sort));
-	}, [approvals, mentions, sort]);
+	}, [approvals, mentions, sort, i18n]);
 
 	const filtered = useMemo(() => {
 		return rows.filter((row) => {

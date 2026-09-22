@@ -83,7 +83,7 @@
 			],
 			"version": 35,
 			"roster_count": 10,
-			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-reviews the items that failed rather than the whole task again."
+			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-checks only what changed rather than the whole task again."
 		},
 		{
 			"slug": "influencer",

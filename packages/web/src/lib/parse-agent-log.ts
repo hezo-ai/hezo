@@ -76,7 +76,6 @@ export interface DoneBlock {
 	durationMs: number | null;
 	inputTokens: number | null;
 	outputTokens: number | null;
-	costUsd: number | null;
 }
 
 /** Operational/lifecycle status lines from the run host (repo sync, worktree setup, …). */
@@ -163,7 +162,6 @@ function parseDone(id: number, text: string): DoneBlock {
 	const turns = /\bturns=(\d+)/.exec(text)?.[1];
 	const duration = /\bduration=(\d+)ms/.exec(text)?.[1];
 	const tokens = /\btokens=(\d+)\/(\d+)/.exec(text);
-	const cost = /\bcost=\$([\d.]+)/.exec(text)?.[1];
 	return {
 		type: 'done',
 		id,
@@ -172,7 +170,6 @@ function parseDone(id: number, text: string): DoneBlock {
 		durationMs: duration ? Number(duration) : null,
 		inputTokens: tokens ? Number(tokens[1]) : null,
 		outputTokens: tokens ? Number(tokens[2]) : null,
-		costUsd: cost ? Number(cost) : null,
 	};
 }
 
