@@ -260,9 +260,11 @@ export async function assignmentWakeupAlreadyServed(
 export type SettlementIntent =
 	/**
 	 * The work was not done and is owed. Put it back for the dispatcher, which may
-	 * not claim it before `notBefore` when one is given.
+	 * not claim it before `notBefore` when one is given. `heldConfigId` names the
+	 * credential whose usage hold the work waits on, so lifting that hold releases
+	 * this wakeup and no other credential's.
 	 */
-	| { kind: 'handback'; reason: WakeupSkipReason; notBefore?: Date }
+	| { kind: 'handback'; reason: WakeupSkipReason; notBefore?: Date; heldConfigId?: string }
 	/** The run did the work. */
 	| { kind: 'complete' }
 	/** The run tried and failed. Nothing here retries it. */
@@ -318,7 +320,8 @@ export async function settleWakeupForRun(
 		const res = await db.query<{ id: string }>(
 			`UPDATE agent_wakeup_requests
 			 SET status = $1::wakeup_status, claimed_at = NULL,
-			     last_skipped_at = now(), last_skipped_reason = $2, not_before = $5
+			     last_skipped_at = now(), last_skipped_reason = $2, not_before = $5,
+			     held_config_id = $6
 			 WHERE id = $3 AND status = $4::wakeup_status
 			 RETURNING id`,
 			[
@@ -327,6 +330,7 @@ export async function settleWakeupForRun(
 				wakeupId,
 				WakeupStatus.Claimed,
 				intent.notBefore ?? null,
+				intent.heldConfigId ?? null,
 			],
 		);
 		return res.rows.length > 0 ? { kind: 'requeued' } : { kind: 'handback_failed' };
@@ -371,20 +375,45 @@ export async function settleWakeupForRun(
 export const WAKEUP_HOLD_ELAPSED_SQL = '(not_before IS NULL OR not_before <= now())';
 
 /**
- * Let the dispatcher claim every wakeup held for a spent usage allowance.
+ * Seconds between two wakeups released from the same usage hold.
  *
- * Called when a credential's hold is lifted. It releases wakeups held on other
- * credentials too, because a wakeup does not record which credential held it;
- * each of those meets its own credential's hold again before a container is
- * claimed, so the cost is one dispatch pass each.
+ * The dispatcher claims up to ten wakeups every five seconds, so a hold that lifts
+ * with its whole queue eligible starts all of it within a minute, on an allowance
+ * that has only just come back. Spaced this far apart, the first few runs show
+ * whether it really has: a refusal puts the hold back, and the wakeups still
+ * waiting meet it before any of them claims a container.
  */
-export async function releaseUsageHeldWakeups(db: Db): Promise<number> {
+export const USAGE_HOLD_RELEASE_SPACING_SEC = 30;
+
+/**
+ * Release the wakeups held on one credential's spent usage allowance, oldest
+ * first and {@link USAGE_HOLD_RELEASE_SPACING_SEC} apart.
+ *
+ * Called when that credential's hold is lifted. A wakeup held on another
+ * credential stays held: its own allowance has not come back. A wakeup handed
+ * back before the credential was recorded has none, and is released by any lift,
+ * to meet its own credential's hold again at dispatch if that still stands.
+ */
+export async function releaseUsageHeldWakeups(db: Db, configId: string): Promise<number> {
 	const r = await db.query<{ id: string }>(
-		`UPDATE agent_wakeup_requests SET not_before = NULL
-		  WHERE status = $1::wakeup_status AND last_skipped_reason = $2
-		    AND not_before IS NOT NULL
-		 RETURNING id`,
-		[WakeupStatus.Queued, WakeupSkipReason.ProviderUsageLimit],
+		`WITH held AS (
+		   SELECT id, row_number() OVER (ORDER BY created_at, id) - 1 AS position
+		     FROM agent_wakeup_requests
+		    WHERE status = $1::wakeup_status AND last_skipped_reason = $2
+		      AND not_before > now()
+		      AND (held_config_id = $3 OR held_config_id IS NULL)
+		 )
+		 UPDATE agent_wakeup_requests w
+		    SET not_before = now() + held.position * make_interval(secs => $4)
+		   FROM held
+		  WHERE w.id = held.id
+		 RETURNING w.id`,
+		[
+			WakeupStatus.Queued,
+			WakeupSkipReason.ProviderUsageLimit,
+			configId,
+			USAGE_HOLD_RELEASE_SPACING_SEC,
+		],
 	);
 	return r.rows.length;
 }

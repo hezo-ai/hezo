@@ -3176,11 +3176,16 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   is claimed. Compared against the hold read before the wait, so the probe's own window does
   not hold the probe.
 - **A turn lifts it.** A run that started under a hold (the probe, or one a person asked
-  for) and got a turn calls `liftUsageHold`, which clears the column and releases every
-  wakeup held on `provider_usage_limit` through `releaseUsageHeldWakeups`. A wakeup does not
-  record its credential, so wakeups held on another credential are released too and meet
-  their own hold again at the pre-row check. Replacing the credential through the PATCH route
-  clears the hold in `updateAiProviderConfig` and releases the same way.
+  for) and got a turn calls `liftUsageHold`, which clears the column and releases the
+  wakeups held on that credential through `releaseUsageHeldWakeups`. The handback records the
+  credential (`agent_wakeup_requests.held_config_id`, migration 081, cleared on claim), so a
+  wakeup held on another credential stays held. The release is paced: oldest first,
+  `USAGE_HOLD_RELEASE_SPACING_SEC` (30) apart, so if the allowance is not really back the
+  first refusal renews the hold and the wakeups still waiting meet it before claiming a
+  container. A wakeup handed back before 081 has no credential and is released by any lift.
+  Replacing the credential through the PATCH route clears the hold in
+  `updateAiProviderConfig` and releases the same way. Pacing slows the restart; the handoff
+  limit and the token ceilings bound the total.
 - **A person bypasses it.** A run whose wakeup payload carries `triggered_by` (Run now,
   Retry) or that has no wakeup (a manual run) skips both checks; its outcome lifts or renews
   the hold.

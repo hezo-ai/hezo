@@ -654,7 +654,8 @@ export class JobManager {
 			     last_skipped_at = NULL,
 			     last_skipped_reason = NULL,
 			     last_skipped_blocker_task_id = NULL,
-			     not_before = NULL
+			     not_before = NULL,
+			     held_config_id = NULL
 			 WHERE id = $2 AND status = $3::wakeup_status
 			 RETURNING id`,
 			[WakeupStatus.Claimed, wakeup.id, WakeupStatus.Queued],
@@ -2166,7 +2167,8 @@ export class JobManager {
 				     last_skipped_at = NULL,
 				     last_skipped_reason = NULL,
 				     last_skipped_blocker_task_id = NULL,
-				     not_before = NULL
+				     not_before = NULL,
+				     held_config_id = NULL
 				 WHERE id = $2`,
 				[WakeupStatus.Claimed, wakeup.id],
 			);
@@ -3615,6 +3617,7 @@ export class JobManager {
 			requeued?: boolean;
 			requeueReason?: WakeupSkipReason;
 			requeueNotBefore?: Date;
+			requeueHeldConfigId?: string;
 			heartbeatRunId?: string;
 		},
 		/** Where to record the outcome. Omitted only where there is no run row to write. */
@@ -3627,6 +3630,7 @@ export class JobManager {
 					kind: 'handback',
 					reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity,
 					notBefore: result.requeueNotBefore,
+					heldConfigId: result.requeueHeldConfigId,
 				}
 			: result.success
 				? { kind: 'complete' }

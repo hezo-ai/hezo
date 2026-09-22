@@ -334,6 +334,8 @@ export interface RunResult {
 	requeueReason?: WakeupSkipReason;
 	/** The earliest the dispatcher may claim the handed-back wakeup again, when the cause has a clock. */
 	requeueNotBefore?: Date;
+	/** The credential whose usage hold the handed-back wakeup waits on, when that is the cause. */
+	requeueHeldConfigId?: string;
 }
 
 export interface RunnerDeps {
@@ -1598,6 +1600,7 @@ export async function runAgent(
 				requeued: true,
 				requeueReason: WakeupSkipReason.ProviderUsageLimit,
 				requeueNotBefore: heldUntil,
+				requeueHeldConfigId: selection.config.configId,
 			};
 		}
 	}
@@ -1750,6 +1753,7 @@ export async function runAgent(
 		reason: string,
 		requeueReason: WakeupSkipReason,
 		requeueNotBefore?: Date,
+		requeueHeldConfigId?: string,
 	): Promise<RunResult> => {
 		releaseCredentialLock?.();
 		const message = `${reason} - returning this run to the queue.`;
@@ -1783,6 +1787,7 @@ export async function runAgent(
 			requeued: true,
 			requeueReason,
 			requeueNotBefore,
+			requeueHeldConfigId,
 		};
 	};
 
@@ -1812,7 +1817,12 @@ export async function runAgent(
 	const providerRefusalHandback = async (
 		verdict: RuntimeErrorVerdict,
 		refused: { configId: string; provider: AiProvider },
-	): Promise<{ message: string; reason: WakeupSkipReason; notBefore: Date } | null> => {
+	): Promise<{
+		message: string;
+		reason: WakeupSkipReason;
+		notBefore: Date;
+		heldConfigId?: string;
+	} | null> => {
 		if (verdict.family === 'usage_limit') {
 			const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
 			const heldUntil = formatUsageHold(hold.until);
@@ -1837,6 +1847,7 @@ export async function runAgent(
 				message: `${verdict.message} Every run on this credential waits until ${heldUntil}`,
 				reason: WakeupSkipReason.ProviderUsageLimit,
 				notBefore: hold.until,
+				heldConfigId: refused.configId,
 			};
 		}
 
@@ -2174,6 +2185,7 @@ export async function runAgent(
 					`${describeUsageHold(holdAfterWait)}, so this run did not start`,
 					WakeupSkipReason.ProviderUsageLimit,
 					holdAfterWait,
+					credential.configId,
 				);
 			}
 		}
@@ -3259,7 +3271,12 @@ export async function runAgent(
 					// this run's per-run secrets off a pooled container, and the row
 					// should not read terminal until that has happened.
 					await cleanupRunArtifacts();
-					return finalizeRequeue(handback.message, handback.reason, handback.notBefore);
+					return finalizeRequeue(
+						handback.message,
+						handback.reason,
+						handback.notBefore,
+						handback.heldConfigId,
+					);
 				}
 			}
 

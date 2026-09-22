@@ -466,10 +466,11 @@ describe('runAgent usage-limit hold', () => {
 		await setHold(120);
 		const held = await db.query<{ id: string }>(
 			`INSERT INTO agent_wakeup_requests
-			   (member_id, team_id, source, status, payload, last_skipped_reason, last_skipped_at, not_before)
-			 VALUES ($1, $2, 'timer', 'queued', '{}'::jsonb, $3, now(), now() + interval '2 hours')
+			   (member_id, team_id, source, status, payload, last_skipped_reason, last_skipped_at,
+			    not_before, held_config_id)
+			 VALUES ($1, $2, 'timer', 'queued', '{}'::jsonb, $3, now(), now() + interval '2 hours', $4)
 			 RETURNING id`,
-			[agentId, teamId, WakeupSkipReason.ProviderUsageLimit],
+			[agentId, teamId, WakeupSkipReason.ProviderUsageLimit, await configId()],
 		);
 		const task = await makeTask('Run now after adding credits');
 		const wakeupId = await claimedWakeup(task.id, {
@@ -494,7 +495,8 @@ describe('runAgent usage-limit hold', () => {
 			'SELECT not_before FROM agent_wakeup_requests WHERE id = $1',
 			[held.rows[0].id],
 		);
-		expect(released.rows[0].not_before).toBeNull();
+		// Released first in line: claimable now rather than at the stated reset.
+		expect(released.rows[0].not_before?.getTime()).toBeLessThanOrEqual(Date.now());
 	});
 
 	it('lets one run test a lapsed hold and holds the others behind it', async () => {

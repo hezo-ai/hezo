@@ -567,7 +567,7 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		}
 		// A replacement credential starts with no usage hold, so the work held on the
 		// old one's spent allowance may dispatch now.
-		if (credential) await releaseUsageHeldWakeups(db);
+		if (credential) await releaseUsageHeldWakeups(db, configId);
 	} catch (e) {
 		if (isUniqueViolation(e)) {
 			return err(c, 'DUPLICATE', 'A config with this provider and label already exists', 409);
