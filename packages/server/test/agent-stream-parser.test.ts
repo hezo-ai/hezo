@@ -910,6 +910,32 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(parser.flush()).toBe('');
 	});
 
+	it('keeps the run going past a step that finished for an unknown reason', () => {
+		// From OpenCode 1.18.21 an `unknown` finish loops like `tool-calls` does.
+		// Recorded from 1.18.32 against a model that sent a finish reason OpenCode
+		// does not recognise: a second model call followed, ending on `stop`.
+		const text = (t: string) => ({ type: 'text', part: { type: 'text', text: t } });
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(`${JSON.stringify(text('partial answer'))}\n`);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('unknown', 500, 5))}\n`)).toBe('');
+		expect(parser.hasEnded()).toBe(false);
+
+		parser.onStdout(`${JSON.stringify(text('second answer'))}\n`);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('stop', 120, 4))}\n`)).toBe(
+			'[done] success tokens=620/9\n',
+		);
+		expect(parser.hasEnded()).toBe(true);
+		expect(parser.getFinalAssistantMessage()).toBe('second answer');
+		expect(parser.flush()).toBe('');
+	});
+
+	it('writes the done line on flush when a run exits after an unknown finish', () => {
+		// OpenCode before 1.18.21 stopped here, with no later step_finish.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('unknown', 500, 5))}\n`)).toBe('');
+		expect(parser.flush()).toBe('[done] success tokens=500/5\n');
+	});
+
 	it('reports an error reason on the done line', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(parser.onStdout(`${JSON.stringify(stepFinish('error', 5, 1))}\n`)).toBe(

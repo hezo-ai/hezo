@@ -82,12 +82,14 @@ interface OpencodeConfig {
 
 const CONFIG_BASENAME = 'opencode.json';
 
-// OpenCode's per-MCP-server request timeout (`mcp.<name>.timeout`) defaults to a
-// mere 5000 ms — any Hezo MCP tool call that takes longer than 5s fails outright.
-// There is no env-var override (OpenCode reads only a fixed env-var set, none
-// timeout-related), so we stamp a generous per-server timeout into the
-// `opencode.json` the injector already writes. 10 min matches the other runtimes'
-// MCP ceilings and is safely above any real Hezo tool call.
+// OpenCode's per-MCP-server request timeout (`mcp.<name>.timeout`) is documented
+// as defaulting to 5000 ms. The code is looser but still too tight: unset, a tool
+// call gets the MCP SDK's 60 s default, so any Hezo MCP tool call past a minute
+// fails outright (measured on 1.18.32: a 65 s call failed without this key and
+// completed with it). There is no env-var override (OpenCode reads only a fixed
+// env-var set, none timeout-related), so we stamp a generous per-server timeout
+// into the `opencode.json` the injector already writes. 10 min matches the other
+// runtimes' MCP ceilings and is safely above any real Hezo tool call.
 const MCP_REQUEST_TIMEOUT_MS = 600_000;
 
 function buildRemoteServer(d: McpHttpDescriptor): OpencodeRemoteServer {

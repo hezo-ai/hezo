@@ -4723,9 +4723,11 @@ that single event - `[tool]` plus `[tool-result]`, or `[tool-error]` when `state
 green. Emitting only the call left every OpenCode tool row showing a grey pending dot forever,
 and reading the arguments off the event root rather than `part.state.input` rendered them all
 as `name()`. Its `step_finish` is likewise per step, distinguished by `part.reason`
-(`tool-calls` = more steps follow, `stop` = last), so only a terminal step renders a `[done]`
-line while every step's counts are still summed - one run summary rather than a full-width
-success banner between each pair of tool calls. Because OpenCode is documented to sometimes
+(`tool-calls` or `unknown` = more steps follow, `stop` = last), so only a terminal step renders
+a `[done]` line while every step's counts are still summed - one run summary rather than a
+full-width success banner between each pair of tool calls. `unknown` joined the non-terminal set
+with OpenCode 1.18.21, which loops again on any finish reason it does not recognise; read as
+terminal, it ended the run mid-stream and switched off the per-run token ceiling for the rest. Because OpenCode is documented to sometimes
 exit before its final `step_finish` (sst/opencode#26855, #31435), the parser writes that
 summary from `flush()` if no `[done]` was reached, rather than losing it with the event.
 
@@ -4733,10 +4735,12 @@ summary from `flush()` if no `[done]` was reached, rather than losing it with th
 CLI's own diagnostics on **stderr**, leaving stdout pure JSON; the runner already relays
 stderr verbatim, so this needs no parser work and costs a healthy run almost nothing. It buys
 the provider and model behind a failure, which the JSON `error` event does not name and whose
-message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`, never
-Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser accepts and ignores
-rather than rejecting - the intent goes silently unapplied, and becomes a hard failure the day
-OpenCode starts refusing unknown arguments.
+message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`.
+OpenCode also takes Claude Code's `--dangerously-skip-permissions`, but only as a hidden alias,
+so the documented name is the one used. **OpenCode refuses an unknown argument**: it prints its
+help to stderr and exits 1 without naming the flag, so a flag renamed upstream fails every
+OpenCode run with no stated reason. Check the stream and auto-approve flags against
+`opencode run --help` on every bump.
 
 ### Runtime timeout hardening
 
@@ -4751,8 +4755,14 @@ legitimately long agent/background work; every runtime is relaxed at its own con
 (`stream_idle_timeout_ms`) are **not** tunable while going direct (config/`-c` overrides of a
 built-in provider are silently ignored by Codex's vacant-only merge) and only drive a
 reconnect/retry, not a kill, so they're left at default. **Antigravity** sets no timeouts at
-all. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
-from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap. The
+all. **OpenCode** (`opencode.json`) sets the per-MCP-server `timeout` to
+10 min. Its schema says the key defaults to 5 s; the code leaves connect and `tools/list` at
+30 s and a tool call at the MCP SDK's 60 s, measured on 1.18.32 (a 65 s call fails without the
+key and completes with it). Its bash tool has a non-configurable 10-min hard cap. From 1.18.27
+each provider also has 5-min `headerTimeout` and `chunkTimeout` defaults; like Codex's stream
+knobs they abort and retry a silent stream rather than kill the run, so they are left at
+default. The retried attempt's tokens never reach the stream, and the abort prints one
+`level=ERROR ... SSE read timed out` line on stderr of a run that then succeeds. The
 same file carries the run's reasoning effort, since the CLI exposes no flag or env var for it:
 `provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model with the
 OpenCode provider prefix taken back off (`opencodeModelKey`). OpenCode merges that entry with
@@ -5900,8 +5910,8 @@ connect; a `connect`-triggered failure logs at debug and a `manual` one warns. *
 called from `loadConnectorDescriptors`**, which deliberately resolves secret *names* only so
 descriptors build while the master key is locked.
 
-Enforcement has two legs, split because the coding CLIs are installed unpinned and their
-config keys can drift:
+Enforcement has two legs, split because a coding CLI's config keys can drift when its pin is
+bumped:
 
 - **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
   `disabledTools` (both views, since Claude Code takes a deny list while Kimi and OpenCode

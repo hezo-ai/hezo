@@ -56,7 +56,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 # here loses its pin.
 ARG CLAUDE_CODE_VERSION=2.1.238
 ARG CODEX_VERSION=0.149.0
-ARG OPENCODE_VERSION=1.18.20
+ARG OPENCODE_VERSION=1.18.32
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     && npm install -g @openai/codex@${CODEX_VERSION} \
     && npm install -g opencode-ai@${OPENCODE_VERSION} \

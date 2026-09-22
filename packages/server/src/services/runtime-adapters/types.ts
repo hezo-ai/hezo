@@ -35,9 +35,9 @@ interface McpDescriptorBase {
 	 *
 	 * This is the *hiding* leg: it keeps a disabled tool out of the agent's tool
 	 * list so it never tries to call one. It is not the enforcement boundary —
-	 * the runtimes are installed unpinned and their filter keys can drift, so the
-	 * egress proxy independently rejects a `tools/call` naming a disabled method
-	 * (see `services/egress/mcp-method-guard.ts`).
+	 * a runtime's filter keys can drift when its CLI is bumped, so the egress
+	 * proxy independently rejects a `tools/call` naming a disabled method (see
+	 * `services/egress/mcp-method-guard.ts`).
 	 */
 	enabledTools?: readonly string[];
 	/**

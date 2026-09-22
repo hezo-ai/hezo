@@ -1469,7 +1469,8 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 //               result are rendered together as a `[tool]` + `[tool-result]`
 //               pair, which is what pairs FIFO in `parse-agent-log.ts` and turns
 //               the viewer's status dot green.
-//   step_finish part.reason ('tool-calls' = more steps follow, 'stop' = last),
+//   step_finish part.reason ('tool-calls' or 'unknown' = more steps follow,
+//               'stop' = last),
 //               part.tokens.{input,output,reasoning}, part.tokens.cache.{read,write}.
 //               OpenCode emits one per step, so only the terminal one renders a
 //               `[done]` line; every step's counts are still summed.
@@ -1742,10 +1743,17 @@ function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStr
 			// are already folded into `tokens` above either way. An event that names
 			// no reason (an older shape, or a `result`/`turn.completed` event) is
 			// treated as terminal, which is what it was before this existed.
+			//
+			// `unknown` loops too, from OpenCode 1.18.21 on (`session/prompt.ts`
+			// continues on `["tool-calls", "unknown"]`), and any upstream finish
+			// reason OpenCode does not recognise becomes `unknown`. Treating it as
+			// terminal ended the run mid-stream, which also switched off the per-run
+			// token ceiling for everything after it. A run that exits right after
+			// one still gets its `[done]` from `flush`.
 			const reason = part
 				? firstString(part, ['reason', 'finish_reason', 'stop_reason'])
 				: undefined;
-			if (reason === 'tool-calls') return [];
+			if (reason === 'tool-calls' || reason === 'unknown') return [];
 			if (reason !== undefined) endedWithReason = true;
 			return [doneLine(tokens ?? captured, reason === 'error' ? 'error' : 'success')];
 		}

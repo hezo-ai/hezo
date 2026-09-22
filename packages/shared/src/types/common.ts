@@ -2792,11 +2792,12 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Antigravity]: ['--dangerously-skip-permissions'],
-	// OpenCode's own auto-approve flag, and NOT `--dangerously-skip-permissions`:
-	// that is Claude Code's spelling. OpenCode accepts unknown flags without
-	// complaint, so a wrong one here never applies and never announces itself -
-	// verify this name against `opencode run --help` rather than assuming a run
-	// that starts cleanly is approving anything.
+	// OpenCode's own auto-approve flag. It also takes Claude Code's
+	// `--dangerously-skip-permissions`, but only as a hidden alias, so the
+	// documented name is the one used. OpenCode rejects an unknown flag by
+	// printing its help to stderr and exiting 1, without naming the flag, so a
+	// wrong name here fails every run with no reason given - check this name
+	// against `opencode run --help` on a bump.
 	[AgentRuntime.OpenCode]: ['--auto'],
 	// Grok's Claude-Code-style permission modes; bypassPermissions skips every
 	// approval prompt so a headless `docker exec` run never hangs on one.
@@ -2868,9 +2869,8 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  * Whether a runtime's config can hide the MCP tools a connector's method
  * allowlist withholds, so the agent never sees a tool it may not call.
  *
- * This is only the *hiding* leg and it is deliberately not load-bearing: the
- * CLIs are installed unpinned, so a key that works today can be renamed
- * upstream tomorrow. The egress proxy independently rejects a `tools/call`
+ * This is only the *hiding* leg and it is deliberately not load-bearing: a
+ * key that works on the pinned CLI can be renamed upstream by the next bump. The egress proxy independently rejects a `tools/call`
  * naming a disabled method, which is what actually enforces the allowlist — a
  * `false` here costs an agent a wasted call and a clear error, never access.
  *
@@ -2945,10 +2945,10 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// OpenCode `run --format json` emits raw JSON events whose terminal event
 	// carries token usage. `--thinking` puts the model's reasoning parts on that
 	// stream too, so the run log shows them (the parser renders them as
-	// `[thinking]`); without it a run reasons invisibly. The CLI is installed
-	// unpinned in the agent image, so an upstream rename of this flag would fail
-	// every OpenCode run on an unknown argument - check it first if OpenCode runs
-	// start dying at exec.
+	// `[thinking]`); without it a run reasons invisibly. OpenCode rejects an
+	// unknown argument (help on stderr, exit 1), so an upstream rename of any flag
+	// here fails every OpenCode run - check them first if OpenCode runs start
+	// dying at exec after a bump.
 	//
 	// `--print-logs` puts the CLI's own diagnostics on stderr, which the runner
 	// already relays verbatim, while stdout stays pure JSON. At ERROR level it is
