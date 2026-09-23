@@ -215,7 +215,8 @@ describe('codex adapter', () => {
 			containerHomeDir: HOME,
 		});
 
-		expect(injection.cliArgs).toEqual([]);
+		// The judge hook runs only with hook trust bypassed.
+		expect(injection.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
 		// 2 files: config.toml + stop-hook judge script
 		expect(injection.files.length).toBe(2);
 		const file = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
@@ -295,7 +296,7 @@ describe('codex adapter', () => {
 
 	it('still emits the Stop hook + judge script even with an empty descriptor list', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
-		expect(injection.cliArgs).toEqual([]);
+		expect(injection.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
 		expect(injection.envEntries).toEqual([]);
 		expect(injection.files.length).toBe(2);
 		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
@@ -1087,12 +1088,18 @@ describe('stopJudge: false omits the completeness judge', () => {
 		expect(fileNamed(injection, 'doc-write-guard.mjs')).toBeDefined();
 	});
 
-	it('codex drops both the hook block and the judge script', () => {
+	it('codex drops the hook block, the judge script and the trust bypass together', () => {
 		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Codex];
-		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
+		const judged = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		expect(fileNamed(judged, 'stop-hook-judge.mjs')).toBeDefined();
+		// Codex drops a user-config hook whose hash was never saved as trusted, and
+		// says nothing; the per-run CODEX_HOME never has one. Without this flag the
+		// hook above is written and never runs.
+		expect(judged.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
 
 		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
 		expect(fileNamed(injection, 'stop-hook-judge.mjs')).toBeUndefined();
+		expect(injection.cliArgs).toEqual([]);
 		const config = fileNamed(injection, 'config.toml');
 		expect(config?.contents).not.toContain('[[hooks.Stop]]');
 		// The rest of the config is untouched.

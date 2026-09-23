@@ -4820,7 +4820,9 @@ itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_
 and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
 scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
 Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
-call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
+call the provider API. Codex runs a user-config hook only when its hash is saved as trusted, and
+drops an untrusted one silently, so its adapter passes `--dangerously-bypass-hook-trust` whenever
+it writes the hook; without it no Codex run was ever judged. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
 the same headless exec: the Codex and Kimi scripts guard it in code, and the Claude Code prompt
 hook now instructs the judge to do the same.

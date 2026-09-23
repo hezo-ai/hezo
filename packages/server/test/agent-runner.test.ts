@@ -2640,6 +2640,9 @@ describe('runAgent', () => {
 
 			expect(capturedCmd).toContain('codex');
 			expect(capturedCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
+			// A task run carries the completeness judge, which Codex runs only with
+			// hook trust bypassed.
+			expect(capturedCmd).toContain('--dangerously-bypass-hook-trust');
 			const codexIdx = capturedCmd.indexOf('codex');
 			expect(capturedCmd[codexIdx + 1]).toBe('exec');
 			expect(capturedCmd[capturedCmd.length - 1]).toBe('-');

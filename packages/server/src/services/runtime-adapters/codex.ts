@@ -23,6 +23,15 @@ function renderStopHookBlock(judgeScriptContainerPath: string): string {
 
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 
+// Codex runs a hook from user config only once its hash is saved as trusted,
+// and drops an untrusted one without a word on stderr or the stream
+// (`hooks/src/engine/discovery.rs`). Hezo writes a fresh CODEX_HOME per run, so
+// its judge hook is never trusted, and until this flag no Codex task run was
+// judged. It travels with the hook: a run without the judge does not get it.
+// It also lets a hook committed in the worked repo's own `.codex/config.toml`
+// run; the agent already executes that repo's code in the same container.
+const BYPASS_HOOK_TRUST_ARG = '--dangerously-bypass-hook-trust';
+
 // Codex's background-terminal poll ceiling (`background_terminal_max_timeout`,
 // milliseconds) is the structural analog of Claude Code's
 // `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`: how long an empty poll on a
@@ -222,6 +231,6 @@ export const codexAdapter: RuntimeAdapter = {
 			});
 		}
 
-		return { cliArgs: [], envEntries, files };
+		return { cliArgs: stopJudge ? [BYPASS_HOOK_TRUST_ARG] : [], envEntries, files };
 	},
 };
