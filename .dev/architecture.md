@@ -4810,7 +4810,9 @@ no Google constant - Antigravity ships without a judge. For the third-party Anth
 only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`)
 needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
 runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
-itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
+itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
+and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
+scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
 Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
 call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop

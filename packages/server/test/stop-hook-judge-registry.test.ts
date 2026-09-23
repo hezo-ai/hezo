@@ -6,6 +6,7 @@ import {
 	buildJudgeScriptForRuntime,
 	type ClaudeCodeSettings,
 	judgeModelForProvider,
+	STOP_HOOK_DECISION_FORMAT,
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_KIMI,
 	STOP_HOOK_PROMPT,
@@ -326,6 +327,26 @@ describe('stop-hook command judges emit the runtime-correct decision and guard t
 		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'stop_hook_active',
 		);
+	});
+
+	it('the Claude Code prompt asks for the {ok, reason} answer its hook enforces', () => {
+		// Claude Code's prompt hook asks whether a "stopping condition" is satisfied
+		// and forces a json_schema of {ok, reason, impossible}. A judge following a
+		// `decision` instruction instead - an endpoint that ignores the schema - got a
+		// hook error, and a hook error lets the run stop.
+		const prompt = stopJudgeHook(buildClaudeCodeSettings(AiProvider.DeepSeek)).prompt;
+		expect(prompt).toContain('{"ok": true}');
+		expect(prompt).toContain('{"ok": false}');
+		expect(prompt).not.toContain('"decision"');
+	});
+
+	it('the command-script judges ask for the decision shape they read back', () => {
+		for (const runtime of [AgentRuntime.Codex, AgentRuntime.Kimi]) {
+			const script = buildJudgeScriptForRuntime(runtime) ?? '';
+			// Embedded as a JSON string literal, so compare the escaped form.
+			expect(script, runtime).toContain(JSON.stringify(STOP_HOOK_DECISION_FORMAT).slice(1, -1));
+			expect(script, runtime).toContain("verdict.decision === 'block'");
+		}
 	});
 
 	it('the Claude Code prompt hook points the judge at the last_assistant_message field', () => {
