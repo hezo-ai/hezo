@@ -618,6 +618,7 @@ const CHAT_PARSER_FACTORIES: Record<
 function createClaudeChatParser(): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
+	const settled: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		const event = raw as ClaudeStreamEvent;
 		const out: AgentChatTurnEvent[] = [];
@@ -637,18 +638,14 @@ function createClaudeChatParser(): AgentChatParser {
 			return out;
 		}
 		if (event.type === 'result') {
-			const u = event.usage ?? {};
-			const regularInput = u.input_tokens ?? 0;
-			const cacheCreation = u.cache_creation_input_tokens ?? 0;
-			const cacheRead = u.cache_read_input_tokens ?? 0;
-			const output = u.output_tokens ?? 0;
+			settleClaudeResult(settled, event);
 			// Same policy as the run parser: the runtime's own dollar figure is
 			// ignored; only the token buckets are recorded.
 			usage = toRunUsage(modelId, {
-				inputTokens: regularInput,
-				cacheCreationTokens: cacheCreation,
-				cacheReadTokens: cacheRead,
-				outputTokens: output,
+				inputTokens: settled.input,
+				cacheCreationTokens: settled.cacheCreation,
+				cacheReadTokens: settled.cacheRead,
+				outputTokens: settled.output,
 			});
 		}
 		return out;
@@ -766,6 +763,28 @@ interface ClaudeStreamEvent {
 	is_error?: boolean;
 	total_cost_usd?: number;
 	usage?: ClaudeUsage;
+	/**
+	 * On `result` only: the session's usage so far, one entry per model, covering
+	 * the main loop, subagents, the Stop-hook judge and the CLI's own side calls.
+	 * `usage` beside it covers only this turn's main-loop calls.
+	 */
+	modelUsage?: Record<string, ClaudeModelUsage>;
+	/** On the `task_*` system events. */
+	task_id?: string;
+	is_backgrounded?: boolean;
+	task_type?: string;
+	description?: string;
+	summary?: string;
+	status?: string;
+	patch?: { status?: string };
+}
+
+/** One model's cumulative usage in a `result` event's `modelUsage`. */
+interface ClaudeModelUsage {
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
 }
 
 /**
@@ -937,27 +956,75 @@ interface ClaudeRunTotals {
 
 const CLAUDE_RUN_TOTAL_KEYS = ['input', 'cacheCreation', 'cacheRead', 'output'] as const;
 
+function sumOf<T>(items: readonly T[], pick: (item: T) => number | undefined): number {
+	return items.reduce((sum, item) => sum + (pick(item) ?? 0), 0);
+}
+
+/**
+ * Fold one Claude Code `result` event into the tokens settled so far.
+ *
+ * `modelUsage` is the session's usage so far per model, including the Stop-hook
+ * judge, subagents and the CLI's own side calls, none of which `result.usage`
+ * (this turn's main loop only) counts - so the sum over its entries replaces the
+ * settled figure. A result without it (an error result can carry `{}`) adds its
+ * `result.usage` instead. `thinkingTokens` is already inside `outputTokens`.
+ */
+function settleClaudeResult(settled: ClaudeRunTotals, event: ClaudeStreamEvent): void {
+	const byModel = Object.values(event.modelUsage ?? {});
+	if (byModel.length > 0) {
+		settled.input = sumOf(byModel, (m) => m.inputTokens);
+		settled.cacheCreation = sumOf(byModel, (m) => m.cacheCreationInputTokens);
+		settled.cacheRead = sumOf(byModel, (m) => m.cacheReadInputTokens);
+		settled.output = sumOf(byModel, (m) => m.outputTokens);
+		return;
+	}
+	const u = event.usage ?? {};
+	settled.input += u.input_tokens ?? 0;
+	settled.cacheCreation += u.cache_creation_input_tokens ?? 0;
+	settled.cacheRead += u.cache_read_input_tokens ?? 0;
+	settled.output += u.output_tokens ?? 0;
+}
+
 function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	let terminalError: RuntimeErrorVerdict | null = null;
-	// Running token totals, accumulated from each assistant turn's `message.usage`,
-	// so a run interrupted before its terminal `result` event (e.g. a server
-	// restart mid-run) still reports the tokens it burned. Each assistant message
-	// carries that API call's usage; Claude Code's final `result.usage` is the sum
-	// across turns, so the running total converges to it and is replaced by the
-	// authoritative figure once `result` lands.
+	// The run's tokens are what the last `result` settled plus what has streamed
+	// since. A `-p` run can take more than one turn - a background Agent finishing
+	// starts another, with its own `init` and its own `result` - so a result is a
+	// checkpoint, not the end.
+	//
+	// Settled: see `settleClaudeResult`.
+	const settled: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	// Streaming: each assistant message's `message.usage` since the last result,
+	// so a run interrupted before its `result` (e.g. a server restart mid-run)
+	// still reports the tokens it burned, and the per-run ceiling sees them.
 	//
 	// Counted once per message id: the CLI emits one `assistant` event per content
 	// block, each restating the whole message's usage (127 of 182 ids repeated in
 	// one real transcript), so a sum over events counted most calls two or three
 	// times. A repeat replaces the message's earlier figure; an event with no id
 	// counts as a message of its own.
-	const run: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
-	const countedMessages = new Map<string, ClaudeRunTotals>();
-	let sawResult = false;
+	const streaming: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	let countedMessages = new Map<string, ClaudeRunTotals>();
+	// True from a `result` until the next turn starts (an `init` or an `assistant`
+	// event), so the per-run ceiling keeps applying to a later turn.
+	let betweenTurns = false;
 	let finalMessage: string | null = null;
+	// Backgrounded tasks by id. A background shell still running when `-p` exits
+	// is killed after a fixed 5 s grace that nothing lifts, and the only trace is
+	// a `task_updated` to `killed` / `task_notification` `stopped` after the
+	// result. The same pair before the result is the model stopping its own task.
+	const backgroundTasks = new Map<string, string>();
+	const recordUsage = () => {
+		usage = toRunUsage(modelId, {
+			inputTokens: settled.input + streaming.input,
+			cacheCreationTokens: settled.cacheCreation + streaming.cacheCreation,
+			cacheReadTokens: settled.cacheRead + streaming.cacheRead,
+			outputTokens: settled.output + streaming.output,
+		});
+	};
 	// Kept past the session line so the runner can persist it on the run row and
 	// `list_connectors` can answer, from inside the run, what each connector
 	// actually contributed. Stays null when no tool name parsed.
@@ -968,6 +1035,7 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		const out: string[] = [];
 
 		if (event.type === 'system' && event.subtype === 'init') {
+			betweenTurns = false;
 			const toolCount = Array.isArray(event.tools) ? event.tools.length : 0;
 			modelId = event.model ?? undefined;
 			const mcpServers = event.mcp_servers ?? [];
@@ -1026,8 +1094,9 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		}
 
 		if (event.type === 'assistant' && event.message) {
+			betweenTurns = false;
 			const mu = event.message.usage;
-			if (mu && !sawResult) {
+			if (mu) {
 				const next: ClaudeRunTotals = {
 					input: mu.input_tokens ?? 0,
 					cacheCreation: mu.cache_creation_input_tokens ?? 0,
@@ -1036,14 +1105,9 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 				};
 				const id = event.message.id;
 				const prior = id ? countedMessages.get(id) : undefined;
-				for (const key of CLAUDE_RUN_TOTAL_KEYS) run[key] += next[key] - (prior?.[key] ?? 0);
+				for (const key of CLAUDE_RUN_TOTAL_KEYS) streaming[key] += next[key] - (prior?.[key] ?? 0);
 				if (id) countedMessages.set(id, next);
-				usage = toRunUsage(modelId, {
-					inputTokens: run.input,
-					cacheCreationTokens: run.cacheCreation,
-					cacheReadTokens: run.cacheRead,
-					outputTokens: run.output,
-				});
+				recordUsage();
 			}
 			const blocks = normalizeContent(event.message.content);
 			for (const block of blocks) {
@@ -1075,35 +1139,49 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		}
 
 		if (event.type === 'result') {
-			sawResult = true;
+			betweenTurns = true;
 			// `result` is Claude Code's authoritative final assistant message on a
 			// clean turn; on an error turn it carries the failure text, so only take
 			// it as the run's final message when the result is not an error.
 			if (!event.is_error && typeof event.result === 'string' && event.result.trim()) {
 				finalMessage = event.result.trim();
 			}
-			const u = event.usage ?? {};
-			const regularInput = u.input_tokens ?? 0;
-			const cacheCreation = u.cache_creation_input_tokens ?? 0;
-			const cacheRead = u.cache_read_input_tokens ?? 0;
-			// The total keeps every input token; the buckets are recorded separately.
-			const input = regularInput + cacheCreation + cacheRead;
-			const output = u.output_tokens ?? 0;
+			settleClaudeResult(settled, event);
+			// What streamed before this result is inside the settled figure now.
+			for (const key of CLAUDE_RUN_TOTAL_KEYS) streaming[key] = 0;
+			countedMessages = new Map();
 			// The runtime's own dollar figure (total_cost_usd) is ignored: it is a
 			// client-side estimate from the CLI's rate card, which is the wrong
 			// provider's for third-party Anthropic-compatible endpoints, and usage
 			// is counted in tokens.
-			usage = toRunUsage(modelId, {
-				inputTokens: regularInput,
-				cacheCreationTokens: cacheCreation,
-				cacheReadTokens: cacheRead,
-				outputTokens: output,
-			});
+			recordUsage();
+			// The total keeps every input token; the buckets are recorded separately.
+			const input = settled.input + settled.cacheCreation + settled.cacheRead;
+			const output = settled.output;
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
 			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
 			out.push(`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output}`);
+			return out;
+		}
+
+		if (event.type === 'system' && event.task_id) {
+			if (event.subtype === 'task_started' && event.is_backgrounded) {
+				backgroundTasks.set(event.task_id, event.description ?? event.task_type ?? 'task');
+				return out;
+			}
+			const killed =
+				(event.subtype === 'task_updated' && event.patch?.status === 'killed') ||
+				(event.subtype === 'task_notification' && event.status === 'stopped');
+			const task = backgroundTasks.get(event.task_id);
+			// Reported once per task: the kill arrives as both events.
+			if (killed && task !== undefined && betweenTurns) {
+				backgroundTasks.delete(event.task_id);
+				out.push(
+					`[runner] Claude Code killed background task "${task}" when the run ended: it was still running, and the CLI waits only 5 s for a background shell. Its output after that point was lost.`,
+				);
+			}
 			return out;
 		}
 
@@ -1116,7 +1194,7 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		getFinalAssistantMessage: () => finalMessage,
 		getMcpToolCounts: () => mcpCounts,
 		tally: toolTally,
-		hasEnded: () => sawResult,
+		hasEnded: () => betweenTurns,
 	});
 	// Untouched passthrough unless this run's endpoint makes the diagnostic
 	// unconditional, so an unknown provider never silences a real one.

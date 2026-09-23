@@ -59,7 +59,8 @@ function buildStdioEntry(d: McpStdioDescriptor): ClaudeStdioEntry {
  * that ceiling, leaving the wait bounded by the run's own container lifecycle. It
  * does not cover a background shell: measured on 2.1.238 and 2.1.280, a
  * `run_in_background` Bash command is still killed 5 s after the final turn,
- * with no marker on stderr.
+ * with no marker on stderr and no setting to lift it. The stream parser logs
+ * that kill from the CLI's task events.
  *
  * `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` (from 2.1.280) raises the 2,048-char
  * cap the CLI puts on an MCP server's `instructions` and on each tool

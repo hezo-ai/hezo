@@ -1819,6 +1819,169 @@ describe('running usage and the end of a run', () => {
 		}
 	});
 
+	it("counts every model in Claude Code's modelUsage, the judge included", () => {
+		// Recorded shape from 2.1.280 with the Stop judge fired twice: `usage` covers
+		// the main loop only, `modelUsage` adds the judge's sonnet calls.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				usage: {
+					input_tokens: 4_604,
+					cache_creation_input_tokens: 6_306,
+					cache_read_input_tokens: 12_612,
+					output_tokens: 242,
+				},
+				modelUsage: {
+					'claude-opus-5': {
+						inputTokens: 4_604,
+						outputTokens: 242,
+						cacheReadInputTokens: 12_612,
+						cacheCreationInputTokens: 6_306,
+						thinkingTokens: 0,
+						costUSD: 0.0748,
+					},
+					'claude-sonnet-4-6': {
+						inputTokens: 14_000,
+						outputTokens: 140,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						thinkingTokens: 0,
+						costUSD: 0.0441,
+					},
+				},
+			})}\n`,
+		);
+		expect(parser.getUsage()?.buckets).toEqual({
+			inputTokens: 18_604,
+			cacheCreationTokens: 6_306,
+			cacheReadTokens: 12_612,
+			outputTokens: 382,
+		});
+	});
+
+	it('follows a Claude Code run through a second turn without counting twice', () => {
+		// A background Agent finishing starts a second turn: a second init and a
+		// second result. `modelUsage` is session-cumulative, `usage` per turn.
+		// Recorded from 2.1.280 (a subagent plus the judge).
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const result = (turn: Record<string, number>, cumulative: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, usage: turn, modelUsage: cumulative })}\n`;
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-5' })}\n`,
+		);
+		parser.onStdout(
+			result(
+				{
+					input_tokens: 802,
+					cache_creation_input_tokens: 804,
+					cache_read_input_tokens: 806,
+					output_tokens: 82,
+				},
+				{
+					'claude-opus-5': {
+						inputTokens: 1_203,
+						cacheCreationInputTokens: 1_206,
+						cacheReadInputTokens: 1_209,
+						outputTokens: 123,
+					},
+					'claude-sonnet-4-6': { inputTokens: 7_000, outputTokens: 70 },
+				},
+			),
+		);
+		expect(parser.hasEnded()).toBe(true);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-5' })}\n`,
+		);
+		// The ceiling applies again once the next turn starts.
+		expect(parser.hasEnded()).toBe(false);
+		parser.onStdout(claudeAssistant('msg_turn2', { input_tokens: 501, output_tokens: 51 }));
+		expect(parser.getUsage()?.buckets?.inputTokens).toBe(8_203 + 501);
+		parser.onStdout(
+			result(
+				{
+					input_tokens: 501,
+					cache_creation_input_tokens: 502,
+					cache_read_input_tokens: 503,
+					output_tokens: 51,
+				},
+				{
+					'claude-opus-5': {
+						inputTokens: 1_704,
+						cacheCreationInputTokens: 1_708,
+						cacheReadInputTokens: 1_712,
+						outputTokens: 174,
+					},
+					'claude-sonnet-4-6': { inputTokens: 14_000, outputTokens: 140 },
+				},
+			),
+		);
+		expect(parser.hasEnded()).toBe(true);
+		expect(parser.getUsage()?.buckets).toEqual({
+			inputTokens: 15_704,
+			cacheCreationTokens: 1_708,
+			cacheReadTokens: 1_712,
+			outputTokens: 314,
+		});
+	});
+
+	it('adds a result that carries no modelUsage to what the last one settled', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const result = (extra: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, ...extra })}\n`;
+		parser.onStdout(
+			result({
+				usage: { input_tokens: 10, output_tokens: 1 },
+				modelUsage: { 'claude-opus-5': { inputTokens: 30, outputTokens: 3 } },
+			}),
+		);
+		parser.onStdout(result({ usage: { input_tokens: 5, output_tokens: 2 }, modelUsage: {} }));
+		expect(parser.getUsage()?.inputTokens).toBe(35);
+		expect(parser.getUsage()?.outputTokens).toBe(5);
+	});
+
+	it('logs a Claude Code background task killed when the run ended', () => {
+		// Recorded from 2.1.280: a `run_in_background` shell still running at the
+		// end of the turn is killed after 5 s, reported only after the result.
+		const task = (extra: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'system', task_id: 'basjra8bs', ...extra })}\n`;
+		const started = task({
+			subtype: 'task_started',
+			tool_use_id: 'toolu_bg1',
+			description: 'Sleep in background',
+			is_backgrounded: true,
+			task_type: 'local_bash',
+		});
+		const killed = [
+			task({ subtype: 'task_updated', patch: { status: 'killed' } }),
+			task({ subtype: 'task_notification', status: 'stopped', summary: 'Sleep in background' }),
+		];
+		const resultLine = `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, usage: {} })}\n`;
+
+		const atExit = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		let out = atExit.onStdout(started) + atExit.onStdout(resultLine);
+		for (const line of killed) out += atExit.onStdout(line);
+		expect(out.match(/killed background task "Sleep in background"/g)).toHaveLength(1);
+
+		// The model stopping its own task (TaskStop) looks the same, but comes
+		// before the result.
+		const stoppedByModel = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		let own = stoppedByModel.onStdout(started);
+		for (const line of killed) own += stoppedByModel.onStdout(line);
+		own += stoppedByModel.onStdout(resultLine);
+		expect(own).not.toContain('killed background task');
+
+		// A background task that finished is not a kill.
+		const finished = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const done =
+			finished.onStdout(started) +
+			finished.onStdout(resultLine) +
+			finished.onStdout(task({ subtype: 'task_notification', status: 'completed' }));
+		expect(done).not.toContain('killed background task');
+	});
+
 	it('does not end an OpenCode run on a terminal-shaped event that states no reason', () => {
 		// The type is matched by a substring rule, so an event that merely looks
 		// terminal must not switch the per-run token stop off for the rest of a run

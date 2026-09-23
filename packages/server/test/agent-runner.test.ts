@@ -2836,6 +2836,8 @@ describe('runAgent', () => {
 						const mid = Math.floor(payload.length / 2);
 						await opts.onChunk({ stream: 'stdout', text: payload.slice(0, mid) });
 						await opts.onChunk({ stream: 'stdout', text: payload.slice(mid) });
+						// Delivered already; returning it too would deliver it twice.
+						return { stdout: '', stderr: '' };
 					}
 					return { stdout: payload, stderr: '' };
 				},

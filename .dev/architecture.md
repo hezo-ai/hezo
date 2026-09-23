@@ -4188,7 +4188,9 @@ output. The line is the runtime's own, carried on its adapter as
 `backgroundTerminationMarker`; `services/background-termination.ts` scans the CLI's own
 diagnostic output for it — stderr and non-JSON stdout lines — so an agent that merely echoes
 the phrase can't trip it. A Claude Code background *shell* is killed 5 s after the final turn
-with no such line, so this backstop cannot see it. The scan
+with no such line; its parser reads the kill off the stream instead (a backgrounded task
+`killed`/`stopped` after the `result`) and logs it, without failing the run, because a
+background shell is as often a dev server the agent was done with as unfinished work. The scan
 is **incremental**, fed from the same per-chunk callback the log pipeline uses: the exec
 transport retains no output at all (see below), so the verdict is accumulated as the run
 streams rather than computed from a kept transcript. This is
