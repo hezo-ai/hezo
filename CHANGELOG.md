@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.68.1 - 2026-09-22
+
+### Bug Fixes
+
+- **docs:** use canonical pricing links ([#1135](https://github.com/hezo-ai/hezo/pull/1135))
+- **web:** keep the project menu off global routes, and unclip HQ's rail badge ([#1134](https://github.com/hezo-ai/hezo/pull/1134))
+
+### Other
+
+- Bound agent loops, and count budgets in tokens ([#1136](https://github.com/hezo-ai/hezo/pull/1136))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.68.0...0.68.1
+
 ## 0.68.0 - 2026-09-18
 
 ### Features
