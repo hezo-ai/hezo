@@ -1,4 +1,11 @@
-import { DEFAULT_LOG_COMPACTION_RETENTION_DAYS } from '@hezo/shared';
+import {
+	DEFAULT_LOCALE_SETTINGS,
+	DEFAULT_LOG_COMPACTION_RETENTION_DAYS,
+	Language,
+	RunLogPassKind,
+	RunLogPassPhase,
+	RunLogRewriteFailureReason,
+} from '@hezo/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render } from '@testing-library/react';
 import { expect, test } from 'vitest';
@@ -31,7 +38,7 @@ function emptyUsage(backend: 'embedded' | 'external'): RunLogUsage {
 		database_bytes: backend === 'embedded' ? 4096 : null,
 		run_log_bytes: 0,
 		run_count: 0,
-		reclaimable_bytes: 0,
+		free_bytes: 0,
 		compactable_run_count: 0,
 		older_than_days: DEFAULT_LOG_COMPACTION_RETENTION_DAYS,
 		compaction: null,
@@ -169,42 +176,57 @@ test('embedded card shows the database size + run-log readout', async () => {
 	expect(logSize.textContent).toContain('1,333');
 });
 
-test('reclaimable estimate + trim count show for the chosen window', async () => {
+test('the free-space estimate and trim count show for the chosen window', async () => {
 	const { findByTestId } = renderCard(
 		{ backend: 'embedded', display: '/root/.hezo/pgdata' },
-		{ usage: usageWith({ reclaimable_bytes: 1_073_741_824, compactable_run_count: 900 }) },
+		{ usage: usageWith({ free_bytes: 1_073_741_824, compactable_run_count: 900 }) },
 	);
-	const line = await findByTestId('settings-compact-reclaimable');
-	expect(line.textContent).toContain('1.0 GB');
-	expect(line.textContent).toContain('trims 900 runs');
+	const free = await findByTestId('settings-run-log-free');
+	expect(free.textContent).toBe('About 1.0 GB of this is free space.');
+	const line = await findByTestId('settings-compact-eligible');
+	expect(line.textContent).toBe('Trims 900 runs older than 30 days.');
 });
 
-test('embedded can still reclaim bloat when nothing is old enough to trim', async () => {
-	const { findByTestId } = renderCard(
-		{ backend: 'embedded', display: '/root/.hezo/pgdata' },
-		{ usage: usageWith({ reclaimable_bytes: 800_000_000, compactable_run_count: 0 }) },
-	);
-	// The button stays enabled (VACUUM reclaims bloat regardless of run age)...
-	const button = (await findByTestId('settings-compact-button')) as HTMLButtonElement;
-	expect(button.disabled).toBe(false);
-	// ...and the copy says so.
-	const line = await findByTestId('settings-compact-reclaimable');
-	expect(line.textContent).toContain('reclaims storage bloat');
-});
-
-test('external Postgres with nothing to trim disables the button', async () => {
+test('a free-space estimate of zero reads as little free space, not as a size', async () => {
 	const { findByTestId } = renderCard(
 		{ backend: 'external', display: 'postgres://••••:••••@h/db' },
-		{ usage: usageWith({ backend: 'external', database_bytes: null, compactable_run_count: 0 }) },
+		{ usage: usageWith({ backend: 'external', database_bytes: null, free_bytes: 0 }) },
 	);
-	const button = (await findByTestId('settings-compact-button')) as HTMLButtonElement;
-	expect(button.disabled).toBe(true);
+	const free = await findByTestId('settings-run-log-free');
+	expect(free.textContent).toBe('Little of this is free space.');
+});
+
+test('with nothing old enough to trim, only returning space to disk stays available', async () => {
+	for (const backend of ['embedded', 'external'] as const) {
+		const { findByTestId, unmount } = renderCard(
+			{ backend, display: backend === 'embedded' ? '/root/.hezo/pgdata' : 'postgres://h/db' },
+			{ usage: usageWith({ backend, free_bytes: 800_000_000, compactable_run_count: 0 }) },
+		);
+		const compact = (await findByTestId('settings-compact-button')) as HTMLButtonElement;
+		expect(compact.disabled).toBe(true);
+		const line = await findByTestId('settings-compact-eligible');
+		expect(line.textContent).toBe('Nothing older than 30 days to compact.');
+		const reclaim = (await findByTestId('settings-reclaim-button')) as HTMLButtonElement;
+		expect(reclaim.disabled).toBe(false);
+		unmount();
+	}
+});
+
+test('the return-space button warns that each table is locked while it is rewritten', async () => {
+	const { findByTestId, findByText } = renderCard(
+		{ backend: 'external', display: 'postgres://••••:••••@h/db' },
+		{ usage: usageWith({ backend: 'external', database_bytes: null, free_bytes: 800_000_000 }) },
+	);
+	fireEvent.click(await findByTestId('settings-reclaim-button'));
+	await findByText('Return free space to disk?');
+	await findByText(/Each table is locked while it is rewritten: agent runs cannot save their logs/);
+	await findByText(/needs free disk space for a new copy of it/);
 });
 
 test('the compact button opens a confirm dialog explaining what is kept', async () => {
 	const { findByTestId, findByText } = renderCard(
 		{ backend: 'embedded', display: '/root/.hezo/pgdata' },
-		{ usage: usageWith({ reclaimable_bytes: 500_000_000, compactable_run_count: 120 }) },
+		{ usage: usageWith({ free_bytes: 500_000_000, compactable_run_count: 120 }) },
 	);
 	fireEvent.click(await findByTestId('settings-compact-button'));
 	await findByText('Compact run logs older than 30 days?');
@@ -213,6 +235,8 @@ test('the compact button opens a confirm dialog explaining what is kept', async 
 	await findByText(/full command that launched each run is kept/);
 	await findByText(/clearly marked as compacted, and status/);
 	await findByText(/permanently discarded and can.t be recovered/);
+	// The embedded backend ends a compaction with the rewrite, and says so.
+	await findByText(/Each table is locked while it is rewritten\.$/);
 });
 
 test('while a pass is running the button is disabled and progress shows', async () => {
@@ -221,17 +245,173 @@ test('while a pass is running the button is disabled and progress shows', async 
 		{
 			usage: usageWith({
 				compaction: {
+					kind: RunLogPassKind.Compact,
+					phase: RunLogPassPhase.Trimming,
 					started_at: new Date().toISOString(),
 					older_than_days: 30,
 					total: 2740,
 					processed: 1200,
-					bytes_reclaimed: 640_000_000,
+					trimmed_bytes: 640_000_000,
 				},
 			}),
 		},
 	);
 	const button = (await findByTestId('settings-compact-button')) as HTMLButtonElement;
 	expect(button.disabled).toBe(true);
+	const reclaim = (await findByTestId('settings-reclaim-button')) as HTMLButtonElement;
+	expect(reclaim.disabled).toBe(true);
 	const progress = await findByTestId('settings-compact-progress');
-	expect(progress.textContent).toContain('1,200 / 2,740 runs');
+	expect(progress.textContent).toContain('1,200 / 2,740 runs · 610.4 MB of log text trimmed');
+});
+
+test('an embedded compaction shows its closing rewrite, not a finished progress bar', async () => {
+	const { findByTestId, queryByTestId } = renderCard(
+		{ backend: 'embedded', display: '/root/.hezo/pgdata' },
+		{
+			usage: usageWith({
+				compaction: {
+					kind: RunLogPassKind.Compact,
+					phase: RunLogPassPhase.Rewriting,
+					started_at: new Date().toISOString(),
+					older_than_days: 30,
+					total: 10,
+					processed: 10,
+					trimmed_bytes: 5_000_000,
+				},
+			}),
+		},
+	);
+	const notice = await findByTestId('settings-compact-rewriting');
+	expect(notice.textContent).toBe('Returning space to disk…');
+	expect(queryByTestId('settings-compact-progress')).toBeNull();
+});
+
+test('while space is returned to disk, both buttons wait and no estimate shows', async () => {
+	const { findByTestId, queryByTestId } = renderCard(
+		{ backend: 'external', display: 'postgres://••••:••••@h/db' },
+		{
+			usage: usageWith({
+				backend: 'external',
+				database_bytes: null,
+				compaction: {
+					kind: RunLogPassKind.Reclaim,
+					phase: RunLogPassPhase.Rewriting,
+					started_at: new Date().toISOString(),
+				},
+			}),
+		},
+	);
+	const reclaim = (await findByTestId('settings-reclaim-button')) as HTMLButtonElement;
+	expect(reclaim.disabled).toBe(true);
+	expect(reclaim.textContent).toBe('Returning space to disk…');
+	const compact = (await findByTestId('settings-compact-button')) as HTMLButtonElement;
+	expect(compact.disabled).toBe(true);
+	expect(queryByTestId('settings-run-log-free')).toBeNull();
+	expect(queryByTestId('settings-run-log-last')).toBeNull();
+});
+
+// ── The last pass: trimmed text and disk space are separate figures ─────────
+
+test('an external compaction reports the text it trimmed, never disk reclaimed', async () => {
+	// The case that read as a bug: "1.9 GB reclaimed" beside an unchanged 1.9 GB.
+	const { findByTestId } = renderCard(
+		{ backend: 'external', display: 'postgres://••••:••••@h/db' },
+		{
+			usage: usageWith({
+				backend: 'external',
+				database_bytes: null,
+				run_log_bytes: 2_040_109_465,
+				last: {
+					kind: RunLogPassKind.Compact,
+					finished_at: new Date().toISOString(),
+					older_than_days: 30,
+					processed: 1206,
+					trimmed_bytes: 2_040_109_465,
+					disk_bytes_freed: null,
+					rewrite_failure: null,
+				},
+			}),
+		},
+	);
+	const last = await findByTestId('settings-run-log-last');
+	expect(last.textContent).toBe('Last compaction: 1,206 runs · 1.9 GB of log text trimmed.');
+});
+
+test('an embedded compaction reports both the trimmed text and the disk returned', async () => {
+	const { findByTestId } = renderCard(
+		{ backend: 'embedded', display: '/root/.hezo/pgdata' },
+		{
+			usage: usageWith({
+				last: {
+					kind: RunLogPassKind.Compact,
+					finished_at: new Date().toISOString(),
+					older_than_days: 30,
+					processed: 1,
+					trimmed_bytes: 2_040_109_465,
+					disk_bytes_freed: 838_860_800,
+					rewrite_failure: null,
+				},
+			}),
+		},
+	);
+	const last = await findByTestId('settings-run-log-last');
+	expect(last.textContent).toBe(
+		'Last compaction: 1 run · 1.9 GB of log text trimmed · 800.0 MB returned to disk.',
+	);
+});
+
+test('a rewrite that stopped names the table and the reason', async () => {
+	const { findByTestId } = renderCard(
+		{ backend: 'external', display: 'postgres://••••:••••@h/db' },
+		{
+			usage: usageWith({
+				backend: 'external',
+				database_bytes: null,
+				last: {
+					kind: RunLogPassKind.Reclaim,
+					finished_at: new Date().toISOString(),
+					disk_bytes_freed: 0,
+					rewrite_failure: {
+						reason: RunLogRewriteFailureReason.Busy,
+						table: 'heartbeat_run_log_chunks',
+						message: null,
+					},
+				},
+			}),
+		},
+	);
+	const last = await findByTestId('settings-run-log-last');
+	// Nothing was freed, so there is no "0 B returned" line, only the reason.
+	expect(last.textContent).toBe(
+		'Hezo could not return space to disk: the heartbeat_run_log_chunks table was in use each time it tried. Try again when fewer agents are running.',
+	);
+});
+
+test('the card renders in the instance language', async () => {
+	localStorage.setItem(
+		'locale',
+		JSON.stringify({ ...DEFAULT_LOCALE_SETTINGS, language: Language.De }),
+	);
+	try {
+		const { findByTestId } = renderCard(
+			{ backend: 'external', display: 'postgres://••••:••••@h/db' },
+			{
+				usage: usageWith({
+					backend: 'external',
+					database_bytes: null,
+					free_bytes: 1_073_741_824,
+					compactable_run_count: 0,
+				}),
+			},
+		);
+		expect((await findByTestId('settings-database-backend')).textContent).toBe('Externes Postgres');
+		expect((await findByTestId('settings-run-log-free')).textContent).toBe(
+			'Davon sind etwa 1.0 GB freier Speicher.',
+		);
+		expect((await findByTestId('settings-reclaim-button')).textContent).toBe(
+			'Speicher zurückgeben',
+		);
+	} finally {
+		localStorage.removeItem('locale');
+	}
 });

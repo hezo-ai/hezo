@@ -373,8 +373,9 @@ export interface JobManagerDeps {
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
 	/**
-	 * Storage backend, so the log-compaction drain knows whether it may VACUUM
-	 * FULL to reclaim disk (embedded only). Defaults to 'embedded' when omitted.
+	 * Storage backend, so the log-compaction drain knows whether a compaction
+	 * pass ends by rewriting the run-log tables (embedded only). Defaults to
+	 * 'embedded' when omitted.
 	 */
 	storageBackend?: StorageBackend;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
@@ -4543,10 +4544,10 @@ export class JobManager {
 	}
 
 	/**
-	 * One drain tick of run-log compaction. A no-op unless a compaction pass is
-	 * active (its marker set from the DB panel); otherwise it compacts a bounded
-	 * slice of the backlog and, once drained, reclaims space and clears the
-	 * marker. See {@link ./log-compaction}.
+	 * One drain tick of run-log maintenance. A no-op unless a pass is active (its
+	 * marker set from the DB panel); otherwise it compacts a bounded slice of the
+	 * backlog or rewrites the run-log tables, and clears the marker when the pass
+	 * is done. See {@link ./log-compaction}.
 	 */
 	private async compactRunLogs(): Promise<void> {
 		const { runLogCompactionTick } = await import('./log-compaction');
