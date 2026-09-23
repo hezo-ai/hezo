@@ -20,8 +20,10 @@ import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import {
 	acquireCredentialLock,
+	bindWorkingDir,
 	buildProviderEnv,
 	buildSubscriptionMount,
+	DEFERRED_WORKING_DIR,
 	getHostPromptPath,
 	getHostSubscriptionRoot,
 	type RunnerDeps,
@@ -2134,6 +2136,8 @@ describe('runAgent', () => {
 			// homeConfigFiles), so there is no per-run home env var and no config
 			// flag on argv. The mcp_config.json content is unit-tested on the adapter.
 			expect(capturedCmd).not.toContain('--mcp-config');
+			// A project with no repo runs in the workspace, which is then agy's workspace.
+			expect(capturedCmd[capturedCmd.indexOf('--add-dir') + 1]).toBe('/workspace');
 			expect(capturedEnv.some((e) => e.startsWith('GEMINI_CLI_HOME='))).toBe(false);
 			expect(capturedEnv.some((e) => e.startsWith('HEZO_ANTIGRAVITY_CONFIG_DIR='))).toBe(false);
 		});
@@ -3641,6 +3645,34 @@ describe('buildProviderEnv derives the subagent model from the run model', () =>
 	it('does not add a subagent model for Anthropic (no staticEnv to override)', () => {
 		const env = buildProviderEnv(AiProvider.Anthropic, cred, 'claude-opus-4-8');
 		expect(env.some((e) => e.startsWith('CLAUDE_CODE_SUBAGENT_MODEL='))).toBe(false);
+	});
+});
+
+describe('bindWorkingDir', () => {
+	it('swaps every placeholder element for the real directory and leaves the rest', () => {
+		expect(
+			bindWorkingDir(
+				['sh', '-c', 'script', 'sh', 'agy', '--add-dir', DEFERRED_WORKING_DIR, '--effort', 'high'],
+				'/worktrees/BE-1/repo',
+			),
+		).toEqual([
+			'sh',
+			'-c',
+			'script',
+			'sh',
+			'agy',
+			'--add-dir',
+			'/worktrees/BE-1/repo',
+			'--effort',
+			'high',
+		]);
+	});
+
+	it('refuses a placeholder buried inside a longer argument', () => {
+		// It would otherwise reach the CLI as a literal, nonexistent path.
+		expect(() => bindWorkingDir([`--add-dir=${DEFERRED_WORKING_DIR}`], '/workspace')).toThrow(
+			/argv element of its own/,
+		);
 	});
 });
 

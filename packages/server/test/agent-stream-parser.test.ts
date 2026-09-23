@@ -579,6 +579,121 @@ describe('agent-stream-parser', () => {
 		});
 	});
 
+	describe('antigravity 1.2.8 recorded frames', () => {
+		const frame = (o: unknown) => `${JSON.stringify(o)}\n`;
+		const step = (s: Record<string, unknown>) =>
+			frame({ event: 'step_update', step_update: { conversation_id: 'c1', ...s } });
+
+		it('names MCP calls by server and tool, renders arguments, and counts failed steps', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			const mcp = {
+				name: 'call_mcp_tool',
+				parameters: {
+					Arguments: { include_comments: true, task_id: 'BE-2' },
+					ServerName: 'hezo',
+					ToolName: 'get_task',
+				},
+			};
+			let out = '';
+			// Each call is reported ACTIVE, then DONE or ERROR; only the end renders.
+			out += parser.onStdout(
+				step({
+					step_index: 2,
+					state: 'ACTIVE',
+					step_type: 'tool',
+					tool_name: 'call_mcp_tool',
+					tool_info: mcp,
+				}),
+			);
+			out += parser.onStdout(
+				step({
+					step_index: 2,
+					state: 'DONE',
+					step_type: 'tool',
+					tool_name: 'call_mcp_tool',
+					tool_info: { ...mcp, output: '[{"slug":"demo","name":"Demo"}]' },
+				}),
+			);
+			out += parser.onStdout(
+				step({
+					step_index: 6,
+					state: 'DONE',
+					step_type: 'tool',
+					tool_name: 'run_command',
+					tool_info: {
+						name: 'run_command',
+						parameters: { CommandLine: 'ls /workspace' },
+						output: 'a.txt\n',
+					},
+				}),
+			);
+			out += parser.onStdout(
+				step({
+					step_index: 10,
+					state: 'ERROR',
+					step_type: 'tool',
+					tool_name: 'view_file',
+					tool_info: {
+						name: 'view_file',
+						parameters: { AbsolutePath: '/workspace/missing.txt' },
+						error: { type: 'TOOL_ERROR', message: 'no such file or directory' },
+					},
+				}),
+			);
+			expect(out).toBe(
+				[
+					'[tool] mcp__hezo__get_task(include_comments=true, task_id=BE-2)',
+					'[tool-result] [{"slug":"demo","name":"Demo"}]',
+					'[tool] run_command(CommandLine=ls /workspace)',
+					'[tool-result] a.txt',
+					'[tool] view_file(AbsolutePath=/workspace/missing.txt)',
+					'[tool-error] no such file or directory',
+					'',
+				].join('\n'),
+			);
+			expect(parser.getToolCallTotal()).toBe(3);
+		});
+
+		it('states a turn the stream missed instead of reporting no output', () => {
+			// A fast upstream answer or refusal on a large prompt: SUCCESS, no
+			// response, no usage, nothing after the prompt.
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(frame({ event: 'init', init: { model: 'gemini-3.6-flash' } }));
+			parser.onStdout(step({ step_index: 0, state: 'DONE', step_type: 'user_input' }));
+			parser.onStdout(
+				frame({
+					event: 'result',
+					result: {
+						status: 'SUCCESS',
+						response: '',
+						usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
+					},
+				}),
+			);
+			const verdict = parser.getTerminalVerdict();
+			expect(verdict?.message).toMatch(/stream missed the turn/);
+			expect(verdict?.failure).toBe(RunFailureClass.Permanent);
+		});
+
+		it('does not flag a turn that did something, even with an empty response', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(step({ step_index: 0, state: 'DONE', step_type: 'user_input' }));
+			parser.onStdout(
+				step({
+					step_index: 1,
+					state: 'DONE',
+					step_type: 'tool',
+					tool_name: 'run_command',
+					tool_info: { name: 'run_command', parameters: { CommandLine: 'true' } },
+				}),
+			);
+			parser.onStdout(
+				frame({ event: 'result', result: { status: 'SUCCESS', response: '', usage: {} } }),
+			);
+			expect(parser.getTerminalVerdict()).toBeNull();
+		});
+	});
+
 	describe('antigravity', () => {
 		const init = (model: string) => `${JSON.stringify({ event: 'init', init: { model } })}\n`;
 		const result = (r: Record<string, unknown>) =>

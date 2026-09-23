@@ -2122,7 +2122,9 @@ cover the rest of the run:
   did not: Grok's calls arrive as `tool_call` (its parser dropped the type, and its field
   names are probed in both spellings because upstream ships two engine generations), and
   Antigravity's arrive as a `step_update` with `step_type: "tool"` - counted on the `DONE`
-  state only, since a step goes ACTIVE then DONE and counting both doubles every call. NULL
+  or `ERROR` state only, since a step goes ACTIVE then one of those and counting both doubles
+  every call. agy routes every MCP call through one `call_mcp_tool` tool, so its parser names
+  the call `mcp__<server>__<tool>` from the step's `ServerName`/`ToolName`. NULL
   still means "not instrumented" and stays distinct from a recorded zero, so a run that
   genuinely called nothing reads as that.
 
@@ -4198,6 +4200,13 @@ a backstop to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (which lifts the wait cei
 CLI versions that ignore the override. The completeness **stop-hook** (§ 6) is a separate
 gate that blocks the agent from ending its turn with unfinished work.
 
+**A turn agy's stream missed fails the run.** When the upstream answers or refuses faster than
+agy's print mode attaches to its own stream (measured on 1.2.8 with a Hezo-sized prompt and an
+instant upstream, most often a rejected credential), the `result` is SUCCESS with no response,
+zero usage and no step after the prompt. The parser turns that shape into a permanent
+`unknown`-family verdict that says so, rather than letting it read as a clean run that did
+nothing; whether the provider answered or refused is not knowable from the stream.
+
 **Sessions & recovery.** `agent_task_sessions` persists per-task session state; each
 heartbeat spawns a fresh subprocess and injects handoff markdown from the prior session,
 with compaction policies rotating on token/run/age thresholds. The orphan detector recovers
@@ -4546,10 +4555,15 @@ absent for most runtimes:
 | `staticEnvValue` | rewrite one provider-table env value for this run | Claude Code (subagent tracks the run model on a third-party endpoint), Kimi (model name + its context window) |
 | `credentialEnv` | env implied by the credential rather than a table | Claude Code (a local provider's per-install endpoint, plus blanking the key it would otherwise prefer) |
 | `modelArg` | the form this CLI's `--model` accepts | Claude Code, OpenCode |
-| `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home) |
+| `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home), Antigravity (`--add-dir` naming its working directory) |
 | `recoverUsage` | usage for a CLI whose stream reports none | Grok, Kimi |
 | `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Antigravity, Kimi |
 | `backgroundTerminationMarker` | the line it prints when it exits 0 having killed unfinished work | Claude Code, Antigravity |
+
+A task run builds its argv before it prepares the worktree that decides its working
+directory, so `extraArgs` gets `DEFERRED_WORKING_DIR` there, and the runner swaps it for the
+real path (`bindWorkingDir`) before it logs and runs the command. An adapter passes the
+directory as an argv element of its own; one buried in a longer element fails the run.
 
 An absent member means "nothing extra", never "unsupported" - the caller has a defined
 answer either way, so no call site needs to know which runtime it holds. The rule is
@@ -5868,8 +5882,10 @@ public skill first.
 **Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
 each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships
 unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All five runtimes
-do: Claude Code & Antigravity install their own global undici proxy dispatcher from `HTTPS_PROXY`
-(and trust `NODE_EXTRA_CA_CERTS`); OpenCode runs on bundled **Bun**, whose `fetch` reads the
+do: Claude Code installs its own global undici proxy dispatcher from `HTTPS_PROXY`
+(and trusts `NODE_EXTRA_CA_CERTS`); Antigravity is a **Go** binary, and Go's standard HTTP
+client reads the same proxy env and trusts the system store (that agy's MCP traffic takes that
+client is assumed, not measured); OpenCode runs on bundled **Bun**, whose `fetch` reads the
 proxy env natively (single-cert `NODE_EXTRA_CA_CERTS` trusted); Codex and Grok are **Rust**
 binaries that honor the proxy env by default and trust the egress CA via the system store that
 the container's start-up `update-ca-certificates` populates (Grok's own Hezo MCP call is plain

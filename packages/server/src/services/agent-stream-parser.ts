@@ -21,6 +21,7 @@ import {
 	AgentRuntime,
 	type AiProvider,
 	claudeCodeProviderUsesCustomEndpoint,
+	qualifiedMcpToolName,
 	type TokenBuckets,
 } from '@hezo/shared';
 import { RunFailureClass } from './run-failure-classification';
@@ -1432,8 +1433,24 @@ interface AntigravityEvent {
 		state?: string;
 		/** Observed values include `user_input`, `agent_response`, `tool`, `checkpoint`. */
 		step_type?: string;
-		/** Present on a `tool` step, carrying the call and its result. */
-		tool_info?: { name?: string; tool_name?: string; tool?: string; args?: unknown };
+		/** The step's tool, also at `tool_info.name`. */
+		tool_name?: string;
+		/**
+		 * Present on a `tool` step, carrying the call and its result. agy 1.2.8
+		 * puts the arguments at `parameters`, a filtered subset of what the model
+		 * sent (`run_command` keeps only `CommandLine`). An MCP call is always
+		 * `call_mcp_tool`, with the real target at `parameters.ServerName` /
+		 * `ToolName` and its arguments at `parameters.Arguments`.
+		 */
+		tool_info?: {
+			name?: string;
+			tool_name?: string;
+			tool?: string;
+			args?: unknown;
+			parameters?: Record<string, unknown>;
+			output?: string;
+			error?: { type?: string; message?: string };
+		};
 		/** The step's own usage; the terminal `result` usage is the sum over steps. */
 		usage?: AntigravityUsage;
 	};
@@ -1454,6 +1471,32 @@ function antigravityUsage(
 	});
 }
 
+/**
+ * One finished agy tool step as a `[tool]` line and its result. An MCP call is
+ * named `mcp__<server>__<tool>` like every other runtime's, rather than by agy's
+ * generic `call_mcp_tool`.
+ */
+function renderAntigravityTool(
+	step: NonNullable<AntigravityEvent['step_update']>,
+	failed: boolean,
+	tally: ToolCallTally,
+): string[] {
+	const info = step.tool_info;
+	const params = info?.parameters;
+	const server = params?.ServerName;
+	const tool = params?.ToolName;
+	const mcp = typeof server === 'string' && typeof tool === 'string';
+	const name = mcp
+		? qualifiedMcpToolName(server, tool)
+		: (info?.name ?? step.tool_name ?? info?.tool_name ?? info?.tool)?.trim() || 'tool';
+	const input = mcp ? params?.Arguments : (params ?? info?.args);
+	const body = failed ? (info?.error?.message ?? info?.output ?? '') : (info?.output ?? '');
+	return [
+		formatToolUse(name, input, tally),
+		labelledResult(failed, body.replace(/\s+/g, ' ').trim()),
+	];
+}
+
 function createAntigravityParser(runModel: string | undefined): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
@@ -1462,6 +1505,8 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 	// agy names its model in the `init` event; the run's own model is the fallback.
 	let model = runModel;
 	let sawResult = false;
+	// Whether the stream carried any step of the turn beyond the prompt itself.
+	let sawTurnStep = false;
 	// Each step's latest usage, keyed by step index, so a step reported more than
 	// once (ACTIVE, then DONE) is counted once. Their sum is the running usage
 	// until `result` replaces it with the run's own total.
@@ -1500,10 +1545,11 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 				stepUsage.set(step.step_index ?? -++unindexedSteps, step.usage);
 				usage = antigravityUsage(runningStepUsage(), model);
 			}
-			if (step?.step_type === 'tool' && (step.state ?? '').toUpperCase() === 'DONE') {
-				const info = step.tool_info;
-				const name = info?.name ?? info?.tool_name ?? info?.tool;
-				out.push(formatToolUse(name?.trim() || 'tool', info?.args, toolTally));
+			// Anything past the prompt is the turn itself: a response, a tool, an error.
+			if (step?.step_type && step.step_type !== 'user_input') sawTurnStep = true;
+			const state = (step?.state ?? '').toUpperCase();
+			if (step?.step_type === 'tool' && (state === 'DONE' || state === 'ERROR')) {
+				out.push(...renderAntigravityTool(step, state === 'ERROR', toolTally));
 			}
 			return out;
 		}
@@ -1520,6 +1566,23 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 			const isError = r.status === 'ERROR';
 			if (isError && r.error) {
 				terminalError = classifyRuntimeError(r.error) ?? terminalError;
+			}
+			// agy can miss its own turn: when the model answers (or the provider
+			// refuses) faster than print mode attaches to the stream, the result is
+			// SUCCESS with no response, no usage and no step after the prompt, and
+			// the only other trace is a warning on stderr. Measured on 1.2.8 with a
+			// Hezo-sized prompt and an instant upstream. Whether the provider
+			// answered or refused is not knowable from here, so this is stated, not
+			// classified - and never transient, since the zero usage is not proof
+			// that nothing was spent.
+			const noTokens = usage.inputTokens === 0 && usage.outputTokens === 0;
+			if (!isError && !resp && noTokens && !sawTurnStep) {
+				terminalError = {
+					message:
+						'Antigravity ended the turn without a response or an error: its stream missed the turn, so whether the provider answered or refused is unknown. This happens when the upstream answers very fast, most often a rejected credential; check the provider credential.',
+					failure: RunFailureClass.Permanent,
+					family: 'unknown',
+				};
 			}
 			out.push(
 				`[done] ${isError ? 'error' : 'success'} tokens=${usage.inputTokens}/${usage.outputTokens}`,

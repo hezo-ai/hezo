@@ -224,6 +224,13 @@ export interface RuntimeEnvContext {
 export interface RuntimeArgsContext {
 	/** The per-run home directory as it appears inside the container, if mounted. */
 	containerHomeDir: string | null;
+	/**
+	 * The absolute directory the CLI runs in, inside the container. Use it only as
+	 * a whole argv element: a task run's argv is built before its worktree is
+	 * prepared, so there it is a placeholder the runner swaps for the real path
+	 * before the exec.
+	 */
+	workingDir: string;
 }
 
 /**

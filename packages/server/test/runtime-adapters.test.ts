@@ -1411,14 +1411,29 @@ describe('runtime adapter behaviour beyond MCP', () => {
 	describe('extraArgs', () => {
 		it('points Grok at a debug file inside its own per-run home', () => {
 			expect(
-				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({ containerHomeDir: '/home/node/.grok' }),
+				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({
+					containerHomeDir: '/home/node/.grok',
+					workingDir: '/workspace',
+				}),
 			).toEqual(['--debug-file', '/home/node/.grok/debug.log']);
 		});
 
 		it('asks for no debug file when there is no host-readable home to put it in', () => {
-			expect(RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({ containerHomeDir: null })).toEqual(
-				[],
-			);
+			expect(
+				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({
+					containerHomeDir: null,
+					workingDir: '/workspace',
+				}),
+			).toEqual([]);
+		});
+
+		it('gives Antigravity its working directory as the workspace, as an absolute path', () => {
+			expect(
+				RUNTIME_ADAPTERS[AgentRuntime.Antigravity].extraArgs?.({
+					containerHomeDir: null,
+					workingDir: '/worktrees/BE-1/repo',
+				}),
+			).toEqual(['--add-dir', '/worktrees/BE-1/repo']);
 		});
 
 		it('is undeclared for runtimes that report usage on their stream', () => {

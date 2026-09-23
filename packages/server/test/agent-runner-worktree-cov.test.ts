@@ -13,7 +13,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
-import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import { DEFERRED_WORKING_DIR, type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { createBundleVault } from '../src/services/sandbox/bundle-vault';
@@ -364,6 +364,71 @@ describe('prepareWorktrees', () => {
 			expect(log).toContain('caught up hezo/WT-REUSE to origin default');
 		} finally {
 			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+		}
+	});
+
+	it('gives the runtime the worktree it runs in, decided after its argv was built', async () => {
+		// Antigravity is the runtime that takes its working directory on argv.
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'google',
+				api_key: 'AIza-worktree-key',
+				label: 'google-worktree',
+			}),
+		});
+		globalThis.fetch = originalFetch;
+		const repoId = await insertRepo('acme/todos');
+		const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
+		mkdirSync(join(clone, '.git'), { recursive: true });
+		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-AGY', 'todos');
+		mkdirSync(join(wt, '.git'), { recursive: true });
+		try {
+			let agentCmd: string[] = [];
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'git@github.com:acme/todos.git\n',
+					}),
+					when((a) => a === 'symbolic-ref --short refs/remotes/origin/HEAD', {
+						stdout: 'origin/main\n',
+					}),
+					when((a) => a.startsWith('rev-parse --verify --quiet refs/remotes/origin/main'), {
+						exitCode: 0,
+					}),
+					when((a) => a === 'symbolic-ref --quiet --short HEAD', { stdout: 'main\n' }),
+					when((a) => a === 'rev-parse --git-dir', { stdout: '.git\n' }),
+					when((a) => a === 'merge-base --is-ancestor origin/main HEAD', { exitCode: 0 }),
+					when((a) => a === 'status --porcelain', { stdout: '' }),
+					when((a) => a === 'rev-parse HEAD', { stdout: 'ccc333\n' }),
+				],
+				onAgentExec: async (config) => {
+					agentCmd = config.Cmd;
+					await markProducedOutput();
+				},
+			});
+
+			const result = await runAgent(
+				baseDeps(docker),
+				makeAgent(),
+				makeTask('WT-AGY', { runtime_type: 'antigravity' }),
+				makeProject(),
+			);
+			expect(result.success).toBe(true);
+
+			expect(agentCmd[agentCmd.indexOf('--add-dir') + 1]).toBe('/worktrees/WT-AGY/todos');
+			expect(agentCmd.some((a) => a.includes(DEFERRED_WORKING_DIR))).toBe(false);
+			const run = await db.query<{ invocation_command: string; working_dir: string }>(
+				'SELECT invocation_command, working_dir FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].working_dir).toBe('/worktrees/WT-AGY/todos');
+			expect(run.rows[0].invocation_command).toContain('--add-dir /worktrees/WT-AGY/todos');
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'google'`);
 		}
 	});
 
