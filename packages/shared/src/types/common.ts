@@ -2844,11 +2844,13 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	//
 	// Deliberately NOT removed, though a failed run made all three look guilty:
 	// the `Task*` family is the agent's own in-session checklist (what replaced
-	// TodoWrite) and persists nothing; `Skill` loads `.claude/skills/` from the
-	// project's own repo, which is a real capability; and `WebSearch` is proxied
-	// server-side so container egress does not affect it. They only misled an
-	// agent that had lost its Hezo tools entirely - a transport failure, fixed
-	// where transport failures belong.
+	// TodoWrite) and persists nothing - from 2.1.268 the CLI itself offers it only
+	// to older Claude models (Claude 3.x, Opus 4.0-4.7, Sonnet 4.0-4.6, Haiku
+	// 4.5), so a third-party or Opus 5 run has none; `Skill` loads
+	// `.claude/skills/` from the project's own repo, which is a real capability;
+	// and `WebSearch` is proxied server-side so container egress does not affect
+	// it. They only misled an agent that had lost its Hezo tools entirely - a
+	// transport failure, fixed where transport failures belong.
 	[AgentRuntime.ClaudeCode]: [
 		'--disallowedTools',
 		'WebFetch',

@@ -244,7 +244,7 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 	{
 		family: 'credit',
 		match:
-			/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|payment\s+required|billing|exceeded your current quota/,
+			/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|credit\s+balance|payment\s+required|billing|exceeded your current quota/,
 		failure: RunFailureClass.Permanent,
 		describe: (text) =>
 			`AI provider rejected the request for lack of credit/quota — top up or switch the team's provider credential. (${text})`,

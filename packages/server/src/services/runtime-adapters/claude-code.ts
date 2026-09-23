@@ -53,11 +53,22 @@ function buildStdioEntry(d: McpStdioDescriptor): ClaudeStdioEntry {
  * the MITM proxy at a host nobody is paying for. These switches turn that off for
  * every provider driving this CLI.
  *
- * `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` is the odd one out and not about noise:
- * headless `claude -p` waits a bounded time for still-running background tasks and
+ * `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` is not about noise: headless `claude -p`
+ * waits a bounded time for still-running background agents and workflows and
  * then kills them, which ends Hezo's legitimately long background work. Zero lifts
- * the ceiling, leaving the wait bounded by the run's own container lifecycle.
+ * that ceiling, leaving the wait bounded by the run's own container lifecycle. It
+ * does not cover a background shell: measured on 2.1.238 and 2.1.280, a
+ * `run_in_background` Bash command is still killed 5 s after the final turn,
+ * with no marker on stderr.
+ *
+ * `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` (from 2.1.280) raises the 2,048-char
+ * cap the CLI puts on an MCP server's `instructions` and on each tool
+ * description. Hezo's own instructions run past that cap, so their tail never
+ * reached the model; `runtime-adapters.test.ts` fails if they, or a Hezo tool
+ * description, outgrow this value.
  */
+export const CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH = 4096;
+
 const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_TELEMETRY: '1',
 	DISABLE_ERROR_REPORTING: '1',
@@ -65,6 +76,7 @@ const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
 	DISABLE_BUG_COMMAND: '1',
 	CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0',
+	CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH: String(CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH),
 } as const;
 
 const CLAUDE_CODE_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
@@ -82,8 +94,11 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		requiresHomeDir: true,
 	},
 	constantEnv: CLAUDE_CODE_QUIET_ENV,
-	// Claude Code's reasoning lever is its own prompt vocabulary rather than a flag
-	// or a variable: these words are what the CLI itself recognises.
+	// Steered by prompt vocabulary. Of these words the CLI itself recognises only
+	// `ultrathink` (measured on 2.1.238 and 2.1.280: it adds a deeper-reasoning
+	// note to the request, while the lower levels send the same request as no
+	// directive at all), so below Max the words reach the model as plain text. The
+	// CLI also has a native `--effort <low|medium|high|xhigh|max>` flag, unused here.
 	applyEffort: (effort) => ({
 		extraArgs: [],
 		extraEnv: [],

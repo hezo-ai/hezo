@@ -7318,18 +7318,23 @@ descriptions at all.
 initialization, so a second handshake would be rejected). Passing `instructions` to
 `new McpServer(...)` therefore reaches nobody - a silent no-op.
 
-**Measured: Claude Code does surface it, as a system-reminder in the message stream.** The
-field was shipped additively because nothing verified that a client passes it to the model at
-all. It does, on Claude Code **2.1.238**: a stub stdio MCP server carried a canary in
+**Measured: Claude Code does surface it, in the message stream.** The field was shipped
+additively because nothing verified that a client passes it to the model at all. It does, on
+Claude Code **2.1.238** and again on **2.1.280**: a stub stdio MCP server carried a canary in
 `instructions` and in no tool name, description or schema, and a local recorder stood in for
 the provider's `/v1/messages` so the request bodies could be read directly rather than inferred
 from a model's answer. The main-loop turn - identified by the stub's tool appearing in its tool
-list - carried the canary inside a `<system-reminder>` block headed `# MCP Server Instructions`
-then `## <server-name>`, as a `system`-role entry in the `messages` array, not in the top-level
-`system` parameter. The control run, identical but with the field omitted, produced the same
-tool surface with no header and no canary in any of its requests, so `instructions` is what
-carried it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do
-not carry it, which is expected.
+list - carried the canary in a block headed `# MCP Server Instructions` then `## <server-name>`,
+as the `system`-role entry at `messages[1]`, not in the top-level `system` parameter and with no
+`<system-reminder>` wrapper (that wrapper appears only where the Stop-hook judge replays the
+transcript). The control run, identical but with the field omitted, produced the same tool
+surface with no header and no canary in any of its requests, so `instructions` is what carried
+it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do not carry
+it, which is expected. **The CLI cuts each server's block at 2,048 characters** by default,
+and Hezo's instructions are longer, so their tail never reached the model on either version.
+From 2.1.280 `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` raises that cap, for tool descriptions as
+well; the Claude Code adapter sets it, and a test fails if Hezo's instructions or a tool
+description outgrow it.
 
 **That result does not license trimming a tool description.** Only Claude Code was measured, of
 the six runtimes in `AgentRuntime`; only a single-turn `-p` invocation was exercised, so

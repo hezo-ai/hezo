@@ -114,6 +114,26 @@ describe('classifyRuntimeError', () => {
 	});
 });
 
+describe('Claude Code credit refusal', () => {
+	it('reads "Credit balance is too low" as a credit error', () => {
+		// Recorded from Claude Code 2.1.280 against an HTTP 400 credit refusal: the
+		// assistant event carries `error: "billing_error"` and the result says only
+		// this. It matched no family, so the operator got no credit message.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				result: 'Credit balance is too low',
+				api_error_status: 400,
+			},
+		]);
+		expect(parser.getTerminalVerdict()?.family).toBe('credit');
+		expect(classifyRuntimeError('Credit balance is too low')?.family).toBe('credit');
+	});
+});
+
 describe('parseCodexRetryAt', () => {
 	const now = new Date('2026-09-17T01:29:10Z');
 

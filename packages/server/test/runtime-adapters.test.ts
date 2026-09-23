@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AgentEffort, AgentRuntime, AiProvider } from '@hezo/shared';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
+import { mcpConventionLines } from '../src/mcp/mcp-reference';
+import { registerTools } from '../src/mcp/tools';
 import {
 	applyEffortToRuntime,
 	type McpDescriptor,
@@ -9,6 +14,7 @@ import {
 	type RuntimeEnvContext,
 	validateInjection,
 } from '../src/services/runtime-adapters';
+import { CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH } from '../src/services/runtime-adapters/claude-code';
 import type { McpInjectionFile } from '../src/services/runtime-adapters/types';
 import {
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
@@ -1232,6 +1238,29 @@ describe('runtime adapter behaviour beyond MCP', () => {
 			const env = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].constantEnv ?? {};
 			expect(env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe('0');
 			expect(env.DISABLE_TELEMETRY).toBe('1');
+		});
+
+		it('lifts the MCP description cap past everything Hezo sends', () => {
+			// Claude Code cuts an MCP server's `instructions` and each tool description
+			// at its cap; Hezo's instructions outgrew the 2,048-char default and lost
+			// their tail. This fails if they, or a tool description, outgrow the raised cap.
+			const env = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].constantEnv ?? {};
+			expect(env.CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH).toBe(
+				String(CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH),
+			);
+			expect(mcpConventionLines('wire').join('\n').length).toBeLessThanOrEqual(
+				CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH,
+			);
+			const tools = registerTools(
+				new McpServer({ name: 'hezo', version: '0.0.0' }),
+				{} as unknown as Db,
+				'/tmp/hezo-mcp-description-cap',
+				{} as unknown as MasterKeyManager,
+			);
+			const over = tools
+				.filter((t) => t.description.length > CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH)
+				.map((t) => `${t.name} (${t.description.length})`);
+			expect(over).toEqual([]);
 		});
 
 		it('gives every other runtime nothing, rather than an empty ceremony', () => {
