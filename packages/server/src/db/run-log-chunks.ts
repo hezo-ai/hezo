@@ -289,9 +289,10 @@ export const LEGACY_RUN_LOG_VACUUM_KEY = 'run_log_chunks:legacy_vacuum_done';
  * metadata-only — the dead TOAST graveyard (routinely ~98% of the table's
  * on-disk size) stays until a VACUUM FULL rewrites the table. Runs once per
  * instance, marker-gated: on the embedded backend it VACUUMs `heartbeat_runs`
- * (with a plain-VACUUM fallback, same posture as reclaimRunLogSpace); on
- * external Postgres it only sets the marker — a VACUUM FULL takes an exclusive
- * lock the operator did not ask for, and autovacuum reuses the space. The
+ * (with a plain-VACUUM fallback); on external Postgres it only sets the marker
+ * — a VACUUM FULL takes an exclusive lock the operator did not ask for, and
+ * autovacuum reuses the space. There the operator returns it to disk from the
+ * Storage settings page (a `reclaim` pass, services/log-compaction.ts). The
  * marker is set only after success so a failed attempt retries next boot.
  */
 export async function runLegacyRunLogVacuumOnce(

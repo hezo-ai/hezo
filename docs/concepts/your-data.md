@@ -94,14 +94,34 @@ Every agent run keeps its full step-by-step log, and on a busy instance those lo
 the largest thing in the database. When you no longer need the blow-by-blow detail of old
 runs, open **Settings → Storage → Database** (superuser only) and use **Compact old run
 logs**. Pick a window (for example, older than 30 days) and Hezo trims each of those runs'
-logs down to the part that still matters - the agent's end-of-run summary and outcome -
-while keeping the exact command that launched the run and clearly marking the log as
-compacted. Status, timing and token counts are untouched; runs newer than the window
-are left alone.
+logs down to the part that still matters: the agent's end-of-run summary and outcome. It
+keeps the exact command that launched the run and clearly marks the log as compacted.
+Status, timing and token counts are untouched, and runs newer than the window are left
+alone.
 
-The card also shows your current **database size** and how much run logs are using, so you
-can see the effect. Compaction runs in the background a batch at a time, so the button is
-disabled while a pass is in progress. On the embedded database the pass finishes by
-reclaiming the freed space (and accumulated storage overhead) so the on-disk size actually
-drops. Trimming is permanent - the detailed output of a compacted run can't be recovered -
-so Hezo confirms before it starts.
+Compaction runs in the background a batch at a time, and the card's buttons are disabled
+while a pass is in progress. Trimming is permanent (the detailed output of a compacted run
+can't be recovered), so Hezo confirms before it starts. When the pass ends, the card says
+how much log text it trimmed.
+
+### Trimmed text is not yet free disk
+
+Deleting rows doesn't shrink the database's files. The database keeps the freed space
+inside its tables for new rows, so the **Run logs** size on the card can stay the same
+after a compaction. Only a rewrite of the tables gives that space back to the disk.
+
+On the embedded database, every compaction ends with that rewrite, so the on-disk size
+drops by itself. On an external Postgres, Hezo doesn't rewrite on its own. Postgres reuses
+the freed space for new logs, so the size stops growing for a while.
+
+The card shows an estimate of how much of the run-log size is free space. To give it back
+to the disk, use **Return free space to disk**. Each table is locked while it is rewritten:
+agent runs can't save their logs, and pages that show runs wait until it ends. On large
+tables this can take several minutes, and the database needs free disk space for a new copy of
+each table while it is rewritten, so pick a quiet time. The estimate leaves out the tables'
+indexes, so a rewrite usually returns a little more than it shows.
+
+If a table is still in use after a few tries, Hezo stops and says so, rather than wait for
+the table and hold up everything queued behind it. On an external Postgres, the database
+user Hezo connects as must own the tables. It does when Hezo created them, which is the
+normal case.

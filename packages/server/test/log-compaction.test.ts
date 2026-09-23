@@ -1,7 +1,9 @@
+import { RunLogPassKind, RunLogPassPhase, RunLogRewriteFailureReason } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { appendRunLogChunks, readRunLogText } from '../src/db/run-log-chunks';
-import { deleteSystemMeta, setSystemMeta } from '../src/lib/system-meta';
+import { waitForBackground } from '../src/lib/background';
+import { deleteSystemMeta, getSystemMeta, setSystemMeta } from '../src/lib/system-meta';
 import {
 	compactRunLogsBatch,
 	computeCompactedLog,
@@ -10,9 +12,10 @@ import {
 	getDatabaseUsage,
 	getLastCompaction,
 	LOG_COMPACTION_ACTIVE_KEY,
-	reclaimRunLogSpace,
+	LOG_COMPACTION_LAST_KEY,
 	runLogCompactionTick,
 	startCompaction,
+	startSpaceReclaim,
 } from '../src/services/log-compaction';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
@@ -117,25 +120,29 @@ describe('run-log compaction — service + routes', () => {
 		await safeClose(db);
 	});
 
+	/** A table's current file. A rewrite (`VACUUM FULL`) always gives it a new one. */
+	async function fileNode(table: string): Promise<number> {
+		const r = await db.query<{ n: number }>(
+			'SELECT pg_relation_filenode($1::regclass)::bigint AS n',
+			[table],
+		);
+		return Number(r.rows[0].n);
+	}
+
 	it('reports database usage without scanning/detoasting failing', async () => {
 		const usage = await getDatabaseUsage(db, 'embedded');
-		expect(usage.runCount).toBeGreaterThanOrEqual(5);
-		expect(usage.runLogDiskBytes).toBeGreaterThan(0);
-		expect(usage.databaseBytes).toBeGreaterThan(0);
+		expect(usage.run_count).toBeGreaterThanOrEqual(5);
+		expect(usage.run_log_bytes).toBeGreaterThan(0);
+		expect(usage.database_bytes).toBeGreaterThan(0);
+		expect((await getDatabaseUsage(db, 'external')).database_bytes).toBeNull();
 	});
 
 	it('estimates only old, large, terminal, uncompacted runs as compactable', async () => {
-		const est = await getCompactionEstimate(db, 'embedded', 30);
+		const est = await getCompactionEstimate(db, 30);
 		// Only oldBig qualifies (oldSmall is below TOAST size, recentBig is inside
 		// the window, oldRunning is non-terminal, oldCompacted is already done).
 		expect(est.runCount).toBe(1);
-		expect(est.reclaimableBytes).toBeGreaterThanOrEqual(0);
-	});
-
-	it('external backend reports zero reclaimable (no VACUUM there)', async () => {
-		const est = await getCompactionEstimate(db, 'external', 30);
-		expect(est.reclaimableBytes).toBe(0);
-		expect(await reclaimRunLogSpace(db, 'external')).toBe(0);
+		expect(est.freeBytes).toBeGreaterThanOrEqual(0);
 	});
 
 	it('compacts the old large run and leaves the others intact', async () => {
@@ -174,16 +181,124 @@ describe('run-log compaction — service + routes', () => {
 		expect(again.processed).toBe(0);
 	});
 
-	it('a full drain tick clears the active marker and records the last pass', async () => {
-		await startCompaction(db, { olderThanDays: 30, backend: 'embedded' });
+	it('an embedded compaction pass ends by rewriting both tables', async () => {
+		await seedRun('oldBigEmbedded', { ageDays: 45, log: bigLog() });
+		const files = [await fileNode('heartbeat_run_log_chunks'), await fileNode('heartbeat_runs')];
+		await startCompaction(db, { olderThanDays: 30 });
 		expect(await getActiveCompaction(db)).not.toBeNull();
 
 		await runLogCompactionTick(db, { backend: 'embedded' });
 
 		expect(await getActiveCompaction(db)).toBeNull();
-		const last = await getLastCompaction(db);
-		expect(last).not.toBeNull();
-		expect(last?.older_than_days).toBe(30);
+		const last = await getLastCompaction(db, 'embedded');
+		expect(last).toMatchObject({
+			kind: RunLogPassKind.Compact,
+			older_than_days: 30,
+			processed: 1,
+			rewrite_failure: null,
+		});
+		if (last?.kind !== RunLogPassKind.Compact) throw new Error('expected a compaction record');
+		// Two separate numbers: the text trimmed, and the disk the rewrite freed.
+		expect(last.trimmed_bytes).toBeGreaterThan(0);
+		expect(typeof last.disk_bytes_freed).toBe('number');
+		expect(await fileNode('heartbeat_run_log_chunks')).not.toBe(files[0]);
+		expect(await fileNode('heartbeat_runs')).not.toBe(files[1]);
+	});
+
+	it('an external compaction pass trims logs but leaves the tables unrewritten', async () => {
+		await seedRun('oldBigExternal', { ageDays: 45, log: bigLog() });
+		const file = await fileNode('heartbeat_run_log_chunks');
+		await startCompaction(db, { olderThanDays: 30 });
+
+		await runLogCompactionTick(db, { backend: 'external' });
+
+		expect(await getActiveCompaction(db)).toBeNull();
+		const last = await getLastCompaction(db, 'external');
+		expect(last).toMatchObject({
+			kind: RunLogPassKind.Compact,
+			processed: 1,
+			disk_bytes_freed: null,
+			rewrite_failure: null,
+		});
+		if (last?.kind !== RunLogPassKind.Compact) throw new Error('expected a compaction record');
+		expect(last.trimmed_bytes).toBeGreaterThan(0);
+		expect(await fileNode('heartbeat_run_log_chunks')).toBe(file);
+		expect((await readRunLogText(db, runIds.oldBigExternal)).length).toBeLessThan(bigLog().length);
+	});
+
+	it('reads a marker and a last record written before reclaim passes existed', async () => {
+		await setSystemMeta(
+			db,
+			LOG_COMPACTION_ACTIVE_KEY,
+			JSON.stringify({
+				started_at: '2026-01-01T00:00:00.000Z',
+				older_than_days: 30,
+				total: 10,
+				processed: 4,
+				bytes_reclaimed: 5000,
+			}),
+		);
+		expect(await getActiveCompaction(db)).toEqual({
+			kind: RunLogPassKind.Compact,
+			phase: RunLogPassPhase.Trimming,
+			started_at: '2026-01-01T00:00:00.000Z',
+			older_than_days: 30,
+			total: 10,
+			processed: 4,
+			trimmed_bytes: 5000,
+			usage_before_rewrite: null,
+		});
+		await deleteSystemMeta(db, LOG_COMPACTION_ACTIVE_KEY);
+
+		const saved = await getSystemMeta(db, LOG_COMPACTION_LAST_KEY);
+		await setSystemMeta(
+			db,
+			LOG_COMPACTION_LAST_KEY,
+			JSON.stringify({
+				finished_at: '2026-01-02T00:00:00.000Z',
+				older_than_days: 30,
+				processed: 1206,
+				bytes_reclaimed: 2_000_000_000,
+			}),
+		);
+		// The one old number was the rewrite's disk figure on the embedded
+		// backend, and the trimmed text on external Postgres, which never rewrote.
+		expect(await getLastCompaction(db, 'embedded')).toMatchObject({
+			trimmed_bytes: null,
+			disk_bytes_freed: 2_000_000_000,
+		});
+		expect(await getLastCompaction(db, 'external')).toMatchObject({
+			trimmed_bytes: 2_000_000_000,
+			disk_bytes_freed: null,
+		});
+		if (saved) await setSystemMeta(db, LOG_COMPACTION_LAST_KEY, saved);
+	});
+
+	it('a rewrite Postgres refuses is recorded, and the pass still ends', async () => {
+		// The real database, except that every VACUUM fails the way a full disk does.
+		const refusing: Db = {
+			kind: db.kind,
+			query: (sql, params) =>
+				sql.startsWith('VACUUM')
+					? Promise.reject(new Error('could not extend file: No space left on device'))
+					: db.query(sql, params),
+			exec: (sql) => db.exec(sql),
+			transaction: (cb) => db.transaction(cb),
+			close: () => db.close(),
+		};
+		await startSpaceReclaim(db, { backend: 'embedded' });
+
+		await runLogCompactionTick(refusing, { backend: 'embedded' });
+
+		expect(await getActiveCompaction(db)).toBeNull();
+		expect(await getLastCompaction(db, 'embedded')).toMatchObject({
+			kind: RunLogPassKind.Reclaim,
+			rewrite_failure: {
+				reason: RunLogRewriteFailureReason.Failed,
+				table: 'heartbeat_run_log_chunks',
+				message: 'could not extend file: No space left on device',
+			},
+		});
 	});
 
 	it('GET run-log-usage returns the usage shape for a superuser', async () => {
@@ -194,32 +309,96 @@ describe('run-log compaction — service + routes', () => {
 		const { data } = (await res.json()) as { data: Record<string, unknown> };
 		expect(data.backend).toBe('embedded');
 		expect(typeof data.run_log_bytes).toBe('number');
-		expect(typeof data.reclaimable_bytes).toBe('number');
+		expect(typeof data.free_bytes).toBe('number');
 		expect(data.older_than_days).toBe(30);
 		expect(data.compaction).toBeNull();
 	});
 
-	it('POST compact-run-logs 409s when a pass is already active', async () => {
+	it('while a rewrite runs, run-log-usage serves the figures read before it', async () => {
+		// Reading the tables' sizes would wait for the rewrite's lock, so the
+		// snapshot stands in; it is never sent to the page itself.
+		await setSystemMeta(
+			db,
+			LOG_COMPACTION_ACTIVE_KEY,
+			JSON.stringify({
+				kind: RunLogPassKind.Reclaim,
+				phase: RunLogPassPhase.Rewriting,
+				started_at: new Date().toISOString(),
+				usage_before_rewrite: { database_bytes: 900, run_log_bytes: 700, run_count: 3 },
+			}),
+		);
+		try {
+			const res = await ctx.app.request('/api/database-info/run-log-usage', {
+				headers: authHeader(ctx.token),
+			});
+			const { data } = (await res.json()) as { data: Record<string, unknown> };
+			expect(data).toMatchObject({
+				database_bytes: 900,
+				run_log_bytes: 700,
+				run_count: 3,
+				free_bytes: 0,
+				compaction: { kind: RunLogPassKind.Reclaim, phase: RunLogPassPhase.Rewriting },
+			});
+			expect(data.compaction).not.toHaveProperty('usage_before_rewrite');
+		} finally {
+			await deleteSystemMeta(db, LOG_COMPACTION_ACTIVE_KEY);
+		}
+	});
+
+	it('POST reclaim-run-log-space rewrites both tables and records the result', async () => {
+		const files = [await fileNode('heartbeat_run_log_chunks'), await fileNode('heartbeat_runs')];
+		const res = await ctx.app.request('/api/database-info/reclaim-run-log-space', {
+			method: 'POST',
+			headers: authHeader(ctx.token),
+		});
+		expect(res.status).toBe(201);
+		const { data } = (await res.json()) as { data: Record<string, unknown> };
+		expect(data).toMatchObject({ kind: RunLogPassKind.Reclaim, phase: RunLogPassPhase.Rewriting });
+		expect(data).not.toHaveProperty('usage_before_rewrite');
+
+		// The route kicks the drain in the background; wait for it.
+		await waitForBackground();
+
+		expect(await getActiveCompaction(db)).toBeNull();
+		const last = await getLastCompaction(db, 'embedded');
+		expect(last).toMatchObject({ kind: RunLogPassKind.Reclaim, rewrite_failure: null });
+		expect(typeof last?.disk_bytes_freed).toBe('number');
+		expect(await fileNode('heartbeat_run_log_chunks')).not.toBe(files[0]);
+		expect(await fileNode('heartbeat_runs')).not.toBe(files[1]);
+	});
+
+	it('POST compact-run-logs and reclaim-run-log-space 409 while a pass is active', async () => {
 		// Seed the active marker directly so the check is deterministic (a real
 		// kicked pass drains asynchronously and would race this assertion).
 		await setSystemMeta(
 			db,
 			LOG_COMPACTION_ACTIVE_KEY,
 			JSON.stringify({
+				kind: RunLogPassKind.Compact,
+				phase: RunLogPassPhase.Trimming,
 				started_at: new Date().toISOString(),
 				older_than_days: 30,
 				total: 1,
 				processed: 0,
-				bytes_reclaimed: 0,
+				trimmed_bytes: 0,
+				usage_before_rewrite: null,
 			}),
 		);
-		const res = await ctx.app.request('/api/database-info/compact-run-logs', {
-			method: 'POST',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ older_than_days: 30 }),
-		});
-		expect(res.status).toBe(409);
-		await deleteSystemMeta(db, LOG_COMPACTION_ACTIVE_KEY);
+		try {
+			const compact = await ctx.app.request('/api/database-info/compact-run-logs', {
+				method: 'POST',
+				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ older_than_days: 30 }),
+			});
+			expect(compact.status).toBe(409);
+			const reclaim = await ctx.app.request('/api/database-info/reclaim-run-log-space', {
+				method: 'POST',
+				headers: authHeader(ctx.token),
+			});
+			expect(reclaim.status).toBe(409);
+		} finally {
+			await deleteSystemMeta(db, LOG_COMPACTION_ACTIVE_KEY);
+		}
 	});
 
 	it('POST compact-run-logs starts a pass and clamps the window', async () => {
@@ -232,6 +411,7 @@ describe('run-log compaction — service + routes', () => {
 		expect(res.status).toBe(201);
 		const { data } = (await res.json()) as { data: { older_than_days: number } };
 		expect(data.older_than_days).toBe(365);
+		await waitForBackground();
 	});
 
 	it('run-log-usage requires a superuser', async () => {
@@ -244,6 +424,11 @@ describe('run-log compaction — service + routes', () => {
 			headers: authHeader(memberToken),
 		});
 		expect(res.status).toBe(403);
+		const reclaim = await ctx.app.request('/api/database-info/reclaim-run-log-space', {
+			method: 'POST',
+			headers: authHeader(memberToken),
+		});
+		expect(reclaim.status).toBe(403);
 	});
 });
 

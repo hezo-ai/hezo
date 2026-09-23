@@ -123,6 +123,9 @@ describe('message catalogs', () => {
 		// "Budget" genuinely is the word in these five, as `nav.budget` recorded
 		// before it was reworded to "Team & Budget".
 		'budget.tab.spend': ['de', 'fr', 'it', 'nl', 'sv'],
+		// "Database" is the ordinary word in Italian and Dutch; the rest differ
+		// (Datenbank, Base de datos, Base de données, Baza danych, Databas, ...).
+		'settings.database.title': ['it', 'nl'],
 		'nav.documents': ['fr'],
 		'nav.home': ['it'],
 		'theme.system': ['de', 'sv'],

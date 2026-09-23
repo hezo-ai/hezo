@@ -159,12 +159,13 @@ only when you have a reason to.
 
 ### Run-log compaction
 
-Compaction is started by an operator from the Storage settings page; these control how it
-drains once running. Nothing here starts a pass on its own.
+Compaction, and the rewrite that returns free space to disk, are started by an operator
+from the Storage settings page; these control how a pass drains once running. Nothing here
+starts a pass on its own.
 
 | Setting | Default | Description |
 |---|---|---|
-| `logCompaction.cron` | `*/10 * * * * *` | Drain tick. Cheap when idle - it only does work while a pass is active. |
+| `logCompaction.cron` | `*/10 * * * * *` | Drain tick. Cheap when idle: it only does work while a pass is active. |
 | `logCompaction.batch` | `50` | Runs compacted per batch. |
 | `logCompaction.maxPerTick` | `500` | Runs compacted per tick before yielding to the next. |
 | `logCompaction.preservedBytes` | `12288` | Trailing bytes of each old run's log kept - the slice holding the end-of-run summary and the token/cost line. Everything before it is discarded. |

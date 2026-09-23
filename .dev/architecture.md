@@ -6824,20 +6824,43 @@ request for its duration. Each pass replaces one old, finished,
 large-enough run's chunks with a single compacted chunk (a "compacted" notice + the run's
 `invocation_command` + the end-of-run summary/`[done]` line) and stamping
 `log_compacted_at` (migration `040`, partial index `idx_runs_compaction`; eligibility
-filters on the summed `pg_column_size` of the run's chunks). When the backlog drains it
-runs `VACUUM (FULL, ANALYZE)` over both run tables on the **embedded** backend — the chunk
-table (compaction's DELETEs) and `heartbeat_runs` (the flusher's per-flush usage UPDATEs;
-PGlite has no autovacuum daemon — external Postgres is left to autovacuum) — records the
-real bytes freed in `log_compaction:last`, and clears the marker.
-`GET /api/database-info/run-log-usage` reports live sizes (`pg_database_size`,
-`pg_total_relation_size` over both tables — cheap, no detoast) plus the
-reclaimable/backlog estimate and status for the panel, embedded-only figures degrading to
-null/0 elsewhere. Deploy-time knobs: the `logCompaction` config block (`cron`, `batch`, `maxPerTick`,
+filters on the summed `pg_column_size` of the run's chunks). Trimming never shrinks a
+file: deleted chunks become free space inside the table, and only a rewrite
+(`VACUUM FULL`) returns it to the disk while holding the table's exclusive lock. So the
+pass records two separate figures in `log_compaction:last`: `trimmed_bytes` (log text
+removed, in characters before compression) and `disk_bytes_freed` (how much the files
+shrank in a rewrite, null when none ran). On the **embedded** backend a drained pass
+moves to a `rewriting` phase and rewrites both run tables — the chunk table (compaction's
+DELETEs) and `heartbeat_runs` (the flusher's per-flush usage UPDATEs) — because PGlite has
+no autovacuum daemon and the space would otherwise never even be reused. **External
+Postgres never rewrites as part of a compaction**: autovacuum makes the space reusable, and
+the lock stalls agents and run pages. There the operator starts the rewrite on its own:
+`POST /api/database-info/reclaim-run-log-space` writes a marker of kind `reclaim` that
+starts in the `rewriting` phase, drained by the same cron. The rewrite runs
+`VACUUM (FULL, ANALYZE, SKIP_LOCKED)` table by table, so it never queues for a lock (a
+queued exclusive lock makes every later reader wait behind it); a skip is only a notice,
+so success is read from the table's new `pg_relation_filenode`. A table still busy after
+five tries, one the connecting role does not own (Postgres skips that with a warning
+too), or a rewrite Postgres aborts stops the pass and lands in `last.rewrite_failure`,
+which the panel words per reason; there is no plain-`VACUUM` fallback. While a marker is in
+the `rewriting` phase, `GET /api/database-info/run-log-usage` serves the usage snapshot the
+marker took before the rewrite, since reading a locked table's size would wait out the
+whole rewrite. Otherwise it reports live sizes (`pg_database_size` embedded-only,
+`pg_total_relation_size` over both tables — cheap, no detoast) and, only when no pass is
+active, the backlog count and `free_bytes`: an estimate of the free space in both tables'
+heap and TOAST, modelled from each live row's `pg_column_size` per column (live columns
+listed from `pg_attribute`, so a dropped column's residue counts as free). The model is
+within 6% of real rewrites on Postgres 16 and PGlite, so anything under 10% of the tables
+reports as 0. Markers and last-pass records written before `kind` existed are translated
+on read (`bytes_reclaimed` was the disk figure on embedded, the trimmed text on external).
+Deploy-time knobs: the `logCompaction` config block (`cron`, `batch`, `maxPerTick`,
 `_PRESERVED_BYTES`. The trimmed detail is unrecoverable, so the UI confirms first.
 Migration `041` (which moved logs from the old `heartbeat_runs.log_text` blob into chunks
 and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-time,
 marker-gated `VACUUM (FULL, ANALYZE) heartbeat_runs` at startup
 (`runLegacyRunLogVacuumOnce`, embedded only) reclaims it on the first post-upgrade boot.
+On external Postgres the dropped column's data stays in old rows until the operator's
+first rewrite; the free-space estimate counts it.
 
 **Nightly database maintenance** (`services/db-maintenance.ts`, the `db-maintenance` cron,
 default 04:30). Two deliberately narrow jobs:

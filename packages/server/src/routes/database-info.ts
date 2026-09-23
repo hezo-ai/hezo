@@ -1,4 +1,8 @@
-import { DEFAULT_LOG_COMPACTION_RETENTION_DAYS } from '@hezo/shared';
+import {
+	type ActiveRunLogPass,
+	DEFAULT_LOG_COMPACTION_RETENTION_DAYS,
+	type RunLogUsage,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { measureSuperseded, pruneSuperseded } from '../db/superseded';
 import type { StorageInfo } from '../lib/db-info';
@@ -7,12 +11,14 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import {
+	type CompactionState,
 	clampRetentionDays,
 	getActiveCompaction,
 	getCompactionEstimate,
 	getDatabaseUsage,
 	getLastCompaction,
 	startCompaction,
+	startSpaceReclaim,
 } from '../services/log-compaction';
 
 const log = logger.child('database-info');
@@ -67,12 +73,13 @@ export function buildDatabaseInfoRoutes(info: StorageInfo, dataDir: string): Hon
 		}
 	});
 
-	// Live database-usage figures + run-log compaction status. `run_log_bytes` is
-	// the on-disk footprint of the run-logs table (main + TOAST + bloat);
-	// `database_bytes` is embedded-only. `reclaimable_bytes` / `compactable_run_count`
-	// reflect the requested window and are computed only when idle (they scan the
-	// table, so the polling path skips them). `compaction` is the active pass
-	// (also the "in progress" flag the DB panel disables its button on).
+	// Live database-usage figures + run-log maintenance status. `run_log_bytes` is
+	// the on-disk footprint of both run-log tables (main + TOAST + indexes + free
+	// space); `database_bytes` is embedded-only. `free_bytes` /
+	// `compactable_run_count` reflect the requested window and are computed only
+	// when idle (they scan the tables, so the polling path skips them).
+	// `compaction` is the active pass (also the "in progress" flag the DB panel
+	// disables its buttons on).
 	routes.get('/database-info/run-log-usage', async (c) => {
 		const denied = requireSuperuser(c);
 		if (denied) return denied;
@@ -80,52 +87,73 @@ export function buildDatabaseInfoRoutes(info: StorageInfo, dataDir: string): Hon
 		const olderThanDays = clampRetentionDays(
 			Number(c.req.query('older_than_days') ?? DEFAULT_LOG_COMPACTION_RETENTION_DAYS),
 		);
-		const [usage, compaction, last] = await Promise.all([
-			getDatabaseUsage(db, info.backend),
+		const [active, last] = await Promise.all([
 			getActiveCompaction(db),
-			getLastCompaction(db),
+			getLastCompaction(db, info.backend),
 		]);
-		// Skip the table-scanning estimate while a pass is running — the UI shows
-		// live progress then, not the reclaimable preview.
-		const estimate = compaction
-			? { runCount: 0, reclaimableBytes: 0 }
-			: await getCompactionEstimate(db, info.backend, olderThanDays);
-		return ok(c, {
+		// While a rewrite holds a run-log table's lock, reading its size would wait
+		// for the whole rewrite, so the figures read just before it are served.
+		const usage = active?.usage_before_rewrite ?? (await getDatabaseUsage(db, info.backend));
+		const estimate = active
+			? { runCount: 0, freeBytes: 0 }
+			: await getCompactionEstimate(db, olderThanDays);
+		const body: RunLogUsage = {
 			backend: info.backend,
-			database_bytes: usage.databaseBytes,
-			run_log_bytes: usage.runLogDiskBytes,
-			run_count: usage.runCount,
-			reclaimable_bytes: estimate.reclaimableBytes,
+			...usage,
+			free_bytes: estimate.freeBytes,
 			compactable_run_count: estimate.runCount,
 			older_than_days: olderThanDays,
-			compaction,
+			compaction: active ? toWirePass(active) : null,
 			last,
-		});
+		};
+		return ok(c, body);
 	});
 
 	// Start a compaction pass over runs older than the chosen window: trims their
 	// verbose logs to the meaningful tail (keeping the launch command + a
-	// compacted marker) and, once the embedded backend is drained, VACUUMs to
-	// reclaim disk (including the dead-tuple bloat, across all runs). Runs in the
-	// background a batch at a time — this returns as soon as the pass is recorded.
-	// 409 if one is already running.
+	// compacted marker) and, on the embedded backend, then rewrites the run-log
+	// tables to return the space to disk. Runs in the background a batch at a
+	// time — this returns as soon as the pass is recorded. 409 if a pass is
+	// already running.
 	routes.post('/database-info/compact-run-logs', async (c) => {
 		const denied = requireSuperuser(c);
 		if (denied) return denied;
 		const db = c.get('db');
 		if (await getActiveCompaction(db)) {
-			return err(c, 'ALREADY_RUNNING', 'A log compaction is already in progress.', 409);
+			return err(c, 'ALREADY_RUNNING', 'A run-log pass is already in progress.', 409);
 		}
 		const body = (await c.req.json().catch(() => ({}))) as { older_than_days?: unknown };
 		const olderThanDays = clampRetentionDays(
 			Number(body.older_than_days ?? DEFAULT_LOG_COMPACTION_RETENTION_DAYS),
 		);
-		const state = await startCompaction(db, { olderThanDays, backend: info.backend });
+		const state = await startCompaction(db, { olderThanDays });
 		// Start draining immediately rather than waiting for the next cron tick;
 		// guarded so it never overlaps the scheduled drain.
 		c.get('jobManager')?.kickLogCompaction();
-		return ok(c, state, 201);
+		return ok(c, toWirePass(state), 201);
+	});
+
+	// Start a pass that only rewrites the run-log tables (VACUUM FULL), returning
+	// the free space inside them to the disk. Each table is locked while it is
+	// rewritten, which is why this is its own operator action. Runs in the
+	// background; 409 if a pass is already running.
+	routes.post('/database-info/reclaim-run-log-space', async (c) => {
+		const denied = requireSuperuser(c);
+		if (denied) return denied;
+		const db = c.get('db');
+		if (await getActiveCompaction(db)) {
+			return err(c, 'ALREADY_RUNNING', 'A run-log pass is already in progress.', 409);
+		}
+		const state = await startSpaceReclaim(db, { backend: info.backend });
+		c.get('jobManager')?.kickLogCompaction();
+		return ok(c, toWirePass(state), 201);
 	});
 
 	return routes;
+}
+
+/** The active pass as the panel sees it, without the server-side usage snapshot. */
+function toWirePass(state: CompactionState): ActiveRunLogPass {
+	const { usage_before_rewrite: _, ...pass } = state;
+	return pass;
 }
