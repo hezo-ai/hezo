@@ -730,6 +730,24 @@ describe('opencode adapter', () => {
 		});
 	});
 
+	it("keys OpenRouter's own router on its native id, not with the author stripped", () => {
+		// `openrouter/auto` is a native OpenRouter id whose author is `openrouter`.
+		// Keyed `auto`, the block configured nothing and the run went upstream as `auto`.
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.OpenRouter,
+				runModel: 'openrouter/auto',
+				effort: AgentEffort.High,
+			}),
+		).toEqual({
+			openrouter: {
+				models: { 'openrouter/auto': { options: { reasoning: { effort: 'high' } } } },
+			},
+		});
+	});
+
 	it('never asks for no reasoning, even at the lowest effort', () => {
 		const provider = reasoningOf({
 			hostHomeDir: HOME,

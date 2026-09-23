@@ -4777,8 +4777,11 @@ knobs they abort and retry a silent stream rather than kill the run, so they are
 default. The retried attempt's tokens never reach the stream, and the abort prints one
 `level=ERROR ... SSE read timed out` line on stderr of a run that then succeeds. The
 same file carries the run's reasoning effort, since the CLI exposes no flag or env var for it:
-`provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model with the
-OpenCode provider prefix taken back off (`opencodeModelKey`). OpenCode merges that entry with
+`provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model as the
+provider's native id (`opencodeModelKey`; `--model` is the key plus that id). OpenRouter's own
+routes are native ids with the author `openrouter`, so `openrouter/auto`, the pinned default,
+is keyed `openrouter/auto` and passed as `--model openrouter/openrouter/auto`; an id that
+merely began with the key used to lose that author and reach OpenRouter as `auto`. OpenCode merges that entry with
 its built-in models.dev catalog, and `options` passes straight to the AI-SDK provider, so the
 value reaches OpenRouter's unified reasoning parameter. Hezo's effort ladder maps onto it 1:1
 and never emits `none`, so every OpenCode run reasons; a run that pins no model gets no block

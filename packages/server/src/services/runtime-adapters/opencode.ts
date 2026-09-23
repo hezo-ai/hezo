@@ -1,10 +1,5 @@
 import { join } from 'node:path';
-import {
-	AgentEffort,
-	OPENCODE_PROVIDER_KEY,
-	opencodeModelArg,
-	opencodeModelKey,
-} from '@hezo/shared';
+import { AgentEffort, OPENCODE_PROVIDERS, opencodeModelArg, opencodeModelKey } from '@hezo/shared';
 import type {
 	McpAdapterContext,
 	McpHttpDescriptor,
@@ -117,7 +112,7 @@ function buildRemoteServer(d: McpHttpDescriptor): OpencodeRemoteServer {
 function buildReasoningProviders(ctx: McpAdapterContext): Record<string, OpencodeProvider> | null {
 	const { provider, runModel, effort } = ctx;
 	if (!provider || !effort) return null;
-	const providerKey = OPENCODE_PROVIDER_KEY[provider];
+	const providerKey = OPENCODE_PROVIDERS[provider]?.key;
 	const model = runModel?.trim();
 	if (!providerKey || !model) return null;
 	return {

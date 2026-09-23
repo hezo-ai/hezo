@@ -2300,39 +2300,47 @@ export function isLocalAiProvider(provider: AiProvider): boolean {
 }
 
 /**
- * OpenCode addresses every model as `<providerKey>/<model>` (e.g.
- * `openrouter/anthropic/claude-sonnet-4.5`). Maps a Hezo AI provider to the
- * OpenCode provider key its models live under, so the runner can prefix a bare
- * model id before passing it to `opencode run --model`.
+ * OpenCode addresses every model as `<key>/<native id>` (e.g.
+ * `openrouter/anthropic/claude-sonnet-4.5`, and `openrouter/openrouter/auto` for
+ * OpenRouter's own router). Maps a Hezo AI provider to the OpenCode provider key
+ * its models live under, and to how many `/` a model id has in that provider's
+ * own catalog - which is what tells a native id that happens to begin with the
+ * key (`openrouter/auto`) from one a user typed already qualified
+ * (`openrouter/anthropic/claude-sonnet-4.5`).
  */
-export const OPENCODE_PROVIDER_KEY: Partial<Record<AiProvider, string>> = {
-	[AiProvider.OpenRouter]: 'openrouter',
+export const OPENCODE_PROVIDERS: Partial<
+	Record<AiProvider, { key: string; nativeIdSlashes: number }>
+> = {
+	// Every OpenRouter catalog id is `author/slug`; its own routes (`auto`,
+	// `free`, ...) have the author `openrouter`.
+	[AiProvider.OpenRouter]: { key: 'openrouter', nativeIdSlashes: 1 },
 };
 
 /**
- * Normalize a model id for `opencode run --model`. Prefixes the OpenCode
- * provider key when the stored id isn't already qualified; leaves already
- * `providerKey/…` ids untouched (the provider catalog already returns them
- * unqualified, but a user may have typed the full form).
+ * The key a model is addressed by inside an `opencode.json` `provider.<key>.models`
+ * map: the provider's native id. A stored id is native already (the provider
+ * catalog returns it that way) unless a user typed it qualified, in which case
+ * the key is taken back off. The config map wants `deepseek/deepseek-v4-pro`, and
+ * a config keyed on any other form silently configures nothing.
  */
-export function opencodeModelArg(provider: AiProvider, model: string): string {
-	const key = OPENCODE_PROVIDER_KEY[provider];
-	if (!key) return model;
-	return model.startsWith(`${key}/`) ? model : `${key}/${model}`;
+export function opencodeModelKey(provider: AiProvider, model: string): string {
+	const entry = OPENCODE_PROVIDERS[provider];
+	if (!entry) return model;
+	const prefix = `${entry.key}/`;
+	if (!model.startsWith(prefix)) return model;
+	const rest = model.slice(prefix.length);
+	return rest.split('/').length - 1 === entry.nativeIdSlashes ? rest : model;
 }
 
 /**
- * The key a model is addressed by inside an `opencode.json` `provider.<key>.models`
- * map - the same id `opencodeModelArg` qualifies, with the provider prefix taken
- * back off. The two directions live together because they are one fact read twice:
- * `--model` wants `openrouter/deepseek/deepseek-v4-pro`, the config map wants
- * `deepseek/deepseek-v4-pro`, and a config keyed on the qualified form silently
- * configures nothing.
+ * Normalize a model id for `opencode run --model`: the provider key plus the
+ * native id, always, so the two directions are inverse by construction. Skipping
+ * the prefix for an id that merely began with the key sent OpenRouter's own
+ * `openrouter/auto` - Hezo's pinned default - upstream as `auto`.
  */
-export function opencodeModelKey(provider: AiProvider, model: string): string {
-	const key = OPENCODE_PROVIDER_KEY[provider];
-	if (!key) return model;
-	return model.startsWith(`${key}/`) ? model.slice(key.length + 1) : model;
+export function opencodeModelArg(provider: AiProvider, model: string): string {
+	const entry = OPENCODE_PROVIDERS[provider];
+	return entry ? `${entry.key}/${opencodeModelKey(provider, model)}` : model;
 }
 
 /**
