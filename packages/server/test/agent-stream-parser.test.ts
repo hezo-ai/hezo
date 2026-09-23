@@ -537,6 +537,48 @@ describe('agent-stream-parser', () => {
 		});
 	});
 
+	describe('codex error events', () => {
+		// Recorded shape: Codex reports a transient failure it will retry exactly
+		// like a fatal one, as a top-level `error` event.
+		const reconnecting = {
+			type: 'error',
+			message:
+				'Reconnecting... 2/5 (stream disconnected before completion: error sending request for url)',
+		};
+		const lines = (events: unknown[]) => events.map((e) => `${JSON.stringify(e)}\n`).join('');
+
+		it('drops an error the turn then recovered from', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(
+				lines([
+					reconnecting,
+					{ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } },
+				]),
+			);
+			expect(parser.getTerminalVerdict()).toBeNull();
+		});
+
+		it('keeps the error when the turn failed without a reason of its own', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(
+				lines([
+					{
+						type: 'error',
+						message: 'Selected model is at capacity. Please try a different model.',
+					},
+					{ type: 'turn.failed', usage: {} },
+				]),
+			);
+			expect(parser.getTerminalVerdict()?.family).toBe('capacity');
+		});
+
+		it('keeps the error when the run ended before its turn resolved', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(lines([{ type: 'error', message: '401 Unauthorized' }]));
+			expect(parser.getTerminalVerdict()?.family).toBe('auth');
+		});
+	});
+
 	describe('antigravity', () => {
 		const init = (model: string) => `${JSON.stringify({ event: 'init', init: { model } })}\n`;
 		const result = (r: Record<string, unknown>) =>

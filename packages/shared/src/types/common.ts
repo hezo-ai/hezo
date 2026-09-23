@@ -2883,14 +2883,17 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  *   as `mcp__<server>__<tool>`.
  * - **Kimi Code** — per-server `enabledTools` / `disabledTools` keys in
  *   `mcp.json`, which map one-to-one onto the descriptor's own fields.
- * - **Codex / Grok** — no per-server tool filter is documented for either CLI.
- *   Emitting a guessed TOML key would risk the CLI rejecting the whole config
- *   and breaking every run on that runtime, which is a far worse failure than
- *   showing an agent a tool the proxy will refuse. Revisit if upstream adds one.
+ * - **Codex** — per-server `enabled_tools` / `disabled_tools` in
+ *   `config.toml`, matched against the raw MCP tool names. Undocumented when
+ *   this table was written, and measured on 0.149.0 and 0.156.0 since.
+ * - **Grok** — no per-server tool filter is documented. Emitting a guessed key
+ *   would risk the CLI rejecting the whole config and breaking every run on
+ *   that runtime, which is a far worse failure than showing an agent a tool the
+ *   proxy will refuse. Revisit if upstream adds one.
  */
 export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.ClaudeCode]: true,
-	[AgentRuntime.Codex]: false,
+	[AgentRuntime.Codex]: true,
 	// agy's mcp_config.json documents no per-server tool allowlist, so Hezo does
 	// not rely on one - its MCP server exposes exactly the tools it means to.
 	[AgentRuntime.Antigravity]: false,

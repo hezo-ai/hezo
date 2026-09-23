@@ -294,6 +294,27 @@ describe('codex adapter', () => {
 		).toThrow(/hostHomeDir/);
 	});
 
+	it("requires Hezo's own server, switches plugins off, and leaves connectors optional", () => {
+		// Without `required`, Codex gives a server about 1 s before the first model
+		// request, so a slow start left the run with no Hezo tools and said nothing.
+		const connector = { ...HEZO_DESCRIPTOR, name: 'linear', url: 'https://mcp.linear.app/mcp' };
+		const injection = adapter.build([HEZO_DESCRIPTOR, connector], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const toml = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`)?.contents ?? '';
+		const hezo = toml.slice(
+			toml.indexOf('[mcp_servers.hezo]'),
+			toml.indexOf('[mcp_servers.linear]'),
+		);
+		const linear = toml.slice(toml.indexOf('[mcp_servers.linear]'));
+		expect(hezo).toContain('required = true');
+		expect(linear.split('[[hooks.Stop]]')[0]).not.toContain('required');
+		// A top-level key, so it precedes every table. It stops a 98 MB plugin
+		// clone into each fresh CODEX_HOME.
+		expect(toml.indexOf('features.plugins = false')).toBeLessThan(toml.indexOf('[mcp_servers'));
+	});
+
 	it('still emits the Stop hook + judge script even with an empty descriptor list', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
 		expect(injection.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
@@ -1208,16 +1229,35 @@ describe('per-connector MCP method filtering', () => {
 		});
 	});
 
-	describe('codex and grok', () => {
-		it('pass the restriction through untouched (no documented per-server filter)', () => {
-			// Deliberate: guessing a TOML key risks the CLI rejecting the whole
-			// config. The egress proxy still enforces the allowlist for these runs.
-			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Grok]) {
-				const injection = RUNTIME_ADAPTERS[runtime].build([RESTRICTED_DESCRIPTOR], HOMES);
-				const contents = injection.files.map((f) => f.contents).join('\n');
-				expect(contents, runtime).toContain('[mcp_servers.linear]');
-				expect(contents, runtime).not.toContain('get_issue');
-			}
+	describe('codex', () => {
+		it('emits enabled_tools and disabled_tools on the server table', () => {
+			// Matched by Codex against the raw MCP tool names, as stored; deny wins.
+			const injection = RUNTIME_ADAPTERS[AgentRuntime.Codex].build(
+				[HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR],
+				HOMES,
+			);
+			const toml = injection.files.find((f) => f.hostPath.endsWith('config.toml'))?.contents ?? '';
+			const linear = toml.slice(toml.indexOf('[mcp_servers.linear]'));
+			expect(linear).toContain('enabled_tools = ["get_issue", "list_issues"]');
+			expect(linear).toContain('disabled_tools = ["save_issue", "delete_comment"]');
+			// An unrestricted server carries no filter at all.
+			const hezo = toml.slice(
+				toml.indexOf('[mcp_servers.hezo]'),
+				toml.indexOf('[mcp_servers.linear]'),
+			);
+			expect(hezo).not.toContain('enabled_tools');
+			expect(hezo).not.toContain('disabled_tools');
+		});
+	});
+
+	describe('grok', () => {
+		it('passes the restriction through untouched (no documented per-server filter)', () => {
+			// Deliberate: guessing a key risks the CLI rejecting the whole config.
+			// The egress proxy still enforces the allowlist for these runs.
+			const injection = RUNTIME_ADAPTERS[AgentRuntime.Grok].build([RESTRICTED_DESCRIPTOR], HOMES);
+			const contents = injection.files.map((f) => f.contents).join('\n');
+			expect(contents).toContain('[mcp_servers.linear]');
+			expect(contents).not.toContain('get_issue');
 		});
 	});
 

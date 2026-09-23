@@ -4520,7 +4520,8 @@ stop-hook judge — 404s on every run while the hook fails open.
 global `high`. Each runtime maps it natively: `claude_code` passes `--effort`, which it sends as
 `output_config.effort` (no `minimal`, which maps to `low`; the prompt words it used to append
 did nothing but `ultrathink`, and that left the effort on the wire unchanged); `codex` passes
-`-c model_reasoning_effort=`; `antigravity`
+`-c model_reasoning_effort=`, sent upstream unchanged (`minimal` maps to `low` and `max` to
+`xhigh`, the levels its model catalog lists); `antigravity`
 passes `--effort`, folding the five-level ladder onto the `low|medium|high` it accepts; `kimi`
 sets `KIMI_MODEL_THINKING_EFFORT` (it has no `minimal`, which maps to `low`); `opencode`
 writes `reasoning.effort` onto the run's model in its per-run `opencode.json` (see below);
@@ -5933,17 +5934,18 @@ Enforcement has two legs, split because a coding CLI's config keys can drift whe
 bumped:
 
 - **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
-  `disabledTools` (both views, since Claude Code takes a deny list while Kimi and OpenCode
-  take allowlists), and each filter-capable adapter emits its own key. Codex, Grok and
+  `disabledTools` (both views, since Claude Code takes a deny list while Kimi, OpenCode and
+  Codex take allowlists), and each filter-capable adapter emits its own key. Grok and
   Antigravity emit none. An agent never sees a tool it cannot
   call. Best-effort and degrades safely: an unrestricted connector emits a byte-identical
   config to before, and Claude Code's deny list is only as complete as the last
-  `tools/list`. **Codex and Grok emit no filter** — no per-server tool-filter key could be
-  verified, and a guessed TOML key risks the CLI rejecting the whole config and breaking
-  every run on that runtime. `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can
-  hide tools.
+  `tools/list`. **Codex** takes `enabled_tools` / `disabled_tools` per server, matched
+  against the raw MCP tool names (measured on 0.149.0 and 0.156.0; deny wins). **Grok emits
+  no filter** — no per-server tool-filter key could be verified, and a guessed key risks the
+  CLI rejecting the whole config and breaking every run on that runtime.
+  `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can hide tools.
 - **The egress proxy is the enforcement leg** — runtime-independent, and the only thing
-  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's hosted connectors
+  restricting Grok and Antigravity at all. `allocateRunProxy` resolves the run's hosted connectors
   once into a `host:port → binding` map (`loadMcpHostBindings`), whose `restriction` half is
   the allowlist to enforce; an unrestricted run has no `restriction` anywhere and takes no
   inspection path. In `forward`, a request to a

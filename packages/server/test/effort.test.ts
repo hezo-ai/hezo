@@ -83,14 +83,16 @@ describe('applyEffortToRuntime — Codex', () => {
 		expect(r.extraArgs).toEqual(['-c', 'model_reasoning_effort=high']);
 	});
 
-	it('maps max → high (Codex does not have a max level)', () => {
+	it('maps max to xhigh, the top level every model in its catalog lists', () => {
+		// Codex sends the value unchanged and does not clamp it; `max` is missing on
+		// gpt-5.5, gpt-5.4 and gpt-5.3-codex, so it would fail the turn there.
 		const r = applyEffortToRuntime(AgentRuntime.Codex, AgentEffort.Max);
-		expect(r.extraArgs).toEqual(['-c', 'model_reasoning_effort=high']);
+		expect(r.extraArgs).toEqual(['-c', 'model_reasoning_effort=xhigh']);
 	});
 
-	it('passes minimal through unchanged', () => {
+	it('maps minimal to low, since no model in its catalog lists minimal', () => {
 		const r = applyEffortToRuntime(AgentRuntime.Codex, AgentEffort.Minimal);
-		expect(r.extraArgs).toEqual(['-c', 'model_reasoning_effort=minimal']);
+		expect(r.extraArgs).toEqual(['-c', 'model_reasoning_effort=low']);
 	});
 });
 

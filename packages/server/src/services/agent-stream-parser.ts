@@ -1270,6 +1270,12 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 	let modelId: string | undefined = runModel;
 	let finalMessage: string | null = null;
 	let terminalError: RuntimeErrorVerdict | null = null;
+	// A top-level `error` event is provisional until the turn resolves. Codex
+	// reports a transient failure it is about to retry ("Reconnecting... 2/5")
+	// in exactly the shape of a fatal one, so only the turn's own end says which
+	// it was: `turn.completed` means it recovered, `turn.failed` states its own
+	// reason and falls back to this one.
+	let provisionalError: RuntimeErrorVerdict | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
@@ -1312,8 +1318,11 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 			// Reading a field the protocol defines, rather than matching on the line.
 			if (type === 'turn.failed') {
 				terminalError =
-					classifyCodexError(extractErrorMessage(event.error, event.message)) ?? terminalError;
+					classifyCodexError(extractErrorMessage(event.error, event.message)) ??
+					provisionalError ??
+					terminalError;
 			}
+			provisionalError = null;
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
 		}
@@ -1330,7 +1339,7 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
 			if (!msg) return [];
-			terminalError = classifyCodexError(msg) ?? terminalError;
+			provisionalError = classifyCodexError(msg) ?? provisionalError;
 			return [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`];
 		}
 
@@ -1339,7 +1348,8 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 
 	return createJsonlParser(renderEvent, {
 		getUsage: () => usage,
-		getTerminalVerdict: () => terminalError,
+		// A run that dies before its turn resolves keeps the last error it saw.
+		getTerminalVerdict: () => terminalError ?? provisionalError,
 		getFinalAssistantMessage: () => finalMessage,
 		tally: toolTally,
 		hasEnded: () => turns > 0,

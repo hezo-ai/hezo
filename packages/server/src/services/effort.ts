@@ -15,8 +15,9 @@
  *
  *   - `claude_code`: the `--effort <low|medium|high|max>` CLI flag. It has no
  *     `minimal`, which maps to `low`.
- *   - `codex`: the `-c model_reasoning_effort=<level>` CLI flag. Codex supports
- *     `minimal|low|medium|high`; `max` is mapped to `high`.
+ *   - `codex`: the `-c model_reasoning_effort=<level>` CLI flag, sent upstream
+ *     unchanged. Its model catalog lists no `minimal`, which maps to `low`, and
+ *     lacks `max` on the pinned models, so `max` maps to `xhigh`.
  *   - `kimi`: the `KIMI_MODEL_THINKING_EFFORT` env var. Kimi Code accepts
  *     `low|medium|high|xhigh|max`; it has no `minimal`, which maps to `low`.
  *   - `opencode`: `reasoning.effort` on the run's model in the per-run
