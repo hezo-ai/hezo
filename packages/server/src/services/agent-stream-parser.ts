@@ -21,6 +21,7 @@ import {
 	AgentRuntime,
 	type AiProvider,
 	claudeCodeProviderUsesCustomEndpoint,
+	qualifiedMcpToolName,
 	type TokenBuckets,
 } from '@hezo/shared';
 import { RunFailureClass } from './run-failure-classification';
@@ -244,14 +245,15 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 	{
 		family: 'credit',
 		match:
-			/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|payment\s+required|billing|exceeded your current quota/,
+			/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|credit\s+balance|payment\s+required|billing|exceeded your current quota/,
 		failure: RunFailureClass.Permanent,
 		describe: (text) =>
 			`AI provider rejected the request for lack of credit/quota — top up or switch the team's provider credential. (${text})`,
 	},
 	{
 		family: 'auth',
-		match: /401|authentication|unauthorized|invalid api key|invalid x-api-key|not logged in/,
+		match:
+			/401|authentication|unauthorized|invalid api key|api key not valid|invalid x-api-key|not logged in/,
 		failure: RunFailureClass.Permanent,
 		describe: (text) =>
 			`AI provider authentication failed — check the team's provider credential. (${text})`,
@@ -617,6 +619,7 @@ const CHAT_PARSER_FACTORIES: Record<
 function createClaudeChatParser(): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
+	const settled: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		const event = raw as ClaudeStreamEvent;
 		const out: AgentChatTurnEvent[] = [];
@@ -636,18 +639,14 @@ function createClaudeChatParser(): AgentChatParser {
 			return out;
 		}
 		if (event.type === 'result') {
-			const u = event.usage ?? {};
-			const regularInput = u.input_tokens ?? 0;
-			const cacheCreation = u.cache_creation_input_tokens ?? 0;
-			const cacheRead = u.cache_read_input_tokens ?? 0;
-			const output = u.output_tokens ?? 0;
+			settleClaudeResult(settled, event);
 			// Same policy as the run parser: the runtime's own dollar figure is
 			// ignored; only the token buckets are recorded.
 			usage = toRunUsage(modelId, {
-				inputTokens: regularInput,
-				cacheCreationTokens: cacheCreation,
-				cacheReadTokens: cacheRead,
-				outputTokens: output,
+				inputTokens: settled.input,
+				cacheCreationTokens: settled.cacheCreation,
+				cacheReadTokens: settled.cacheRead,
+				outputTokens: settled.output,
 			});
 		}
 		return out;
@@ -765,6 +764,28 @@ interface ClaudeStreamEvent {
 	is_error?: boolean;
 	total_cost_usd?: number;
 	usage?: ClaudeUsage;
+	/**
+	 * On `result` only: the session's usage so far, one entry per model, covering
+	 * the main loop, subagents, the Stop-hook judge and the CLI's own side calls.
+	 * `usage` beside it covers only this turn's main-loop calls.
+	 */
+	modelUsage?: Record<string, ClaudeModelUsage>;
+	/** On the `task_*` system events. */
+	task_id?: string;
+	is_backgrounded?: boolean;
+	task_type?: string;
+	description?: string;
+	summary?: string;
+	status?: string;
+	patch?: { status?: string };
+}
+
+/** One model's cumulative usage in a `result` event's `modelUsage`. */
+interface ClaudeModelUsage {
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
 }
 
 /**
@@ -936,27 +957,75 @@ interface ClaudeRunTotals {
 
 const CLAUDE_RUN_TOTAL_KEYS = ['input', 'cacheCreation', 'cacheRead', 'output'] as const;
 
+function sumOf<T>(items: readonly T[], pick: (item: T) => number | undefined): number {
+	return items.reduce((sum, item) => sum + (pick(item) ?? 0), 0);
+}
+
+/**
+ * Fold one Claude Code `result` event into the tokens settled so far.
+ *
+ * `modelUsage` is the session's usage so far per model, including the Stop-hook
+ * judge, subagents and the CLI's own side calls, none of which `result.usage`
+ * (this turn's main loop only) counts - so the sum over its entries replaces the
+ * settled figure. A result without it (an error result can carry `{}`) adds its
+ * `result.usage` instead. `thinkingTokens` is already inside `outputTokens`.
+ */
+function settleClaudeResult(settled: ClaudeRunTotals, event: ClaudeStreamEvent): void {
+	const byModel = Object.values(event.modelUsage ?? {});
+	if (byModel.length > 0) {
+		settled.input = sumOf(byModel, (m) => m.inputTokens);
+		settled.cacheCreation = sumOf(byModel, (m) => m.cacheCreationInputTokens);
+		settled.cacheRead = sumOf(byModel, (m) => m.cacheReadInputTokens);
+		settled.output = sumOf(byModel, (m) => m.outputTokens);
+		return;
+	}
+	const u = event.usage ?? {};
+	settled.input += u.input_tokens ?? 0;
+	settled.cacheCreation += u.cache_creation_input_tokens ?? 0;
+	settled.cacheRead += u.cache_read_input_tokens ?? 0;
+	settled.output += u.output_tokens ?? 0;
+}
+
 function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	let terminalError: RuntimeErrorVerdict | null = null;
-	// Running token totals, accumulated from each assistant turn's `message.usage`,
-	// so a run interrupted before its terminal `result` event (e.g. a server
-	// restart mid-run) still reports the tokens it burned. Each assistant message
-	// carries that API call's usage; Claude Code's final `result.usage` is the sum
-	// across turns, so the running total converges to it and is replaced by the
-	// authoritative figure once `result` lands.
+	// The run's tokens are what the last `result` settled plus what has streamed
+	// since. A `-p` run can take more than one turn - a background Agent finishing
+	// starts another, with its own `init` and its own `result` - so a result is a
+	// checkpoint, not the end.
+	//
+	// Settled: see `settleClaudeResult`.
+	const settled: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	// Streaming: each assistant message's `message.usage` since the last result,
+	// so a run interrupted before its `result` (e.g. a server restart mid-run)
+	// still reports the tokens it burned, and the per-run ceiling sees them.
 	//
 	// Counted once per message id: the CLI emits one `assistant` event per content
 	// block, each restating the whole message's usage (127 of 182 ids repeated in
 	// one real transcript), so a sum over events counted most calls two or three
 	// times. A repeat replaces the message's earlier figure; an event with no id
 	// counts as a message of its own.
-	const run: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
-	const countedMessages = new Map<string, ClaudeRunTotals>();
-	let sawResult = false;
+	const streaming: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	let countedMessages = new Map<string, ClaudeRunTotals>();
+	// True from a `result` until the next turn starts (an `init` or an `assistant`
+	// event), so the per-run ceiling keeps applying to a later turn.
+	let betweenTurns = false;
 	let finalMessage: string | null = null;
+	// Backgrounded tasks by id. A background shell still running when `-p` exits
+	// is killed after a fixed 5 s grace that nothing lifts, and the only trace is
+	// a `task_updated` to `killed` / `task_notification` `stopped` after the
+	// result. The same pair before the result is the model stopping its own task.
+	const backgroundTasks = new Map<string, string>();
+	const recordUsage = () => {
+		usage = toRunUsage(modelId, {
+			inputTokens: settled.input + streaming.input,
+			cacheCreationTokens: settled.cacheCreation + streaming.cacheCreation,
+			cacheReadTokens: settled.cacheRead + streaming.cacheRead,
+			outputTokens: settled.output + streaming.output,
+		});
+	};
 	// Kept past the session line so the runner can persist it on the run row and
 	// `list_connectors` can answer, from inside the run, what each connector
 	// actually contributed. Stays null when no tool name parsed.
@@ -967,6 +1036,7 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		const out: string[] = [];
 
 		if (event.type === 'system' && event.subtype === 'init') {
+			betweenTurns = false;
 			const toolCount = Array.isArray(event.tools) ? event.tools.length : 0;
 			modelId = event.model ?? undefined;
 			const mcpServers = event.mcp_servers ?? [];
@@ -1025,8 +1095,9 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		}
 
 		if (event.type === 'assistant' && event.message) {
+			betweenTurns = false;
 			const mu = event.message.usage;
-			if (mu && !sawResult) {
+			if (mu) {
 				const next: ClaudeRunTotals = {
 					input: mu.input_tokens ?? 0,
 					cacheCreation: mu.cache_creation_input_tokens ?? 0,
@@ -1035,14 +1106,9 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 				};
 				const id = event.message.id;
 				const prior = id ? countedMessages.get(id) : undefined;
-				for (const key of CLAUDE_RUN_TOTAL_KEYS) run[key] += next[key] - (prior?.[key] ?? 0);
+				for (const key of CLAUDE_RUN_TOTAL_KEYS) streaming[key] += next[key] - (prior?.[key] ?? 0);
 				if (id) countedMessages.set(id, next);
-				usage = toRunUsage(modelId, {
-					inputTokens: run.input,
-					cacheCreationTokens: run.cacheCreation,
-					cacheReadTokens: run.cacheRead,
-					outputTokens: run.output,
-				});
+				recordUsage();
 			}
 			const blocks = normalizeContent(event.message.content);
 			for (const block of blocks) {
@@ -1074,35 +1140,49 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		}
 
 		if (event.type === 'result') {
-			sawResult = true;
+			betweenTurns = true;
 			// `result` is Claude Code's authoritative final assistant message on a
 			// clean turn; on an error turn it carries the failure text, so only take
 			// it as the run's final message when the result is not an error.
 			if (!event.is_error && typeof event.result === 'string' && event.result.trim()) {
 				finalMessage = event.result.trim();
 			}
-			const u = event.usage ?? {};
-			const regularInput = u.input_tokens ?? 0;
-			const cacheCreation = u.cache_creation_input_tokens ?? 0;
-			const cacheRead = u.cache_read_input_tokens ?? 0;
-			// The total keeps every input token; the buckets are recorded separately.
-			const input = regularInput + cacheCreation + cacheRead;
-			const output = u.output_tokens ?? 0;
+			settleClaudeResult(settled, event);
+			// What streamed before this result is inside the settled figure now.
+			for (const key of CLAUDE_RUN_TOTAL_KEYS) streaming[key] = 0;
+			countedMessages = new Map();
 			// The runtime's own dollar figure (total_cost_usd) is ignored: it is a
 			// client-side estimate from the CLI's rate card, which is the wrong
 			// provider's for third-party Anthropic-compatible endpoints, and usage
 			// is counted in tokens.
-			usage = toRunUsage(modelId, {
-				inputTokens: regularInput,
-				cacheCreationTokens: cacheCreation,
-				cacheReadTokens: cacheRead,
-				outputTokens: output,
-			});
+			recordUsage();
+			// The total keeps every input token; the buckets are recorded separately.
+			const input = settled.input + settled.cacheCreation + settled.cacheRead;
+			const output = settled.output;
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
 			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
 			out.push(`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output}`);
+			return out;
+		}
+
+		if (event.type === 'system' && event.task_id) {
+			if (event.subtype === 'task_started' && event.is_backgrounded) {
+				backgroundTasks.set(event.task_id, event.description ?? event.task_type ?? 'task');
+				return out;
+			}
+			const killed =
+				(event.subtype === 'task_updated' && event.patch?.status === 'killed') ||
+				(event.subtype === 'task_notification' && event.status === 'stopped');
+			const task = backgroundTasks.get(event.task_id);
+			// Reported once per task: the kill arrives as both events.
+			if (killed && task !== undefined && betweenTurns) {
+				backgroundTasks.delete(event.task_id);
+				out.push(
+					`[runner] Claude Code killed background task "${task}" when the run ended: it was still running, and the CLI waits only 5 s for a background shell. Its output after that point was lost.`,
+				);
+			}
 			return out;
 		}
 
@@ -1115,7 +1195,7 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 		getFinalAssistantMessage: () => finalMessage,
 		getMcpToolCounts: () => mcpCounts,
 		tally: toolTally,
-		hasEnded: () => sawResult,
+		hasEnded: () => betweenTurns,
 	});
 	// Untouched passthrough unless this run's endpoint makes the diagnostic
 	// unconditional, so an unknown provider never silences a real one.
@@ -1191,6 +1271,12 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 	let modelId: string | undefined = runModel;
 	let finalMessage: string | null = null;
 	let terminalError: RuntimeErrorVerdict | null = null;
+	// A top-level `error` event is provisional until the turn resolves. Codex
+	// reports a transient failure it is about to retry ("Reconnecting... 2/5")
+	// in exactly the shape of a fatal one, so only the turn's own end says which
+	// it was: `turn.completed` means it recovered, `turn.failed` states its own
+	// reason and falls back to this one.
+	let provisionalError: RuntimeErrorVerdict | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
@@ -1233,8 +1319,11 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 			// Reading a field the protocol defines, rather than matching on the line.
 			if (type === 'turn.failed') {
 				terminalError =
-					classifyCodexError(extractErrorMessage(event.error, event.message)) ?? terminalError;
+					classifyCodexError(extractErrorMessage(event.error, event.message)) ??
+					provisionalError ??
+					terminalError;
 			}
+			provisionalError = null;
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
 		}
@@ -1251,7 +1340,7 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
 			if (!msg) return [];
-			terminalError = classifyCodexError(msg) ?? terminalError;
+			provisionalError = classifyCodexError(msg) ?? provisionalError;
 			return [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`];
 		}
 
@@ -1260,7 +1349,8 @@ function createCodexParser(runModel?: string): AgentStreamParser {
 
 	return createJsonlParser(renderEvent, {
 		getUsage: () => usage,
-		getTerminalVerdict: () => terminalError,
+		// A run that dies before its turn resolves keeps the last error it saw.
+		getTerminalVerdict: () => terminalError ?? provisionalError,
 		getFinalAssistantMessage: () => finalMessage,
 		tally: toolTally,
 		hasEnded: () => turns > 0,
@@ -1343,8 +1433,24 @@ interface AntigravityEvent {
 		state?: string;
 		/** Observed values include `user_input`, `agent_response`, `tool`, `checkpoint`. */
 		step_type?: string;
-		/** Present on a `tool` step, carrying the call and its result. */
-		tool_info?: { name?: string; tool_name?: string; tool?: string; args?: unknown };
+		/** The step's tool, also at `tool_info.name`. */
+		tool_name?: string;
+		/**
+		 * Present on a `tool` step, carrying the call and its result. agy 1.2.8
+		 * puts the arguments at `parameters`, a filtered subset of what the model
+		 * sent (`run_command` keeps only `CommandLine`). An MCP call is always
+		 * `call_mcp_tool`, with the real target at `parameters.ServerName` /
+		 * `ToolName` and its arguments at `parameters.Arguments`.
+		 */
+		tool_info?: {
+			name?: string;
+			tool_name?: string;
+			tool?: string;
+			args?: unknown;
+			parameters?: Record<string, unknown>;
+			output?: string;
+			error?: { type?: string; message?: string };
+		};
 		/** The step's own usage; the terminal `result` usage is the sum over steps. */
 		usage?: AntigravityUsage;
 	};
@@ -1365,6 +1471,32 @@ function antigravityUsage(
 	});
 }
 
+/**
+ * One finished agy tool step as a `[tool]` line and its result. An MCP call is
+ * named `mcp__<server>__<tool>` like every other runtime's, rather than by agy's
+ * generic `call_mcp_tool`.
+ */
+function renderAntigravityTool(
+	step: NonNullable<AntigravityEvent['step_update']>,
+	failed: boolean,
+	tally: ToolCallTally,
+): string[] {
+	const info = step.tool_info;
+	const params = info?.parameters;
+	const server = params?.ServerName;
+	const tool = params?.ToolName;
+	const mcp = typeof server === 'string' && typeof tool === 'string';
+	const name = mcp
+		? qualifiedMcpToolName(server, tool)
+		: (info?.name ?? step.tool_name ?? info?.tool_name ?? info?.tool)?.trim() || 'tool';
+	const input = mcp ? params?.Arguments : (params ?? info?.args);
+	const body = failed ? (info?.error?.message ?? info?.output ?? '') : (info?.output ?? '');
+	return [
+		formatToolUse(name, input, tally),
+		labelledResult(failed, body.replace(/\s+/g, ' ').trim()),
+	];
+}
+
 function createAntigravityParser(runModel: string | undefined): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
@@ -1373,6 +1505,8 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 	// agy names its model in the `init` event; the run's own model is the fallback.
 	let model = runModel;
 	let sawResult = false;
+	// Whether the stream carried any step of the turn beyond the prompt itself.
+	let sawTurnStep = false;
 	// Each step's latest usage, keyed by step index, so a step reported more than
 	// once (ACTIVE, then DONE) is counted once. Their sum is the running usage
 	// until `result` replaces it with the run's own total.
@@ -1411,10 +1545,11 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 				stepUsage.set(step.step_index ?? -++unindexedSteps, step.usage);
 				usage = antigravityUsage(runningStepUsage(), model);
 			}
-			if (step?.step_type === 'tool' && (step.state ?? '').toUpperCase() === 'DONE') {
-				const info = step.tool_info;
-				const name = info?.name ?? info?.tool_name ?? info?.tool;
-				out.push(formatToolUse(name?.trim() || 'tool', info?.args, toolTally));
+			// Anything past the prompt is the turn itself: a response, a tool, an error.
+			if (step?.step_type && step.step_type !== 'user_input') sawTurnStep = true;
+			const state = (step?.state ?? '').toUpperCase();
+			if (step?.step_type === 'tool' && (state === 'DONE' || state === 'ERROR')) {
+				out.push(...renderAntigravityTool(step, state === 'ERROR', toolTally));
 			}
 			return out;
 		}
@@ -1431,6 +1566,23 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 			const isError = r.status === 'ERROR';
 			if (isError && r.error) {
 				terminalError = classifyRuntimeError(r.error) ?? terminalError;
+			}
+			// agy can miss its own turn: when the model answers (or the provider
+			// refuses) faster than print mode attaches to the stream, the result is
+			// SUCCESS with no response, no usage and no step after the prompt, and
+			// the only other trace is a warning on stderr. Measured on 1.2.8 with a
+			// Hezo-sized prompt and an instant upstream. Whether the provider
+			// answered or refused is not knowable from here, so this is stated, not
+			// classified - and never transient, since the zero usage is not proof
+			// that nothing was spent.
+			const noTokens = usage.inputTokens === 0 && usage.outputTokens === 0;
+			if (!isError && !resp && noTokens && !sawTurnStep) {
+				terminalError = {
+					message:
+						'Antigravity ended the turn without a response or an error: its stream missed the turn, so whether the provider answered or refused is unknown. This happens when the upstream answers very fast, most often a rejected credential; check the provider credential.',
+					failure: RunFailureClass.Permanent,
+					family: 'unknown',
+				};
 			}
 			out.push(
 				`[done] ${isError ? 'error' : 'success'} tokens=${usage.inputTokens}/${usage.outputTokens}`,
@@ -1469,7 +1621,8 @@ function createAntigravityParser(runModel: string | undefined): AgentStreamParse
 //               result are rendered together as a `[tool]` + `[tool-result]`
 //               pair, which is what pairs FIFO in `parse-agent-log.ts` and turns
 //               the viewer's status dot green.
-//   step_finish part.reason ('tool-calls' = more steps follow, 'stop' = last),
+//   step_finish part.reason ('tool-calls' or 'unknown' = more steps follow,
+//               'stop' = last),
 //               part.tokens.{input,output,reasoning}, part.tokens.cache.{read,write}.
 //               OpenCode emits one per step, so only the terminal one renders a
 //               `[done]` line; every step's counts are still summed.
@@ -1742,10 +1895,17 @@ function createGenericJsonlParser(fallbackModelId: string | undefined): AgentStr
 			// are already folded into `tokens` above either way. An event that names
 			// no reason (an older shape, or a `result`/`turn.completed` event) is
 			// treated as terminal, which is what it was before this existed.
+			//
+			// `unknown` loops too, from OpenCode 1.18.21 on (`session/prompt.ts`
+			// continues on `["tool-calls", "unknown"]`), and any upstream finish
+			// reason OpenCode does not recognise becomes `unknown`. Treating it as
+			// terminal ended the run mid-stream, which also switched off the per-run
+			// token ceiling for everything after it. A run that exits right after
+			// one still gets its `[done]` from `flush`.
 			const reason = part
 				? firstString(part, ['reason', 'finish_reason', 'stop_reason'])
 				: undefined;
-			if (reason === 'tool-calls') return [];
+			if (reason === 'tool-calls' || reason === 'unknown') return [];
 			if (reason !== undefined) endedWithReason = true;
 			return [doneLine(tokens ?? captured, reason === 'error' ? 'error' : 'success')];
 		}
@@ -1786,6 +1946,10 @@ function createGenericChatParser(fallbackModelId: string | undefined): AgentChat
 		if (model) modelId = model;
 		const captured = extractGenericUsage(event);
 		if (captured) tokens = addGenericUsage(tokens, captured);
+		// Reasoning is not shown. `--thinking` is in the shared stream args, so a
+		// chat turn's stream carries it too, with its text at `part.text` where a
+		// reply's sits - read as text, it was streamed into the reply bubble.
+		if (/reason|think/i.test(type)) return [];
 		const toolName = extractGenericTool(event, type);
 		if (toolName) return [{ toolActivity: toolName }];
 		const text = extractGenericText(event);
@@ -2179,8 +2343,9 @@ export function extractGrokUsageFromDebugLog(contents: string): AgentRunUsage | 
 //   {"role":"tool","tool_call_id":"…","content":"…"}
 //   {"role":"meta","type":"turn.step.retrying"|"session.resume_hint"|"system.version",…}
 //
-// Thinking content and tool progress go to STDERR, not this stream, so there is
-// no [thinking] rendering here — stderr passes through untouched.
+// Thinking never reaches this stream (2.0.2's stream-json writer drops it), and
+// tool progress goes to STDERR, so there is no [thinking] rendering here.
+// Recorded shapes: `kimi-2.0.2.stdout.jsonl` under `test/fixtures/kimi/`.
 //
 // Like Grok, the stream carries NO token usage, so getUsage() stays null and cost
 // comes from `extractKimiUsageFromSessionLog` post-run.
@@ -2212,6 +2377,9 @@ function kimiContentText(content: unknown): string {
 	if (typeof content === 'string') return content;
 	return extractToolResultText(content);
 }
+
+/** How Kimi Code prefixes a provider failure it does not retry, on stderr. */
+const KIMI_PROMPT_FAILURE_PREFIX = 'error: failed to run prompt:';
 
 function createKimiParser(): AgentStreamParser {
 	const toolTally = createToolCallTally();
@@ -2254,10 +2422,11 @@ function createKimiParser(): AgentStreamParser {
 
 		if (event.role === 'meta') {
 			if (event.type === 'turn.step.retrying') {
-				// A retry is the only place Kimi surfaces an upstream failure on stdout
-				// (402/401 land here), so it is both logged and classified. It is not
-				// necessarily fatal — the CLI retries — but if the run then fails, this
-				// is the most useful cause to report.
+				// A retry (a rate limit, an overload) is the only place Kimi surfaces an
+				// upstream failure on stdout, so it is both logged and classified. It is
+				// not necessarily fatal — the CLI retries — but if the run then fails,
+				// this is the most useful cause to report. A failure it does not retry
+				// never reaches stdout; see `onStderr` below.
 				const msg = extractErrorMessage(undefined, event.error_message ?? event.error_name);
 				if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
 				const attempt =
@@ -2276,11 +2445,40 @@ function createKimiParser(): AgentStreamParser {
 
 	// Kimi's stream states no end, so hasEnded stays false: only the moments
 	// between its last message and its exit are exposed to the ceiling.
-	return createJsonlParser(renderEvent, {
+	const base = createJsonlParser(renderEvent, {
 		getTerminalVerdict: () => terminalError,
 		getFinalAssistantMessage: () => finalAssistantMessage,
 		tally: toolTally,
 	});
+
+	// Kimi fails fast, without retrying, on a rejected credential or an empty
+	// balance (a 401, a 402, a quota 429). Nothing about it reaches stdout: the
+	// cause is one stderr line, `error: failed to run prompt: provider.<code>:
+	// <status> <message>`. Read it there; stderr itself passes through untouched.
+	let stderrLine = '';
+	const readFailure = (line: string) => {
+		const at = line.indexOf(KIMI_PROMPT_FAILURE_PREFIX);
+		if (at === -1) return;
+		const msg = line.slice(at + KIMI_PROMPT_FAILURE_PREFIX.length).trim();
+		if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
+	};
+	return {
+		...base,
+		onStderr(chunk: string): string {
+			stderrLine += chunk;
+			const lines = stderrLine.split('\n');
+			stderrLine = lines.pop() ?? '';
+			for (const line of lines) readFailure(line);
+			// Past this length the held line cannot be the one-line failure.
+			if (stderrLine.length > STDERR_FILTER_BUFFER_LIMIT) stderrLine = '';
+			return chunk;
+		},
+		flush(): string {
+			readFailure(stderrLine);
+			stderrLine = '';
+			return base.flush();
+		},
+	};
 }
 
 function createKimiChatParser(): AgentChatParser {
@@ -2326,21 +2524,29 @@ const KIMI_RECORD_ID_KEYS = ['request_id', 'requestId', 'id'] as const;
  * log records usage per API call with the buckets Hezo needs:
  * `inputOther` / `output` / `inputCacheRead` / `inputCacheCreation`.
  *
- * Two hazards this handles:
+ * What 0.30.0 and 2.0.2 actually write is one `usage.record` per request, a
+ * delta with no request id, tagged `usageScope: "turn"` or `"session"` - where
+ * "session" means a request outside a turn (a compaction, a title), still a
+ * delta. So every record is summed. Recorded shape:
+ * `test/fixtures/kimi/kimi-2.0.2.wire.jsonl`. **Never add `usageScope` to
+ * `KIMI_SCOPE_KEYS`**: that would drop the non-turn requests and undercount.
  *
- *  1. **Turn- vs session-scoped records.** Session-scoped records are *cumulative
- *     totals*, so summing them alongside per-turn records double-counts. When any
- *     scope-tagged turn record is present, only those are summed; otherwise the
- *     last session-scoped record is taken as the authoritative total. Untagged
- *     records are summed, which is the natural reading of a wire log (one record
- *     per request).
- *  2. **Duplicate records.** As with Grok's spans, a record may be echoed; entries
- *     are keyed by request id (last write wins) before summing.
+ * Two hazards are still handled for shapes not seen on those versions:
  *
- * Field spellings are probed in both camelCase and snake_case. That is deliberate
- * hedging, not indecision: the CLI ships two engine generations with duplicated
- * logging paths, and the older `kimi-cli` used the snake_case spelling. Accepting
- * both costs nothing and avoids silently losing usage on an upstream version bump.
+ *  1. **Cumulative records.** A record tagged by `KIMI_SCOPE_KEYS` as
+ *     session-scoped is read as a running total: when any scope-tagged turn
+ *     record is present only those are summed, otherwise the last session record
+ *     is taken. Untagged records are summed.
+ *  2. **Duplicate records.** A record carrying a request id is keyed by it (last
+ *     write wins) before summing.
+ *
+ * The usage record names the model by the CLI's alias for the env-registered
+ * provider (`__kimi_env_model__`), not by its id. The `llm.request` record that
+ * precedes it carries both, so the model is read from there.
+ *
+ * Field spellings are probed in both camelCase and snake_case: the older
+ * `kimi-cli` used the snake_case spelling. Accepting both costs nothing and
+ * avoids silently losing usage on an upstream version bump.
  *
  * Returns null when the log carries no usable record - the caller then records
  * no usage, failing low rather than inventing a number.
@@ -2356,6 +2562,9 @@ export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage 
 	}
 	const byId = new Map<string, Rec>();
 	let counter = 0;
+	// The model and alias named by the latest `llm.request`, to resolve the alias a
+	// usage record names instead of the model.
+	let request: { model: string; alias: unknown } | undefined;
 
 	for (const line of contents.split('\n')) {
 		const trimmed = line.trim();
@@ -2368,6 +2577,10 @@ export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage 
 		}
 		if (!parsed || typeof parsed !== 'object') continue;
 		const record = parsed as Record<string, unknown>;
+		if (record.type === 'llm.request' && typeof record.model === 'string' && record.model) {
+			request = { model: record.model, alias: record.modelAlias };
+			continue;
+		}
 
 		// The buckets live under `usage` (Kimi Code) or `token_usage` (older
 		// kimi-cli). Anything without one of those is not a usage record.
@@ -2387,12 +2600,14 @@ export function extractKimiUsageFromSessionLog(contents: string): AgentRunUsage 
 
 		const scope = pickString(record, KIMI_SCOPE_KEYS) ?? pickString(usage, KIMI_SCOPE_KEYS) ?? '';
 		const id = pickString(record, KIMI_RECORD_ID_KEYS) ?? `#${counter++}`;
+		let model = pickString(record, KIMI_MODEL_KEYS) ?? pickString(usage, KIMI_MODEL_KEYS);
+		if (request && (model === undefined || model === request.alias)) model = request.model;
 		byId.set(id, {
 			input: input ?? 0,
 			output: output ?? 0,
 			cacheRead: cacheRead ?? 0,
 			cacheCreation: cacheCreation ?? 0,
-			model: pickString(record, KIMI_MODEL_KEYS) ?? pickString(usage, KIMI_MODEL_KEYS),
+			model,
 			sessionScoped: scope.toLowerCase().includes('session'),
 		});
 	}

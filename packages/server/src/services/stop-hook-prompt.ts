@@ -1,20 +1,23 @@
 /**
  * Quality-gate Stop hook injected into every agent run.
  *
- * Claude Code's Stop hook fires when the assistant decides to end its turn;
- * returning `{"decision":"block","reason":"..."}` keeps the run looping
- * (even in headless `-p` mode) so the gate forces the agent to keep working
- * until its own judgment agrees the task is genuinely complete. Codex's
- * `Stop` hook shares this block-and-loop shape — only Claude Code supports the
+ * Claude Code's Stop hook fires when the assistant decides to end its turn; a
+ * block keeps the run looping (even in headless `-p` mode) so the gate forces
+ * the agent to keep working until its own judgment agrees the task is genuinely
+ * complete. Its `type: "prompt"` hook asks the judge whether a "stopping
+ * condition" is satisfied and forces an `{ok, reason}` answer, so `ok: false`
+ * is the block; the command-script judges answer `{"decision":"block"}`
+ * instead. Codex's `Stop` hook shares this block-and-loop shape — only Claude Code supports the
  * elegant `type: "prompt"` sub-LLM call directly; Codex supports
  * `type: "command"` only, so the judge LLM call has to be made by a small Node
  * script Hezo writes alongside the hook config (`buildCodexJudgeScript`).
  *
  * The judge runs inside the container against the team's existing
  * provider credential. No server-side LLM client. The hook is on for every
- * runtime whose turn-end hook can block-and-continue in headless mode. OpenCode,
- * Grok and Antigravity cannot (their hooks do not fire, or only warn, in headless
- * mode), so those runtimes run with no completeness judge.
+ * runtime whose turn-end hook can block-and-continue in headless mode. OpenCode
+ * and Grok cannot (their hooks do not fire, or only warn, in headless mode), and
+ * Antigravity's can from agy 1.2 but is not wired, so those three runtimes run
+ * with no completeness judge.
  * The judge model is chosen per provider so the
  * call resolves against the team's own upstream — see
  * CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code runtimes and the
@@ -115,7 +118,7 @@ export function judgeModelForProvider(
  */
 export const STOP_HOOK_RULES = `You are a quality gate. The agent is about to stop working on a Hezo task. Review its final message and decide whether the work is truly complete.
 
-Block the stop (output JSON with "decision":"block" and a "reason") if ANY of the following are true:
+Block the stop if ANY of the following are true:
 1. There are still failing tests that haven't been fixed.
 2. The agent is claiming an issue is "out of scope" / "pre-existing" / "unrelated" to avoid fixing it.
 3. The agent says it will "leave that for later" / "the user can fix that manually" / "as a follow-up" without either (a) doing the work in this turn, (b) creating a SUB-TASK via the create_task MCP tool with parent_task_id set to the current task, (c) posting a comment on the current task that describes the deferred work concretely AND leaving the task in a non-terminal status (no set_task_status call to done/cancelled in this turn — the heartbeat will re-pick the task up and the agent will see its own comment), or (d) filing the deferred work as a SEPARATE task whose blocked_by_task_ids points at the specific unfinished task it is gated on — valid only when the remaining work genuinely cannot proceed until that other task lands AND is not part of THIS task's own deliverable (e.g. this task's plan/content is finished, but launch execution needs another task's not-yet-built feature). In case (d) marking the current task terminal is fine: the dependency edge keeps the work tracked and the cascade auto-wakes the follow-up's assignee when the blocker resolves. A new TOP-LEVEL task with NO such blocker edge, OR closing the current task while deferring work that has no gating dependency, is still NOT an acceptable deferral — that would let the deferred work disappear from this task's lifecycle. CRITICAL: options (b) and (d) are NOT available for work that is part of THIS task's own deliverable — a defect, gap, omission, or rework discovered in the very thing this task is producing (a bug in code this task wrote, a failing check on this task's work, a review finding on it, an adjacent issue noticed while editing it). That is this task's own remaining work, not separable follow-up: it must be resolved by (a) doing it this turn or (c) a concrete self-comment with the task left non-terminal. Spinning it into a sub-task or a separate task is itself a block-worthy deferral — sub-tasks and peer tasks are only for genuinely separable work (a parallelisable slice, or an independent deliverable that can ship on its own), never for fixing this task's own in-flight output.
@@ -130,15 +133,25 @@ Block the stop (output JSON with "decision":"block" and a "reason") if ANY of th
 12. The run was woken by someone ASKING this agent for something on this task — a review or sign-off request, a question, a request for a decision, a status or information request, from the admin or from a teammate — and the substance of the reply exists ONLY in the final message, with no create_comment call on this task this turn. This is distinct from rule 10, which turns on the final message being SHAPED like a handoff (an active mention, a baton-passing line, a named-approver recap). Rule 12 fires on a reply that names nobody and passes no baton but is still owed to whoever asked: a review verdict ("Verdict: PASS — all 14 reports are accurate and ready"), an answer to a question, a decision, a findings summary. The asker is waiting on the thread, and a final message reaches them exactly as little as it reaches anyone else — the task simply sits in_progress until a human notices nothing happened. Signals that the run was answering an ask: the final message reads as a verdict, an answer, a review result, or a report addressed to whoever raised the task or commented on it, and the context the agent was given (a mention handoff block, an "Your original comment" reply block, or list_comments output it read) shows a request it has now completed. Doing the work is NOT the deliverable on its own — reporting it back is. Block, and tell the agent to post its reply as a create_comment on the current task; it does not need an @-mention if it is simply answering the person who asked (the reply reaches them), but the substance must land in the thread.
 13. The agent found that an integration the work depends on is BROKEN — an MCP connector or credential that is expired, revoked, unauthorised, or rejecting calls (a 401/403 from a connector, a test_connector failure, an OAuth grant that no longer refreshes, an MCP server whose tools error out) — and is stopping without escalating it to the human. Recording it as a "known gap", an "acknowledged limitation", a caveat in a report or document, a note in a progress summary, or an item in ANOTHER task's description is NOT escalation: none of those reach a person who can fix it, and the integration stays broken while every later run silently works around it or produces degraded output. This is distinct from rule 6, which covers an agent that NEEDED a credential it never had; rule 13 covers one that WAS working and has stopped working. The only acceptable resolutions are an active @admin comment on the current task naming the connector, what is failing, and what the human needs to do (typically reconnect or re-authorise it), or a request_credential call where a pasted value is what fixes it. Block unless one of those actually happened this turn. Working around the breakage for this task's own output is fine and often correct — but it does not discharge the escalation, and a run that both worked around it and stayed silent about it is exactly the failure this rule exists to catch.
 
-Allow the stop (output JSON with "decision":"allow") only if the work appears genuinely complete, or every unfinished thread is captured either as a sub-task (parent_task_id = current task), as a concrete self-comment on the current task with the task left in a non-terminal status, or — when the remaining work is a separate deliverable gated on another unfinished task — as a separate task whose blocked_by_task_ids points at that gating task (in which case the current task may be marked terminal), or this task has been gated on the task it is waiting for via add_task_blocker (so it now shows blocked and the cascade will auto-wake it), or the agent is correctly waiting on input it cannot obtain by itself. "Waiting on input it cannot obtain by itself" means input from a human or an external system — posting a comment containing the literal mention "@admin" on the current task and stopping with the task left in a non-terminal status counts (the admin's reply wakes the agent automatically), as does calling request_credential for a needed secret. Waiting on an approval or sign-off the task's flow requires — whether the admin's final approval (@admin) or a named approver's sign-off (@<approver-slug>, e.g. a lead or captain) — is likewise a valid stop when the agent has posted that approval request as a live @-mention comment on the current task this run and left the task non-terminal; the approver's reply wakes the agent. What is NOT valid is closing the task while such a required approval is still ungranted (rule 11). Filing a proposal or opening an approval that now awaits an admin decision the agent cannot make itself — e.g. a hire proposal via create_hire_proposal — and leaving the task in a non-terminal status counts the same way: the admin's resolution auto-wakes the agent exactly as an @admin reply does, so re-evaluating such a task on a later turn and calling report_no_work while the approval is still pending is a valid stop, NOT an unresolved problem (rule 5) or an unanswered outbound question (rule 7). The same wait with the task set to done or cancelled is NOT a valid stop — that is rule 7. Waiting on ANOTHER TASK's completion does NOT count as waiting on input — it is only acceptable with the add_task_blocker edge described in rule 8.
+Allow the stop only if the work appears genuinely complete, or every unfinished thread is captured either as a sub-task (parent_task_id = current task), as a concrete self-comment on the current task with the task left in a non-terminal status, or — when the remaining work is a separate deliverable gated on another unfinished task — as a separate task whose blocked_by_task_ids points at that gating task (in which case the current task may be marked terminal), or this task has been gated on the task it is waiting for via add_task_blocker (so it now shows blocked and the cascade will auto-wake it), or the agent is correctly waiting on input it cannot obtain by itself. "Waiting on input it cannot obtain by itself" means input from a human or an external system — posting a comment containing the literal mention "@admin" on the current task and stopping with the task left in a non-terminal status counts (the admin's reply wakes the agent automatically), as does calling request_credential for a needed secret. Waiting on an approval or sign-off the task's flow requires — whether the admin's final approval (@admin) or a named approver's sign-off (@<approver-slug>, e.g. a lead or captain) — is likewise a valid stop when the agent has posted that approval request as a live @-mention comment on the current task this run and left the task non-terminal; the approver's reply wakes the agent. What is NOT valid is closing the task while such a required approval is still ungranted (rule 11). Filing a proposal or opening an approval that now awaits an admin decision the agent cannot make itself — e.g. a hire proposal via create_hire_proposal — and leaving the task in a non-terminal status counts the same way: the admin's resolution auto-wakes the agent exactly as an @admin reply does, so re-evaluating such a task on a later turn and calling report_no_work while the approval is still pending is a valid stop, NOT an unresolved problem (rule 5) or an unanswered outbound question (rule 7). The same wait with the task set to done or cancelled is NOT a valid stop — that is rule 7. Waiting on ANOTHER TASK's completion does NOT count as waiting on input — it is only acceptable with the add_task_blocker edge described in rule 8.
 
 Separately, if the agent has genuinely evaluated the current task, concluded there is no actionable work this turn, and called the report_no_work MCP tool (e.g. a planning task whose sub-tasks are still open, or a thread already fully handled), that is a valid stop — but ONLY when none of the block rules 1-13 above is triggered. report_no_work is not an escape hatch: failing tests, an unfixed acknowledged problem, deferred work, an unanswered thread, an unreported reply, or an unescalated broken integration still blocks the stop regardless of it.`;
 
+/**
+ * How a command-script judge answers. The scripts read `decision` off the reply,
+ * so this is appended to the rules there. Claude Code's prompt hook forces a
+ * different shape of its own, stated in STOP_HOOK_PROMPT, which is why the
+ * rules themselves name no output format.
+ */
+export const STOP_HOOK_DECISION_FORMAT = `Answer with only a JSON object: {"decision":"block","reason":"<what the agent must do next>"} to block the stop, or {"decision":"allow"} to allow it.`;
+
 export const STOP_HOOK_PROMPT = `${STOP_HOOK_RULES}
 
-Loop breaker (check this FIRST): the "Stop-hook input" below is the raw Stop-hook input JSON. If it contains "stop_hook_active": true, this turn has ALREADY been continued once by this very hook — output {"decision":"allow"} immediately, with no further analysis. Blocking again would re-continue the same run and can loop the agent indefinitely on a verdict that is not going to change. (The command-script judges for the other runtimes short-circuit on this same flag.)
+How to answer: you are asked whether this stopping condition is satisfied. It is satisfied, {"ok": true}, when the rules above allow the stop. It is not satisfied, {"ok": false}, when any block rule applies, and then the "reason" must tell the agent what to do next.
 
-The agent's final message — the text you evaluate against the rules above — is the "last_assistant_message" field of the Stop-hook input JSON below. Evaluate THAT message. Every other field (session_id, transcript_path, cwd, permission_mode, hook_event_name) is metadata: ignore it, except "stop_hook_active" for the loop breaker above. In particular, rule 10 turns on what the "last_assistant_message" text itself says — an active @<agent-slug> or @admin mention or a baton-passing handoff there is UNDELIVERED and blocks by default. If "last_assistant_message" is absent or empty, output {"decision":"allow"}.
+Loop breaker (check this FIRST): the "Stop-hook input" below is the raw Stop-hook input JSON. If it contains "stop_hook_active": true, this turn has ALREADY been continued once by this very hook — the condition is satisfied: answer {"ok": true} immediately, with no further analysis. Blocking again would re-continue the same run and can loop the agent indefinitely on a verdict that is not going to change. (The command-script judges for the other runtimes short-circuit on this same flag.)
+
+The agent's final message — the text you evaluate against the rules above — is the "last_assistant_message" field of the Stop-hook input JSON below. Evaluate THAT message. Every other field (session_id, transcript_path, cwd, permission_mode, hook_event_name) is metadata: ignore it, except "stop_hook_active" for the loop breaker above. In particular, rule 10 turns on what the "last_assistant_message" text itself says — an active @<agent-slug> or @admin mention or a baton-passing handoff there is UNDELIVERED and blocks by default. If "last_assistant_message" is absent or empty, the condition is satisfied: answer {"ok": true}.
 
 Stop-hook input:
 $ARGUMENTS`;
@@ -311,13 +324,14 @@ interface JudgeRuntimeSpec {
 	 * Recover the final assistant message from the run's own session log when
 	 * `inputFields` yields nothing.
 	 *
-	 * Kimi Code's Stop payload carries only `hook_event_name` / `session_id` /
-	 * `cwd` — the agent's final message is not passed under any field name — so
-	 * without this the judge would have nothing to evaluate and would always fail
-	 * open. The script walks `$KIMI_CODE_HOME` (a per-run directory Hezo owns) for
-	 * the session's JSONL and takes the last assistant message. Set only for
-	 * runtimes whose payload genuinely lacks the message; every other runtime
-	 * leaves it unset and keeps the cheaper stdin-only path.
+	 * Kimi Code's Stop payload carries `hook_event_name` / `session_id` / `cwd` /
+	 * `client_type` and a `stop_hook_active` that is always false — the agent's
+	 * final message is not passed under any field name — so without this the
+	 * judge would have nothing to evaluate and would always fail open. The script
+	 * walks `$KIMI_CODE_HOME` (a per-run directory Hezo owns) for the session's
+	 * JSONL and asks `finalMessageFn` for the last assistant message in it. Set
+	 * only for runtimes whose payload genuinely lacks the message; every other
+	 * runtime leaves it unset and keeps the cheaper stdin-only path.
 	 */
 	sessionLogLookup?: {
 		/** Env var holding the runtime's data root. */
@@ -333,6 +347,14 @@ interface JudgeRuntimeSpec {
 		 * not both. No runtime uses it today; the emitted script handles both.
 		 */
 		logSuffix?: string;
+		/**
+		 * Source of `function finalMessage(records)`: given one log file's parsed
+		 * records in order, return the last assistant message they hold, or
+		 * undefined. The record shape is the runtime's own, so it lives here rather
+		 * than in the shared script body - and it is exactly what a CLI bump must
+		 * re-check, since a shape this does not recognise fails open silently.
+		 */
+		finalMessageFn: string;
 	};
 	/**
 	 * Use a marker file rather than `stop_hook_active` as the "already continued
@@ -376,6 +398,7 @@ const GUARD_BASENAME = ${JSON.stringify(guard?.basename ?? '')};
 const LOG_HOME_ENV = ${JSON.stringify(lookup?.homeEnvVar ?? '')};
 const LOG_BASENAME = ${JSON.stringify(lookup?.logBasename ?? '')};
 const LOG_SUFFIX = ${JSON.stringify(lookup?.logSuffix ?? '')};
+${lookup?.finalMessageFn ?? 'function finalMessage() { return undefined; }'}
 
 function guardPath() {
 	if (!GUARD_HOME_ENV || !GUARD_BASENAME) return null;
@@ -421,9 +444,10 @@ function matchesLog(name) {
 
 // Last assistant message from the run's own session log, for runtimes whose Stop
 // payload omits it. Prefers the file whose path contains the session id when the
-// run has more than one session dir.
+// run has more than one session dir. The record shape is read by the runtime's
+// own \`finalMessage\`, declared above.
 function messageFromSessionLog(sessionId) {
-	if (!LOG_HOME_ENV || !LOG_BASENAME) return undefined;
+	if (!LOG_HOME_ENV || !(LOG_BASENAME || LOG_SUFFIX)) return undefined;
 	const home = process.env[LOG_HOME_ENV];
 	if (!home) return undefined;
 	let files = findLogs(home, 0);
@@ -436,24 +460,14 @@ function messageFromSessionLog(sessionId) {
 	for (const f of files) {
 		let contents;
 		try { contents = fs.readFileSync(f, 'utf8'); } catch { continue; }
+		const records = [];
 		for (const line of contents.split('\\n')) {
 			const t = line.trim();
 			if (!t) continue;
-			let rec;
-			try { rec = JSON.parse(t); } catch { continue; }
-			if (!rec || rec.role !== 'assistant') continue;
-			const c = rec.content;
-			// Content is a plain string on some runtimes and a parts array on others
-			// (text / thinking / tool-call parts); take the text parts.
-			const text = typeof c === 'string'
-				? c
-				: Array.isArray(c)
-					? c.filter((part) => part && part.type === 'text' && typeof part.text === 'string')
-							.map((part) => part.text)
-							.join('')
-					: '';
-			if (text.trim()) latest = text;
+			try { records.push(JSON.parse(t)); } catch { /* a torn last line */ }
 		}
+		const text = finalMessage(records);
+		if (typeof text === 'string' && text.trim()) latest = text;
 	}
 	return latest;
 }
@@ -466,7 +480,7 @@ function messageFromSessionLog(sessionId) {
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
+const SYSTEM_PROMPT = ${JSON.stringify(`${STOP_HOOK_RULES}\n\n${STOP_HOOK_DECISION_FORMAT}`)};
 const JUDGE_MODEL = ${JSON.stringify(spec.model)};
 const MESSAGE_FIELDS = ${JSON.stringify(spec.inputFields)};
 const apiKey = ${apiKeyExpr};
@@ -570,22 +584,24 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
 		inputFields: ['last_assistant_message'],
 	}),
-	// No Antigravity (Google) entry: `agy`'s Stop hook does not fire in headless
-	// mode, so the runtime ships fail-open like Grok and OpenCode. JUDGE_SPECS is
+	// No Antigravity (Google) entry: from agy 1.2 its Stop hook fires headless, but
+	// the payload carries no final message (only a `transcriptPath`) and no judge
+	// is wired, so the runtime ships fail-open like Grok and OpenCode. JUDGE_SPECS is
 	// Partial, so a missing entry is the disabled state, not a compile error.
 	// Kimi Code `Stop` hook → Moonshot's OpenAI-compatible Chat Completions.
 	//
 	// Kimi's Stop hook is genuinely blockable (one of only three such events, with
 	// UserPromptSubmit and PreToolUse), and a blocked stop feeds the reason back as
 	// a new user message — the same continue-the-turn semantics as Codex. But its
-	// payload is thinner than any other runtime's: it carries `hook_event_name`,
-	// `session_id` and `cwd` and nothing else we need. Hence the two extras:
+	// payload is thinner than any other runtime's: past `hook_event_name`,
+	// `session_id`, `cwd` and `client_type` it carries a `stop_hook_active` that is
+	// always false. Hence the two extras:
 	//
 	//  - `inputFields` is still probed first (cheap, and future-proof if upstream
 	//    starts passing the message), but realistically `sessionLogLookup` is what
 	//    supplies the final message;
-	//  - `loopGuardFile` replaces the absent `stop_hook_active` so the one-block
-	//    ceiling is real rather than nominal.
+	//  - `loopGuardFile` stands in for `stop_hook_active`. The CLI allows one Stop
+	//    continuation per turn by itself; the marker makes it one per run.
 	//
 	// Both read `$KIMI_CODE_HOME`, which the runner points at a per-run directory
 	// (see RUNTIME_HOME_LAYOUTS), so neither can leak across runs. The API key is
@@ -604,7 +620,32 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		// which one the installed version honours.
 		blockExitCode: 2,
 		blockReasonToStderr: true,
-		sessionLogLookup: { homeEnvVar: 'KIMI_CODE_HOME', logBasename: 'wire.jsonl' },
+		sessionLogLookup: {
+			homeEnvVar: 'KIMI_CODE_HOME',
+			logBasename: 'wire.jsonl',
+			// Kimi Code writes no assistant-message record while a turn is still open:
+			// the text arrives as `content.part` loop events, one per part, each tagged
+			// with the step it belongs to. The final message is the text of the last
+			// step that had any. A subagent logs under its own `agentId`, and those
+			// records are skipped; 0.30.0 wrote no `agentId` at all. Recorded shape:
+			// `test/fixtures/kimi/kimi-2.0.2.wire.jsonl`.
+			finalMessageFn: `function finalMessage(records) {
+	let latest;
+	let step;
+	let stepText = '';
+	for (const rec of records) {
+		if (!rec || rec.type !== 'context.append_loop_event') continue;
+		if (rec.agentId !== undefined && rec.agentId !== 'main') continue;
+		const ev = rec.event;
+		if (!ev || ev.type !== 'content.part' || !ev.part) continue;
+		if (ev.part.type !== 'text' || typeof ev.part.text !== 'string') continue;
+		if (ev.stepUuid !== step) { step = ev.stepUuid; stepText = ''; }
+		stepText += ev.part.text;
+		if (stepText.trim()) latest = stepText;
+	}
+	return latest;
+}`,
+		},
 		loopGuardFile: { homeEnvVar: 'KIMI_CODE_HOME', basename: '.hezo-stop-blocked' },
 	},
 };

@@ -8,8 +8,20 @@ import {
 } from '../agent-stream-parser';
 import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import { buildCodexJudgeScript } from '../stop-hook-prompt';
-import { bearerEnvVarName, escapeTomlBasicString, renderHttpBlock, renderStdioBlock } from './toml';
-import type { McpDescriptor, McpInjection, McpInjectionFile, RuntimeAdapter } from './types';
+import {
+	bearerEnvVarName,
+	escapeTomlBasicString,
+	renderHttpBlock,
+	renderStdioBlock,
+	tomlArray,
+} from './toml';
+import {
+	HEZO_MCP_SERVER_NAME,
+	type McpDescriptor,
+	type McpInjection,
+	type McpInjectionFile,
+	type RuntimeAdapter,
+} from './types';
 
 function renderStopHookBlock(judgeScriptContainerPath: string): string {
 	return [
@@ -22,6 +34,15 @@ function renderStopHookBlock(judgeScriptContainerPath: string): string {
 }
 
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
+
+// Codex runs a hook from user config only once its hash is saved as trusted,
+// and drops an untrusted one without a word on stderr or the stream
+// (`hooks/src/engine/discovery.rs`). Hezo writes a fresh CODEX_HOME per run, so
+// its judge hook is never trusted, and until this flag no Codex task run was
+// judged. It travels with the hook: a run without the judge does not get it.
+// It also lets a hook committed in the worked repo's own `.codex/config.toml`
+// run; the agent already executes that repo's code in the same container.
+const BYPASS_HOOK_TRUST_ARG = '--dangerously-bypass-hook-trust';
 
 // Codex's background-terminal poll ceiling (`background_terminal_max_timeout`,
 // milliseconds) is the structural analog of Claude Code's
@@ -62,21 +83,55 @@ const MCP_STARTUP_TIMEOUT_SEC = 120;
 // unrecognised key is the failure mode that breaks a whole config.
 const APPS_DISABLED_KEY = 'features.apps = false';
 
-/** Append Codex's per-server timeout keys to a rendered `[mcp_servers.<name>]` table. */
-function withServerTimeouts(serverBlock: string): string {
-	return [
+// Codex syncs its curated plugins repository into every fresh CODEX_HOME: a
+// 25 MB download and about 98 MB on disk, per run, for plugins no Hezo run
+// uses. Measured on 0.149.0 and 0.156.0: with this off there is no clone and no
+// warning, and MCP, web search and the apps switch are unaffected.
+const PLUGINS_DISABLED_KEY = 'features.plugins = false';
+
+/**
+ * Codex's own keys on a rendered `[mcp_servers.<name>]` table.
+ *
+ * - The timeouts, raised so a long-running MCP tool or a slow-starting stdio
+ *   server isn't cut off.
+ * - `required` on Hezo's own server. Without it Codex gives a server about 1 s
+ *   before the first model request, whatever `startup_timeout_sec` says, so a
+ *   slow start left the run with no Hezo tools and nothing on the stream to say
+ *   so. Required, Codex waits up to `startup_timeout_sec`, and a server that
+ *   never comes up fails the run at once (exit 1, the reason on stderr) instead
+ *   of running blind. Connectors stay optional: one being down should not stop
+ *   the work.
+ * - The connector's method allowlist as `enabled_tools` / `disabled_tools`,
+ *   which Codex matches against the raw MCP tool names, as Hezo stores them. A
+ *   filtered tool is refused before the call reaches the server; deny wins over
+ *   allow; an unknown name is ignored. Absent means no filter, and the table is
+ *   byte-identical to one written before the filter existed. The egress proxy
+ *   still enforces the allowlist on its own.
+ */
+function withServerKeys(serverBlock: string, d: McpDescriptor): string {
+	const lines = [
 		serverBlock,
 		`startup_timeout_sec = ${MCP_STARTUP_TIMEOUT_SEC}`,
 		`tool_timeout_sec = ${MCP_TOOL_TIMEOUT_SEC}`,
-	].join('\n');
+	];
+	if (d.name === HEZO_MCP_SERVER_NAME) lines.push('required = true');
+	if (d.enabledTools) lines.push(`enabled_tools = ${tomlArray(d.enabledTools)}`);
+	if (d.disabledTools) lines.push(`disabled_tools = ${tomlArray(d.disabledTools)}`);
+	return lines.join('\n');
 }
 
+/**
+ * Codex sends the value as the Responses API's `reasoning.effort` unchanged and
+ * does not clamp it, so an unsupported value fails the turn. Its model catalog
+ * lists no `minimal` for any model, lists `xhigh` for every one, and lacks `max`
+ * on the models Hezo pins (gpt-5.5, gpt-5.4, gpt-5.3-codex).
+ */
 const CODEX_REASONING_EFFORT: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: 'minimal',
+	[AgentEffort.Minimal]: 'low',
 	[AgentEffort.Low]: 'low',
 	[AgentEffort.Medium]: 'medium',
 	[AgentEffort.High]: 'high',
-	[AgentEffort.Max]: 'high',
+	[AgentEffort.Max]: 'xhigh',
 };
 
 /**
@@ -181,17 +236,11 @@ export const codexAdapter: RuntimeAdapter = {
 		// file. "live" fetches current pages rather than the cached index, giving
 		// agents real-time web search.
 		const blocks: string[] = [
-			`web_search = "live"\nbackground_terminal_max_timeout = ${BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}\n${APPS_DISABLED_KEY}`,
+			`web_search = "live"\nbackground_terminal_max_timeout = ${BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}\n${APPS_DISABLED_KEY}\n${PLUGINS_DISABLED_KEY}`,
 		];
-		// A descriptor's `enabledTools` is intentionally ignored here: Codex
-		// documents no per-server tool filter, and inventing a TOML key risks the
-		// CLI rejecting the whole config and breaking every Codex run. Restricted
-		// connectors are still enforced — the egress proxy refuses a `tools/call`
-		// naming a disabled method regardless of runtime. See
-		// RUNTIME_SUPPORTS_MCP_TOOL_FILTER in @hezo/shared.
 		for (const d of descriptors) {
 			const serverBlock = d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d);
-			blocks.push(withServerTimeouts(serverBlock));
+			blocks.push(withServerKeys(serverBlock, d));
 		}
 		// Both the hook block and the script it points at are omitted together when
 		// the caller wants no completeness judge (the CEO chat) - a hook naming a
@@ -222,6 +271,6 @@ export const codexAdapter: RuntimeAdapter = {
 			});
 		}
 
-		return { cliArgs: [], envEntries, files };
+		return { cliArgs: stopJudge ? [BYPASS_HOOK_TRUST_ARG] : [], envEntries, files };
 	},
 };

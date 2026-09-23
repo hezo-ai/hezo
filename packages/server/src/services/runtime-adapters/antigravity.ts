@@ -24,8 +24,10 @@ import type {
  *   header from the `headers` field, so Hezo's descriptor maps straight onto it.
  *   Carries the per-run agent JWT, so it is scrubbed after the run.
  *
- * No completeness Stop-hook judge: `agy`'s Stop hook does not fire in headless
- * (`--print`) mode, so the runtime ships fail-open like Grok and OpenCode.
+ * No completeness Stop-hook judge is wired. From 1.2 `agy`'s Stop hook does fire
+ * in headless (`--print`) mode and honours `decision: "continue"`, but its payload
+ * carries no final message (only a `transcriptPath`), and 1.1.17 fired no hooks
+ * headless at all. So the runtime still ships fail-open like Grok and OpenCode.
  */
 interface AgyHttpEntry {
 	serverUrl: string;
@@ -79,6 +81,20 @@ export const antigravityAdapter: RuntimeAdapter = {
 		extraEnv: [],
 		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 	}),
+	// From 1.2 a headless run gives an unfinished background command 5 s once the
+	// agent is idle, then kills it and still exits 0 with SUCCESS, printing
+	// "terminating 1 background task(s) on exit" on stderr (`--print-timeout` does
+	// not extend the grace). A daemon command it leaves running prints only
+	// "leaving 1 daemon task(s) running on exit", which is not a kill.
+	backgroundTerminationMarker: /terminating [1-9]\d* background task\(s\)/,
+	// Without it agy tells the model it has no workspace and should create one
+	// under `~/.gemini/antigravity-cli/scratch`, even with a repo as its cwd. With
+	// it, the model is told the directory is its workspace, the repo's `AGENTS.md`
+	// and `GEMINI.md` reach it as rules, and the repo's `.agents/hooks.json` runs -
+	// what Claude Code and Codex do with their own project files. The path must be
+	// absolute: 1.2.8 logs and ignores a relative one, and accepts one that does not
+	// exist, both silently.
+	extraArgs: (ctx) => ['--add-dir', ctx.workingDir],
 	build(descriptors): McpInjection {
 		const homeConfigFiles: HomeConfigFile[] = [
 			{

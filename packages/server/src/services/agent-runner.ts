@@ -709,6 +709,25 @@ export interface EgressEnvDescriptor {
 	token: string | null;
 }
 
+/**
+ * Stands in for the working directory in argv built before that directory is
+ * known: a task run builds its invocation before it prepares the worktree that
+ * decides it. Always a whole argv element; {@link bindWorkingDir} swaps it.
+ */
+export const DEFERRED_WORKING_DIR = '__HEZO_RUN_WORKING_DIR__';
+
+/** Argv with {@link DEFERRED_WORKING_DIR} replaced by the run's real directory. */
+export function bindWorkingDir(argv: readonly string[], workingDir: string): string[] {
+	const bound = argv.map((a) => (a === DEFERRED_WORKING_DIR ? workingDir : a));
+	// A placeholder inside a longer element would reach the CLI as a literal path.
+	if (bound.some((a) => a.includes(DEFERRED_WORKING_DIR))) {
+		throw new Error(
+			`argv still names the working-directory placeholder inside a longer argument; an adapter must pass the working directory as an argv element of its own`,
+		);
+	}
+	return bound;
+}
+
 export interface RuntimeInvocation {
 	env: string[];
 	cmd: string[];
@@ -739,6 +758,12 @@ export interface RuntimeInvocationInput {
 	runUser: ContainerRunUser;
 	/** Container path the prompt file is written to - see RUNTIME_PROMPT_DELIVERY. */
 	promptContainerPath: string;
+	/**
+	 * The absolute directory the CLI runs in, or {@link DEFERRED_WORKING_DIR} when
+	 * it is not known yet. The caller then binds argv with {@link bindWorkingDir}
+	 * before the exec.
+	 */
+	workingDir: string;
 	/**
 	 * The run's resolved system prompt, for a runtime whose
 	 * {@link RUNTIME_SYSTEM_PROMPT_FILE} entry routes it to an instructions file
@@ -802,6 +827,7 @@ export async function buildRuntimeInvocation(
 		containerId,
 		runUser,
 		promptContainerPath,
+		workingDir,
 		systemPrompt = null,
 		effort,
 		effortApplication,
@@ -1032,10 +1058,13 @@ export async function buildRuntimeInvocation(
 			// standard proxy handling (URL userinfo → Basic auth); a runtime that
 			// somehow omitted it would 407 loudly rather than silently egressing
 			// direct (auth failure ⊂ the same fail-closed posture as a missing proxy):
-			//   • Claude Code & Gemini (Node): install their own global undici
+			//   • Claude Code (Node): installs its own global undici
 			//     ProxyAgent/EnvHttpProxyAgent from HTTPS_PROXY at startup (this then
-			//     overrides NODE_USE_ENV_PROXY for them — fine); undici sends userinfo
-			//     as Proxy-Authorization; trust NODE_EXTRA_CA_CERTS.
+			//     overrides NODE_USE_ENV_PROXY for it — fine); undici sends userinfo
+			//     as Proxy-Authorization; trusts NODE_EXTRA_CA_CERTS.
+			//   • Antigravity (Go): Go's standard HTTP client reads HTTP(S)_PROXY incl.
+			//     userinfo and trusts the system store; agy's use of it is assumed,
+			//     not measured.
 			//   • OpenCode (bundled Bun, not Node): Bun's fetch reads HTTP(S)_PROXY
 			//     natively incl. userinfo; trusts our single-cert NODE_EXTRA_CA_CERTS.
 			//   • Codex & Grok (Rust/reqwest): honor HTTP(S)_PROXY incl. userinfo by
@@ -1072,7 +1101,7 @@ export async function buildRuntimeInvocation(
 	// Whatever this CLI needs that no shared table can express - a path into its own
 	// per-run home, typically. Most runtimes contribute nothing.
 	const adapterArgs =
-		adapter.extraArgs?.({ containerHomeDir: homeMount?.containerDir ?? null }) ?? [];
+		adapter.extraArgs?.({ containerHomeDir: homeMount?.containerDir ?? null, workingDir }) ?? [];
 
 	// A 'file'-delivery CLI opens the prompt itself, so the flag's VALUE belongs in
 	// the server-built argv rather than being appended by the exec wrapper. That is
@@ -1279,6 +1308,8 @@ async function buildRunContext(
 			containerId: project.container_id,
 			runUser,
 			promptContainerPath: promptFilePath,
+			// Decided by the worktree prep that runs after this; bound before the exec.
+			workingDir: DEFERRED_WORKING_DIR,
 			systemPrompt: systemPromptToFile,
 			effort,
 			effortApplication,
@@ -2735,7 +2766,9 @@ export async function runAgent(
 			// has to go through the provider's file API. Nothing else about it changes.
 			await workspaceFiles.write(promptRelPath, context.taskPrompt);
 
-			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+			const cmd = bindWorkingDir(context.cmd, prep.workingDir);
+			const execCmd = bindWorkingDir(context.execCmd, prep.workingDir);
+			const redactedCmd = cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
 			const promptSuffix =
 				context.promptDelivery === 'arg'
 					? ` "$(cat ${context.promptFilePath})"`
@@ -2753,8 +2786,12 @@ export async function runAgent(
 
 			// Scanned incrementally rather than over a retained transcript: the raw
 			// exec output is the full stream-json stream and never kept (see
-			// ExecStartOpts.onChunk).
-			const backgroundTermination = new BackgroundTerminationDetector();
+			// ExecStartOpts.onChunk). Only a runtime that can kill unfinished
+			// background work and still exit 0 names a line to watch for.
+			const backgroundMarker = RUNTIME_ADAPTERS[runtimeType].backgroundTerminationMarker;
+			const backgroundTermination = backgroundMarker
+				? new BackgroundTerminationDetector(backgroundMarker)
+				: null;
 
 			// The runtime states its per-server tool counts once, in the session-init
 			// event at the very start of the stream, so this is persisted mid-run
@@ -2814,7 +2851,7 @@ export async function runAgent(
 			};
 
 			const onChunk = async (chunk: ExecLogChunk) => {
-				backgroundTermination.push(chunk.stream, chunk.text);
+				backgroundTermination?.push(chunk.stream, chunk.text);
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
@@ -2849,7 +2886,7 @@ export async function runAgent(
 			// however the exec ends, before anything reads and scrubs the usage file.
 			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser)
 				.exec({
-					cmd: context.execCmd,
+					cmd: execCmd,
 					env: context.env,
 					workingDir: prep.workingDir,
 					// The derived signal, so a tunnel that dies mid-run tears the exec down
@@ -3259,10 +3296,7 @@ export async function runAgent(
 			// deep-research Workflow that never got to synthesize its report) even
 			// though it exits 0 and may have written something earlier. Fail it so it
 			// surfaces and is retried rather than silently counting as done.
-			const backgroundWorkTerminated =
-				exitedClean &&
-				Boolean(RUNTIME_ADAPTERS[runtimeType].terminatesBackgroundWork) &&
-				backgroundTermination.finish();
+			const backgroundWorkTerminated = exitedClean && (backgroundTermination?.finish() ?? false);
 
 			const success =
 				exitedClean &&
@@ -5821,8 +5855,8 @@ async function updateHeartbeatRun(
 		usagePartial?: boolean | null;
 		/**
 		 * Which tools the run called and how many times, from the parser's tally.
-		 * Null when the runtime's parser renders no tool events (Grok, Antigravity),
-		 * which the column reads as "not instrumented" rather than "called nothing".
+		 * Null when the parser kept no tally, which the column reads as "not
+		 * instrumented" rather than "called nothing".
 		 */
 		toolCallCounts?: Record<string, number> | null;
 	},

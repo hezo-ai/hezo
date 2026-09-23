@@ -84,7 +84,6 @@ import {
 	RUNTIME_ADAPTERS,
 	validateInjection,
 } from '../../src/services/runtime-adapters';
-import { GROK_DEBUG_BASENAME } from '../../src/services/runtime-adapters/grok';
 import {
 	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
@@ -305,15 +304,18 @@ function providerEnv(mp: LiveModelProvider, runtime: AgentRuntime): string[] {
  * come from. Mirrors `buildRuntimeInvocation`'s `cmd` (`agent-runner.ts`), minus
  * the effort args.
  *
- * Grok's `--debug-file` is included rather than dropped: it is the *only* place
- * that runtime states the tokens a run used, so a suite that omitted it could not
- * assert usage at all and recorded the runtime's real behaviour as a failure.
+ * The adapter's own args are included rather than dropped. Grok's `--debug-file`
+ * is the *only* place that runtime states the tokens a run used, so a suite that
+ * omitted it could not assert usage at all and recorded the runtime's real
+ * behaviour as a failure; Antigravity's `--add-dir` is what gives its model a
+ * workspace.
  */
 function cliArgv(
 	mp: LiveModelProvider,
 	runtime: AgentRuntime,
 	mcpArgs: readonly string[],
 	containerHomeDir: string | null,
+	workingDir: string,
 	promptContainerPath: string,
 ): string[] {
 	// The model id is remapped per runtime, not per provider: Claude Code and
@@ -323,16 +325,12 @@ function cliArgv(
 		if (runtime === AgentRuntime.ClaudeCode) cliModel = claudeCodeModelArg(mp.provider, cliModel);
 		else if (runtime === AgentRuntime.OpenCode) cliModel = opencodeModelArg(mp.provider, cliModel);
 	}
-	const grokDebugArgs =
-		runtime === AgentRuntime.Grok && containerHomeDir
-			? ['--debug-file', `${containerHomeDir}/${GROK_DEBUG_BASENAME}`]
-			: [];
 	return [
 		RUNTIME_COMMANDS[runtime],
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtime],
 		...mcpArgs,
 		...RUNTIME_STREAM_ARGS[runtime],
-		...grokDebugArgs,
+		...(RUNTIME_ADAPTERS[runtime].extraArgs?.({ containerHomeDir, workingDir }) ?? []),
 		...RUNTIME_AUTO_APPROVE_ARGS[runtime],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtime],
 		...(cliModel && RUNTIME_MODEL_DELIVERY[runtime] === 'flag' ? ['--model', cliModel] : []),
@@ -683,6 +681,7 @@ function describeOneAgentCliRun(
 				runtime,
 				injection.cliArgs,
 				homeMount?.containerDir ?? null,
+				fixture.workRoot,
 				promptContainerPath,
 			)
 				.map(shellQuote)

@@ -35,9 +35,9 @@ interface McpDescriptorBase {
 	 *
 	 * This is the *hiding* leg: it keeps a disabled tool out of the agent's tool
 	 * list so it never tries to call one. It is not the enforcement boundary —
-	 * the runtimes are installed unpinned and their filter keys can drift, so the
-	 * egress proxy independently rejects a `tools/call` naming a disabled method
-	 * (see `services/egress/mcp-method-guard.ts`).
+	 * a runtime's filter keys can drift when its CLI is bumped, so the egress
+	 * proxy independently rejects a `tools/call` naming a disabled method (see
+	 * `services/egress/mcp-method-guard.ts`).
 	 */
 	enabledTools?: readonly string[];
 	/**
@@ -224,6 +224,13 @@ export interface RuntimeEnvContext {
 export interface RuntimeArgsContext {
 	/** The per-run home directory as it appears inside the container, if mounted. */
 	containerHomeDir: string | null;
+	/**
+	 * The absolute directory the CLI runs in, inside the container. Use it only as
+	 * a whole argv element: a task run's argv is built before its worktree is
+	 * prepared, so there it is a placeholder the runner swaps for the real path
+	 * before the exec.
+	 */
+	workingDir: string;
 }
 
 /**
@@ -317,9 +324,9 @@ export interface RuntimeAdapter {
 	offStreamUsage?: OffStreamUsage;
 
 	/**
-	 * True when this CLI can exit 0 having killed background work it had not
-	 * finished. Only such a runtime has its stream watched for that report, and
-	 * only there does a clean exit get second-guessed.
+	 * The line this CLI prints when it exits 0 having killed background work it
+	 * had not finished. Absent means it never does. Only a runtime with one has its
+	 * output watched for it, and only there does a clean exit get second-guessed.
 	 */
-	readonly terminatesBackgroundWork?: boolean;
+	readonly backgroundTerminationMarker?: RegExp;
 }

@@ -83,9 +83,10 @@ const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 const SYSTEM_PROMPT_BASENAME = RUNTIME_SYSTEM_PROMPT_FILE[AgentRuntime.Kimi] ?? 'AGENTS.md';
 
 // Kimi's `[[hooks]]` entries accept EXACTLY four keys — event, matcher, command,
-// timeout — and the CLI refuses to load a config containing any other key. Do not
-// add fields here without checking that upstream accepts them; a rejected config
-// breaks every run on this runtime, not just the hook.
+// timeout. Any other key makes the CLI drop the whole `hooks` section with a
+// stderr warning and run on, so the judge and the doc-write guard silently vanish
+// from every run on this runtime. Do not add fields here without checking that
+// upstream accepts them (`kimi doctor` reports the rejection as an error).
 const STOP_HOOK_TIMEOUT_SEC = 30;
 
 // The doc-write guard is a string comparison plus one `git ls-files`, so it needs
@@ -135,18 +136,20 @@ function buildStdioEntry(d: McpStdioDescriptor): KimiStdioEntry {
 /**
  * `config.toml`: the Stop hook plus a permission rule.
  *
- * `-p` already applies the `auto` permission policy, so this rule is a belt to
- * that braces — an explicit allow-all so a future tightening of what `auto`
- * covers cannot leave a headless run blocked on an approval prompt nobody can
- * answer. Approvals are safe to skip here for the same reason they are on every
- * other runtime: the container is an ephemeral, egress-constrained sandbox in
- * which the agent already executes arbitrary code.
+ * `-p` already applies the `auto` permission policy, which is what approves
+ * every tool call. The allow-all rule was a belt to that braces, but 2.0.2
+ * validates `permission.rules` and then never applies them, so today it does
+ * nothing. It stays because it is still valid config and costs nothing; it is
+ * not what keeps a headless run from blocking on an approval prompt. Approvals
+ * are safe to skip here for the same reason they are on every other runtime:
+ * the container is an ephemeral, egress-constrained sandbox in which the agent
+ * already executes arbitrary code.
  *
  * `permission.rules` is an ARRAY of `{pattern, decision}` — an inline table with
  * a `default` key parses as one malformed rule, and the CLI then drops the whole
- * `permission` section with a warning rather than failing, so the belt silently
- * was not there. `kimi doctor` is what states the schema; check a change against
- * it, since a rejected section reports as a warning and not an error.
+ * `permission` section with a warning rather than failing. `kimi doctor` is what
+ * states the schema; check a change against it, since a rejected section
+ * reports as a warning and not an error.
  */
 function renderConfigToml(
 	judgeScriptContainerPath: string | null,
@@ -155,7 +158,7 @@ function renderConfigToml(
 	const lines = ['[[permission.rules]]', 'pattern = "*"', 'decision = "allow"', ''];
 	// Omitted entirely when the caller wants no completeness judge (the CEO chat),
 	// together with the script it would point at. Exactly the four permitted keys
-	// - any fifth makes the CLI reject the whole config.
+	// - a fifth makes the CLI drop every hook.
 	if (judgeScriptContainerPath) {
 		lines.push(
 			'[[hooks]]',
@@ -168,7 +171,7 @@ function renderConfigToml(
 	// PreToolUse is one of Kimi's three blockable events. Emitted only when the
 	// project has docs to guard, so a run without them keeps a byte-identical
 	// config. Exactly the four permitted keys, in the same order as the Stop
-	// entry — any fifth key makes the CLI reject the whole config.
+	// entry — a fifth makes the CLI drop every hook.
 	if (docWriteGuardContainerPath) {
 		lines.push(
 			'[[hooks]]',

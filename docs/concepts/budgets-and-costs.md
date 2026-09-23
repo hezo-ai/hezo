@@ -24,6 +24,11 @@ subscription, or a model on your own hardware. Hezo keeps no price list, so a fi
 never depends on a price it has to guess. Usage rolls up two ways (**per agent** and
 **per project**), so the budget view shows where the tokens went.
 
+**Antigravity runs count low.** Once per run, Antigravity sends the whole prompt to a
+small Gemini model to give the conversation a title. It does not report that call's
+tokens, and nothing turns the call off, so Hezo cannot count them. Google counts more
+tokens for an Antigravity run than Hezo shows.
+
 **Chat turns are counted too.** A reply in the assistant chat counts its tokens the same
 way a run does, under the replying agent and its project, and an agent or project at
 its budget limit pauses in chat as well: the thread shows a notice, and the conversation

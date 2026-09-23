@@ -2330,6 +2330,7 @@ export class ChatSessionManager {
 				containerId,
 				runUser,
 				promptContainerPath: getContainerPromptPath(sessionId),
+				workingDir: CHAT_WORKING_DIR,
 				// Written to the runtime's instructions file rather than repeated in
 				// every turn's prompt, for the runtimes that need it (see
 				// RUNTIME_SYSTEM_PROMPT_FILE). Null everywhere else, where the turn

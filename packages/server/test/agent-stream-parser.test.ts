@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -535,6 +537,163 @@ describe('agent-stream-parser', () => {
 		});
 	});
 
+	describe('codex error events', () => {
+		// Recorded shape: Codex reports a transient failure it will retry exactly
+		// like a fatal one, as a top-level `error` event.
+		const reconnecting = {
+			type: 'error',
+			message:
+				'Reconnecting... 2/5 (stream disconnected before completion: error sending request for url)',
+		};
+		const lines = (events: unknown[]) => events.map((e) => `${JSON.stringify(e)}\n`).join('');
+
+		it('drops an error the turn then recovered from', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(
+				lines([
+					reconnecting,
+					{ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } },
+				]),
+			);
+			expect(parser.getTerminalVerdict()).toBeNull();
+		});
+
+		it('keeps the error when the turn failed without a reason of its own', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(
+				lines([
+					{
+						type: 'error',
+						message: 'Selected model is at capacity. Please try a different model.',
+					},
+					{ type: 'turn.failed', usage: {} },
+				]),
+			);
+			expect(parser.getTerminalVerdict()?.family).toBe('capacity');
+		});
+
+		it('keeps the error when the run ended before its turn resolved', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(lines([{ type: 'error', message: '401 Unauthorized' }]));
+			expect(parser.getTerminalVerdict()?.family).toBe('auth');
+		});
+	});
+
+	describe('antigravity 1.2.8 recorded frames', () => {
+		const frame = (o: unknown) => `${JSON.stringify(o)}\n`;
+		const step = (s: Record<string, unknown>) =>
+			frame({ event: 'step_update', step_update: { conversation_id: 'c1', ...s } });
+
+		it('names MCP calls by server and tool, renders arguments, and counts failed steps', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			const mcp = {
+				name: 'call_mcp_tool',
+				parameters: {
+					Arguments: { include_comments: true, task_id: 'BE-2' },
+					ServerName: 'hezo',
+					ToolName: 'get_task',
+				},
+			};
+			let out = '';
+			// Each call is reported ACTIVE, then DONE or ERROR; only the end renders.
+			out += parser.onStdout(
+				step({
+					step_index: 2,
+					state: 'ACTIVE',
+					step_type: 'tool',
+					tool_name: 'call_mcp_tool',
+					tool_info: mcp,
+				}),
+			);
+			out += parser.onStdout(
+				step({
+					step_index: 2,
+					state: 'DONE',
+					step_type: 'tool',
+					tool_name: 'call_mcp_tool',
+					tool_info: { ...mcp, output: '[{"slug":"demo","name":"Demo"}]' },
+				}),
+			);
+			out += parser.onStdout(
+				step({
+					step_index: 6,
+					state: 'DONE',
+					step_type: 'tool',
+					tool_name: 'run_command',
+					tool_info: {
+						name: 'run_command',
+						parameters: { CommandLine: 'ls /workspace' },
+						output: 'a.txt\n',
+					},
+				}),
+			);
+			out += parser.onStdout(
+				step({
+					step_index: 10,
+					state: 'ERROR',
+					step_type: 'tool',
+					tool_name: 'view_file',
+					tool_info: {
+						name: 'view_file',
+						parameters: { AbsolutePath: '/workspace/missing.txt' },
+						error: { type: 'TOOL_ERROR', message: 'no such file or directory' },
+					},
+				}),
+			);
+			expect(out).toBe(
+				[
+					'[tool] mcp__hezo__get_task(include_comments=true, task_id=BE-2)',
+					'[tool-result] [{"slug":"demo","name":"Demo"}]',
+					'[tool] run_command(CommandLine=ls /workspace)',
+					'[tool-result] a.txt',
+					'[tool] view_file(AbsolutePath=/workspace/missing.txt)',
+					'[tool-error] no such file or directory',
+					'',
+				].join('\n'),
+			);
+			expect(parser.getToolCallTotal()).toBe(3);
+		});
+
+		it('states a turn the stream missed instead of reporting no output', () => {
+			// A fast upstream answer or refusal on a large prompt: SUCCESS, no
+			// response, no usage, nothing after the prompt.
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(frame({ event: 'init', init: { model: 'gemini-3.6-flash' } }));
+			parser.onStdout(step({ step_index: 0, state: 'DONE', step_type: 'user_input' }));
+			parser.onStdout(
+				frame({
+					event: 'result',
+					result: {
+						status: 'SUCCESS',
+						response: '',
+						usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
+					},
+				}),
+			);
+			const verdict = parser.getTerminalVerdict();
+			expect(verdict?.message).toMatch(/stream missed the turn/);
+			expect(verdict?.failure).toBe(RunFailureClass.Permanent);
+		});
+
+		it('does not flag a turn that did something, even with an empty response', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(step({ step_index: 0, state: 'DONE', step_type: 'user_input' }));
+			parser.onStdout(
+				step({
+					step_index: 1,
+					state: 'DONE',
+					step_type: 'tool',
+					tool_name: 'run_command',
+					tool_info: { name: 'run_command', parameters: { CommandLine: 'true' } },
+				}),
+			);
+			parser.onStdout(
+				frame({ event: 'result', result: { status: 'SUCCESS', response: '', usage: {} } }),
+			);
+			expect(parser.getTerminalVerdict()).toBeNull();
+		});
+	});
+
 	describe('antigravity', () => {
 		const init = (model: string) => `${JSON.stringify({ event: 'init', init: { model } })}\n`;
 		const result = (r: Record<string, unknown>) =>
@@ -910,6 +1069,32 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(parser.flush()).toBe('');
 	});
 
+	it('keeps the run going past a step that finished for an unknown reason', () => {
+		// From OpenCode 1.18.21 an `unknown` finish loops like `tool-calls` does.
+		// Recorded from 1.18.32 against a model that sent a finish reason OpenCode
+		// does not recognise: a second model call followed, ending on `stop`.
+		const text = (t: string) => ({ type: 'text', part: { type: 'text', text: t } });
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(`${JSON.stringify(text('partial answer'))}\n`);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('unknown', 500, 5))}\n`)).toBe('');
+		expect(parser.hasEnded()).toBe(false);
+
+		parser.onStdout(`${JSON.stringify(text('second answer'))}\n`);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('stop', 120, 4))}\n`)).toBe(
+			'[done] success tokens=620/9\n',
+		);
+		expect(parser.hasEnded()).toBe(true);
+		expect(parser.getFinalAssistantMessage()).toBe('second answer');
+		expect(parser.flush()).toBe('');
+	});
+
+	it('writes the done line on flush when a run exits after an unknown finish', () => {
+		// OpenCode before 1.18.21 stopped here, with no later step_finish.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('unknown', 500, 5))}\n`)).toBe('');
+		expect(parser.flush()).toBe('[done] success tokens=500/5\n');
+	});
+
 	it('reports an error reason on the done line', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(parser.onStdout(`${JSON.stringify(stepFinish('error', 5, 1))}\n`)).toBe(
@@ -1242,6 +1427,40 @@ describe('kimi stream parser', () => {
 		expect(parser.getTerminalError()).toMatch(/authentication failed/i);
 	});
 
+	it('classifies a provider failure Kimi reports only on stderr', () => {
+		// A rejected key or an empty balance is not retried, and nothing about it
+		// reaches stdout. Lines as Kimi Code 2.0.2 prints them, split across chunks.
+		const cases: Array<[string, string]> = [
+			['error: failed to run prompt: provider.auth_error: 401 Invalid Authentication', 'auth'],
+			[
+				'error: failed to run prompt: provider.api_error: 402 Your account is suspended due to insufficient balance',
+				'credit',
+			],
+			[
+				'error: failed to run prompt: provider.rate_limit: 429 Too many requests, rate limit reached',
+				'rate_limit',
+			],
+		];
+		for (const [stderr, family] of cases) {
+			const parser = createAgentStreamParser(AgentRuntime.Kimi);
+			parser.onStdout(line({ role: 'meta', type: 'system.version', version: '2.0.2' }));
+			const half = Math.floor(stderr.length / 2);
+			// Stderr still reaches the run log unchanged.
+			expect(parser.onStderr(stderr.slice(0, half))).toBe(stderr.slice(0, half));
+			expect(parser.onStderr(`${stderr.slice(half)}\n`)).toBe(`${stderr.slice(half)}\n`);
+			expect(parser.getTerminalVerdict()?.family, stderr).toBe(family);
+		}
+		// Also when the line is the last thing written, with no newline.
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		parser.onStderr(cases[0][0]);
+		parser.flush();
+		expect(parser.getTerminalVerdict()?.family).toBe('auth');
+		// Other stderr is not read as a failure.
+		const quiet = createAgentStreamParser(AgentRuntime.Kimi);
+		quiet.onStderr('Warning: this folder is not trusted; skipped 1 project-level MCP servers\n');
+		expect(quiet.getTerminalVerdict()).toBeNull();
+	});
+
 	it('drops session.resume_hint noise from the run log', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Kimi);
 		const out = parser.onStdout(
@@ -1249,7 +1468,35 @@ describe('kimi stream parser', () => {
 		);
 		expect(out).toBe('');
 	});
+
+	it('parses a run recorded from Kimi Code 2.0.2', () => {
+		// Five tool calls (two MCP servers, a doc-guard refusal, an image result and
+		// Bash), then a final answer, a Stop-hook block and a second answer. 2.0.2
+		// opens the stream with a `system.version` meta line.
+		const stream = readKimiFixture('kimi-2.0.2.stdout.jsonl');
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		let out = '';
+		// Chunked mid-line, as a pipe delivers it.
+		for (let i = 0; i < stream.length; i += 97) out += parser.onStdout(stream.slice(i, i + 97));
+		out += parser.flush();
+
+		expect(out).not.toContain('system.version');
+		expect(out).not.toContain('resume');
+		expect(out).toContain('[tool] mcp__hezo__echo(text=hello-from-mock)');
+		expect(out).toContain('[tool-result] bash-ran-ok');
+		expect(parser.getToolCallTotal()).toBe(5);
+		expect(parser.getFinalAssistantMessage()).toBe(
+			'SECOND_FINAL_ANSWER after the judge continued me.',
+		);
+		expect(parser.getTerminalVerdict()).toBeNull();
+		expect(parser.getUsage()).toBeNull();
+	});
 });
+
+/** A capture recorded from the pinned Kimi Code CLI against a local mock provider. */
+function readKimiFixture(name: string): string {
+	return readFileSync(resolve(import.meta.dirname, 'fixtures/kimi', name), 'utf8');
+}
 
 describe('extractKimiUsageFromSessionLog', () => {
 	const rec = (o: Record<string, unknown>) => JSON.stringify(o);
@@ -1359,6 +1606,40 @@ describe('extractKimiUsageFromSessionLog', () => {
 		const usage = extractKimiUsageFromSessionLog(log);
 		expect(usage?.inputTokens).toBe(460);
 		expect(usage?.outputTokens).toBe(40);
+	});
+
+	it('sums the usage records of a session recorded from Kimi Code 2.0.2', () => {
+		// Seven requests, each one `usage.record` with `usageScope: "turn"` and no
+		// request id. The mock billed prompt_tokens 17,500 (1,400 of it cached) and
+		// completion_tokens 385 across them.
+		const usage = extractKimiUsageFromSessionLog(readKimiFixture('kimi-2.0.2.wire.jsonl'));
+		expect(usage?.inputTokens).toBe(17_500);
+		expect(usage?.outputTokens).toBe(385);
+		expect(usage?.buckets).toEqual({
+			inputTokens: 16_100,
+			cacheReadTokens: 1_400,
+			cacheCreationTokens: 0,
+			outputTokens: 385,
+		});
+		// The usage records name `__kimi_env_model__`, the CLI's alias for the
+		// env-registered provider; the run is recorded under the real model id.
+		expect(usage?.model).toBe('kimi-k3');
+	});
+
+	it('resolves the model alias from the request that preceded each usage record', () => {
+		const log = [
+			rec({ type: 'llm.request', model: 'kimi-k3', modelAlias: '__kimi_env_model__' }),
+			rec({
+				type: 'usage.record',
+				model: '__kimi_env_model__',
+				usage: { inputOther: 100, output: 10 },
+				usageScope: 'turn',
+			}),
+		].join('\n');
+		expect(extractKimiUsageFromSessionLog(log)?.model).toBe('kimi-k3');
+		// A record naming a real model keeps it.
+		const named = rec({ model: 'kimi-k2', usage: { inputOther: 1, output: 1 } });
+		expect(extractKimiUsageFromSessionLog(`${log}\n${named}`)?.model).toBe('kimi-k2');
 	});
 
 	it('returns null when the log carries no usage record', () => {
@@ -1693,6 +1974,169 @@ describe('running usage and the end of a run', () => {
 			parser.onStdout(end);
 			expect(parser.hasEnded(), runtime).toBe(true);
 		}
+	});
+
+	it("counts every model in Claude Code's modelUsage, the judge included", () => {
+		// Recorded shape from 2.1.280 with the Stop judge fired twice: `usage` covers
+		// the main loop only, `modelUsage` adds the judge's sonnet calls.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				usage: {
+					input_tokens: 4_604,
+					cache_creation_input_tokens: 6_306,
+					cache_read_input_tokens: 12_612,
+					output_tokens: 242,
+				},
+				modelUsage: {
+					'claude-opus-5': {
+						inputTokens: 4_604,
+						outputTokens: 242,
+						cacheReadInputTokens: 12_612,
+						cacheCreationInputTokens: 6_306,
+						thinkingTokens: 0,
+						costUSD: 0.0748,
+					},
+					'claude-sonnet-4-6': {
+						inputTokens: 14_000,
+						outputTokens: 140,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						thinkingTokens: 0,
+						costUSD: 0.0441,
+					},
+				},
+			})}\n`,
+		);
+		expect(parser.getUsage()?.buckets).toEqual({
+			inputTokens: 18_604,
+			cacheCreationTokens: 6_306,
+			cacheReadTokens: 12_612,
+			outputTokens: 382,
+		});
+	});
+
+	it('follows a Claude Code run through a second turn without counting twice', () => {
+		// A background Agent finishing starts a second turn: a second init and a
+		// second result. `modelUsage` is session-cumulative, `usage` per turn.
+		// Recorded from 2.1.280 (a subagent plus the judge).
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const result = (turn: Record<string, number>, cumulative: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, usage: turn, modelUsage: cumulative })}\n`;
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-5' })}\n`,
+		);
+		parser.onStdout(
+			result(
+				{
+					input_tokens: 802,
+					cache_creation_input_tokens: 804,
+					cache_read_input_tokens: 806,
+					output_tokens: 82,
+				},
+				{
+					'claude-opus-5': {
+						inputTokens: 1_203,
+						cacheCreationInputTokens: 1_206,
+						cacheReadInputTokens: 1_209,
+						outputTokens: 123,
+					},
+					'claude-sonnet-4-6': { inputTokens: 7_000, outputTokens: 70 },
+				},
+			),
+		);
+		expect(parser.hasEnded()).toBe(true);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-5' })}\n`,
+		);
+		// The ceiling applies again once the next turn starts.
+		expect(parser.hasEnded()).toBe(false);
+		parser.onStdout(claudeAssistant('msg_turn2', { input_tokens: 501, output_tokens: 51 }));
+		expect(parser.getUsage()?.buckets?.inputTokens).toBe(8_203 + 501);
+		parser.onStdout(
+			result(
+				{
+					input_tokens: 501,
+					cache_creation_input_tokens: 502,
+					cache_read_input_tokens: 503,
+					output_tokens: 51,
+				},
+				{
+					'claude-opus-5': {
+						inputTokens: 1_704,
+						cacheCreationInputTokens: 1_708,
+						cacheReadInputTokens: 1_712,
+						outputTokens: 174,
+					},
+					'claude-sonnet-4-6': { inputTokens: 14_000, outputTokens: 140 },
+				},
+			),
+		);
+		expect(parser.hasEnded()).toBe(true);
+		expect(parser.getUsage()?.buckets).toEqual({
+			inputTokens: 15_704,
+			cacheCreationTokens: 1_708,
+			cacheReadTokens: 1_712,
+			outputTokens: 314,
+		});
+	});
+
+	it('adds a result that carries no modelUsage to what the last one settled', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const result = (extra: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, ...extra })}\n`;
+		parser.onStdout(
+			result({
+				usage: { input_tokens: 10, output_tokens: 1 },
+				modelUsage: { 'claude-opus-5': { inputTokens: 30, outputTokens: 3 } },
+			}),
+		);
+		parser.onStdout(result({ usage: { input_tokens: 5, output_tokens: 2 }, modelUsage: {} }));
+		expect(parser.getUsage()?.inputTokens).toBe(35);
+		expect(parser.getUsage()?.outputTokens).toBe(5);
+	});
+
+	it('logs a Claude Code background task killed when the run ended', () => {
+		// Recorded from 2.1.280: a `run_in_background` shell still running at the
+		// end of the turn is killed after 5 s, reported only after the result.
+		const task = (extra: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'system', task_id: 'basjra8bs', ...extra })}\n`;
+		const started = task({
+			subtype: 'task_started',
+			tool_use_id: 'toolu_bg1',
+			description: 'Sleep in background',
+			is_backgrounded: true,
+			task_type: 'local_bash',
+		});
+		const killed = [
+			task({ subtype: 'task_updated', patch: { status: 'killed' } }),
+			task({ subtype: 'task_notification', status: 'stopped', summary: 'Sleep in background' }),
+		];
+		const resultLine = `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, usage: {} })}\n`;
+
+		const atExit = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		let out = atExit.onStdout(started) + atExit.onStdout(resultLine);
+		for (const line of killed) out += atExit.onStdout(line);
+		expect(out.match(/killed background task "Sleep in background"/g)).toHaveLength(1);
+
+		// The model stopping its own task (TaskStop) looks the same, but comes
+		// before the result.
+		const stoppedByModel = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		let own = stoppedByModel.onStdout(started);
+		for (const line of killed) own += stoppedByModel.onStdout(line);
+		own += stoppedByModel.onStdout(resultLine);
+		expect(own).not.toContain('killed background task');
+
+		// A background task that finished is not a kill.
+		const finished = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const done =
+			finished.onStdout(started) +
+			finished.onStdout(resultLine) +
+			finished.onStdout(task({ subtype: 'task_notification', status: 'completed' }));
+		expect(done).not.toContain('killed background task');
 	});
 
 	it('does not end an OpenCode run on a terminal-shaped event that states no reason', () => {

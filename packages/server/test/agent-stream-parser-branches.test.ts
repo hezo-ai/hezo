@@ -359,7 +359,9 @@ describe('Claude Code — assistant usage edge arms', () => {
 		expect(parser.getUsage()).toBeNull();
 	});
 
-	it('stops accumulating assistant usage once the terminal result has been seen', () => {
+	it('keeps counting an assistant turn that starts after a result', () => {
+		// A `-p` run can take another turn after its first result (a background
+		// Agent finishing starts one). Its tokens are real and count on top.
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		feed(parser, [
 			{
@@ -369,22 +371,23 @@ describe('Claude Code — assistant usage edge arms', () => {
 				usage: { input_tokens: 5, output_tokens: 2 },
 			},
 		]);
-		// After result, sawResult=true → the !sawResult arm is false, usage unchanged.
+		expect(parser.hasEnded()).toBe(true);
 		feed(parser, [
 			{
 				type: 'assistant',
 				message: { role: 'assistant', usage: { input_tokens: 999, output_tokens: 999 } },
 			},
 		]);
+		expect(parser.hasEnded()).toBe(false);
 		expect(parser.getUsage()).toEqual({
-			inputTokens: 5,
-			outputTokens: 2,
+			inputTokens: 1_004,
+			outputTokens: 1_001,
 			model: null,
 			buckets: {
-				inputTokens: 5,
+				inputTokens: 1_004,
 				cacheCreationTokens: 0,
 				cacheReadTokens: 0,
-				outputTokens: 2,
+				outputTokens: 1_001,
 			},
 		});
 	});

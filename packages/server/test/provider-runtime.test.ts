@@ -58,6 +58,13 @@ describe('opencodeModelArg', () => {
 		expect(opencodeModelKey(AiProvider.Anthropic, 'claude-opus-4-6')).toBe('claude-opus-4-6');
 	});
 
+	it("keeps OpenRouter's own routes, whose native ids begin with the key", () => {
+		expect(opencodeModelArg(AiProvider.OpenRouter, 'openrouter/auto')).toBe(
+			'openrouter/openrouter/auto',
+		);
+		expect(opencodeModelKey(AiProvider.OpenRouter, 'openrouter/auto')).toBe('openrouter/auto');
+	});
+
 	it('asks OpenCode to stream the model reasoning it is now always told to do', () => {
 		// `--thinking` is what puts reasoning parts on the `--format json` stream;
 		// without it a run reasons invisibly and the log shows no thinking blocks.

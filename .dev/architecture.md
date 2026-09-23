@@ -2122,7 +2122,9 @@ cover the rest of the run:
   did not: Grok's calls arrive as `tool_call` (its parser dropped the type, and its field
   names are probed in both spellings because upstream ships two engine generations), and
   Antigravity's arrive as a `step_update` with `step_type: "tool"` - counted on the `DONE`
-  state only, since a step goes ACTIVE then DONE and counting both doubles every call. NULL
+  or `ERROR` state only, since a step goes ACTIVE then one of those and counting both doubles
+  every call. agy routes every MCP call through one `call_mcp_tool` tool, so its parser names
+  the call `mcp__<server>__<tool>` from the step's `ServerName`/`ToolName`. NULL
   still means "not instrumented" and stays distinct from a recorded zero, so a run that
   genuinely called nothing reads as that.
 
@@ -4181,16 +4183,29 @@ diff), or the agent explicitly calls `report_no_work`. A clean exit with neither
 silent no-op, marked `failed`. One further demotion overrides even a run that *did* write:
 if the CLI force-terminated still-running background work (Claude Code's headless
 `--print` mode prints "Background tasks still running after Ns; terminating" and kills a
-`run_in_background` job or a `Workflow` fan-out that never synthesized), the run
-**abandoned unfinished work** and is marked `failed` regardless of earlier output
-(`services/background-termination.ts` scans the CLI's own diagnostic output — stderr and
-non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). The scan
+`run_in_background` job or a `Workflow` fan-out that never synthesized; agy from 1.2 gives a
+background command 5 s once the agent is idle, then prints "terminating N background task(s)
+on exit"), the run **abandoned unfinished work** and is marked `failed` regardless of earlier
+output. The line is the runtime's own, carried on its adapter as
+`backgroundTerminationMarker`; `services/background-termination.ts` scans the CLI's own
+diagnostic output for it — stderr and non-JSON stdout lines — so an agent that merely echoes
+the phrase can't trip it. A Claude Code background *shell* is killed 5 s after the final turn
+with no such line; its parser reads the kill off the stream instead (a backgrounded task
+`killed`/`stopped` after the `result`) and logs it, without failing the run, because a
+background shell is as often a dev server the agent was done with as unfinished work. The scan
 is **incremental**, fed from the same per-chunk callback the log pipeline uses: the exec
 transport retains no output at all (see below), so the verdict is accumulated as the run
 streams rather than computed from a kept transcript. This is
 a backstop to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (which lifts the wait ceiling) for
 CLI versions that ignore the override. The completeness **stop-hook** (§ 6) is a separate
 gate that blocks the agent from ending its turn with unfinished work.
+
+**A turn agy's stream missed fails the run.** When the upstream answers or refuses faster than
+agy's print mode attaches to its own stream (measured on 1.2.8 with a Hezo-sized prompt and an
+instant upstream, most often a rejected credential), the `result` is SUCCESS with no response,
+zero usage and no step after the prompt. The parser turns that shape into a permanent
+`unknown`-family verdict that says so, rather than letting it read as a clean run that did
+nothing; whether the provider answered or refused is not knowable from the stream.
 
 **Sessions & recovery.** `agent_task_sessions` persists per-task session state; each
 heartbeat spawns a fresh subprocess and injects handoff markdown from the prior session,
@@ -4290,9 +4305,10 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   a temporary in-memory provider for the launch. Hezo uses it so the key stays in env and is
   never written to a file the agent can read. `KIMI_MODEL_NAME` is what activates the family,
   so it is always set and `buildProviderEnv` overrides it with the run's selected model.
-  `KIMI_MODEL_CAPABILITIES` must include `image_in`, or the CLI's `downgradeUnsupportedMedia`
-  step silently replaces every image part with a placeholder string — which would break
-  `read_project_asset`, the only path by which an agent ever receives an image.
+  `KIMI_MODEL_CAPABILITIES` includes `image_in`. Without it the 0.30.0 engine replaced every
+  image part with a placeholder string, which would break `read_project_asset`, the only path
+  by which an agent ever receives an image. 2.0.2 passed an MCP image through either way when
+  measured, but still reads the capability, so it stays declared.
 - **`KIMI_CODE_HOME` is a real variable the CLI consumes**, unlike the Hezo-internal markers
   the Claude Code entries use in `RUNTIME_HOME_LAYOUTS`. It relocates the entire data root
   (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
@@ -4510,8 +4526,11 @@ stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
-global `high`. Each runtime maps it natively: `claude_code` appends
-`think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `antigravity`
+global `high`. Each runtime maps it natively: `claude_code` passes `--effort`, which it sends as
+`output_config.effort` (no `minimal`, which maps to `low`; the prompt words it used to append
+did nothing but `ultrathink`, and that left the effort on the wire unchanged); `codex` passes
+`-c model_reasoning_effort=`, sent upstream unchanged (`minimal` maps to `low` and `max` to
+`xhigh`, the levels its model catalog lists); `antigravity`
 passes `--effort`, folding the five-level ladder onto the `low|medium|high` it accepts; `kimi`
 sets `KIMI_MODEL_THINKING_EFFORT` (it has no `minimal`, which maps to `low`); `opencode`
 writes `reasoning.effort` onto the run's model in its per-run `opencode.json` (see below);
@@ -4536,10 +4555,15 @@ absent for most runtimes:
 | `staticEnvValue` | rewrite one provider-table env value for this run | Claude Code (subagent tracks the run model on a third-party endpoint), Kimi (model name + its context window) |
 | `credentialEnv` | env implied by the credential rather than a table | Claude Code (a local provider's per-install endpoint, plus blanking the key it would otherwise prefer) |
 | `modelArg` | the form this CLI's `--model` accepts | Claude Code, OpenCode |
-| `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home) |
+| `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home), Antigravity (`--add-dir` naming its working directory) |
 | `recoverUsage` | usage for a CLI whose stream reports none | Grok, Kimi |
 | `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Antigravity, Kimi |
-| `terminatesBackgroundWork` | can it exit 0 having killed unfinished work | Claude Code |
+| `backgroundTerminationMarker` | the line it prints when it exits 0 having killed unfinished work | Claude Code, Antigravity |
+
+A task run builds its argv before it prepares the worktree that decides its working
+directory, so `extraArgs` gets `DEFERRED_WORKING_DIR` there, and the runner swaps it for the
+real path (`bindWorkingDir`) before it logs and runs the command. An adapter passes the
+directory as an argv element of its own; one buried in a longer element fails the run.
 
 An absent member means "nothing extra", never "unsupported" - the caller has a defined
 answer either way, so no call site needs to know which runtime it holds. The rule is
@@ -4681,8 +4705,9 @@ carrying any other, which would break every run on that runtime rather than just
 **Grok and Kimi Code report no token usage on their streams** — for Grok the runner points at
 a per-run `--debug-file` and parses the `process_conversation_turn` tracing spans
 (`extractGrokUsageFromDebugLog`); for Kimi Code it reads the per-session `wire.jsonl` under
-the run home (`extractKimiUsageFromSessionLog`, counting turn-scoped records and never
-summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both and scrubs the
+the run home (`extractKimiUsageFromSessionLog`, summing its per-request `usage.record` deltas and
+reading the model from the `llm.request` record beside each, since the usage record names only
+the CLI's alias). `recoverOffStreamRunUsage` dispatches both and scrubs the
 file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
 Moonshot bearer.
 
@@ -4723,9 +4748,11 @@ that single event - `[tool]` plus `[tool-result]`, or `[tool-error]` when `state
 green. Emitting only the call left every OpenCode tool row showing a grey pending dot forever,
 and reading the arguments off the event root rather than `part.state.input` rendered them all
 as `name()`. Its `step_finish` is likewise per step, distinguished by `part.reason`
-(`tool-calls` = more steps follow, `stop` = last), so only a terminal step renders a `[done]`
-line while every step's counts are still summed - one run summary rather than a full-width
-success banner between each pair of tool calls. Because OpenCode is documented to sometimes
+(`tool-calls` or `unknown` = more steps follow, `stop` = last), so only a terminal step renders
+a `[done]` line while every step's counts are still summed - one run summary rather than a
+full-width success banner between each pair of tool calls. `unknown` joined the non-terminal set
+with OpenCode 1.18.21, which loops again on any finish reason it does not recognise; read as
+terminal, it ended the run mid-stream and switched off the per-run token ceiling for the rest. Because OpenCode is documented to sometimes
 exit before its final `step_finish` (sst/opencode#26855, #31435), the parser writes that
 summary from `flush()` if no `[done]` was reached, rather than losing it with the event.
 
@@ -4733,10 +4760,12 @@ summary from `flush()` if no `[done]` was reached, rather than losing it with th
 CLI's own diagnostics on **stderr**, leaving stdout pure JSON; the runner already relays
 stderr verbatim, so this needs no parser work and costs a healthy run almost nothing. It buys
 the provider and model behind a failure, which the JSON `error` event does not name and whose
-message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`, never
-Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser accepts and ignores
-rather than rejecting - the intent goes silently unapplied, and becomes a hard failure the day
-OpenCode starts refusing unknown arguments.
+message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`.
+OpenCode also takes Claude Code's `--dangerously-skip-permissions`, but only as a hidden alias,
+so the documented name is the one used. **OpenCode refuses an unknown argument**: it prints its
+help to stderr and exits 1 without naming the flag, so a flag renamed upstream fails every
+OpenCode run with no stated reason. Check the stream and auto-approve flags against
+`opencode run --help` on every bump.
 
 ### Runtime timeout hardening
 
@@ -4751,11 +4780,22 @@ legitimately long agent/background work; every runtime is relaxed at its own con
 (`stream_idle_timeout_ms`) are **not** tunable while going direct (config/`-c` overrides of a
 built-in provider are silently ignored by Codex's vacant-only merge) and only drive a
 reconnect/retry, not a kill, so they're left at default. **Antigravity** sets no timeouts at
-all. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
-from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap. The
+all; up to 1.2.5 agy's own `--print-timeout` defaulted to 5 min and ended every longer headless
+turn with "timeout waiting for response" (measured on 1.1.17), and from 1.2.6 it defaults to no
+limit. **OpenCode** (`opencode.json`) sets the per-MCP-server `timeout` to
+10 min. Its schema says the key defaults to 5 s; the code leaves connect and `tools/list` at
+30 s and a tool call at the MCP SDK's 60 s, measured on 1.18.32 (a 65 s call fails without the
+key and completes with it). Its bash tool has a non-configurable 10-min hard cap. From 1.18.27
+each provider also has 5-min `headerTimeout` and `chunkTimeout` defaults; like Codex's stream
+knobs they abort and retry a silent stream rather than kill the run, so they are left at
+default. The retried attempt's tokens never reach the stream, and the abort prints one
+`level=ERROR ... SSE read timed out` line on stderr of a run that then succeeds. The
 same file carries the run's reasoning effort, since the CLI exposes no flag or env var for it:
-`provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model with the
-OpenCode provider prefix taken back off (`opencodeModelKey`). OpenCode merges that entry with
+`provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model as the
+provider's native id (`opencodeModelKey`; `--model` is the key plus that id). OpenRouter's own
+routes are native ids with the author `openrouter`, so `openrouter/auto`, the pinned default,
+is keyed `openrouter/auto` and passed as `--model openrouter/openrouter/auto`; an id that
+merely began with the key used to lose that author and reach OpenRouter as `auto`. OpenCode merges that entry with
 its built-in models.dev catalog, and `options` passes straight to the AI-SDK provider, so the
 value reaches OpenRouter's unified reasoning parameter. Hezo's effort ladder maps onto it 1:1
 and never emits `none`, so every OpenCode run reasons; a run that pins no model gets no block
@@ -4798,18 +4838,24 @@ no Google constant - Antigravity ships without a judge. For the third-party Anth
 only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`)
 needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
 runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
-itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
+itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
+and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
+scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
 Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
-call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
+call the provider API. Codex runs a user-config hook only when its hash is saved as trusted, and
+drops an untrusted one silently, so its adapter passes `--dangerously-bypass-hook-trust` whenever
+it writes the hook; without it no Codex run was ever judged. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
 the same headless exec: the Codex and Kimi scripts guard it in code, and the Claude Code prompt
 hook now instructs the judge to do the same.
 
 **Kimi Code needs two substitutes to run the same judge.** Its `Stop` hook *is* blockable
-(one of only three such events), but its stdin payload carries only `hook_event_name`,
-`session_id` and `cwd` — neither the agent's final message nor `stop_hook_active`. So its
-`JUDGE_SPECS` entry sets `sessionLogLookup` (read the last assistant message from the run's own
-`wire.jsonl` under `$KIMI_CODE_HOME` — the same file the usage scrape parses) and
+(one of only three such events), but its stdin payload carries no final message, and a
+`stop_hook_active` that is always false. So its `JUDGE_SPECS` entry sets `sessionLogLookup`
+(read the final message from the run's own `wire.jsonl` under `$KIMI_CODE_HOME` — the same file
+the usage scrape parses — as the text `content.part` loop events of the last step; the spec
+carries that record shape as `finalMessageFn`, because no assistant-message record exists while
+the turn is open and the earlier lookup for one never fired the judge) and
 `loopGuardFile` (a `.hezo-stop-blocked` marker in that home, written before emitting a block
 and checked on entry, standing in for the absent flag so the one-block ceiling is real rather
 than nominal). Both are opt-in fields that stay unset for every other runtime. A block is
@@ -4851,7 +4897,8 @@ and the handoff-delivery net are:
   project's active doc slugs, shipped through `mcpInjection.files` and wired as a Claude Code
   `PreToolUse` hook of `type: "command"` matching `Write|Edit|MultiEdit|NotebookEdit`. It refuses
   a write whose basename matches a doc slug **and** which `git ls-files --error-unmatch` says is
-  untracked — a repo that legitimately carries its own `spec.md` keeps writing to it. The refusal
+  untracked — a repo that legitimately carries its own `spec.md` keeps writing to it. The path is
+  resolved against the payload's `cwd` first, because Kimi Code passes it relative. The refusal
   names `write_project_doc`/`edit_project_doc` explicitly, and is emitted on all three channels
   (exit 2, stderr, stdout JSON). It fails **open** on any malformed payload or error: a guard that
   blocked real work would be worse than the problem. `buildClaudeCodeSettings` emits the hook only
@@ -5835,8 +5882,10 @@ public skill first.
 **Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
 each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships
 unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All five runtimes
-do: Claude Code & Antigravity install their own global undici proxy dispatcher from `HTTPS_PROXY`
-(and trust `NODE_EXTRA_CA_CERTS`); OpenCode runs on bundled **Bun**, whose `fetch` reads the
+do: Claude Code installs its own global undici proxy dispatcher from `HTTPS_PROXY`
+(and trusts `NODE_EXTRA_CA_CERTS`); Antigravity is a **Go** binary, and Go's standard HTTP
+client reads the same proxy env and trusts the system store (that agy's MCP traffic takes that
+client is assumed, not measured); OpenCode runs on bundled **Bun**, whose `fetch` reads the
 proxy env natively (single-cert `NODE_EXTRA_CA_CERTS` trusted); Codex and Grok are **Rust**
 binaries that honor the proxy env by default and trust the egress CA via the system store that
 the container's start-up `update-ca-certificates` populates (Grok's own Hezo MCP call is plain
@@ -5900,21 +5949,22 @@ connect; a `connect`-triggered failure logs at debug and a `manual` one warns. *
 called from `loadConnectorDescriptors`**, which deliberately resolves secret *names* only so
 descriptors build while the master key is locked.
 
-Enforcement has two legs, split because the coding CLIs are installed unpinned and their
-config keys can drift:
+Enforcement has two legs, split because a coding CLI's config keys can drift when its pin is
+bumped:
 
 - **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
-  `disabledTools` (both views, since Claude Code takes a deny list while Kimi and OpenCode
-  take allowlists), and each filter-capable adapter emits its own key. Codex, Grok and
+  `disabledTools` (both views, since Claude Code takes a deny list while Kimi, OpenCode and
+  Codex take allowlists), and each filter-capable adapter emits its own key. Grok and
   Antigravity emit none. An agent never sees a tool it cannot
   call. Best-effort and degrades safely: an unrestricted connector emits a byte-identical
   config to before, and Claude Code's deny list is only as complete as the last
-  `tools/list`. **Codex and Grok emit no filter** — no per-server tool-filter key could be
-  verified, and a guessed TOML key risks the CLI rejecting the whole config and breaking
-  every run on that runtime. `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can
-  hide tools.
+  `tools/list`. **Codex** takes `enabled_tools` / `disabled_tools` per server, matched
+  against the raw MCP tool names (measured on 0.149.0 and 0.156.0; deny wins). **Grok emits
+  no filter** — no per-server tool-filter key could be verified, and a guessed key risks the
+  CLI rejecting the whole config and breaking every run on that runtime.
+  `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can hide tools.
 - **The egress proxy is the enforcement leg** — runtime-independent, and the only thing
-  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's hosted connectors
+  restricting Grok and Antigravity at all. `allocateRunProxy` resolves the run's hosted connectors
   once into a `host:port → binding` map (`loadMcpHostBindings`), whose `restriction` half is
   the allowlist to enforce; an unrestricted run has no `restriction` anywhere and takes no
   inspection path. In `forward`, a request to a
@@ -7301,18 +7351,23 @@ descriptions at all.
 initialization, so a second handshake would be rejected). Passing `instructions` to
 `new McpServer(...)` therefore reaches nobody - a silent no-op.
 
-**Measured: Claude Code does surface it, as a system-reminder in the message stream.** The
-field was shipped additively because nothing verified that a client passes it to the model at
-all. It does, on Claude Code **2.1.238**: a stub stdio MCP server carried a canary in
+**Measured: Claude Code does surface it, in the message stream.** The field was shipped
+additively because nothing verified that a client passes it to the model at all. It does, on
+Claude Code **2.1.238** and again on **2.1.280**: a stub stdio MCP server carried a canary in
 `instructions` and in no tool name, description or schema, and a local recorder stood in for
 the provider's `/v1/messages` so the request bodies could be read directly rather than inferred
 from a model's answer. The main-loop turn - identified by the stub's tool appearing in its tool
-list - carried the canary inside a `<system-reminder>` block headed `# MCP Server Instructions`
-then `## <server-name>`, as a `system`-role entry in the `messages` array, not in the top-level
-`system` parameter. The control run, identical but with the field omitted, produced the same
-tool surface with no header and no canary in any of its requests, so `instructions` is what
-carried it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do
-not carry it, which is expected.
+list - carried the canary in a block headed `# MCP Server Instructions` then `## <server-name>`,
+as the `system`-role entry at `messages[1]`, not in the top-level `system` parameter and with no
+`<system-reminder>` wrapper (that wrapper appears only where the Stop-hook judge replays the
+transcript). The control run, identical but with the field omitted, produced the same tool
+surface with no header and no canary in any of its requests, so `instructions` is what carried
+it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do not carry
+it, which is expected. **The CLI cuts each server's block at 2,048 characters** by default,
+and Hezo's instructions are longer, so their tail never reached the model on either version.
+From 2.1.280 `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` raises that cap, for tool descriptions as
+well; the Claude Code adapter sets it, and a test fails if Hezo's instructions or a tool
+description outgrow it.
 
 **That result does not license trimming a tool description.** Only Claude Code was measured, of
 the six runtimes in `AgentRuntime`; only a single-turn `-p` invocation was exercised, so

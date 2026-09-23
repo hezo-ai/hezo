@@ -41,8 +41,8 @@ export function isAgentRuntime(value: unknown): value is AgentRuntime {
 /**
  * Reasoning/thinking effort level applied to an individual agent run.
  *
- * Each runtime maps this to its native knob (Claude Code → "think" / "ultrathink"
- * prompt keywords, Codex → `model_reasoning_effort` CLI flag, etc.). See
+ * Each runtime maps this to its native knob (Claude Code → the `--effort` CLI
+ * flag, Codex → `model_reasoning_effort` CLI flag, etc.). See
  * `packages/server/src/services/effort.ts` for the concrete mappings.
  */
 export const AgentEffort = {
@@ -2010,8 +2010,8 @@ export const KIMI_DEFAULT_MODEL = 'kimi-k3';
  *
  * Kimi Code learns a model's metadata from the provider catalog, but the
  * `KIMI_MODEL_*` family registers an *in-memory* provider it can look nothing up
- * for - so it refuses to start unless the window is stated. Declaring one too
- * large is the harmful direction (the CLI compacts too late and the endpoint
+ * for - so unless the window is stated it assumes 262,144 tokens, whatever the
+ * model. Declaring one too large is the harmful direction (the CLI compacts too late and the endpoint
  * rejects the request), so an unlisted model takes the smallest window Moonshot
  * currently ships rather than the largest.
  */
@@ -2063,12 +2063,13 @@ const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
  *
  * `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
  * `buildProviderEnv` overrides it with the run's selected model when there is
- * one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
- * `downgradeUnsupportedMedia` step silently replaces every image part with
- * "[image omitted: current model has no image input]" — which would break
- * `read_project_asset`, the only path by which an agent ever sees an image.
- * Capabilities resolve as a union of declared + auto-detected, so declaring can
- * only add.
+ * one. `KIMI_MODEL_CAPABILITIES` includes `image_in` so the CLI treats the
+ * model as taking images. Without it the 0.30.0 engine replaced every image part
+ * with "[image omitted: current model has no image input]", which would break
+ * `read_project_asset`, the only path by which an agent ever sees an image. 2.0.2
+ * passed an MCP image through either way when measured, but it still reads the
+ * capability, so it stays declared. Capabilities resolve as a union of declared +
+ * auto-detected, so declaring can only add.
  */
 const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
 	staticEnv: {
@@ -2299,39 +2300,47 @@ export function isLocalAiProvider(provider: AiProvider): boolean {
 }
 
 /**
- * OpenCode addresses every model as `<providerKey>/<model>` (e.g.
- * `openrouter/anthropic/claude-sonnet-4.5`). Maps a Hezo AI provider to the
- * OpenCode provider key its models live under, so the runner can prefix a bare
- * model id before passing it to `opencode run --model`.
+ * OpenCode addresses every model as `<key>/<native id>` (e.g.
+ * `openrouter/anthropic/claude-sonnet-4.5`, and `openrouter/openrouter/auto` for
+ * OpenRouter's own router). Maps a Hezo AI provider to the OpenCode provider key
+ * its models live under, and to how many `/` a model id has in that provider's
+ * own catalog - which is what tells a native id that happens to begin with the
+ * key (`openrouter/auto`) from one a user typed already qualified
+ * (`openrouter/anthropic/claude-sonnet-4.5`).
  */
-export const OPENCODE_PROVIDER_KEY: Partial<Record<AiProvider, string>> = {
-	[AiProvider.OpenRouter]: 'openrouter',
+export const OPENCODE_PROVIDERS: Partial<
+	Record<AiProvider, { key: string; nativeIdSlashes: number }>
+> = {
+	// Every OpenRouter catalog id is `author/slug`; its own routes (`auto`,
+	// `free`, ...) have the author `openrouter`.
+	[AiProvider.OpenRouter]: { key: 'openrouter', nativeIdSlashes: 1 },
 };
 
 /**
- * Normalize a model id for `opencode run --model`. Prefixes the OpenCode
- * provider key when the stored id isn't already qualified; leaves already
- * `providerKey/…` ids untouched (the provider catalog already returns them
- * unqualified, but a user may have typed the full form).
+ * The key a model is addressed by inside an `opencode.json` `provider.<key>.models`
+ * map: the provider's native id. A stored id is native already (the provider
+ * catalog returns it that way) unless a user typed it qualified, in which case
+ * the key is taken back off. The config map wants `deepseek/deepseek-v4-pro`, and
+ * a config keyed on any other form silently configures nothing.
  */
-export function opencodeModelArg(provider: AiProvider, model: string): string {
-	const key = OPENCODE_PROVIDER_KEY[provider];
-	if (!key) return model;
-	return model.startsWith(`${key}/`) ? model : `${key}/${model}`;
+export function opencodeModelKey(provider: AiProvider, model: string): string {
+	const entry = OPENCODE_PROVIDERS[provider];
+	if (!entry) return model;
+	const prefix = `${entry.key}/`;
+	if (!model.startsWith(prefix)) return model;
+	const rest = model.slice(prefix.length);
+	return rest.split('/').length - 1 === entry.nativeIdSlashes ? rest : model;
 }
 
 /**
- * The key a model is addressed by inside an `opencode.json` `provider.<key>.models`
- * map - the same id `opencodeModelArg` qualifies, with the provider prefix taken
- * back off. The two directions live together because they are one fact read twice:
- * `--model` wants `openrouter/deepseek/deepseek-v4-pro`, the config map wants
- * `deepseek/deepseek-v4-pro`, and a config keyed on the qualified form silently
- * configures nothing.
+ * Normalize a model id for `opencode run --model`: the provider key plus the
+ * native id, always, so the two directions are inverse by construction. Skipping
+ * the prefix for an id that merely began with the key sent OpenRouter's own
+ * `openrouter/auto` - Hezo's pinned default - upstream as `auto`.
  */
-export function opencodeModelKey(provider: AiProvider, model: string): string {
-	const key = OPENCODE_PROVIDER_KEY[provider];
-	if (!key) return model;
-	return model.startsWith(`${key}/`) ? model.slice(key.length + 1) : model;
+export function opencodeModelArg(provider: AiProvider, model: string): string {
+	const entry = OPENCODE_PROVIDERS[provider];
+	return entry ? `${entry.key}/${opencodeModelKey(provider, model)}` : model;
 }
 
 /**
@@ -2766,8 +2775,7 @@ export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
  * id against a `[models."<id>"]` table in `config.toml`, and Hezo registers its
  * model through the shell-read `KIMI_MODEL_*` family instead - an in-memory
  * provider that table knows nothing about. Passing the flag there fails the run
- * outright with `config.invalid: Model "…" is not configured in config.toml`,
- * so the id has to travel on `KIMI_MODEL_NAME` alone (`buildProviderEnv` puts
+ * outright with `Model "…" is not configured in config.toml.`, so the id has to travel on `KIMI_MODEL_NAME` alone (`buildProviderEnv` puts
  * the run's selected model there).
  *
  * Writing the model into `config.toml` instead is not an option: the same file
@@ -2792,22 +2800,24 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Antigravity]: ['--dangerously-skip-permissions'],
-	// OpenCode's own auto-approve flag, and NOT `--dangerously-skip-permissions`:
-	// that is Claude Code's spelling. OpenCode accepts unknown flags without
-	// complaint, so a wrong one here never applies and never announces itself -
-	// verify this name against `opencode run --help` rather than assuming a run
-	// that starts cleanly is approving anything.
+	// OpenCode's own auto-approve flag. It also takes Claude Code's
+	// `--dangerously-skip-permissions`, but only as a hidden alias, so the
+	// documented name is the one used. OpenCode rejects an unknown flag by
+	// printing its help to stderr and exiting 1, without naming the flag, so a
+	// wrong name here fails every run with no reason given - check this name
+	// against `opencode run --help` on a bump.
 	[AgentRuntime.OpenCode]: ['--auto'],
 	// Grok's Claude-Code-style permission modes; bypassPermissions skips every
 	// approval prompt so a headless `docker exec` run never hangs on one.
 	[AgentRuntime.Grok]: ['--permission-mode', 'bypassPermissions'],
 	// Kimi Code needs nothing here, and must not be given anything: `--prompt`
 	// is mutually exclusive with `--yolo`/`--auto`/`--plan`, so passing one would
-	// make the CLI reject the invocation outright. `-p` already applies the `auto`
-	// permission policy to tool calls on its own. If a future version still gates
-	// some call under `auto`, the escape hatches are the undocumented
-	// `--yes`/`--auto-approve` flags or `[permission.rules]` in the injected
-	// config.toml — not a flag that conflicts with `--prompt`.
+	// make the CLI reject the invocation outright. The hidden `--yes` and
+	// `--auto-approve` are aliases of `--yolo` and are refused the same way. `-p`
+	// already applies the `auto` permission policy to tool calls on its own, and
+	// 2.0.2 no longer applies `[permission.rules]` from config.toml, so there is
+	// no second lever: if a future version gates a call under `auto`, that is a
+	// bump blocker.
 	[AgentRuntime.Kimi]: [],
 };
 
@@ -2842,11 +2852,13 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	//
 	// Deliberately NOT removed, though a failed run made all three look guilty:
 	// the `Task*` family is the agent's own in-session checklist (what replaced
-	// TodoWrite) and persists nothing; `Skill` loads `.claude/skills/` from the
-	// project's own repo, which is a real capability; and `WebSearch` is proxied
-	// server-side so container egress does not affect it. They only misled an
-	// agent that had lost its Hezo tools entirely - a transport failure, fixed
-	// where transport failures belong.
+	// TodoWrite) and persists nothing - from 2.1.268 the CLI itself offers it only
+	// to older Claude models (Claude 3.x, Opus 4.0-4.7, Sonnet 4.0-4.6, Haiku
+	// 4.5), so a third-party or Opus 5 run has none; `Skill` loads
+	// `.claude/skills/` from the project's own repo, which is a real capability;
+	// and `WebSearch` is proxied server-side so container egress does not affect
+	// it. They only misled an agent that had lost its Hezo tools entirely - a
+	// transport failure, fixed where transport failures belong.
 	[AgentRuntime.ClaudeCode]: [
 		'--disallowedTools',
 		'WebFetch',
@@ -2868,9 +2880,8 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  * Whether a runtime's config can hide the MCP tools a connector's method
  * allowlist withholds, so the agent never sees a tool it may not call.
  *
- * This is only the *hiding* leg and it is deliberately not load-bearing: the
- * CLIs are installed unpinned, so a key that works today can be renamed
- * upstream tomorrow. The egress proxy independently rejects a `tools/call`
+ * This is only the *hiding* leg and it is deliberately not load-bearing: a
+ * key that works on the pinned CLI can be renamed upstream by the next bump. The egress proxy independently rejects a `tools/call`
  * naming a disabled method, which is what actually enforces the allowlist — a
  * `false` here costs an agent a wasted call and a clear error, never access.
  *
@@ -2880,14 +2891,17 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  *   as `mcp__<server>__<tool>`.
  * - **Kimi Code** — per-server `enabledTools` / `disabledTools` keys in
  *   `mcp.json`, which map one-to-one onto the descriptor's own fields.
- * - **Codex / Grok** — no per-server tool filter is documented for either CLI.
- *   Emitting a guessed TOML key would risk the CLI rejecting the whole config
- *   and breaking every run on that runtime, which is a far worse failure than
- *   showing an agent a tool the proxy will refuse. Revisit if upstream adds one.
+ * - **Codex** — per-server `enabled_tools` / `disabled_tools` in
+ *   `config.toml`, matched against the raw MCP tool names. Undocumented when
+ *   this table was written, and measured on 0.149.0 and 0.156.0 since.
+ * - **Grok** — no per-server tool filter is documented. Emitting a guessed key
+ *   would risk the CLI rejecting the whole config and breaking every run on
+ *   that runtime, which is a far worse failure than showing an agent a tool the
+ *   proxy will refuse. Revisit if upstream adds one.
  */
 export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.ClaudeCode]: true,
-	[AgentRuntime.Codex]: false,
+	[AgentRuntime.Codex]: true,
 	// agy's mcp_config.json documents no per-server tool allowlist, so Hezo does
 	// not rely on one - its MCP server exposes exactly the tools it means to.
 	[AgentRuntime.Antigravity]: false,
@@ -2945,10 +2959,10 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// OpenCode `run --format json` emits raw JSON events whose terminal event
 	// carries token usage. `--thinking` puts the model's reasoning parts on that
 	// stream too, so the run log shows them (the parser renders them as
-	// `[thinking]`); without it a run reasons invisibly. The CLI is installed
-	// unpinned in the agent image, so an upstream rename of this flag would fail
-	// every OpenCode run on an unknown argument - check it first if OpenCode runs
-	// start dying at exec.
+	// `[thinking]`); without it a run reasons invisibly. OpenCode rejects an
+	// unknown argument (help on stderr, exit 1), so an upstream rename of any flag
+	// here fails every OpenCode run - check them first if OpenCode runs start
+	// dying at exec after a bump.
 	//
 	// `--print-logs` puts the CLI's own diagnostics on stderr, which the runner
 	// already relays verbatim, while stdout stays pure JSON. At ERROR level it is

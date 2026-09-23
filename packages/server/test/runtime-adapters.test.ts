@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AgentEffort, AgentRuntime, AiProvider } from '@hezo/shared';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
+import { mcpConventionLines } from '../src/mcp/mcp-reference';
+import { registerTools } from '../src/mcp/tools';
 import {
 	applyEffortToRuntime,
 	type McpDescriptor,
@@ -9,6 +14,7 @@ import {
 	type RuntimeEnvContext,
 	validateInjection,
 } from '../src/services/runtime-adapters';
+import { CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH } from '../src/services/runtime-adapters/claude-code';
 import type { McpInjectionFile } from '../src/services/runtime-adapters/types';
 import {
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
@@ -209,7 +215,8 @@ describe('codex adapter', () => {
 			containerHomeDir: HOME,
 		});
 
-		expect(injection.cliArgs).toEqual([]);
+		// The judge hook runs only with hook trust bypassed.
+		expect(injection.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
 		// 2 files: config.toml + stop-hook judge script
 		expect(injection.files.length).toBe(2);
 		const file = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
@@ -287,9 +294,30 @@ describe('codex adapter', () => {
 		).toThrow(/hostHomeDir/);
 	});
 
+	it("requires Hezo's own server, switches plugins off, and leaves connectors optional", () => {
+		// Without `required`, Codex gives a server about 1 s before the first model
+		// request, so a slow start left the run with no Hezo tools and said nothing.
+		const connector = { ...HEZO_DESCRIPTOR, name: 'linear', url: 'https://mcp.linear.app/mcp' };
+		const injection = adapter.build([HEZO_DESCRIPTOR, connector], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const toml = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`)?.contents ?? '';
+		const hezo = toml.slice(
+			toml.indexOf('[mcp_servers.hezo]'),
+			toml.indexOf('[mcp_servers.linear]'),
+		);
+		const linear = toml.slice(toml.indexOf('[mcp_servers.linear]'));
+		expect(hezo).toContain('required = true');
+		expect(linear.split('[[hooks.Stop]]')[0]).not.toContain('required');
+		// A top-level key, so it precedes every table. It stops a 98 MB plugin
+		// clone into each fresh CODEX_HOME.
+		expect(toml.indexOf('features.plugins = false')).toBeLessThan(toml.indexOf('[mcp_servers'));
+	});
+
 	it('still emits the Stop hook + judge script even with an empty descriptor list', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
-		expect(injection.cliArgs).toEqual([]);
+		expect(injection.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
 		expect(injection.envEntries).toEqual([]);
 		expect(injection.files.length).toBe(2);
 		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
@@ -448,7 +476,7 @@ describe('antigravity adapter', () => {
 		expect(eff(AgentEffort.Max)).toEqual(['--effort', 'high']);
 	});
 
-	it('ships no completeness judge (agy’s Stop hook does not fire headless)', () => {
+	it('ships no completeness judge (none is wired for agy)', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
 			hostHomeDir: null,
 			containerHomeDir: null,
@@ -698,6 +726,24 @@ describe('opencode adapter', () => {
 		).toEqual({
 			openrouter: {
 				models: { 'deepseek/deepseek-v3.2': { options: { reasoning: { effort: 'medium' } } } },
+			},
+		});
+	});
+
+	it("keys OpenRouter's own router on its native id, not with the author stripped", () => {
+		// `openrouter/auto` is a native OpenRouter id whose author is `openrouter`.
+		// Keyed `auto`, the block configured nothing and the run went upstream as `auto`.
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.OpenRouter,
+				runModel: 'openrouter/auto',
+				effort: AgentEffort.High,
+			}),
+		).toEqual({
+			openrouter: {
+				models: { 'openrouter/auto': { options: { reasoning: { effort: 'high' } } } },
 			},
 		});
 	});
@@ -1081,12 +1127,18 @@ describe('stopJudge: false omits the completeness judge', () => {
 		expect(fileNamed(injection, 'doc-write-guard.mjs')).toBeDefined();
 	});
 
-	it('codex drops both the hook block and the judge script', () => {
+	it('codex drops the hook block, the judge script and the trust bypass together', () => {
 		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Codex];
-		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
+		const judged = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		expect(fileNamed(judged, 'stop-hook-judge.mjs')).toBeDefined();
+		// Codex drops a user-config hook whose hash was never saved as trusted, and
+		// says nothing; the per-run CODEX_HOME never has one. Without this flag the
+		// hook above is written and never runs.
+		expect(judged.cliArgs).toEqual(['--dangerously-bypass-hook-trust']);
 
 		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
 		expect(fileNamed(injection, 'stop-hook-judge.mjs')).toBeUndefined();
+		expect(injection.cliArgs).toEqual([]);
 		const config = fileNamed(injection, 'config.toml');
 		expect(config?.contents).not.toContain('[[hooks.Stop]]');
 		// The rest of the config is untouched.
@@ -1195,16 +1247,35 @@ describe('per-connector MCP method filtering', () => {
 		});
 	});
 
-	describe('codex and grok', () => {
-		it('pass the restriction through untouched (no documented per-server filter)', () => {
-			// Deliberate: guessing a TOML key risks the CLI rejecting the whole
-			// config. The egress proxy still enforces the allowlist for these runs.
-			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Grok]) {
-				const injection = RUNTIME_ADAPTERS[runtime].build([RESTRICTED_DESCRIPTOR], HOMES);
-				const contents = injection.files.map((f) => f.contents).join('\n');
-				expect(contents, runtime).toContain('[mcp_servers.linear]');
-				expect(contents, runtime).not.toContain('get_issue');
-			}
+	describe('codex', () => {
+		it('emits enabled_tools and disabled_tools on the server table', () => {
+			// Matched by Codex against the raw MCP tool names, as stored; deny wins.
+			const injection = RUNTIME_ADAPTERS[AgentRuntime.Codex].build(
+				[HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR],
+				HOMES,
+			);
+			const toml = injection.files.find((f) => f.hostPath.endsWith('config.toml'))?.contents ?? '';
+			const linear = toml.slice(toml.indexOf('[mcp_servers.linear]'));
+			expect(linear).toContain('enabled_tools = ["get_issue", "list_issues"]');
+			expect(linear).toContain('disabled_tools = ["save_issue", "delete_comment"]');
+			// An unrestricted server carries no filter at all.
+			const hezo = toml.slice(
+				toml.indexOf('[mcp_servers.hezo]'),
+				toml.indexOf('[mcp_servers.linear]'),
+			);
+			expect(hezo).not.toContain('enabled_tools');
+			expect(hezo).not.toContain('disabled_tools');
+		});
+	});
+
+	describe('grok', () => {
+		it('passes the restriction through untouched (no documented per-server filter)', () => {
+			// Deliberate: guessing a key risks the CLI rejecting the whole config.
+			// The egress proxy still enforces the allowlist for these runs.
+			const injection = RUNTIME_ADAPTERS[AgentRuntime.Grok].build([RESTRICTED_DESCRIPTOR], HOMES);
+			const contents = injection.files.map((f) => f.contents).join('\n');
+			expect(contents).toContain('[mcp_servers.linear]');
+			expect(contents).not.toContain('get_issue');
 		});
 	});
 
@@ -1232,6 +1303,29 @@ describe('runtime adapter behaviour beyond MCP', () => {
 			const env = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].constantEnv ?? {};
 			expect(env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe('0');
 			expect(env.DISABLE_TELEMETRY).toBe('1');
+		});
+
+		it('lifts the MCP description cap past everything Hezo sends', () => {
+			// Claude Code cuts an MCP server's `instructions` and each tool description
+			// at its cap; Hezo's instructions outgrew the 2,048-char default and lost
+			// their tail. This fails if they, or a tool description, outgrow the raised cap.
+			const env = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].constantEnv ?? {};
+			expect(env.CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH).toBe(
+				String(CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH),
+			);
+			expect(mcpConventionLines('wire').join('\n').length).toBeLessThanOrEqual(
+				CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH,
+			);
+			const tools = registerTools(
+				new McpServer({ name: 'hezo', version: '0.0.0' }),
+				{} as unknown as Db,
+				'/tmp/hezo-mcp-description-cap',
+				{} as unknown as MasterKeyManager,
+			);
+			const over = tools
+				.filter((t) => t.description.length > CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH)
+				.map((t) => `${t.name} (${t.description.length})`);
+			expect(over).toEqual([]);
 		});
 
 		it('gives every other runtime nothing, rather than an empty ceremony', () => {
@@ -1317,14 +1411,29 @@ describe('runtime adapter behaviour beyond MCP', () => {
 	describe('extraArgs', () => {
 		it('points Grok at a debug file inside its own per-run home', () => {
 			expect(
-				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({ containerHomeDir: '/home/node/.grok' }),
+				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({
+					containerHomeDir: '/home/node/.grok',
+					workingDir: '/workspace',
+				}),
 			).toEqual(['--debug-file', '/home/node/.grok/debug.log']);
 		});
 
 		it('asks for no debug file when there is no host-readable home to put it in', () => {
-			expect(RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({ containerHomeDir: null })).toEqual(
-				[],
-			);
+			expect(
+				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({
+					containerHomeDir: null,
+					workingDir: '/workspace',
+				}),
+			).toEqual([]);
+		});
+
+		it('gives Antigravity its working directory as the workspace, as an absolute path', () => {
+			expect(
+				RUNTIME_ADAPTERS[AgentRuntime.Antigravity].extraArgs?.({
+					containerHomeDir: null,
+					workingDir: '/worktrees/BE-1/repo',
+				}),
+			).toEqual(['--add-dir', '/worktrees/BE-1/repo']);
 		});
 
 		it('is undeclared for runtimes that report usage on their stream', () => {
@@ -1350,20 +1459,20 @@ describe('runtime adapter behaviour beyond MCP', () => {
 		});
 	});
 
-	describe('terminatesBackgroundWork', () => {
-		it('is claimed only by Claude Code, the one CLI that reports it', () => {
-			const claiming = Object.values(AgentRuntime).filter(
-				(r) => RUNTIME_ADAPTERS[r].terminatesBackgroundWork,
+	describe('backgroundTerminationMarker', () => {
+		it('is named only by the CLIs that kill unfinished background work and exit 0', () => {
+			const naming = Object.values(AgentRuntime).filter(
+				(r) => RUNTIME_ADAPTERS[r].backgroundTerminationMarker,
 			);
-			expect(claiming).toEqual([AgentRuntime.ClaudeCode]);
+			expect(naming.sort()).toEqual([AgentRuntime.Antigravity, AgentRuntime.ClaudeCode].sort());
 		});
 	});
 
 	describe('applyEffort', () => {
-		it('gives Claude Code its own prompt vocabulary and no flags', () => {
+		it('gives Claude Code its native --effort flag and no prompt words', () => {
 			const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, AgentEffort.Max);
-			expect(r.promptDirective).toBe('ultrathink');
-			expect(r.extraArgs).toEqual([]);
+			expect(r.promptDirective).toBe('');
+			expect(r.extraArgs).toEqual(['--effort', 'max']);
 			expect(r.extraEnv).toEqual([]);
 		});
 

@@ -53,11 +53,23 @@ function buildStdioEntry(d: McpStdioDescriptor): ClaudeStdioEntry {
  * the MITM proxy at a host nobody is paying for. These switches turn that off for
  * every provider driving this CLI.
  *
- * `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` is the odd one out and not about noise:
- * headless `claude -p` waits a bounded time for still-running background tasks and
+ * `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` is not about noise: headless `claude -p`
+ * waits a bounded time for still-running background agents and workflows and
  * then kills them, which ends Hezo's legitimately long background work. Zero lifts
- * the ceiling, leaving the wait bounded by the run's own container lifecycle.
+ * that ceiling, leaving the wait bounded by the run's own container lifecycle. It
+ * does not cover a background shell: measured on 2.1.238 and 2.1.280, a
+ * `run_in_background` Bash command is still killed 5 s after the final turn,
+ * with no marker on stderr and no setting to lift it. The stream parser logs
+ * that kill from the CLI's task events.
+ *
+ * `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` (from 2.1.280) raises the 2,048-char
+ * cap the CLI puts on an MCP server's `instructions` and on each tool
+ * description. Hezo's own instructions run past that cap, so their tail never
+ * reached the model; `runtime-adapters.test.ts` fails if they, or a Hezo tool
+ * description, outgrow this value.
  */
+export const CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH = 4096;
+
 const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_TELEMETRY: '1',
 	DISABLE_ERROR_REPORTING: '1',
@@ -65,14 +77,24 @@ const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
 	DISABLE_BUG_COMMAND: '1',
 	CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0',
+	CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH: String(CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH),
 } as const;
 
-const CLAUDE_CODE_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: '',
-	[AgentEffort.Low]: 'think about this step by step.',
-	[AgentEffort.Medium]: 'think',
-	[AgentEffort.High]: 'think hard',
-	[AgentEffort.Max]: 'ultrathink',
+/**
+ * Claude Code's `--effort`, which it sends as `output_config.effort`. Measured on
+ * 2.1.238 and 2.1.280: Opus 5 and 5.5 and the third-party models take every
+ * value as given, Sonnet 4.6 clamps `xhigh` to `high`, and Haiku 4.5 drops the
+ * field. There is no `minimal`: the CLI warns and falls back to the model's own
+ * default, which is `high` or above, so Minimal maps to `low`. `xhigh` is left
+ * out, since it sits between two levels Hezo already has and Sonnet cannot take
+ * it.
+ */
+const CLAUDE_CODE_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'low',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
 };
 
 export const claudeCodeAdapter: RuntimeAdapter = {
@@ -82,17 +104,21 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		requiresHomeDir: true,
 	},
 	constantEnv: CLAUDE_CODE_QUIET_ENV,
-	// Claude Code's reasoning lever is its own prompt vocabulary rather than a flag
-	// or a variable: these words are what the CLI itself recognises.
+	// The native flag, and no prompt words: the CLI recognises only `ultrathink`,
+	// which adds a note and leaves the effort on the wire unchanged, so the words
+	// were a second lever that did nothing below Max. The flag, not
+	// CLAUDE_CODE_EFFORT_LEVEL: the variable overrides the flag and, on a
+	// third-party provider, reaches the Stop-hook judge too, while the flag leaves
+	// the judge at its own fixed `high`. Subagents inherit it.
 	applyEffort: (effort) => ({
-		extraArgs: [],
+		extraArgs: ['--effort', CLAUDE_CODE_EFFORT[effort]],
 		extraEnv: [],
-		promptDirective: CLAUDE_CODE_PROMPT_DIRECTIVE[effort],
+		promptDirective: '',
 	}),
 	// Even with the ceiling lifted, the CLI can still report that it terminated
-	// unfinished background work - and it says so while exiting 0. It is the only
-	// runtime that does, so it is the only one whose clean exit gets second-guessed.
-	terminatesBackgroundWork: true,
+	// unfinished background work - and it says so while exiting 0, as
+	// "Background tasks still running after 600s; terminating."
+	backgroundTerminationMarker: /Background tasks still running after .*?terminating/i,
 	modelArg: claudeCodeModelArg,
 	staticEnvValue(key, value, ctx) {
 		// On a third-party Anthropic-compatible provider the subagent default should

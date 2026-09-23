@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fallbackPinnedModel } from '../src/model-pins';
 import {
 	AgentEffort,
 	AgentRuntime,
@@ -359,8 +360,19 @@ describe('provider helpers', () => {
 		expect(opencodeModelArg(AiProvider.OpenRouter, 'anthropic/claude')).toBe(
 			'openrouter/anthropic/claude',
 		);
-		expect(opencodeModelArg(AiProvider.OpenRouter, 'openrouter/x')).toBe('openrouter/x');
+		// OpenRouter's own routes are native ids with the author `openrouter`.
+		expect(opencodeModelArg(AiProvider.OpenRouter, 'openrouter/x')).toBe('openrouter/openrouter/x');
 		expect(opencodeModelArg(AiProvider.Anthropic, 'claude-opus-4')).toBe('claude-opus-4');
+	});
+
+	it("addresses OpenRouter's own router, the pinned default, under the provider key", () => {
+		// `openrouter/auto` began with the key, so it was passed as-is and OpenCode
+		// sent `auto` upstream - or failed with ProviderModelNotFoundError when no
+		// config block declared it.
+		const pinned = fallbackPinnedModel(AiProvider.OpenRouter) ?? '';
+		expect(pinned).toBe('openrouter/auto');
+		expect(opencodeModelArg(AiProvider.OpenRouter, pinned)).toBe('openrouter/openrouter/auto');
+		expect(opencodeModelKey(AiProvider.OpenRouter, pinned)).toBe('openrouter/auto');
 	});
 
 	it('opencodeModelKey is the inverse of opencodeModelArg', () => {
@@ -371,6 +383,17 @@ describe('provider helpers', () => {
 			expect(
 				opencodeModelArg(AiProvider.OpenRouter, opencodeModelKey(AiProvider.OpenRouter, model)),
 			).toBe('openrouter/anthropic/claude');
+		}
+		const key = (m: string) => opencodeModelKey(AiProvider.OpenRouter, m);
+		const arg = (m: string) => opencodeModelArg(AiProvider.OpenRouter, m);
+		for (const model of [
+			'anthropic/claude',
+			'openrouter/anthropic/claude',
+			'openrouter/auto',
+			'openrouter/free',
+		]) {
+			expect(arg(key(model)), model).toBe(arg(model));
+			expect(key(arg(model)), model).toBe(key(model));
 		}
 		expect(opencodeModelKey(AiProvider.Anthropic, 'claude-opus-4')).toBe('claude-opus-4');
 	});

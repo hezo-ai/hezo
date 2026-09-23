@@ -5,10 +5,14 @@ import { renderTerminalScreen } from '../src/services/sandbox/terminal-screen';
 import { SUBSCRIPTION_LOGIN_DRIVERS } from '../src/services/subscription-login-drivers';
 
 /**
- * The fixtures below are **recorded** from the real CLIs at the versions the
- * agent image pins, captured with the streams separated and no TTY (Codex) and
+ * The fixtures below are **recorded** from the real CLIs, each at the version
+ * named beside it, captured with the streams separated and no TTY (Codex) and
  * under a PTY (Claude Code). Where one carried a credential the value is
- * substituted and the escape structure kept.
+ * substituted and the escape structure kept. A pin bump re-checks them: Codex
+ * 0.156.0 prints the same device-auth screen apart from its version, and Claude
+ * Code 2.1.280 the same `setup-token` first screen and paste prompt, and the
+ * drivers parse both. The token box shown after a real sign-in was not
+ * re-recorded, since that needs a real account.
  *
  * They are the whole point of this file: a parser written against prose in a
  * vendor doc is a guess, and the failure mode of a wrong guess is a sign-in that

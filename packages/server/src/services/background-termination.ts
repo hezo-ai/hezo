@@ -1,21 +1,19 @@
 /**
- * Claude Code's headless `--print` mode caps how long it waits for still-running
- * background tasks (a `run_in_background` job, a Workflow fan-out that hasn't
- * synthesized yet) and then FORCE-KILLS them, printing a diagnostic line like
- * "Background tasks still running after 600s; terminating." to its own output.
- * `CLAUDE_CODE_QUIET_ENV` sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` to lift
- * that ceiling, but an older CLI (or one that ignores the override) still
- * terminates the work — and the CLI then exits 0 with a NON-error `result`, so a
- * run that already wrote something earlier (e.g. a progress update) would be
- * counted a success even though its actual deliverable was killed mid-flight.
- * This is the runner-side backstop: detect the diagnostic so the run is failed.
+ * A CLI can exit 0 having killed background work it had not finished - a
+ * `run_in_background` job, a Workflow fan-out that hasn't synthesized yet - and
+ * then report a NON-error result, so a run that already wrote something earlier
+ * (e.g. a progress update) would be counted a success even though its actual
+ * deliverable was killed mid-flight. This is the runner-side backstop: detect the
+ * line the CLI prints when it does so, and fail the run.
+ *
+ * The line is the runtime's own, so it lives on that runtime's adapter
+ * (`RuntimeAdapter.backgroundTerminationMarker`); this module only scans for it.
  *
  * Matched only against the CLI's own diagnostic output — stderr, plus non-JSON
  * stdout lines. The stream-json events an agent's text rides in are JSON objects
- * (they start with `{`), so an agent that merely echoes this phrase in its
+ * (they start with `{`), so an agent that merely echoes the phrase in its
  * message can't trip the backstop.
  */
-const BACKGROUND_TERMINATION_MARKER = /Background tasks still running after .*?terminating/i;
 
 /**
  * Cap on how much of one unterminated line is held while scanning. A run's raw
@@ -39,7 +37,10 @@ class MarkerLineScanner {
 	private skippingLine = false;
 	private found = false;
 
-	constructor(private readonly skipJsonLines: boolean) {}
+	constructor(
+		private readonly marker: RegExp,
+		private readonly skipJsonLines: boolean,
+	) {}
 
 	push(text: string): void {
 		if (this.found) return;
@@ -74,7 +75,7 @@ class MarkerLineScanner {
 			this.pending = '';
 			return;
 		}
-		if (BACKGROUND_TERMINATION_MARKER.test(this.pending)) {
+		if (this.marker.test(this.pending)) {
 			this.found = true;
 			this.pending = '';
 			return;
@@ -86,7 +87,7 @@ class MarkerLineScanner {
 		if (!this.found && !this.skippingLine) {
 			const trimmed = this.pending.trim();
 			const skippable = trimmed.length === 0 || (this.skipJsonLines && trimmed.startsWith('{'));
-			if (!skippable && BACKGROUND_TERMINATION_MARKER.test(trimmed)) this.found = true;
+			if (!skippable && this.marker.test(trimmed)) this.found = true;
 		}
 		this.pending = '';
 		this.skippingLine = false;
@@ -104,10 +105,15 @@ class MarkerLineScanner {
  * dominant heap consumer. Nothing needs the bytes; only this verdict.
  */
 export class BackgroundTerminationDetector {
-	private readonly scanners = {
-		stdout: new MarkerLineScanner(true),
-		stderr: new MarkerLineScanner(false),
-	};
+	private readonly scanners: Record<'stdout' | 'stderr', MarkerLineScanner>;
+
+	/** `marker` is the line the runtime prints when it kills unfinished work. */
+	constructor(marker: RegExp) {
+		this.scanners = {
+			stdout: new MarkerLineScanner(marker, true),
+			stderr: new MarkerLineScanner(marker, false),
+		};
+	}
 
 	push(stream: 'stdout' | 'stderr', text: string): void {
 		this.scanners[stream].push(text);
@@ -126,8 +132,12 @@ export class BackgroundTerminationDetector {
  * Whole-string form, for callers that already hold the complete output. Runs
  * through the same scanner as the streaming path so the two can't diverge.
  */
-export function detectTerminatedBackgroundWork(stdout: string, stderr: string): boolean {
-	const detector = new BackgroundTerminationDetector();
+export function detectTerminatedBackgroundWork(
+	stdout: string,
+	stderr: string,
+	marker: RegExp,
+): boolean {
+	const detector = new BackgroundTerminationDetector(marker);
 	detector.push('stdout', stdout);
 	detector.push('stderr', stderr);
 	return detector.finish();

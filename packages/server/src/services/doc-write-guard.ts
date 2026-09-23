@@ -118,10 +118,14 @@ process.stdin.on('end', () => {
 
     // A repo may legitimately track its own file of this name; writing to that
     // is real work and must stay allowed. Only an untracked path is a stray
-    // copy of the database doc.
+    // copy of the database doc. Kimi Code passes a path relative to the
+    // session's cwd, so resolve it first: taken as-is, \`docs/x.md\` was looked
+    // up as \`docs/docs/x.md\` and a tracked file was refused.
+    const sessionDir = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+    const target = path.resolve(sessionDir, filePath);
     try {
-      execFileSync('git', ['ls-files', '--error-unmatch', '--', filePath], {
-        cwd: path.dirname(filePath),
+      execFileSync('git', ['ls-files', '--error-unmatch', '--', target], {
+        cwd: path.dirname(target),
         stdio: 'ignore',
       });
       return allow();

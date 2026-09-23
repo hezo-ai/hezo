@@ -81,6 +81,23 @@ describe('agent-chat-parser — Claude Code', () => {
 		});
 	});
 
+	it("counts every model in the result's modelUsage, side calls included", () => {
+		// `usage` covers the main loop only; `modelUsage` adds the CLI's side calls.
+		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'result',
+				usage: { input_tokens: 100, output_tokens: 50 },
+				modelUsage: {
+					'claude-opus-5': { inputTokens: 100, outputTokens: 50 },
+					'claude-haiku-4-5': { inputTokens: 5_000, outputTokens: 50 },
+				},
+			},
+		]);
+		expect(parser.getUsage()?.inputTokens).toBe(5_100);
+		expect(parser.getUsage()?.outputTokens).toBe(100);
+	});
+
 	it('records the tokens and ignores the reported dollar figure', () => {
 		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
 		feed(parser, [
@@ -316,6 +333,18 @@ describe('agent-chat-parser — generic (OpenCode)', () => {
 				outputTokens: 60,
 			},
 		});
+	});
+
+	it('keeps reasoning out of the reply', () => {
+		// `--thinking` is in the shared stream args, so a chat turn's stream carries
+		// the model's reasoning, with its text at `part.text` exactly where a reply's
+		// text sits. Shapes as OpenCode 1.18.32 emits them.
+		const parser = createAgentChatParser(AgentRuntime.OpenCode);
+		const events = feed(parser, [
+			{ type: 'reasoning', part: { type: 'reasoning', text: 'I should call hezo_ping.' } },
+			{ type: 'text', part: { type: 'text', text: 'All done.' } },
+		]);
+		expect(events).toEqual([{ text: 'All done.' }]);
 	});
 
 	it('drops non-object lines and unrecognized events', () => {

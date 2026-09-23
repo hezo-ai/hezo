@@ -20,8 +20,10 @@ import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import {
 	acquireCredentialLock,
+	bindWorkingDir,
 	buildProviderEnv,
 	buildSubscriptionMount,
+	DEFERRED_WORKING_DIR,
 	getHostPromptPath,
 	getHostSubscriptionRoot,
 	type RunnerDeps,
@@ -1341,12 +1343,12 @@ describe('runAgent', () => {
 	});
 
 	describe('effort configuration', () => {
-		it('appends the ultrathink directive when the wakeup asks for max effort', async () => {
+		it('passes --effort max when the wakeup asks for max effort', async () => {
 			const project = makeProject();
-			let capturedPrompt = '';
+			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					capturedCmd = opts.Cmd;
 					return 'exec-ultra';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1366,15 +1368,16 @@ describe('runAgent', () => {
 				effort: AgentEffort.Max,
 			});
 
-			expect(capturedPrompt.trim().endsWith('ultrathink')).toBe(true);
+			const at = capturedCmd.indexOf('--effort');
+			expect(capturedCmd[at + 1]).toBe('max');
 		});
 
 		it("uses the agent's default_effort when the wakeup carries no override", async () => {
 			const project = makeProject();
-			let capturedPrompt = '';
+			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					capturedCmd = opts.Cmd;
 					return 'exec-default';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1397,7 +1400,7 @@ describe('runAgent', () => {
 				project,
 			);
 
-			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
+			expect(capturedCmd[capturedCmd.indexOf('--effort') + 1]).toBe('high');
 		});
 
 		it('tells the agent what the task has used so far', async () => {
@@ -1441,10 +1444,10 @@ describe('runAgent', () => {
 
 		it('runs a Captain at its configured effort rather than forcing max', async () => {
 			const project = makeProject();
-			let capturedPrompt = '';
+			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					capturedCmd = opts.Cmd;
 					return 'exec-captain-effort';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1466,8 +1469,7 @@ describe('runAgent', () => {
 				project,
 			);
 
-			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
-			expect(capturedPrompt.trim().endsWith('ultrathink')).toBe(false);
+			expect(capturedCmd[capturedCmd.indexOf('--effort') + 1]).toBe('high');
 		});
 
 		it('exposes HEZO_AGENT_EFFORT in the container env', async () => {
@@ -2134,6 +2136,8 @@ describe('runAgent', () => {
 			// homeConfigFiles), so there is no per-run home env var and no config
 			// flag on argv. The mcp_config.json content is unit-tested on the adapter.
 			expect(capturedCmd).not.toContain('--mcp-config');
+			// A project with no repo runs in the workspace, which is then agy's workspace.
+			expect(capturedCmd[capturedCmd.indexOf('--add-dir') + 1]).toBe('/workspace');
 			expect(capturedEnv.some((e) => e.startsWith('GEMINI_CLI_HOME='))).toBe(false);
 			expect(capturedEnv.some((e) => e.startsWith('HEZO_ANTIGRAVITY_CONFIG_DIR='))).toBe(false);
 		});
@@ -2640,6 +2644,9 @@ describe('runAgent', () => {
 
 			expect(capturedCmd).toContain('codex');
 			expect(capturedCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
+			// A task run carries the completeness judge, which Codex runs only with
+			// hook trust bypassed.
+			expect(capturedCmd).toContain('--dangerously-bypass-hook-trust');
 			const codexIdx = capturedCmd.indexOf('codex');
 			expect(capturedCmd[codexIdx + 1]).toBe('exec');
 			expect(capturedCmd[capturedCmd.length - 1]).toBe('-');
@@ -2833,6 +2840,8 @@ describe('runAgent', () => {
 						const mid = Math.floor(payload.length / 2);
 						await opts.onChunk({ stream: 'stdout', text: payload.slice(0, mid) });
 						await opts.onChunk({ stream: 'stdout', text: payload.slice(mid) });
+						// Delivered already; returning it too would deliver it twice.
+						return { stdout: '', stderr: '' };
 					}
 					return { stdout: payload, stderr: '' };
 				},
@@ -3636,6 +3645,34 @@ describe('buildProviderEnv derives the subagent model from the run model', () =>
 	it('does not add a subagent model for Anthropic (no staticEnv to override)', () => {
 		const env = buildProviderEnv(AiProvider.Anthropic, cred, 'claude-opus-4-8');
 		expect(env.some((e) => e.startsWith('CLAUDE_CODE_SUBAGENT_MODEL='))).toBe(false);
+	});
+});
+
+describe('bindWorkingDir', () => {
+	it('swaps every placeholder element for the real directory and leaves the rest', () => {
+		expect(
+			bindWorkingDir(
+				['sh', '-c', 'script', 'sh', 'agy', '--add-dir', DEFERRED_WORKING_DIR, '--effort', 'high'],
+				'/worktrees/BE-1/repo',
+			),
+		).toEqual([
+			'sh',
+			'-c',
+			'script',
+			'sh',
+			'agy',
+			'--add-dir',
+			'/worktrees/BE-1/repo',
+			'--effort',
+			'high',
+		]);
+	});
+
+	it('refuses a placeholder buried inside a longer argument', () => {
+		// It would otherwise reach the CLI as a literal, nonexistent path.
+		expect(() => bindWorkingDir([`--add-dir=${DEFERRED_WORKING_DIR}`], '/workspace')).toThrow(
+			/argv element of its own/,
+		);
 	});
 });
 

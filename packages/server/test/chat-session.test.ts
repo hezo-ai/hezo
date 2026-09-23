@@ -456,6 +456,55 @@ describe('ChatSessionManager', () => {
 		await manager.stop();
 	});
 
+	test('gives a runtime that takes its working directory on argv the chat workspace', async () => {
+		// Antigravity tells its model there is no workspace unless one is named.
+		await ctx.db.query('DELETE FROM ai_provider_configs');
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		await ctx.db.query(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status)
+			 VALUES ('google', 'api_key', 'gemini', $1, true, 'verified')`,
+			[encrypt('AIza-test', key)],
+		);
+
+		const cmds: string[][] = [];
+		const agyDocker = createStubDocker({
+			execCreate: async (_id: string, config: { Cmd?: string[] }) => {
+				cmds.push(config.Cmd ?? []);
+				return 'exec-agy';
+			},
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+			) => {
+				await opts.onChunk?.({
+					stream: 'stdout',
+					text: `${JSON.stringify({
+						event: 'result',
+						result: { status: 'SUCCESS', response: 'Hi there', usage: { input_tokens: 3 } },
+					})}\n`,
+				});
+				return { stdout: '', stderr: '' };
+			},
+		});
+		const { manager } = makeManager(ctx, agyDocker);
+
+		const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+
+		const cliCmds = cmds.filter((c) => c.includes('agy'));
+		expect(cliCmds.length).toBeGreaterThan(0);
+		for (const c of cliCmds) expect(c[c.indexOf('--add-dir') + 1]).toBe('/workspace');
+
+		await manager.stop();
+	});
+
 	test('broadcasts tool activity as progress, keeping it out of the reply text', async () => {
 		// The runtimes emit whole assistant messages, not token deltas, so a turn
 		// that calls a tool after writing its text is indistinguishable from a
