@@ -134,6 +134,27 @@ describe('Claude Code credit refusal', () => {
 	});
 });
 
+describe('Antigravity provider refusal', () => {
+	it('reads a rejected Gemini API key as an auth error', () => {
+		// Recorded from agy 1.2.8, which carries the upstream text into the result
+		// (1.1.17 said only "Agent execution terminated due to error.").
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		feed(parser, [
+			{
+				event: 'result',
+				result: {
+					status: 'ERROR',
+					response: '',
+					error:
+						'agent executor error: generating and executing: Error 400, Message: API key not valid. Please pass a valid API key., Status: INVALID_ARGUMENT, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com reason:API_KEY_INVALID]]',
+					usage: { input_tokens: 0, output_tokens: 0 },
+				},
+			},
+		]);
+		expect(parser.getTerminalVerdict()?.family).toBe('auth');
+	});
+});
+
 describe('parseCodexRetryAt', () => {
 	const now = new Date('2026-09-17T01:29:10Z');
 

@@ -35,7 +35,7 @@ describe('generated stop-hook judge scripts', () => {
 
 	it('covers every runtime that has a command-script judge', () => {
 		// Claude Code uses a native prompt hook (no script); OpenCode, Grok and
-		// Antigravity have no judge at all (agy's Stop hook does not fire headless).
+		// Antigravity have no judge at all (none is wired for agy).
 		// Everything else must be exercised below.
 		expect(runtimesWithScripts).toContain(AgentRuntime.Codex);
 		expect(runtimesWithScripts).toContain(AgentRuntime.Kimi);

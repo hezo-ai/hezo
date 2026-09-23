@@ -454,7 +454,7 @@ describe('antigravity adapter', () => {
 		expect(eff(AgentEffort.Max)).toEqual(['--effort', 'high']);
 	});
 
-	it('ships no completeness judge (agy’s Stop hook does not fire headless)', () => {
+	it('ships no completeness judge (none is wired for agy)', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
 			hostHomeDir: null,
 			containerHomeDir: null,
@@ -1379,12 +1379,12 @@ describe('runtime adapter behaviour beyond MCP', () => {
 		});
 	});
 
-	describe('terminatesBackgroundWork', () => {
-		it('is claimed only by Claude Code, the one CLI that reports it', () => {
-			const claiming = Object.values(AgentRuntime).filter(
-				(r) => RUNTIME_ADAPTERS[r].terminatesBackgroundWork,
+	describe('backgroundTerminationMarker', () => {
+		it('is named only by the CLIs that kill unfinished background work and exit 0', () => {
+			const naming = Object.values(AgentRuntime).filter(
+				(r) => RUNTIME_ADAPTERS[r].backgroundTerminationMarker,
 			);
-			expect(claiming).toEqual([AgentRuntime.ClaudeCode]);
+			expect(naming.sort()).toEqual([AgentRuntime.Antigravity, AgentRuntime.ClaudeCode].sort());
 		});
 	});
 

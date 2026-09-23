@@ -105,9 +105,9 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		promptDirective: CLAUDE_CODE_PROMPT_DIRECTIVE[effort],
 	}),
 	// Even with the ceiling lifted, the CLI can still report that it terminated
-	// unfinished background work - and it says so while exiting 0. It is the only
-	// runtime that does, so it is the only one whose clean exit gets second-guessed.
-	terminatesBackgroundWork: true,
+	// unfinished background work - and it says so while exiting 0, as
+	// "Background tasks still running after 600s; terminating."
+	backgroundTerminationMarker: /Background tasks still running after .*?terminating/i,
 	modelArg: claudeCodeModelArg,
 	staticEnvValue(key, value, ctx) {
 		// On a third-party Anthropic-compatible provider the subagent default should

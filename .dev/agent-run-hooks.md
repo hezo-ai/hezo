@@ -23,7 +23,7 @@ Wiring lives in `services/runtime-adapters/<runtime>.ts`, specs in `JUDGE_SPECS`
 | Kimi Code | helper script | `[[hooks]]` entries accept **exactly four keys** (`event`, `matcher`, `command`, `timeout`) — any other makes the CLI drop the whole `hooks` section with a stderr warning, so the judge and the doc-write guard silently vanish from every run on the runtime. Block via exit code **2**; any other non-zero reads as a broken script and fails open. Its stdin payload carries no final assistant message, and its `stop_hook_active` is always false, so the spec opts into a session-log lookup and an on-disk loop-guard marker. The lookup reads the text `content.part` loop events of the last step in `wire.jsonl`: no assistant-message record exists while the turn is open, and a lookup for one never fired the judge on 0.30.0 or 2.0.2. The spec carries that record shape, so a bump re-checks it there. The PreToolUse payload gives `path` relative to its `cwd`. |
 | OpenCode | **none** | Its plugin API can't block-and-continue in headless mode. Fails open. |
 | Grok | **none** | Its hooks block only on pre-tool-use; Stop is a passive notification. Fails open. |
-| Antigravity | **none** | agy's Stop hook does not fire in headless (`--print`) mode. Fails open. |
+| Antigravity | **none** | Not wired. From 1.2 agy's Stop hook fires in headless (`--print`) mode and honours `decision: "continue"`, but its payload carries no final message, only a `transcriptPath` (1.1.17 fired no hooks headless). Fails open. |
 
 ## Structural signals
 

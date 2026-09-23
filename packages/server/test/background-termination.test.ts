@@ -1,10 +1,26 @@
+import { AgentRuntime } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	BackgroundTerminationDetector,
-	detectTerminatedBackgroundWork,
+	detectTerminatedBackgroundWork as detectFor,
 } from '../src/services/background-termination';
+import { RUNTIME_ADAPTERS } from '../src/services/runtime-adapters';
 
 const DIAGNOSTIC = 'Background tasks still running after 600s; terminating.';
+
+/** The line each runtime prints when it kills unfinished work, from its adapter. */
+function markerOf(runtime: AgentRuntime): RegExp {
+	const marker = RUNTIME_ADAPTERS[runtime].backgroundTerminationMarker;
+	if (!marker) throw new Error(`${runtime} names no background-termination marker`);
+	return marker;
+}
+
+const CLAUDE = markerOf(AgentRuntime.ClaudeCode);
+
+/** Claude Code's marker, which the cases below were written against. */
+function detectTerminatedBackgroundWork(stdout: string, stderr: string): boolean {
+	return detectFor(stdout, stderr, CLAUDE);
+}
 
 describe('detectTerminatedBackgroundWork', () => {
 	it('matches the CLI diagnostic on stderr', () => {
@@ -47,7 +63,7 @@ describe('detectTerminatedBackgroundWork', () => {
  */
 describe('BackgroundTerminationDetector (incremental)', () => {
 	const feed = (chunks: Array<['stdout' | 'stderr', string]>): boolean => {
-		const detector = new BackgroundTerminationDetector();
+		const detector = new BackgroundTerminationDetector(CLAUDE);
 		for (const [stream, text] of chunks) detector.push(stream, text);
 		return detector.finish();
 	};
@@ -103,7 +119,7 @@ describe('BackgroundTerminationDetector (incremental)', () => {
 	// MB. Scanning must stay bounded, and a huge JSON event must not match even
 	// though it contains the phrase.
 	it('stays bounded on a very long stream-json line carrying the phrase', () => {
-		const detector = new BackgroundTerminationDetector();
+		const detector = new BackgroundTerminationDetector(CLAUDE);
 		detector.push('stdout', `{"type":"assistant","text":"${DIAGNOSTIC} `);
 		for (let i = 0; i < 500; i++) detector.push('stdout', 'x'.repeat(4096));
 		detector.push('stdout', '"}\n');
@@ -111,9 +127,39 @@ describe('BackgroundTerminationDetector (incremental)', () => {
 	});
 
 	it('still finds a diagnostic that follows a very long non-JSON line', () => {
-		const detector = new BackgroundTerminationDetector();
+		const detector = new BackgroundTerminationDetector(CLAUDE);
 		for (let i = 0; i < 200; i++) detector.push('stdout', 'y'.repeat(4096));
 		detector.push('stdout', `\n${DIAGNOSTIC}\n`);
 		expect(detector.finish()).toBe(true);
+	});
+});
+
+describe('Antigravity background termination', () => {
+	const AGY = markerOf(AgentRuntime.Antigravity);
+
+	it('matches the line agy 1.2.8 prints when it kills a background command', () => {
+		// Recorded from agy 1.2.8 headless: the command was killed, and the run
+		// still exited 0 with SUCCESS.
+		const stderr = [
+			'root agent idle; waiting up to 5s for 1 background task(s)',
+			'terminating 1 background task(s) on exit',
+			'',
+		].join('\n');
+		expect(detectFor('', stderr, AGY)).toBe(true);
+	});
+
+	it('does not read a daemon it left running as a kill', () => {
+		expect(detectFor('', 'leaving 1 daemon task(s) running on exit\n', AGY)).toBe(false);
+		expect(detectFor('', 'root agent idle; waiting up to 5s for 1 background task(s)\n', AGY)).toBe(
+			false,
+		);
+	});
+
+	it('ignores the phrase inside a stream-json frame on stdout', () => {
+		const frame = JSON.stringify({
+			event: 'step_update',
+			text: 'terminating 1 background task(s) on exit',
+		});
+		expect(detectFor(`${frame}\n`, '', AGY)).toBe(false);
 	});
 });

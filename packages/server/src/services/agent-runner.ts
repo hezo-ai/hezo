@@ -2753,8 +2753,12 @@ export async function runAgent(
 
 			// Scanned incrementally rather than over a retained transcript: the raw
 			// exec output is the full stream-json stream and never kept (see
-			// ExecStartOpts.onChunk).
-			const backgroundTermination = new BackgroundTerminationDetector();
+			// ExecStartOpts.onChunk). Only a runtime that can kill unfinished
+			// background work and still exit 0 names a line to watch for.
+			const backgroundMarker = RUNTIME_ADAPTERS[runtimeType].backgroundTerminationMarker;
+			const backgroundTermination = backgroundMarker
+				? new BackgroundTerminationDetector(backgroundMarker)
+				: null;
 
 			// The runtime states its per-server tool counts once, in the session-init
 			// event at the very start of the stream, so this is persisted mid-run
@@ -2814,7 +2818,7 @@ export async function runAgent(
 			};
 
 			const onChunk = async (chunk: ExecLogChunk) => {
-				backgroundTermination.push(chunk.stream, chunk.text);
+				backgroundTermination?.push(chunk.stream, chunk.text);
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
@@ -3259,10 +3263,7 @@ export async function runAgent(
 			// deep-research Workflow that never got to synthesize its report) even
 			// though it exits 0 and may have written something earlier. Fail it so it
 			// surfaces and is retried rather than silently counting as done.
-			const backgroundWorkTerminated =
-				exitedClean &&
-				Boolean(RUNTIME_ADAPTERS[runtimeType].terminatesBackgroundWork) &&
-				backgroundTermination.finish();
+			const backgroundWorkTerminated = exitedClean && (backgroundTermination?.finish() ?? false);
 
 			const success =
 				exitedClean &&

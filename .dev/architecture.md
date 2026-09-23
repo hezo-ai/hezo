@@ -4181,10 +4181,14 @@ diff), or the agent explicitly calls `report_no_work`. A clean exit with neither
 silent no-op, marked `failed`. One further demotion overrides even a run that *did* write:
 if the CLI force-terminated still-running background work (Claude Code's headless
 `--print` mode prints "Background tasks still running after Ns; terminating" and kills a
-`run_in_background` job or a `Workflow` fan-out that never synthesized), the run
-**abandoned unfinished work** and is marked `failed` regardless of earlier output
-(`services/background-termination.ts` scans the CLI's own diagnostic output — stderr and
-non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). The scan
+`run_in_background` job or a `Workflow` fan-out that never synthesized; agy from 1.2 gives a
+background command 5 s once the agent is idle, then prints "terminating N background task(s)
+on exit"), the run **abandoned unfinished work** and is marked `failed` regardless of earlier
+output. The line is the runtime's own, carried on its adapter as
+`backgroundTerminationMarker`; `services/background-termination.ts` scans the CLI's own
+diagnostic output for it — stderr and non-JSON stdout lines — so an agent that merely echoes
+the phrase can't trip it. A Claude Code background *shell* is killed 5 s after the final turn
+with no such line, so this backstop cannot see it. The scan
 is **incremental**, fed from the same per-chunk callback the log pipeline uses: the exec
 transport retains no output at all (see below), so the verdict is accumulated as the run
 streams rather than computed from a kept transcript. This is
@@ -4540,7 +4544,7 @@ absent for most runtimes:
 | `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home) |
 | `recoverUsage` | usage for a CLI whose stream reports none | Grok, Kimi |
 | `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Antigravity, Kimi |
-| `terminatesBackgroundWork` | can it exit 0 having killed unfinished work | Claude Code |
+| `backgroundTerminationMarker` | the line it prints when it exits 0 having killed unfinished work | Claude Code, Antigravity |
 
 An absent member means "nothing extra", never "unsupported" - the caller has a defined
 answer either way, so no call site needs to know which runtime it holds. The rule is
@@ -4757,7 +4761,9 @@ legitimately long agent/background work; every runtime is relaxed at its own con
 (`stream_idle_timeout_ms`) are **not** tunable while going direct (config/`-c` overrides of a
 built-in provider are silently ignored by Codex's vacant-only merge) and only drive a
 reconnect/retry, not a kill, so they're left at default. **Antigravity** sets no timeouts at
-all. **OpenCode** (`opencode.json`) sets the per-MCP-server `timeout` to
+all; up to 1.2.5 agy's own `--print-timeout` defaulted to 5 min and ended every longer headless
+turn with "timeout waiting for response" (measured on 1.1.17), and from 1.2.6 it defaults to no
+limit. **OpenCode** (`opencode.json`) sets the per-MCP-server `timeout` to
 10 min. Its schema says the key defaults to 5 s; the code leaves connect and `tools/list` at
 30 s and a tool call at the MCP SDK's 60 s, measured on 1.18.32 (a 65 s call fails without the
 key and completes with it). Its bash tool has a non-configurable 10-min hard cap. From 1.18.27

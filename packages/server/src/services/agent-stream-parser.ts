@@ -251,7 +251,8 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 	},
 	{
 		family: 'auth',
-		match: /401|authentication|unauthorized|invalid api key|invalid x-api-key|not logged in/,
+		match:
+			/401|authentication|unauthorized|invalid api key|api key not valid|invalid x-api-key|not logged in/,
 		failure: RunFailureClass.Permanent,
 		describe: (text) =>
 			`AI provider authentication failed — check the team's provider credential. (${text})`,

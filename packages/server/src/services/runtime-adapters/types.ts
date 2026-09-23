@@ -317,9 +317,9 @@ export interface RuntimeAdapter {
 	offStreamUsage?: OffStreamUsage;
 
 	/**
-	 * True when this CLI can exit 0 having killed background work it had not
-	 * finished. Only such a runtime has its stream watched for that report, and
-	 * only there does a clean exit get second-guessed.
+	 * The line this CLI prints when it exits 0 having killed background work it
+	 * had not finished. Absent means it never does. Only a runtime with one has its
+	 * output watched for it, and only there does a clean exit get second-guessed.
 	 */
-	readonly terminatesBackgroundWork?: boolean;
+	readonly backgroundTerminationMarker?: RegExp;
 }

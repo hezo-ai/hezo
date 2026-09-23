@@ -155,9 +155,9 @@ trial, and we don't ask for a card - see
 - **One platform layer over every model.** The [meta-harness](./docs/concepts/meta-harness.md)
   runs each model in its own first-party CLI, then levels the differences: the same tools,
   skills, memory and sandbox whichever you pick, plus a completeness check that will not let
-  a run end on failing tests or an "out of scope" dodge on the runtimes whose CLI can block a
-  turn (Claude Code, Codex and Kimi Code; Antigravity, Grok Build and OpenCode cannot, and
-  fail open).
+  a run end on failing tests or an "out of scope" dodge. It runs on Claude Code, Codex and
+  Kimi Code. Grok Build and OpenCode cannot block a turn, and Hezo does not check Antigravity
+  runs yet, so runs on those three fail open.
 - **Agents never hold your secrets.** Every credential is a
   [placeholder](./docs/security/secret-protection.md). The egress proxy swaps in the real
   value only for the hosts you allowed.

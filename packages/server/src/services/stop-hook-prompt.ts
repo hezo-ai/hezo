@@ -14,9 +14,10 @@
  *
  * The judge runs inside the container against the team's existing
  * provider credential. No server-side LLM client. The hook is on for every
- * runtime whose turn-end hook can block-and-continue in headless mode. OpenCode,
- * Grok and Antigravity cannot (their hooks do not fire, or only warn, in headless
- * mode), so those runtimes run with no completeness judge.
+ * runtime whose turn-end hook can block-and-continue in headless mode. OpenCode
+ * and Grok cannot (their hooks do not fire, or only warn, in headless mode), and
+ * Antigravity's can from agy 1.2 but is not wired, so those three runtimes run
+ * with no completeness judge.
  * The judge model is chosen per provider so the
  * call resolves against the team's own upstream — see
  * CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code runtimes and the
@@ -583,8 +584,9 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
 		inputFields: ['last_assistant_message'],
 	}),
-	// No Antigravity (Google) entry: `agy`'s Stop hook does not fire in headless
-	// mode, so the runtime ships fail-open like Grok and OpenCode. JUDGE_SPECS is
+	// No Antigravity (Google) entry: from agy 1.2 its Stop hook fires headless, but
+	// the payload carries no final message (only a `transcriptPath`) and no judge
+	// is wired, so the runtime ships fail-open like Grok and OpenCode. JUDGE_SPECS is
 	// Partial, so a missing entry is the disabled state, not a compile error.
 	// Kimi Code `Stop` hook → Moonshot's OpenAI-compatible Chat Completions.
 	//
