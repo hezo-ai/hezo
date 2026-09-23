@@ -52,21 +52,28 @@ describe('parseEffortFromCommentBody', () => {
 });
 
 describe('applyEffortToRuntime — Claude Code', () => {
-	it('appends ultrathink directive at max effort', () => {
-		const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, AgentEffort.Max);
-		expect(r.promptDirective).toBe('ultrathink');
-		expect(r.extraArgs).toEqual([]);
-		expect(r.extraEnv).toEqual([]);
+	it('passes every level as the native --effort flag, with no prompt words', () => {
+		// Measured on 2.1.238 and 2.1.280: the flag reaches the request as
+		// `output_config.effort`, while of the old prompt words only `ultrathink` was
+		// recognised, and it left the effort on the wire unchanged.
+		const expected: Record<AgentEffort, string> = {
+			[AgentEffort.Minimal]: 'low',
+			[AgentEffort.Low]: 'low',
+			[AgentEffort.Medium]: 'medium',
+			[AgentEffort.High]: 'high',
+			[AgentEffort.Max]: 'max',
+		};
+		for (const [effort, flag] of Object.entries(expected) as [AgentEffort, string][]) {
+			const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, effort);
+			expect(r.extraArgs, effort).toEqual(['--effort', flag]);
+			expect(r.extraEnv, effort).toEqual([]);
+			expect(r.promptDirective, effort).toBe('');
+		}
 	});
 
-	it('uses "think hard" at high effort', () => {
-		const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, AgentEffort.High);
-		expect(r.promptDirective).toBe('think hard');
-	});
-
-	it('omits the directive at minimal effort', () => {
+	it('never passes minimal, which the CLI ignores in favour of its high default', () => {
 		const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, AgentEffort.Minimal);
-		expect(r.promptDirective).toBe('');
+		expect(r.extraArgs).not.toContain('minimal');
 	});
 });
 

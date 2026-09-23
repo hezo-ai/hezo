@@ -13,7 +13,8 @@
  *
  * Once resolved, the effort is translated to each runtime's native knob:
  *
- *   - `claude_code`: a "think"/"ultrathink" keyword appended to the task prompt.
+ *   - `claude_code`: the `--effort <low|medium|high|max>` CLI flag. It has no
+ *     `minimal`, which maps to `low`.
  *   - `codex`: the `-c model_reasoning_effort=<level>` CLI flag. Codex supports
  *     `minimal|low|medium|high`; `max` is mapped to `high`.
  *   - `kimi`: the `KIMI_MODEL_THINKING_EFFORT` env var. Kimi Code accepts

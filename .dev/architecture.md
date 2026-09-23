@@ -4515,8 +4515,10 @@ stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
-global `high`. Each runtime maps it natively: `claude_code` appends
-`think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `antigravity`
+global `high`. Each runtime maps it natively: `claude_code` passes `--effort`, which it sends as
+`output_config.effort` (no `minimal`, which maps to `low`; the prompt words it used to append
+did nothing but `ultrathink`, and that left the effort on the wire unchanged); `codex` passes
+`-c model_reasoning_effort=`; `antigravity`
 passes `--effort`, folding the five-level ladder onto the `low|medium|high` it accepts; `kimi`
 sets `KIMI_MODEL_THINKING_EFFORT` (it has no `minimal`, which maps to `low`); `opencode`
 writes `reasoning.effort` onto the run's model in its per-run `opencode.json` (see below);

@@ -79,12 +79,21 @@ const CLAUDE_CODE_QUIET_ENV = {
 	CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH: String(CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH),
 } as const;
 
-const CLAUDE_CODE_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: '',
-	[AgentEffort.Low]: 'think about this step by step.',
-	[AgentEffort.Medium]: 'think',
-	[AgentEffort.High]: 'think hard',
-	[AgentEffort.Max]: 'ultrathink',
+/**
+ * Claude Code's `--effort`, which it sends as `output_config.effort`. Measured on
+ * 2.1.238 and 2.1.280: Opus 5 and 5.5 and the third-party models take every
+ * value as given, Sonnet 4.6 clamps `xhigh` to `high`, and Haiku 4.5 drops the
+ * field. There is no `minimal`: the CLI warns and falls back to the model's own
+ * default, which is `high` or above, so Minimal maps to `low`. `xhigh` is left
+ * out, since it sits between two levels Hezo already has and Sonnet cannot take
+ * it.
+ */
+const CLAUDE_CODE_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'low',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
 };
 
 export const claudeCodeAdapter: RuntimeAdapter = {
@@ -94,15 +103,16 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		requiresHomeDir: true,
 	},
 	constantEnv: CLAUDE_CODE_QUIET_ENV,
-	// Steered by prompt vocabulary. Of these words the CLI itself recognises only
-	// `ultrathink` (measured on 2.1.238 and 2.1.280: it adds a deeper-reasoning
-	// note to the request, while the lower levels send the same request as no
-	// directive at all), so below Max the words reach the model as plain text. The
-	// CLI also has a native `--effort <low|medium|high|xhigh|max>` flag, unused here.
+	// The native flag, and no prompt words: the CLI recognises only `ultrathink`,
+	// which adds a note and leaves the effort on the wire unchanged, so the words
+	// were a second lever that did nothing below Max. The flag, not
+	// CLAUDE_CODE_EFFORT_LEVEL: the variable overrides the flag and, on a
+	// third-party provider, reaches the Stop-hook judge too, while the flag leaves
+	// the judge at its own fixed `high`. Subagents inherit it.
 	applyEffort: (effort) => ({
-		extraArgs: [],
+		extraArgs: ['--effort', CLAUDE_CODE_EFFORT[effort]],
 		extraEnv: [],
-		promptDirective: CLAUDE_CODE_PROMPT_DIRECTIVE[effort],
+		promptDirective: '',
 	}),
 	// Even with the ceiling lifted, the CLI can still report that it terminated
 	// unfinished background work - and it says so while exiting 0, as

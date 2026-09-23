@@ -48,7 +48,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'captain',
 			reports_to_slug: null,
 			sort_order: 0,
-			// Strategy + delegation requires deep reasoning — default to max (ultrathink).
+			// Strategy + delegation requires deep reasoning — default to max.
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,

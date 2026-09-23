@@ -41,8 +41,8 @@ export function isAgentRuntime(value: unknown): value is AgentRuntime {
 /**
  * Reasoning/thinking effort level applied to an individual agent run.
  *
- * Each runtime maps this to its native knob (Claude Code → "think" / "ultrathink"
- * prompt keywords, Codex → `model_reasoning_effort` CLI flag, etc.). See
+ * Each runtime maps this to its native knob (Claude Code → the `--effort` CLI
+ * flag, Codex → `model_reasoning_effort` CLI flag, etc.). See
  * `packages/server/src/services/effort.ts` for the concrete mappings.
  */
 export const AgentEffort = {

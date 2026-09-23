@@ -1341,12 +1341,12 @@ describe('runAgent', () => {
 	});
 
 	describe('effort configuration', () => {
-		it('appends the ultrathink directive when the wakeup asks for max effort', async () => {
+		it('passes --effort max when the wakeup asks for max effort', async () => {
 			const project = makeProject();
-			let capturedPrompt = '';
+			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					capturedCmd = opts.Cmd;
 					return 'exec-ultra';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1366,15 +1366,16 @@ describe('runAgent', () => {
 				effort: AgentEffort.Max,
 			});
 
-			expect(capturedPrompt.trim().endsWith('ultrathink')).toBe(true);
+			const at = capturedCmd.indexOf('--effort');
+			expect(capturedCmd[at + 1]).toBe('max');
 		});
 
 		it("uses the agent's default_effort when the wakeup carries no override", async () => {
 			const project = makeProject();
-			let capturedPrompt = '';
+			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					capturedCmd = opts.Cmd;
 					return 'exec-default';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1397,7 +1398,7 @@ describe('runAgent', () => {
 				project,
 			);
 
-			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
+			expect(capturedCmd[capturedCmd.indexOf('--effort') + 1]).toBe('high');
 		});
 
 		it('tells the agent what the task has used so far', async () => {
@@ -1441,10 +1442,10 @@ describe('runAgent', () => {
 
 		it('runs a Captain at its configured effort rather than forcing max', async () => {
 			const project = makeProject();
-			let capturedPrompt = '';
+			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
+					capturedCmd = opts.Cmd;
 					return 'exec-captain-effort';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1466,8 +1467,7 @@ describe('runAgent', () => {
 				project,
 			);
 
-			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
-			expect(capturedPrompt.trim().endsWith('ultrathink')).toBe(false);
+			expect(capturedCmd[capturedCmd.indexOf('--effort') + 1]).toBe('high');
 		});
 
 		it('exposes HEZO_AGENT_EFFORT in the container env', async () => {

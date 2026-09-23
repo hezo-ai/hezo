@@ -1396,10 +1396,10 @@ describe('runtime adapter behaviour beyond MCP', () => {
 	});
 
 	describe('applyEffort', () => {
-		it('gives Claude Code its own prompt vocabulary and no flags', () => {
+		it('gives Claude Code its native --effort flag and no prompt words', () => {
 			const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, AgentEffort.Max);
-			expect(r.promptDirective).toBe('ultrathink');
-			expect(r.extraArgs).toEqual([]);
+			expect(r.promptDirective).toBe('');
+			expect(r.extraArgs).toEqual(['--effort', 'max']);
 			expect(r.extraEnv).toEqual([]);
 		});
 
