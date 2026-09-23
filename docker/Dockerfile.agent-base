@@ -164,7 +164,7 @@ RUN HOME=/opt GROK_BIN_DIR=/usr/local/bin bash -c \
 # `BUN_VERSION` in `.github/workflows/ci.yml`, which pins the Bun that builds and
 # runs Hezo itself; the two can and will diverge, and neither constrains the
 # other.
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 RUN npm install -g bun@${BUN_VERSION} \
     && bun --version
 
