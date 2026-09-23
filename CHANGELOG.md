@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.68.2 - 2026-09-23
+
+### Bug Fixes
+
+- **storage:** tell trimmed log text apart from freed disk, add a rewrite ([#1139](https://github.com/hezo-ai/hezo/pull/1139))
+
+### Other
+
+- Bump the agent CLI pins, and fix what re-checking them found ([#1138](https://github.com/hezo-ai/hezo/pull/1138))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.68.1...0.68.2
+
 ## 0.68.1 - 2026-09-22
 
 ### Bug Fixes
