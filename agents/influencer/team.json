@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 27,
+			"notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
+		},
+		{
 			"version": 26,
 			"notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max."
 		},

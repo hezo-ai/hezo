@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 36,
+			"notes": "Agents now write every GitHub pull request, issue and commit they name as a link to its page. The Engineer links the PR in each progress comment, and the Captain's goal notes follow the same link rules as task comments."
+		},
+		{
 			"version": 35,
 			"notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-checks only what changed rather than the whole task again."
 		},

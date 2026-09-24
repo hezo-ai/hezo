@@ -513,6 +513,19 @@ describe('template resolver', () => {
 		expect(result).not.toContain('Lead with a one-line summary of the outcome');
 	});
 
+	// A PR number or a SHA written as plain text links nowhere, so the admin cannot
+	// open the pull request an agent asks them to merge. The rule sits once, beside
+	// the Link forms, and the Comments section no longer models a SHA as inline code.
+	it('tells every agent to link GitHub pull requests, issues and commits', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('**GitHub references are markdown links to their full URL.**');
+		expect(result).toContain('[PR #1135](https://github.com/<owner>/<repo>/pull/1135)');
+		expect(result).toContain('[issue #88](https://github.com/<owner>/<repo>/issues/88)');
+		expect(result).toContain('https://github.com/<owner>/<repo>/commit/<full-sha>');
+		expect(result).toContain('**or** name a GitHub reference without its link');
+		expect(result).not.toContain('opaque values like commit SHAs');
+	});
+
 	// A marketing-lead delegated the content rewrites to content-writer as a sub-task,
 	// then the admin posted further feedback on the parent ticket — and the lead did
 	// that work itself instead of forwarding it to the still-open sub-task, so two

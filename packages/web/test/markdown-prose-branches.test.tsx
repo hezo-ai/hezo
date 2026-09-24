@@ -54,6 +54,30 @@ test('a review highlight activates on click, Enter, and Space, and shows the act
 	expect(onClick).toHaveBeenCalledTimes(3);
 });
 
+// The link forms agents are told to write for GitHub references: a PR by number,
+// and a commit whose link text is its short SHA in inline code.
+test('a GitHub pull request link and a commit link render as external anchors', () => {
+	const sha = 'a200cccd17d909907f4276618425eca91bd80f77';
+	const { getByRole } = render(
+		withI18n(
+			<QueryClientProvider client={new QueryClient()}>
+				<MarkdownProse>
+					{`Merge [PR #1135](https://github.com/o/r/pull/1135) at [\`a200ccc\`](https://github.com/o/r/commit/${sha}).`}
+				</MarkdownProse>
+			</QueryClientProvider>,
+		),
+	);
+
+	const pr = getByRole('link', { name: 'PR #1135' });
+	expect(pr.getAttribute('href')).toBe('https://github.com/o/r/pull/1135');
+	expect(pr.getAttribute('target')).toBe('_blank');
+
+	const commit = getByRole('link', { name: 'a200ccc' });
+	expect(commit.getAttribute('href')).toBe(`https://github.com/o/r/commit/${sha}`);
+	expect(commit.getAttribute('target')).toBe('_blank');
+	expect(commit.querySelector('code')?.textContent).toBe('a200ccc');
+});
+
 test('an inactive review highlight renders the idle style', () => {
 	const { getByTestId } = render(
 		withI18n(

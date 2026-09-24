@@ -515,7 +515,7 @@ Record your current assessment of a goal's progress. Only the Captain does this,
 | `health` | `on_track` \| `at_risk` \| `off_track` | Yes | on_track, at_risk, or off_track. |
 | `status_blurb` | `string` | Yes | One-paragraph summary of where the goal stands and the next step. |
 
-**Returns:** The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. Returns `{ error }` if the goal is not in the project or the inputs are invalid.
+**Returns:** The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. It may carry an advisory `warning` string, e.g. when the blurb names a GitHub pull request, issue or commit without linking it. Returns `{ error }` if the goal is not in the project or the inputs are invalid.
 
 **Authorization:** Captain only, and only from within a progress-update agent run (the run records the history point).
 
