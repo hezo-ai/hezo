@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 35,
+			"version": 36,
 			"roster_count": 10,
-			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max. When fixes come back, QA re-checks only what changed rather than the whole task again."
+			"latest_notes": "Agents now write every GitHub pull request, issue and commit they name as a link to its page. The Engineer links the PR in each progress comment, and the Captain's goal notes follow the same link rules as task comments."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 26,
+			"version": 27,
 			"roster_count": 7,
-			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max."
+			"latest_notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 27,
+			"version": 28,
 			"roster_count": 6,
-			"latest_notes": "The Captain's prompt no longer says every run is forced to max effort: it runs at the effort set for it, which starts at max."
+			"latest_notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
 		}
 	]
 }

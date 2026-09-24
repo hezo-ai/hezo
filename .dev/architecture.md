@@ -5067,6 +5067,16 @@ backticked-entity check would otherwise tell the author to un-backtick exactly t
 `detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
 two advisories can never contradict each other.
 
+**GitHub reference advisory.** `detectUnlinkedGitHubReferences` (same module) flags a pull
+request or issue named by number (`PR #12`, `issue #12`, `owner/repo#12`) or a commit SHA written
+anywhere outside a markdown link, a URL or a fenced code block, so the agent rewrites it as a link
+to its full URL. Inline code does not exempt one: a SHA in backticks is the usual unlinked form. It
+is pure text, with no roster or DB read. A bare `#12` is not flagged (it is as often a list
+position), and a SHA counts only right after a word that names it (`commit`, `SHA`, `head`,
+`merge`) - without that gate every container id and file hash would warn. It runs on both comment
+writes, and through `withReferenceWarnings` (together with the backticked-entity check) on
+`create_task`, `create_tasks`, `update_task` and `update_goal_progress`.
+
 `detectPassiveTeammateAsks` gates its forms differently, because they differ in
 how ambiguous they are. A **leading-line** `@@slug — …` (including one behind a routing label,
 `Next step: @@slug — …`) is flagged **unconditionally, with no ask gate**: opening a line with a

@@ -306,10 +306,10 @@ describe('MCP create_task / create_tasks error & batch branches', () => {
 	});
 
 	it('create_tasks as an agent attaches a backtick advisory per created item', async () => {
-		// The agent path (auth.type === Agent) folds withBacktickWarning over each
+		// The agent path (auth.type === Agent) folds withReferenceWarnings over each
 		// created task — distinct from the admin path that returns raw results.
 		// A Captain may always assign to itself; this drives the agent fold over the
-		// batch (withBacktickWarning per created item) rather than the admin path.
+		// batch (withReferenceWarnings per created item) rather than the admin path.
 		const results = (await callToolAs(await captainToken(), 'create_tasks', {
 			project: projectId,
 			items: [{ title: 'Agent batch item', assignee_id: captainId }],

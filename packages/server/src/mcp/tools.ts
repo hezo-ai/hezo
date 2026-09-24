@@ -109,6 +109,7 @@ import {
 	detectNarratedActiveMentions,
 	detectPassiveTeammateAsks,
 	detectQuotedMentionTokens,
+	detectUnlinkedGitHubReferences,
 	detectUnlinkedTeammateReferences,
 	extractMentionSlugs,
 } from '../lib/mentions';
@@ -578,6 +579,25 @@ async function buildBacktickedEntityWarning(
 }
 
 /**
+ * Returns a warning when text names a GitHub pull request, issue or commit
+ * without linking it (see detectUnlinkedGitHubReferences), or null otherwise.
+ * Pure text, no DB read. Advisory and non-blocking, like the builders above.
+ */
+function buildUnlinkedGitHubReferenceWarning(content: string): string | null {
+	const offenders = detectUnlinkedGitHubReferences(content);
+	if (offenders.length === 0) return null;
+	const named = offenders.map((ref) => `"${ref}"`).join(', ');
+	return (
+		`You named GitHub reference(s) without a link - ${named} - so readers cannot open them. ` +
+		'Edit the text so each one is a markdown link to its full URL: ' +
+		'[PR #123](https://github.com/<owner>/<repo>/pull/123), ' +
+		'[issue #45](https://github.com/<owner>/<repo>/issues/45), or ' +
+		'[`<short-sha>`](https://github.com/<owner>/<repo>/commit/<full-sha>) for a commit. ' +
+		'Take <owner>/<repo> from the Repository section of your prompt.'
+	);
+}
+
+/**
  * Returns a warning when an agent posts an active mention (an ask) on a task
  * that is already terminal, or null otherwise. A done/cancelled task reads as
  * finished, so an ask parked on it is easy to miss — the correct move was to
@@ -604,11 +624,12 @@ async function buildTerminalTaskAskWarning(
 }
 
 /**
- * Attach a backticked-entity warning, computed over `content`, to a write
- * result when the caller is an agent. The check is advisory: failures are
- * swallowed and never block the already-persisted write.
+ * Attach the reference warnings (backticked Hezo entities, unlinked GitHub
+ * references), computed over `content`, to a write result when the caller is
+ * an agent. The checks are advisory: failures are swallowed and never block
+ * the already-persisted write.
  */
-async function withBacktickWarning<T extends object>(
+async function withReferenceWarnings<T extends object>(
 	db: Db,
 	auth: AuthInfo,
 	teamId: string,
@@ -617,10 +638,15 @@ async function withBacktickWarning<T extends object>(
 	result: T,
 ): Promise<T | (T & { warning: string })> {
 	if (auth.type !== AuthType.Agent || !content) return result;
-	const warning = await buildBacktickedEntityWarning(db, teamId, projectId, content).catch((e) => {
-		log.error('Failed to check for backticked entity references:', e);
-		return null;
-	});
+	const backtickWarning = await buildBacktickedEntityWarning(db, teamId, projectId, content).catch(
+		(e) => {
+			log.error('Failed to check for backticked entity references:', e);
+			return null;
+		},
+	);
+	const warning = [backtickWarning, buildUnlinkedGitHubReferenceWarning(content)]
+		.filter((w): w is string => Boolean(w))
+		.join(' ');
 	return warning ? { ...result, warning } : result;
 }
 
@@ -1731,7 +1757,7 @@ export function registerTools(
 			// and remembers where it came from, so completion and blocked receipts
 			// can find their way back. No-op for every other caller.
 			await recordChatTaskOrigin(db, wsManager, auth, created);
-			return withBacktickWarning(
+			return withReferenceWarnings(
 				db,
 				auth,
 				scope.teamId,
@@ -1910,7 +1936,7 @@ export function registerTools(
 				return { error: `Goal not found in project: ${goalId}` };
 			}
 			try {
-				return await recordGoalProgress(
+				const goal = await recordGoalProgress(
 					db,
 					{
 						goalId,
@@ -1920,6 +1946,14 @@ export function registerTools(
 						statusBlurb: args.status_blurb as string,
 					},
 					wsManager,
+				);
+				return await withReferenceWarnings(
+					db,
+					auth,
+					scope.teamId,
+					scope.projectId,
+					args.status_blurb as string,
+					goal,
 				);
 			} catch (e) {
 				if (e instanceof Error && 'code' in e) return { error: e.message };
@@ -2032,7 +2066,7 @@ export function registerTools(
 				results.map(async (r) => {
 					if (!r.ok) return r;
 					const description = items[r.index]?.description;
-					const task = await withBacktickWarning(
+					const task = await withReferenceWarnings(
 						db,
 						auth,
 						scope.teamId,
@@ -2426,7 +2460,7 @@ export function registerTools(
 			const updatedText = [args.description, args.progress_summary, args.rules]
 				.filter((v): v is string => typeof v === 'string')
 				.join('\n');
-			return withBacktickWarning(
+			return withReferenceWarnings(
 				db,
 				auth,
 				teamId,
@@ -3875,6 +3909,7 @@ export function registerTools(
 					passiveWarning,
 					narratedWarning,
 					backtickWarning,
+					buildUnlinkedGitHubReferenceWarning(commentText),
 					terminalAskWarning,
 				]
 					.filter((w): w is string => Boolean(w))
@@ -4015,7 +4050,13 @@ export function registerTools(
 					),
 				],
 			);
-			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
+			const warning = [
+				teammateWarning,
+				passiveWarning,
+				narratedWarning,
+				backtickWarning,
+				buildUnlinkedGitHubReferenceWarning(args.content as string),
+			]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
 			if (warning) return { ...commentWriteAck(r.rows[0]), wake, warning };

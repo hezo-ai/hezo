@@ -195,7 +195,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_goal_progress: {
 		category: 'Goals',
 		returns:
-			'The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. Returns `{ error }` if the goal is not in the project or the inputs are invalid.',
+			'The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. It may carry an advisory `warning` string, e.g. when the blurb names a GitHub pull request, issue or commit without linking it. Returns `{ error }` if the goal is not in the project or the inputs are invalid.',
 		auth: 'Captain only, and only from within a progress-update agent run (the run records the history point).',
 	},
 

@@ -321,9 +321,10 @@ describe('buildProgressUpdatePrompt', () => {
 		const out = buildProgressUpdatePrompt('SYS', { goals: [goal()] });
 		expect(out.startsWith('SYS')).toBe(true);
 		expect(out).toContain('1 goal is also due for a progress check');
-		// The status_blurb guidance tells the Captain it renders as markdown and to link PRs.
+		// The status_blurb guidance tells the Captain it renders as markdown under the
+		// shared link rules, which carry the PR/issue/commit link forms.
 		expect(out).toContain('The blurb renders as markdown');
-		expect(out).toContain('[PR #502](https://github.com/owner/repo/pull/502)');
+		expect(out).toContain('follows the same link rules as a comment');
 		// 100% is not terminal — goals can regress or be never-ending.
 		expect(out).toContain('A goal at 100% is not finished for tracking');
 		expect(out).toContain('never-ending');

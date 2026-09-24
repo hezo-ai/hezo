@@ -290,6 +290,9 @@ describe('mode gating', () => {
 		expect(result).toContain('### How You Write');
 		expect(result).toContain('Write in Simplified Technical English');
 		expect(result).toContain('Answer the question and stop');
+		expect(result).toContain(
+			'Write a GitHub pull request, issue or commit as a markdown link to its full URL',
+		);
 	});
 
 	it('preview mode omits Run Context and Repository but keeps Teammates + guidelines', async () => {

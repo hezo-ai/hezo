@@ -619,6 +619,47 @@ function unlinkedMentionParagraphs(stripped: string, escapedSlug: string): strin
 		.join('\n');
 }
 
+// A markdown link, inline (`[text](url)`) or reference-style (`[text][ref]`),
+// plus an angle-bracket autolink and a bare URL. Blanking all of them first is
+// what exempts a GitHub reference that is already linked.
+const LINKED_SPAN_RE =
+	/!?\[[^\]\n]*\](?:\([^)\n]*\)|\[[^\]\n]*\])|<https?:\/\/[^>\s]+>|https?:\/\/\S+/g;
+// A pull request or issue by number: `PR #12`, `PRs #12`, `pull request #12`,
+// `issue #12`, or the `owner/repo#12` shorthand. A bare `#12` is left alone:
+// it is as often a list position ("#1 priority") as a GitHub number.
+const GITHUB_NUMBER_REF_RE =
+	/(?<![\w/.-])(?:(?:PRs?|pull\s+requests?|issues?)[ \t]*#\d+|[a-z0-9][\w-]*\/[\w.-]+#\d+)(?!\w)/gi;
+// A commit SHA, but only right after a word that says it is one (`commit`,
+// `SHA`, `head`, `merge`), optionally through `:`/`=` and one joining word.
+// Without that gate every container id and file hash would match. The SHA
+// holds at least one digit so an English word spelt in a-f never matches.
+const COMMIT_REF_RE =
+	/\b(?:commits?|shas?|head|merged?)\b[ \t]*[:=]?[ \t]*(?:(?:at|is|to|in|into|of|was)[ \t]+)?((?=[0-9a-f]*[0-9])[0-9a-f]{7,40})(?![\w-])/gi;
+
+/**
+ * GitHub references a reader cannot open: a pull request or issue named by
+ * number, or a commit named by its SHA, anywhere outside a markdown link, a
+ * URL or a fenced code block. Inline code does not exempt one: backticks make a
+ * reference inert, and a SHA in backticks (`` at head `a200ccc` ``) is the
+ * usual unlinked form. Returns each offender as written, deduped, in text order.
+ */
+export function detectUnlinkedGitHubReferences(content: unknown): string[] {
+	const text = flattenTextFields(content);
+	if (!text) return [];
+	const unlinked = text
+		.replace(FENCED_CODE_RE, ' ')
+		.replace(LINKED_SPAN_RE, ' ')
+		.replace(/`([^`]*)`/g, ' $1 ');
+	const found: Array<{ index: number; ref: string }> = [];
+	for (const m of unlinked.matchAll(GITHUB_NUMBER_REF_RE)) {
+		found.push({ index: m.index, ref: m[0].replace(/\s+/g, ' ') });
+	}
+	for (const m of unlinked.matchAll(COMMIT_REF_RE)) {
+		found.push({ index: m.index, ref: m[1] });
+	}
+	return Array.from(new Set(found.sort((a, b) => a.index - b.index).map((f) => f.ref)));
+}
+
 function flattenTextFields(value: unknown): string {
 	if (value === null || value === undefined) return '';
 	if (typeof value === 'string') return value;
