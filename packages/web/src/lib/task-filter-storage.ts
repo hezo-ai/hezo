@@ -20,6 +20,13 @@ export interface StoredTaskFilters {
 }
 
 const STORAGE_PREFIX = 'hezo:task-filters:';
+/**
+ * Bumped when a stored selection's meaning changes; entries older than version 2
+ * carry none. Version 2: the status filter also governs the In progress section,
+ * which every older entry left always shown - so an older entry gains
+ * `in_progress` on read to keep the view it saved.
+ */
+export const TASK_FILTERS_STORAGE_VERSION = 2;
 const SORT_FIELDS: readonly TaskSortField[] = ['work_order', 'created_at', 'updated_at'];
 const SORT_DIRS: readonly TaskSortDir[] = ['asc', 'desc'];
 
@@ -45,12 +52,19 @@ export function readStoredTaskFilters(projectId: string): StoredTaskFilters | nu
 		const parsed = JSON.parse(raw) as unknown;
 		if (typeof parsed !== 'object' || parsed === null) return null;
 		const obj = parsed as Record<string, unknown>;
+		// Drop any stale/unknown status (e.g. a persisted `closed` from before
+		// that status was removed) — the server casts each value `::task_status`
+		// and would 500 on an unknown one.
+		const statusValues = stringArray(obj.statusValues).filter((s) => KNOWN_STATUSES.has(s));
+		if (
+			obj.version !== TASK_FILTERS_STORAGE_VERSION &&
+			!statusValues.includes(TaskStatus.InProgress)
+		) {
+			statusValues.unshift(TaskStatus.InProgress);
+		}
 		return {
 			search: typeof obj.search === 'string' ? obj.search : '',
-			// Drop any stale/unknown status (e.g. a persisted `closed` from before
-			// that status was removed) — the server casts each value `::task_status`
-			// and would 500 on an unknown one.
-			statusValues: stringArray(obj.statusValues).filter((s) => KNOWN_STATUSES.has(s)),
+			statusValues,
 			ownerValues: stringArray(obj.ownerValues),
 			sortField: SORT_FIELDS.includes(obj.sortField as TaskSortField)
 				? (obj.sortField as TaskSortField)
@@ -67,7 +81,10 @@ export function readStoredTaskFilters(projectId: string): StoredTaskFilters | nu
 export function writeStoredTaskFilters(projectId: string, filters: StoredTaskFilters): void {
 	if (typeof window === 'undefined' || !projectId) return;
 	try {
-		localStorage.setItem(keyFor(projectId), JSON.stringify(filters));
+		localStorage.setItem(
+			keyFor(projectId),
+			JSON.stringify({ ...filters, version: TASK_FILTERS_STORAGE_VERSION }),
+		);
 	} catch {
 		// ignore storage failures (private mode, quota, etc.)
 	}

@@ -4,10 +4,16 @@ import {
 	clearStoredTaskFilters,
 	readStoredTaskFilters,
 	type StoredTaskFilters,
+	TASK_FILTERS_STORAGE_VERSION,
 	writeStoredTaskFilters,
 } from '../src/lib/task-filter-storage';
 
 const KEY = 'hezo:task-filters:ops';
+
+/** Store a raw entry stamped with the current version, as a write would. */
+function storeCurrent(entry: Record<string, unknown>): void {
+	localStorage.setItem(KEY, JSON.stringify({ ...entry, version: TASK_FILTERS_STORAGE_VERSION }));
+}
 
 function fullFilters(): StoredTaskFilters {
 	return {
@@ -31,6 +37,37 @@ describe('task-filter-storage', () => {
 	test('write then read round-trips all fields', () => {
 		writeStoredTaskFilters('ops', fullFilters());
 		expect(readStoredTaskFilters('ops')).toEqual(fullFilters());
+	});
+
+	test('a selection without In progress round-trips unchanged', () => {
+		writeStoredTaskFilters('ops', { ...fullFilters(), statusValues: [TaskStatus.Done] });
+		expect(readStoredTaskFilters('ops')?.statusValues).toEqual([TaskStatus.Done]);
+	});
+
+	// Before version 2 the In progress section showed whatever the status filter
+	// held, so an older entry gains `in_progress` to keep the view it saved.
+	test('an entry saved before version 2 gains in_progress', () => {
+		localStorage.setItem(KEY, JSON.stringify({ statusValues: [TaskStatus.Backlog] }));
+		expect(readStoredTaskFilters('ops')?.statusValues).toEqual([
+			TaskStatus.InProgress,
+			TaskStatus.Backlog,
+		]);
+	});
+
+	test('an empty selection saved before version 2 gains in_progress', () => {
+		localStorage.setItem(KEY, JSON.stringify({ statusValues: [] }));
+		expect(readStoredTaskFilters('ops')?.statusValues).toEqual([TaskStatus.InProgress]);
+	});
+
+	test('an entry saved before version 2 that has in_progress is not given a second one', () => {
+		localStorage.setItem(
+			KEY,
+			JSON.stringify({ statusValues: [TaskStatus.Backlog, TaskStatus.InProgress] }),
+		);
+		expect(readStoredTaskFilters('ops')?.statusValues).toEqual([
+			TaskStatus.Backlog,
+			TaskStatus.InProgress,
+		]);
 	});
 
 	test('write keys storage by project slug', () => {
@@ -68,7 +105,7 @@ describe('task-filter-storage', () => {
 	});
 
 	test('read coerces missing/garbage fields to safe defaults', () => {
-		localStorage.setItem(KEY, JSON.stringify({}));
+		storeCurrent({});
 		expect(readStoredTaskFilters('ops')).toEqual({
 			search: '',
 			statusValues: [],
@@ -84,25 +121,19 @@ describe('task-filter-storage', () => {
 	});
 
 	test('read drops unknown/stale status values', () => {
-		localStorage.setItem(
-			KEY,
-			JSON.stringify({ statusValues: [TaskStatus.Done, 'closed', 'bogus'] }),
-		);
+		storeCurrent({ statusValues: [TaskStatus.Done, 'closed', 'bogus'] });
 		expect(readStoredTaskFilters('ops')?.statusValues).toEqual([TaskStatus.Done]);
 	});
 
 	test('read filters non-string entries out of statusValues and ownerValues', () => {
-		localStorage.setItem(
-			KEY,
-			JSON.stringify({ statusValues: [TaskStatus.Done, 5, null], ownerValues: ['a', 7, {}] }),
-		);
+		storeCurrent({ statusValues: [TaskStatus.Done, 5, null], ownerValues: ['a', 7, {}] });
 		const r = readStoredTaskFilters('ops');
 		expect(r?.statusValues).toEqual([TaskStatus.Done]);
 		expect(r?.ownerValues).toEqual(['a']);
 	});
 
 	test('read defaults non-array statusValues/ownerValues to empty arrays', () => {
-		localStorage.setItem(KEY, JSON.stringify({ statusValues: 'nope', ownerValues: 42 }));
+		storeCurrent({ statusValues: 'nope', ownerValues: 42 });
 		const r = readStoredTaskFilters('ops');
 		expect(r?.statusValues).toEqual([]);
 		expect(r?.ownerValues).toEqual([]);

@@ -169,8 +169,10 @@ A project's task list is split into three sections:
 - **Backlog** - the open work nobody has picked up yet, paged as you scroll.
 - **Done** - finished tasks, at the bottom.
 
-The status filter narrows the Backlog and Done sections. In progress is pinned above them
-and stays put whichever statuses you filter for, so the work in flight is always in view.
+The status filter picks which sections show. Its **In progress** choice also covers blocked
+tasks, because they sit in that section. By default the list shows In progress, Backlog and
+Done. Cancelled tasks show only when you select **Cancelled**. The search and owner filters
+narrow Backlog and Done only.
 
 ## How the task list is ordered
 

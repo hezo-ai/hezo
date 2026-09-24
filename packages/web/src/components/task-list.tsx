@@ -49,20 +49,38 @@ const DEFAULT_OPEN_STATUSES: string[] = ALL_STATUSES.filter((s) => !TERMINAL_STA
 const PINNED_TASK_STATUSES = [TaskStatus.InProgress, TaskStatus.Blocked] as const;
 const PINNED_STATUS_SET = new Set<string>(PINNED_TASK_STATUSES);
 const PINNED_STATUS_PARAM = PINNED_TASK_STATUSES.join(',');
-// The default selection shows open work (backlog; in_progress/blocked are pinned
-// in their own section) plus completed (`done`) tasks, which land in the bottom
-// "Done" section. `cancelled` stays hidden unless explicitly filtered in.
-const DEFAULT_TODO_STATUSES: string[] = [
+const IN_PROGRESS_LABEL = 'In progress';
+
+// The status filter offers one choice per section status, in section order. The
+// `in_progress` choice stands for the whole pinned section, so `blocked` has no
+// choice of its own.
+const statusOptions: MultiSelectOption[] = [
+	{ value: TaskStatus.InProgress, label: IN_PROGRESS_LABEL },
+	...ALL_STATUSES.filter((s) => !PINNED_STATUS_SET.has(s)).map((s) => ({
+		value: s,
+		label: formatTaskStatus(s),
+	})),
+];
+const STATUS_OPTION_VALUES = statusOptions.map((o) => o.value);
+const statusOptionLabels = new Map(statusOptions.map((o) => [o.value, o.label]));
+
+// The default selection shows all open work (the pinned section plus the
+// backlog) and completed (`done`) tasks, which land in the bottom "Done"
+// section. `cancelled` stays hidden unless explicitly filtered in.
+const DEFAULT_STATUS_VALUES: string[] = [
+	TaskStatus.InProgress,
 	...DEFAULT_OPEN_STATUSES.filter((s) => !PINNED_STATUS_SET.has(s)),
 	TaskStatus.Done,
 ];
 
-const todoStatusOptions: MultiSelectOption[] = ALL_STATUSES.filter(
-	(s) => !PINNED_STATUS_SET.has(s),
-).map((s) => ({
-	value: s,
-	label: formatTaskStatus(s),
-}));
+// Selections the collapsed filter bar names in words rather than as a count.
+const NAMED_STATUS_SELECTIONS: { values: string[]; label: string }[] = [
+	{ values: DEFAULT_STATUS_VALUES, label: 'Open & done' },
+	{
+		values: [TaskStatus.Backlog, TaskStatus.InProgress],
+		label: `${formatTaskStatus(TaskStatus.Backlog)} + ${IN_PROGRESS_LABEL}`,
+	},
+];
 
 const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
 	'work_order:asc': 'Work order',
@@ -74,23 +92,20 @@ const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
 };
 
 /**
- * Drop now-pinned statuses from a persisted selection - the main-list query must
- * not fetch rows the pinned section renders, and the filter dropdown no longer
- * offers them. A selection emptied by that filtering falls back to the defaults
- * rather than reading as a deliberate "no statuses" choice; an already-empty one
- * is that deliberate choice and is kept.
+ * Keep only the statuses the filter offers, in its order - a persisted selection
+ * can carry `blocked`, which rides the In progress choice. A selection emptied by
+ * that filtering falls back to the defaults rather than reading as a deliberate
+ * "no statuses" choice; an already-empty one is that deliberate choice and is kept.
  */
-function sanitizeTodoStatuses(values: string[] | undefined): string[] {
-	if (!values) return [...DEFAULT_TODO_STATUSES];
-	const kept = values.filter((s) => !PINNED_STATUS_SET.has(s));
-	if (kept.length === 0 && values.length > 0) return [...DEFAULT_TODO_STATUSES];
+function sanitizeStatusValues(values: string[] | undefined): string[] {
+	if (!values) return [...DEFAULT_STATUS_VALUES];
+	const kept = STATUS_OPTION_VALUES.filter((s) => values.includes(s));
+	if (kept.length === 0 && values.length > 0) return [...DEFAULT_STATUS_VALUES];
 	return kept;
 }
 
-function isDefaultTodoSelection(values: string[]): boolean {
-	if (values.length !== DEFAULT_TODO_STATUSES.length) return false;
-	const set = new Set(values);
-	return DEFAULT_TODO_STATUSES.every((s) => set.has(s));
+function isSameSelection(a: string[], b: string[]): boolean {
+	return a.length === b.length && a.every((s) => b.includes(s));
 }
 
 type TaskRow = Pick<
@@ -212,7 +227,7 @@ export function TaskList({ projectId }: TaskListProps) {
 	const [search, setSearch] = useState(stored?.search ?? '');
 	const [debouncedSearch, setDebouncedSearch] = useState((stored?.search ?? '').trim());
 	const [statusValues, setStatusValues] = useState<string[]>(() =>
-		sanitizeTodoStatuses(stored?.statusValues),
+		sanitizeStatusValues(stored?.statusValues),
 	);
 	const [ownerValues, setOwnerValues] = useState<string[]>(stored?.ownerValues ?? []);
 	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
@@ -246,7 +261,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		const next = readStoredTaskFilters(projectId);
 		setSearch(next?.search ?? '');
 		setDebouncedSearch((next?.search ?? '').trim());
-		setStatusValues(sanitizeTodoStatuses(next?.statusValues));
+		setStatusValues(sanitizeStatusValues(next?.statusValues));
 		setOwnerValues(next?.ownerValues ?? []);
 		setSortField(next?.sortField ?? 'work_order');
 		setSortDir(next?.sortDir ?? 'asc');
@@ -288,15 +303,23 @@ export function TaskList({ projectId }: TaskListProps) {
 		[projectId, ownerValues, debouncedSearch, sortField, sortDir],
 	);
 
-	const { data: inProgressResult, isLoading: inProgressLoading } = useTasks(projectId, {
-		project_id: projectId,
-		status: PINNED_STATUS_PARAM,
-		sort: 'updated_at:desc',
-		page: '1',
-		per_page: '200',
-	});
+	const inProgressEnabled = statusValues.includes(TaskStatus.InProgress);
+	const { data: inProgressResult, isLoading: inProgressQueryLoading } = useTasks(
+		projectId,
+		{
+			project_id: projectId,
+			status: PINNED_STATUS_PARAM,
+			sort: 'updated_at:desc',
+			page: '1',
+			per_page: '200',
+		},
+		{ enabled: inProgressEnabled },
+	);
+	const inProgressLoading = inProgressEnabled && inProgressQueryLoading;
 
-	const todoListEnabled = statusValues.length > 0;
+	// The main list never fetches rows the pinned section renders.
+	const todoStatusValues = statusValues.filter((s) => !PINNED_STATUS_SET.has(s));
+	const todoListEnabled = todoStatusValues.length > 0;
 
 	const {
 		data: infiniteData,
@@ -308,7 +331,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		projectId,
 		{
 			...todoFilters,
-			status: statusValues.length > 0 ? statusValues.join(',') : undefined,
+			status: todoListEnabled ? todoStatusValues.join(',') : undefined,
 		},
 		{ enabled: todoListEnabled },
 	);
@@ -319,9 +342,11 @@ export function TaskList({ projectId }: TaskListProps) {
 	);
 	const totalCount = infiniteData?.pages[0]?.meta.total ?? 0;
 
+	// A disabled query still returns what it cached while enabled, so gate on the
+	// selection rather than on the data.
 	const inProgressTasks = useMemo(
-		() => nestTasksForDisplay(inProgressResult?.data ?? []),
-		[inProgressResult?.data],
+		() => (inProgressEnabled ? nestTasksForDisplay(inProgressResult?.data ?? []) : []),
+		[inProgressEnabled, inProgressResult?.data],
 	);
 	// Split the filtered main list into "Backlog" (open work) and "Done" (terminal:
 	// done/cancelled). Each group nests independently so a child whose parent
@@ -350,12 +375,18 @@ export function TaskList({ projectId }: TaskListProps) {
 		};
 	}, [mainRows, todoListEnabled]);
 
-	const hasNoTasksAtAll =
+	const showsNoTasks =
 		!inProgressLoading &&
 		!mainLoading &&
 		inProgressTasks.length === 0 &&
 		backlogTasks.length === 0 &&
 		doneTasks.length === 0;
+	// Only an unfiltered view can tell the project has no tasks yet; a narrowed
+	// one that shows nothing just has no matches.
+	const isUnfilteredView =
+		isSameSelection(statusValues, DEFAULT_STATUS_VALUES) &&
+		ownerValues.length === 0 &&
+		!debouncedSearch;
 
 	const ownerLabelById = useMemo(() => {
 		const map = new Map<string, string>();
@@ -365,9 +396,12 @@ export function TaskList({ projectId }: TaskListProps) {
 
 	const statusLabel: string | null = (() => {
 		if (statusValues.length === 0) return 'No statuses';
-		if (statusValues.length === ALL_STATUSES.length) return 'All statuses';
-		if (isDefaultTodoSelection(statusValues)) return 'Open & done';
-		if (statusValues.length === 1) return `Status: ${formatTaskStatus(statusValues[0])}`;
+		if (statusValues.length === statusOptions.length) return 'All statuses';
+		const named = NAMED_STATUS_SELECTIONS.find((n) => isSameSelection(n.values, statusValues));
+		if (named) return named.label;
+		if (statusValues.length === 1) {
+			return `Status: ${statusOptionLabels.get(statusValues[0]) ?? formatTaskStatus(statusValues[0])}`;
+		}
 		return `${statusValues.length} statuses`;
 	})();
 
@@ -412,7 +446,7 @@ export function TaskList({ projectId }: TaskListProps) {
 
 	function resetFilters() {
 		setSearch('');
-		setStatusValues([...DEFAULT_TODO_STATUSES]);
+		setStatusValues([...DEFAULT_STATUS_VALUES]);
 		setOwnerValues([]);
 		setSortField('work_order');
 		setSortDir('asc');
@@ -608,7 +642,7 @@ export function TaskList({ projectId }: TaskListProps) {
 						<span className="text-[11px] uppercase tracking-wider text-text-3">Status</span>
 						<MultiSelect
 							label="Status"
-							options={todoStatusOptions}
+							options={statusOptions}
 							value={statusValues}
 							onChange={handleStatusChange}
 							testId="task-filter-status"
@@ -668,7 +702,7 @@ export function TaskList({ projectId }: TaskListProps) {
 				</div>
 			) : (
 				<TaskListSection
-					title="In progress"
+					title={IN_PROGRESS_LABEL}
 					testId="task-list-in-progress"
 					tasks={inProgressTasks}
 					columns={columns}
@@ -683,7 +717,7 @@ export function TaskList({ projectId }: TaskListProps) {
 				>
 					{t('common.loading')}
 				</div>
-			) : hasNoTasksAtAll ? (
+			) : showsNoTasks && isUnfilteredView ? (
 				<EmptyState
 					variant="hero"
 					icon={<ListPlus className="w-8 h-8" />}
@@ -700,6 +734,10 @@ export function TaskList({ projectId }: TaskListProps) {
 						</Button>
 					}
 				/>
+			) : showsNoTasks ? (
+				<p className="text-text-2 text-[13px] py-6 text-center" data-testid="task-list-todo-empty">
+					No matching tasks
+				</p>
 			) : (
 				<>
 					{/* Open work and finished work each get their own section; an empty one
@@ -719,15 +757,6 @@ export function TaskList({ projectId }: TaskListProps) {
 						onRowClick={handleRowClick}
 						faded
 					/>
-
-					{backlogTasks.length === 0 && doneTasks.length === 0 && (
-						<p
-							className="text-text-2 text-[13px] py-6 text-center"
-							data-testid="task-list-todo-empty"
-						>
-							No matching tasks
-						</p>
-					)}
 
 					{(backlogTasks.length > 0 || doneTasks.length > 0) && (
 						<div className="mt-4 flex flex-col items-center gap-2 text-xs text-text-2">
