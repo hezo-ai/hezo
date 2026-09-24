@@ -104,23 +104,29 @@ test('default view shows open and done tasks with a collapsed filter bar and New
 test('multi-select status filter narrows results and reset restores defaults', async () => {
 	let projectSlug = '';
 
-	const { findByText, findByTestId, findByRole, queryByText, router, user } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Filter Project B' });
-			const agentId = ws.agents[0].id;
-			const tasks = [];
-			for (const title of ['Second Active Task', 'In Progress Task', 'Done Task', 'Backlog Task']) {
-				const t = await seedTask(ws, project, { title, assignee_id: agentId });
-				tasks.push(t);
-			}
-			await patchStatus(ws, tasks[0].id, 'in_progress');
-			await patchStatus(ws, tasks[1].id, 'in_progress');
-			await patchStatus(ws, tasks[2].id, 'done');
-			projectSlug = project.slug;
-		},
-	});
+	const { findByText, findByTestId, findByRole, queryByText, queryByTestId, router, user } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Filter Project B' });
+				const agentId = ws.agents[0].id;
+				const tasks = [];
+				for (const title of [
+					'Second Active Task',
+					'In Progress Task',
+					'Done Task',
+					'Backlog Task',
+				]) {
+					const t = await seedTask(ws, project, { title, assignee_id: agentId });
+					tasks.push(t);
+				}
+				await patchStatus(ws, tasks[0].id, 'in_progress');
+				await patchStatus(ws, tasks[1].id, 'in_progress');
+				await patchStatus(ws, tasks[2].id, 'done');
+				projectSlug = project.slug;
+			},
+		});
 
 	await router.navigate({
 		to: '/projects/$projectId/tasks',
@@ -147,12 +153,13 @@ test('multi-select status filter narrows results and reset restores defaults', a
 		() => {
 			expect(queryByText('Done Task')).not.toBeNull();
 			expect(queryByText('Backlog Task')).toBeNull();
-			// In-progress tasks stay pinned at the top regardless of the status filter.
-			expect(queryByText('In Progress Task')).not.toBeNull();
-			expect(queryByText('Second Active Task')).not.toBeNull();
+			// The In progress list shows only when its choice is selected.
+			expect(queryByText('In Progress Task')).toBeNull();
+			expect(queryByText('Second Active Task')).toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
+	expect(queryByTestId('task-list-in-progress')).toBeNull();
 
 	await user.click(statusBtn);
 	clear = await findByRole('button', { name: 'Clear selection' });
@@ -165,12 +172,28 @@ test('multi-select status filter narrows results and reset restores defaults', a
 		() => {
 			expect(queryByText('Backlog Task')).not.toBeNull();
 			expect(queryByText('Done Task')).toBeNull();
-			// To-do filters do not affect the pinned in-progress section.
-			expect(queryByText('In Progress Task')).not.toBeNull();
-			expect(queryByText('Second Active Task')).not.toBeNull();
+			expect(queryByText('In Progress Task')).toBeNull();
+			expect(queryByText('Second Active Task')).toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
+
+	// Adding the In progress choice brings its list back beside the backlog, and
+	// the collapsed bar names the pair.
+	await user.click(statusBtn);
+	await user.click(await findByRole('menuitemcheckbox', { name: 'In progress' }));
+	await user.click(statusBtn);
+
+	await waitFor(
+		() => {
+			expect(queryByText('Backlog Task')).not.toBeNull();
+			expect(queryByText('In Progress Task')).not.toBeNull();
+			expect(queryByText('Second Active Task')).not.toBeNull();
+			expect(queryByText('Done Task')).toBeNull();
+		},
+		{ timeout: 10_000 },
+	);
+	expect(toggle.textContent).toContain('Backlog + In progress');
 
 	const resetBtn = await findByTestId('task-filter-reset');
 	await user.click(resetBtn);
@@ -651,15 +674,13 @@ test('blocked tasks pin to the in progress section, not the backlog', async () =
 	expect(mainSection.textContent).toContain('Backlog Task');
 	expect(mainSection.textContent).not.toContain('Blocked Task');
 
-	// Pinned statuses are dropped from the to-do filter, and narrowing the to-do
-	// list to Backlog leaves the pinned blocked task in place.
+	// Blocked has no filter choice of its own: the In progress choice covers it.
 	const toggle = await findByTestId('task-filter-toggle');
 	await user.click(toggle);
 	const statusBtn = await findByTestId('task-filter-status');
 	await user.click(statusBtn);
-	// The pinned statuses are not offered as to-do filters (the row's own status
-	// badge still reads "Blocked", so match the option button, not any text).
-	expect(queryAllByRole('button', { name: 'Blocked' })).toHaveLength(0);
+	// Match the option, not any text: the row's own status badge reads "Blocked".
+	expect(queryAllByRole('menuitemcheckbox', { name: 'Blocked' })).toHaveLength(0);
 	const clear = await findByRole('button', { name: 'Clear selection' });
 	await user.click(clear);
 	const backlogOption = await findByRole('menuitemcheckbox', { name: 'Backlog' });
@@ -669,11 +690,138 @@ test('blocked tasks pin to the in progress section, not the backlog', async () =
 	await waitFor(
 		() => {
 			expect(queryByText('Backlog Task')).not.toBeNull();
+			expect(queryByText('Blocked Task')).toBeNull();
+		},
+		{ timeout: 10_000 },
+	);
+
+	await user.click(statusBtn);
+	await user.click(await findByRole('menuitemcheckbox', { name: 'In progress' }));
+	await user.click(statusBtn);
+
+	await waitFor(
+		() => {
+			expect(queryByText('Backlog Task')).not.toBeNull();
 			expect(queryByText('Blocked Task')).not.toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
+	expect((await findByTestId('task-list-in-progress')).textContent).toContain('Blocked Task');
 	expect((await findByTestId('task-list-main')).textContent).not.toContain('Blocked Task');
+});
+
+test('selecting only In progress hides the other lists without a no-matches message', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, findByRole, queryByTestId, queryByText, router, user } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Only Active Project' });
+				projectSlug = project.slug;
+				const agentId = ws.agents[0].id;
+				const active = await seedTask(ws, project, { title: 'Active Task', assignee_id: agentId });
+				await patchStatus(ws, active.id, 'in_progress');
+				await seedTask(ws, project, { title: 'Backlog Task', assignee_id: agentId });
+				const done = await seedTask(ws, project, { title: 'Done Task', assignee_id: agentId });
+				await patchStatus(ws, done.id, 'done');
+			},
+		});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByText('Backlog Task', undefined, { timeout: 10_000 });
+
+	const toggle = await findByTestId('task-filter-toggle');
+	await user.click(toggle);
+	const statusBtn = await findByTestId('task-filter-status');
+	await user.click(statusBtn);
+	await user.click(await findByRole('button', { name: 'Clear selection' }));
+	await user.click(await findByRole('menuitemcheckbox', { name: 'In progress' }));
+	await user.click(statusBtn);
+
+	await waitFor(
+		() => {
+			expect(queryByText('Active Task')).not.toBeNull();
+			expect(queryByText('Backlog Task')).toBeNull();
+			expect(queryByText('Done Task')).toBeNull();
+		},
+		{ timeout: 10_000 },
+	);
+	expect(queryByTestId('task-list-todo-empty')).toBeNull();
+	expect(toggle.textContent).toContain('Status: In progress');
+});
+
+test('a narrowed view with nothing to show says no matching tasks, not no tasks yet', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, findByRole, queryByTestId, queryByText, router, user } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Nothing Active Project' });
+				projectSlug = project.slug;
+				await seedTask(ws, project, { title: 'Backlog Task', assignee_id: ws.agents[0].id });
+			},
+		});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByText('Backlog Task', undefined, { timeout: 10_000 });
+
+	await user.click(await findByTestId('task-filter-toggle'));
+	const statusBtn = await findByTestId('task-filter-status');
+	await user.click(statusBtn);
+	await user.click(await findByRole('button', { name: 'Clear selection' }));
+	await user.click(await findByRole('menuitemcheckbox', { name: 'In progress' }));
+	await user.click(statusBtn);
+
+	await findByTestId('task-list-todo-empty', undefined, { timeout: 10_000 });
+	expect(queryByText('Backlog Task')).toBeNull();
+	expect(queryByTestId('task-list-empty-create')).toBeNull();
+});
+
+test('a filter saved before In progress was a choice keeps showing that list', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Saved Filter Project' });
+			projectSlug = project.slug;
+			const agentId = ws.agents[0].id;
+			const active = await seedTask(ws, project, { title: 'Active Task', assignee_id: agentId });
+			await patchStatus(ws, active.id, 'in_progress');
+			await seedTask(ws, project, { title: 'Backlog Task', assignee_id: agentId });
+			// The shape an earlier release saved: no version, Backlog only.
+			localStorage.setItem(
+				`hezo:task-filters:${project.slug}`,
+				JSON.stringify({
+					search: '',
+					statusValues: ['backlog'],
+					ownerValues: [],
+					sortField: 'work_order',
+					sortDir: 'asc',
+				}),
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	await findByText('Active Task', undefined, { timeout: 10_000 });
+	await findByText('Backlog Task');
+	expect((await findByTestId('task-filter-toggle')).textContent).toContain('Backlog + In progress');
 });
 
 test('to-do search does not filter the in progress section', async () => {
