@@ -356,6 +356,11 @@ describe('provider helpers', () => {
 		expect(claudeCodeModelArg(AiProvider.Anthropic, 'claude-opus-4[1m]')).toBe('claude-opus-4[1m]');
 	});
 
+	it('opencodeModelArg qualifies Requesty managed policy ids under its key', () => {
+		expect(opencodeModelArg(AiProvider.Requesty, 'gpt-5.4-mini')).toBe('requesty/gpt-5.4-mini');
+		expect(opencodeModelKey(AiProvider.Requesty, 'requesty/gpt-5.4-mini')).toBe('gpt-5.4-mini');
+	});
+
 	it('opencodeModelArg qualifies bare ids for OpenRouter only', () => {
 		expect(opencodeModelArg(AiProvider.OpenRouter, 'anthropic/claude')).toBe(
 			'openrouter/anthropic/claude',
@@ -439,6 +444,7 @@ describe('provider helpers', () => {
 		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.OpenAI)).toBe(false);
 		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.Google)).toBe(false);
 		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.OpenRouter)).toBe(false);
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.Requesty)).toBe(false);
 		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.XAi)).toBe(false);
 	});
 });
@@ -472,6 +478,20 @@ describe('parseProviderModels', () => {
 			],
 		});
 		expect(out).toEqual([{ id: 'gpt-4o', label: 'GPT-4o' }]);
+	});
+
+	it('reads the Requesty managed policy list, labelled by id', () => {
+		const out = parseProviderModels(AiProvider.Requesty, {
+			object: 'list',
+			data: [
+				{ id: 'claude-sonnet-4-5', api: 'chat', context_window: 200000 },
+				{ id: 'gpt-5.4-mini@eu', api: 'chat' },
+			],
+		});
+		expect(out).toEqual([
+			{ id: 'claude-sonnet-4-5', label: 'claude-sonnet-4-5' },
+			{ id: 'gpt-5.4-mini@eu', label: 'gpt-5.4-mini@eu' },
+		]);
 	});
 
 	it('falls back to the id when no display name is present', () => {

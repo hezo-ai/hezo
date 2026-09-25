@@ -56,8 +56,8 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
 
 - **Your own model accounts, if you want them.** Sign in with a Claude or
   ChatGPT subscription, paste an API key from Anthropic, OpenAI, Google, xAI,
-  Kimi, DeepSeek, Z.ai or OpenRouter, or point Hezo at your own model server
-  reachable over the internet. That spend is billed to you by them. See [AI model support](/docs/ai-models).
+  Kimi, DeepSeek, Z.ai, OpenRouter or Requesty, or point Hezo at your own model
+  server reachable over the internet. That spend is billed to you by them. See [AI model support](/docs/ai-models).
 - **Anything your agents need to reach** - repositories, connectors, API
   credentials - stored encrypted, and referenced by agents as placeholders
   rather than real values. See
