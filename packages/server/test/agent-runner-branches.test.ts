@@ -198,6 +198,17 @@ describe('buildProviderEnv', () => {
 		expect(env).toContain('OPENROUTER_API_KEY=or-key');
 	});
 
+	it('emits the Requesty key for OpenCode with no quiet env', () => {
+		const env = buildProviderEnv(AiProvider.Requesty, {
+			value: 'rq-key',
+			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
+		});
+		expect(env.some((e) => e.startsWith('DISABLE_TELEMETRY='))).toBe(false);
+		expect(env).toContain('REQUESTY_API_KEY=rq-key');
+	});
+
 	it('emits just the credential var for a provider with neither quiet env nor staticEnv (OpenAI api-key)', () => {
 		const env = buildProviderEnv(AiProvider.OpenAI, {
 			value: 'sk-openai',

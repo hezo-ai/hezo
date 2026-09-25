@@ -36,6 +36,11 @@ const EXPECTED_KEY_LINKS: ReadonlyArray<{ card: string; title: RegExp; href: str
 		title: /How to get your Kimi API key/i,
 		href: 'https://platform.kimi.ai/console/api-keys',
 	},
+	{
+		card: 'Requesty',
+		title: /How to get your Requesty API key/i,
+		href: 'https://app.requesty.ai/api-keys',
+	},
 ];
 
 test('every pickable provider shows how-to-get-a-key instructions linking its key console', async () => {

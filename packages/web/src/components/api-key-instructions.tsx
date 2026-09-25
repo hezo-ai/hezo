@@ -180,6 +180,26 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>
 		),
 	},
+	[AiProvider.Requesty]: {
+		title: 'How to get your Requesty API key',
+		steps: [
+			<>
+				Sign in at <InstructionsLink href="https://app.requesty.ai/">Requesty</InstructionsLink> (or
+				create an account).
+			</>,
+			<>
+				Open <InstructionsLink href="https://app.requesty.ai/api-keys">API keys</InstructionsLink>{' '}
+				and create a new key.
+			</>,
+			<>Copy the key and paste it below.</>,
+		],
+		footer: (
+			<>
+				One Requesty key routes to models from many labs. Usage is prepaid, so add credits in your
+				Requesty account before agents run.
+			</>
+		),
+	},
 	[AiProvider.Kimi]: KIMI_KEY_INSTRUCTIONS,
 	[AiProvider.XAi]: {
 		title: 'How to get your xAI API key',
