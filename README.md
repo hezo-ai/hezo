@@ -241,8 +241,8 @@ Bring your own provider accounts - connect as many as you like, and give any ind
 agent [its own model](./docs/ai-models.md#give-an-agent-its-own-model). Each provider is
 driven through a **first-party agentic command-line runtime** inside the container.
 Anthropic, OpenAI, Google and xAI each run on their own CLI; the
-Anthropic-compatible providers run through Claude Code, and OpenRouter through
-OpenCode. Hezo's [meta-harness](./docs/concepts/meta-harness.md) levels the differences, so
+Anthropic-compatible providers run through Claude Code, and OpenRouter and Requesty
+through OpenCode. Hezo's [meta-harness](./docs/concepts/meta-harness.md) levels the differences, so
 the tooling, memory and sandbox stay the same underneath whichever model you pick.
 
 | Provider | Models | Runtime | Auth |
@@ -255,6 +255,7 @@ the tooling, memory and sandbox stay the same underneath whichever model you pic
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |
+| **Requesty** | Many, via one account | OpenCode | API key |
 | **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
 | **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 

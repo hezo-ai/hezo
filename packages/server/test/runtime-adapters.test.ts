@@ -714,6 +714,22 @@ describe('opencode adapter', () => {
 		});
 	});
 
+	it('keys the Requesty reasoning block on the managed policy id', () => {
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.Requesty,
+				runModel: 'requesty/claude-sonnet-4-5',
+				effort: AgentEffort.High,
+			}),
+		).toEqual({
+			requesty: {
+				models: { 'claude-sonnet-4-5': { options: { reasoning: { effort: 'high' } } } },
+			},
+		});
+	});
+
 	it('strips the opencode provider prefix off an already-qualified model id', () => {
 		expect(
 			reasoningOf({

@@ -4223,8 +4223,8 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ### Providers and runtimes
 
-**Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
+**Providers → runtimes is one-to-MANY.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `requesty`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
 `AgentRuntime` has **six** — `claude_code`, `codex`, `antigravity`, `opencode`, `grok`, `kimi`. The dead `gemini` label is retained in the DB enum for stored rows only. A
 provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
@@ -4244,7 +4244,7 @@ task-level `runtime_type` pin searches.
 Defaults: Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `KIMI_DEFAULT_MODEL`), OpenAI → `codex`,
-Google → `antigravity`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
+Google → `antigravity`, OpenRouter + Requesty → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
 (local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
 see below), so it is the one provider that offers a choice. Every other provider offers exactly
@@ -4520,7 +4520,8 @@ added — and holds the previous pin on an unreachable provider, a rejected key 
 matched nothing. Providers with no spec (the local runners) get no pin at all. **OpenRouter's
 family is a single id**, `openrouter/auto`: a router has no version ladder inside it, and
 pinning one vendor line there discards the routing the operator chose OpenRouter for, so the
-refresh only ever confirms the catalog still lists that route. It exists because a hardcoded
+refresh only ever confirms the catalog still lists that route. Requesty has no auto route, so
+its family is the managed `claude-sonnet-*` policies (no `@eu` variants). It exists because a hardcoded
 id cannot notice its own retirement: a withdrawn one — once `gemini-1.5-flash`, the Google
 stop-hook judge — 404s on every run while the hook fails open.
 
@@ -4795,7 +4796,9 @@ same file carries the run's reasoning effort, since the CLI exposes no flag or e
 provider's native id (`opencodeModelKey`; `--model` is the key plus that id). OpenRouter's own
 routes are native ids with the author `openrouter`, so `openrouter/auto`, the pinned default,
 is keyed `openrouter/auto` and passed as `--model openrouter/openrouter/auto`; an id that
-merely began with the key used to lose that author and reach OpenRouter as `auto`. OpenCode merges that entry with
+merely began with the key used to lose that author and reach OpenRouter as `auto`. Requesty's
+OpenCode catalog is its managed policies, whose ids carry no author (`nativeIdSlashes: 0`), so
+`requesty/claude-sonnet-4-5` is keyed `claude-sonnet-4-5`. OpenCode merges that entry with
 its built-in models.dev catalog, and `options` passes straight to the AI-SDK provider, so the
 value reaches OpenRouter's unified reasoning parameter. Hezo's effort ladder maps onto it 1:1
 and never emits `none`, so every OpenCode run reasons; a run that pins no model gets no block

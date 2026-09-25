@@ -71,6 +71,10 @@ export const MODEL_PIN_SPECS: Partial<Record<AiProvider, ModelPinSpec>> = {
 	// climb, so a refresh only ever confirms the catalog still lists it and holds
 	// the previous pin if it ever stops.
 	[AiProvider.OpenRouter]: { family: /^openrouter\/auto$/, fallback: 'openrouter/auto' },
+	// Requesty is a router too, but has no auto route, so the pin tracks its
+	// managed Claude Sonnet policy. The family excludes the `@eu` variants, which
+	// an operator picks on purpose.
+	[AiProvider.Requesty]: { family: /^claude-sonnet-[\d-]+$/, fallback: 'claude-sonnet-4-5' },
 };
 
 /**

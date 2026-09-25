@@ -26,12 +26,20 @@ describe('providerDirectUpstreamHosts', () => {
 		// so the direct host is derived from ANTHROPIC_BASE_URL.
 		expect(providerDirectUpstreamHosts(AiProvider.Kimi)).toEqual(['api.moonshot.ai']);
 	});
+
+	it('routes Requesty direct to its router host', () => {
+		expect(providerDirectUpstreamHosts(AiProvider.Requesty)).toEqual(['router.requesty.ai']);
+	});
 });
 
 describe('provider → runtime mapping', () => {
 	it('drives OpenRouter through OpenCode and Kimi through Claude Code', () => {
 		expect(PROVIDER_TO_RUNTIME[AiProvider.OpenRouter]).toBe(AgentRuntime.OpenCode);
 		expect(PROVIDER_TO_RUNTIME[AiProvider.Kimi]).toBe(AgentRuntime.ClaudeCode);
+	});
+
+	it('drives Requesty through OpenCode', () => {
+		expect(PROVIDER_TO_RUNTIME[AiProvider.Requesty]).toBe(AgentRuntime.OpenCode);
 	});
 });
 
@@ -40,6 +48,16 @@ describe('opencodeModelArg', () => {
 		expect(opencodeModelArg(AiProvider.OpenRouter, 'anthropic/claude-sonnet-4.5')).toBe(
 			'openrouter/anthropic/claude-sonnet-4.5',
 		);
+	});
+
+	it('prefixes the Requesty provider key onto a managed policy id', () => {
+		expect(opencodeModelArg(AiProvider.Requesty, 'claude-sonnet-4-5')).toBe(
+			'requesty/claude-sonnet-4-5',
+		);
+		expect(opencodeModelArg(AiProvider.Requesty, 'requesty/claude-sonnet-4-5')).toBe(
+			'requesty/claude-sonnet-4-5',
+		);
+		expect(opencodeModelKey(AiProvider.Requesty, 'requesty/gpt-5.4-mini')).toBe('gpt-5.4-mini');
 	});
 
 	it('leaves an already-qualified id untouched', () => {

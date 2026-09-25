@@ -143,6 +143,17 @@ describe('pickLatestModel', () => {
 		).toBeNull();
 	});
 
+	it('pins Requesty to the newest managed Claude Sonnet policy, never an EU variant', () => {
+		const catalog = [
+			'claude-sonnet-4-5',
+			'claude-sonnet-4-6',
+			'claude-sonnet-5@eu',
+			'claude-opus-5',
+			'gpt-5.4-mini',
+		];
+		expect(pickLatestModel(AiProvider.Requesty, catalog)).toBe('claude-sonnet-4-6');
+	});
+
 	it('holds the previous pin when the family matches nothing', () => {
 		// Renamed upstream, or a key that sees a restricted catalog. Null means the
 		// caller keeps what it had rather than pinning something from another tier.
