@@ -45,7 +45,7 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
 ## What you bring
 
 - **Your own model accounts.** Connect Anthropic, OpenAI, Google, xAI, Kimi,
-  DeepSeek, Z.ai or OpenRouter, and that spend is billed to you by them. See
+  DeepSeek, Z.ai, OpenRouter or Requesty, and that spend is billed to you by them. See
   [AI model support](/docs/ai-models).
 - **Your recovery phrase.** We never hold it, and nobody here can recover it
   for you.

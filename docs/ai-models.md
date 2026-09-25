@@ -22,18 +22,19 @@ and your agents run on the models you choose.
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |
+| **Requesty** | Many, via one account | OpenCode | API key |
 | **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
 | **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 
 Each provider is driven through a first-party agentic command-line runtime inside the
 agent's container. Anthropic, OpenAI, Google, and xAI each use their own CLI (xAI runs on
 its **Grok Build** CLI, on the `grok-4.5` model); Kimi, DeepSeek, and Z.ai run through
-Claude Code against their Anthropic-compatible endpoints; OpenRouter runs through the
-**OpenCode** CLI; and Ollama and LM Studio run through Claude Code against your own
+Claude Code against their Anthropic-compatible endpoints; OpenRouter and Requesty run
+through the **OpenCode** CLI; and Ollama and LM Studio run through Claude Code against your own
 machine.
 
 Every runtime is asked to reason, at the effort level the agent is configured for. On
-OpenRouter through OpenCode that reasoning is always on: the run asks the model to think at
+OpenRouter and Requesty through OpenCode that reasoning is always on: the run asks the model to think at
 its own effort level rather than answering straight away, and the thinking shows in the run
 log alongside the tool calls. A model that cannot reason ignores the request.
 
@@ -210,6 +211,7 @@ form in Hezo walks you through these same steps inline.
 | **DeepSeek** | [DeepSeek Platform → API keys](https://platform.deepseek.com/api_keys) | Prepaid balance |
 | **Z.ai** | [Z.ai platform → API keys](https://z.ai/manage-apikey/apikey-list) | Prepaid balance ([billing page](https://z.ai/manage-apikey/billing)) |
 | **OpenRouter** | [OpenRouter → Keys](https://openrouter.ai/keys) | Prepaid credits, billed per token |
+| **Requesty** | [Requesty → API keys](https://app.requesty.ai/) | Prepaid credits, billed per token |
 | **Ollama** | Not required | Runs on your hardware, no per-token cost |
 | **LM Studio** | Not required | Runs on your hardware, no per-token cost |
 
@@ -294,6 +296,10 @@ default stands.
 **OpenRouter starts on `openrouter/auto`**, OpenRouter's own routing endpoint, which picks a
 model per request instead of fixing one. That is the routing you signed up for; pick a
 specific model from the list if you would rather choose yourself.
+
+**Requesty starts on its newest managed Claude Sonnet policy** (such as
+`claude-sonnet-4-5`). The model list shows Requesty's managed policies, each a routing chain
+Requesty maintains for one model. Ids ending in `@eu` route only through EU providers.
 
 Local model servers have no pinned default: the catalog is whatever you have pulled, so
 the CLI's own choice applies until you pick one.

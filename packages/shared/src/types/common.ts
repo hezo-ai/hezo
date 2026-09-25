@@ -1924,6 +1924,7 @@ export const AiProvider = {
 	DeepSeek: 'deepseek',
 	ZAi: 'z_ai',
 	OpenRouter: 'openrouter',
+	Requesty: 'requesty',
 	// One Moonshot provider, two CLIs. It used to be two providers (`kimi` on
 	// Claude Code, `kimi_code` on Moonshot's own CLI) only because a runtime was
 	// pinned to its provider; now that a credential carries its own runtime the
@@ -2141,6 +2142,12 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.OpenCode,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
 	},
+	// Requesty is another OpenCode provider: OpenCode ships a `requesty` entry
+	// (from models.dev) that reads REQUESTY_API_KEY, so it needs no provider block.
+	[AiProvider.Requesty]: {
+		runtime: AgentRuntime.OpenCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'REQUESTY_API_KEY' },
+	},
 	// One Moonshot provider reachable by two CLIs against the same upstream with
 	// the same key: Claude Code at `/anthropic` (the default) and Moonshot's own
 	// `kimi` at `/v1`. Neither supersedes the other, and an operator switches a
@@ -2190,6 +2197,7 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.DeepSeek]: ['api.deepseek.com'],
 	[AiProvider.ZAi]: ['api.z.ai'],
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
+	[AiProvider.Requesty]: ['router.requesty.ai'],
 	// One host either way: `/anthropic` under Claude Code, `/v1` under Kimi Code.
 	[AiProvider.Kimi]: ['api.moonshot.ai'],
 	[AiProvider.XAi]: ['api.x.ai'],
@@ -2314,6 +2322,9 @@ export const OPENCODE_PROVIDERS: Partial<
 	// Every OpenRouter catalog id is `author/slug`; its own routes (`auto`,
 	// `free`, ...) have the author `openrouter`.
 	[AiProvider.OpenRouter]: { key: 'openrouter', nativeIdSlashes: 1 },
+	// OpenCode's Requesty catalog is Requesty's managed policies, whose ids carry
+	// no author (`claude-sonnet-4-5`, `gpt-5.4-mini`).
+	[AiProvider.Requesty]: { key: 'requesty', nativeIdSlashes: 0 },
 };
 
 /**
@@ -3144,6 +3155,18 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		// strict key validation — a bad key surfaces on the first run.
 		verifyEndpoint: {
 			url: 'https://openrouter.ai/api/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	[AiProvider.Requesty]: {
+		name: 'Requesty',
+		runtimeLabel: 'OpenCode',
+		keyPlaceholder: 'rqsty-...',
+		// `/v1/models/managed` lists Requesty's managed policies, the same ids
+		// OpenCode's Requesty catalog carries (drives the model dropdown). A bad
+		// key answers 403, so this is a real key check.
+		verifyEndpoint: {
+			url: 'https://router.requesty.ai/v1/models/managed',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},

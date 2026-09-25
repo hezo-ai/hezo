@@ -218,6 +218,7 @@ const LIVE_PROVIDER_ENV: Record<AiProvider, { slug: string; model?: string }> = 
 	// that may not serve tool use at all - which fails as a 404 naming neither the
 	// model nor the cause. Pin one known to carry tools.
 	[AiProvider.OpenRouter]: { slug: 'OPENROUTER', model: 'anthropic/claude-haiku-4.5' },
+	[AiProvider.Requesty]: { slug: 'REQUESTY', model: 'claude-haiku-4-5' },
 	[AiProvider.Kimi]: { slug: 'KIMI', model: KIMI_DEFAULT_MODEL },
 	[AiProvider.XAi]: { slug: 'XAI', model: 'grok-4.5' },
 	// The local runners take a server URL in place of a key - see `baseUrl`.
