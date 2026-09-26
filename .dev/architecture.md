@@ -822,7 +822,13 @@ usage, and the work is done by then. Claude Code's running usage is counted once
 since the CLI restates a message's usage on every content-block event. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
 dispatch suppression: the tokens of every run on the task since the admin last spoke
 (`adminSpokeAtSql`), held for every agent until the admin speaks, with one `task_token_ceiling`
-notice per hold.
+notice per hold. **A run stopped for its size holds its task too.** `stopRunForSize` records
+`heartbeat_runs.stop_reason` (`token_ceiling` or `tool_call_ceiling`) the moment either ceiling
+fires, and `runSizeStopHold` - the third hard stop in `dispatchSuppression`, read from the same
+`loadTaskSpend` round trip - holds the task for every agent until the admin speaks, with one
+`run_size_stop` notice. Without it the ceiling bounded a run and nothing else: the next heartbeat
+or mention restarted the same oversized work, and on production three runs spent 72M after a
+stopped 31M one.
 
 **What else bounds a single run is `runs.maxToolCalls` (default 600), plus wall-clock
 `run_timeout_min`.** Tool calls because they are what grows the tokens: every tool result stays in the conversation and is re-sent on the next call, so a run's

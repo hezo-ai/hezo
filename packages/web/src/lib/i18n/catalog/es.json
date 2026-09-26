@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Ver el error completo",
 	"comment.runFailed": "La ejecución de {agent} falló.",
 	"comment.runFailedWithError": "La ejecución de {agent} falló: {error}",
+	"comment.runSizeStop": "Una ejecución de esta tarea se detuvo por su tamaño antes de terminar el trabajo. Ningún agente trabajará en ella hasta que responda el admin. Acotarla o dividirla antes evita que la próxima ejecución se detenga por lo mismo.",
 	"comment.runTimedOut": "La ejecución de {agent} agotó el tiempo.",
 	"comment.runTimedOutWithError": "La ejecución de {agent} agotó el tiempo: {error}",
 	"comment.statusChanged": "{actor} cambió el estado de {from} a {to}",

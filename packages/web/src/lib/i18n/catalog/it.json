@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Mostra l'errore completo",
 	"comment.runFailed": "Esecuzione per {agent} non riuscita.",
 	"comment.runFailedWithError": "Esecuzione per {agent} non riuscita: {error}",
+	"comment.runSizeStop": "Un'esecuzione di questa attività è stata fermata per le sue dimensioni prima di finire il lavoro. Nessun agente ci lavorerà finché l'admin non risponde. Ridurla o dividerla prima evita che la prossima esecuzione si fermi allo stesso modo.",
 	"comment.runTimedOut": "Esecuzione per {agent} scaduta.",
 	"comment.runTimedOutWithError": "Esecuzione per {agent} scaduta: {error}",
 	"comment.statusChanged": "{actor} ha cambiato lo stato da {from} a {to}",

@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "エラーの全文を表示します",
 	"comment.runFailed": "{agent} の実行が失敗しました。",
 	"comment.runFailedWithError": "{agent} の実行が失敗しました: {error}",
+	"comment.runSizeStop": "このタスクの実行が、作業を終える前に規模の上限で停止しました。管理者が返信するまで、どのエージェントもこのタスクを実行しません。先に範囲を絞るか分割すると、次の実行が同じ理由で止まるのを防げます。",
 	"comment.runTimedOut": "{agent} の実行がタイムアウトしました。",
 	"comment.runTimedOutWithError": "{agent} の実行がタイムアウトしました: {error}",
 	"comment.statusChanged": "{actor} がステータスを {from} から {to} に変更しました",

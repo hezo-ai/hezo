@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Ver o erro completo",
 	"comment.runFailed": "A execução de {agent} falhou.",
 	"comment.runFailedWithError": "A execução de {agent} falhou: {error}",
+	"comment.runSizeStop": "Uma execução desta tarefa foi interrompida pelo tamanho antes de terminar o trabalho. Nenhum agente vai trabalhar nela até o admin responder. Reduzir o escopo ou dividi-la antes evita que a próxima execução pare do mesmo jeito.",
 	"comment.runTimedOut": "A execução de {agent} expirou.",
 	"comment.runTimedOutWithError": "A execução de {agent} expirou: {error}",
 	"comment.statusChanged": "{actor} alterou o status de {from} para {to}",

@@ -68,7 +68,10 @@ agent, whether or not it has a budget:
 - **A single run stops at 30 million tokens.** A run that long spends most of its tokens
   re-reading its own context. This applies to every runtime. For Codex, Grok and Kimi Code,
   Hezo reads the usage once a minute, so a run can go a little past the limit before it
-  stops. A run that has already finished its work is never stopped.
+  stops. A run that has already finished its work is never stopped. When a run is stopped
+  this way, or at the tool-call ceiling below, its task waits for your reply before any agent
+  runs on it again, since the next run would start the same oversized work. You get a notice
+  in your inbox; scope the task down or split it, then reply.
 - **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
   wakes the task's assignee and allows another 100 million, and **Run now** starts one

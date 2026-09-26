@@ -96,6 +96,8 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	runSizeStopHold,
+	runSizeStopNotice,
 	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
@@ -277,6 +279,7 @@ const HOLDS_WAITING_ON_A_PERSON: ReadonlySet<WakeupSkipReason> = new Set([
 	WakeupSkipReason.RetrospectiveHold,
 	WakeupSkipReason.HandoffRoundsExhausted,
 	WakeupSkipReason.TaskTokenCeiling,
+	WakeupSkipReason.RunSizeStop,
 ]);
 
 /**
@@ -1973,6 +1976,14 @@ export class JobManager {
 				reason: WakeupSkipReason.TaskTokenCeiling,
 				detail: `is held on ${at} after ${usage.tokens} tokens since the admin last replied (ceiling ${TASK_TOKEN_CEILING})`,
 				notice: { content: taskTokenCeilingNotice(usage), unlessPostedSince: usage.noticeSince },
+			};
+		}
+		const sized = runSizeStopHold(spend);
+		if (sized) {
+			return {
+				reason: WakeupSkipReason.RunSizeStop,
+				detail: `is held on ${at} after ${sized.stops} run(s) on it were stopped for size since the admin last replied`,
+				notice: { content: runSizeStopNotice(sized), unlessPostedSince: sized.noticeSince },
 			};
 		}
 		return null;

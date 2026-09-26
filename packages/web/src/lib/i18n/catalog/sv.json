@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Visa hela felet",
 	"comment.runFailed": "Körningen för {agent} misslyckades.",
 	"comment.runFailedWithError": "Körningen för {agent} misslyckades: {error}",
+	"comment.runSizeStop": "En körning på den här uppgiften stoppades för sin storlek innan arbetet var klart. Ingen agent arbetar med den förrän admin svarar. Om du avgränsar eller delar upp den först stoppas inte nästa körning på samma sätt.",
 	"comment.runTimedOut": "Körningen för {agent} tog för lång tid.",
 	"comment.runTimedOutWithError": "Körningen för {agent} tog för lång tid: {error}",
 	"comment.statusChanged": "{actor} ändrade status från {from} till {to}",

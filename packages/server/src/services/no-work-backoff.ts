@@ -678,6 +678,9 @@ const HANDOFF_CHAIN_CTES = `admin AS (SELECT ${adminSpokeAtSql('$1')} AS at),
 		 )`;
 
 /** The bind values {@link HANDOFF_CHAIN_CTES} reads, in order. */
+/** The bind position of the size-stop reasons, after the handoff chain's own four. */
+const SIZE_STOP_PARAM = 5;
+
 function handoffChainParams(taskId: string): unknown[] {
 	return [taskId, [...CONVERSATIONAL_SOURCES], RunCancelReason.HandedBack, HANDOFF_SCAN_RUNS];
 }
@@ -709,8 +712,11 @@ export interface TaskSpend {
 	tokens: number;
 	/** When the admin last spoke on the task, or null when they have not. */
 	adminAt: Date | null;
-	/** Runs and tokens since then; the whole task's when the admin has not spoken. */
-	sinceAdmin: { runs: number; tokens: number };
+	/**
+	 * Runs, tokens and runs stopped for their size since then; the whole task's
+	 * when the admin has not spoken.
+	 */
+	sinceAdmin: { runs: number; tokens: number; sizeStops: number };
 	handoff: {
 		rounds: number;
 		tokens: number;
@@ -727,6 +733,7 @@ export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> 
 		admin_at: Date | null;
 		since_runs: number;
 		since_tokens: number;
+		since_size_stops: number;
 		rounds: number;
 		chain_tokens: number;
 		chain_slugs: string[] | null;
@@ -739,6 +746,9 @@ export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> 
 		        count(r.id) FILTER (WHERE a.at IS NULL OR r.started_at > a.at)::int AS since_runs,
 		        COALESCE(sum(r.input_tokens + r.output_tokens)
 		                 FILTER (WHERE a.at IS NULL OR r.started_at > a.at), 0)::float8 AS since_tokens,
+		        count(r.id) FILTER (WHERE (a.at IS NULL OR r.started_at > a.at)
+		                              AND r.stop_reason = ANY($${SIZE_STOP_PARAM}::text[]))::int
+		          AS since_size_stops,
 		        (SELECT count(DISTINCT wakeup_id)::int FROM chain) AS rounds,
 		        (SELECT COALESCE(sum(tokens), 0)::float8 FROM chain) AS chain_tokens,
 		        (SELECT array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL)
@@ -747,14 +757,18 @@ export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> 
 		   FROM admin a
 		   LEFT JOIN heartbeat_runs r ON r.task_id = $1 AND r.started_at IS NOT NULL
 		  GROUP BY a.at`,
-		handoffChainParams(taskId),
+		[...handoffChainParams(taskId), [...RUN_SIZE_STOP_REASONS]],
 	);
 	const row = r.rows[0];
 	return {
 		runs: row?.runs ?? 0,
 		tokens: Number(row?.tokens ?? 0),
 		adminAt: row?.admin_at ? new Date(row.admin_at) : null,
-		sinceAdmin: { runs: row?.since_runs ?? 0, tokens: Number(row?.since_tokens ?? 0) },
+		sinceAdmin: {
+			runs: row?.since_runs ?? 0,
+			tokens: Number(row?.since_tokens ?? 0),
+			sizeStops: row?.since_size_stops ?? 0,
+		},
 		handoff: {
 			rounds: row?.rounds ?? 0,
 			tokens: Number(row?.chain_tokens ?? 0),
@@ -770,7 +784,9 @@ export async function loadTaskUsageSoFar(db: Db, taskId: string): Promise<TaskUs
 	return {
 		runs: spend.runs,
 		tokens: spend.tokens,
-		sinceAdminReply: spend.adminAt ? spend.sinceAdmin : null,
+		sinceAdminReply: spend.adminAt
+			? { runs: spend.sinceAdmin.runs, tokens: spend.sinceAdmin.tokens }
+			: null,
 		handoffRounds: spend.handoff.rounds,
 	};
 }
@@ -831,6 +847,50 @@ export const TASK_TOKEN_CEILING = 100_000_000;
 /** The system comment kind that tells the admin a task reached its token ceiling. */
 export const TASK_TOKEN_CEILING_COMMENT_KIND = 'task_token_ceiling';
 
+/**
+ * Why a run was stopped for its size, as `heartbeat_runs.stop_reason` records it:
+ * its tokens or its tool calls outgrew the per-run ceiling.
+ */
+export const RUN_SIZE_STOP_REASONS = ['token_ceiling', 'tool_call_ceiling'] as const;
+export type RunSizeStopReason = (typeof RUN_SIZE_STOP_REASONS)[number];
+
+/** The system comment kind that tells the admin a task's run was stopped for size. */
+export const RUN_SIZE_STOP_COMMENT_KIND = 'run_size_stop';
+
+/** A task held by {@link runSizeStopHold}, as the notice to the admin states it. */
+export interface RunSizeStops {
+	/** Runs on it stopped for size since the admin last spoke. */
+	stops: number;
+	/** A notice for this hold posted after this instant already stands. */
+	noticeSince: Date | null;
+}
+
+/**
+ * Was a run on this task stopped for its size since the admin last spoke?
+ *
+ * A run stopped at the token or tool-call ceiling ended before its work did, and
+ * whatever woke the task next - a heartbeat, a teammate's mention - started the
+ * same work again at the same size: on production a stopped 31M-token run was
+ * resumed by its agent's heartbeat twelve hours later and three more runs spent
+ * 72M. So the task waits for the admin, who can scope it down, split it, or say
+ * to carry on. The admin's reply lifts it; a Run now runs as ever.
+ */
+export function runSizeStopHold(spend: TaskSpend): RunSizeStops | null {
+	if (spend.sinceAdmin.sizeStops === 0) return null;
+	return { stops: spend.sinceAdmin.sizeStops, noticeSince: spend.adminAt };
+}
+
+/** The notice a task held by {@link runSizeStopHold} carries, for `postAdminNotice`. */
+export function runSizeStopNotice(
+	u: RunSizeStops,
+): { kind: string; text: string } & Record<string, unknown> {
+	return {
+		kind: RUN_SIZE_STOP_COMMENT_KIND,
+		stops: u.stops,
+		text: `A run on this task was stopped for its size before its work was done. No agent will run on it until the admin replies. Scoping it down or splitting it first keeps the next run from stopping the same way.`,
+	};
+}
+
 /** A task held by {@link tokenCeilingHold}, as the notice to the admin states it. */
 export interface TaskTokenUsage {
 	/** Tokens its runs used since the admin last spoke on it. */
@@ -866,6 +926,7 @@ export function tokenCeilingHold(spend: TaskSpend): TaskTokenUsage | null {
 export const ADMIN_HOLD_NOTICE_KINDS: readonly string[] = [
 	HANDOFF_LIMIT_COMMENT_KIND,
 	TASK_TOKEN_CEILING_COMMENT_KIND,
+	RUN_SIZE_STOP_COMMENT_KIND,
 ];
 
 /** The notice a task held by its token ceiling carries, for `postAdminNotice`. */

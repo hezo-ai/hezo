@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Vollständigen Fehler anzeigen",
 	"comment.runFailed": "Lauf für {agent} fehlgeschlagen.",
 	"comment.runFailedWithError": "Lauf für {agent} fehlgeschlagen: {error}",
+	"comment.runSizeStop": "Ein Lauf dieser Aufgabe wurde wegen seiner Größe gestoppt, bevor die Arbeit fertig war. Kein Agent arbeitet daran weiter, bis der Admin antwortet. Wenn Sie die Aufgabe vorher eingrenzen oder aufteilen, stoppt der nächste Lauf nicht aus demselben Grund.",
 	"comment.runTimedOut": "Zeitüberschreitung beim Lauf für {agent}.",
 	"comment.runTimedOutWithError": "Zeitüberschreitung beim Lauf für {agent}: {error}",
 	"comment.statusChanged": "{actor} hat den Status von {from} zu {to} geändert",

@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "전체 오류 보기",
 	"comment.runFailed": "{agent} 실행이 실패했어요.",
 	"comment.runFailedWithError": "{agent} 실행이 실패했어요: {error}",
+	"comment.runSizeStop": "이 작업의 실행이 일을 마치기 전에 규모 한도로 중지됐어요. 관리자가 답장할 때까지 어떤 에이전트도 이 작업을 실행하지 않아요. 먼저 범위를 줄이거나 나누면 다음 실행이 같은 이유로 멈추지 않아요.",
 	"comment.runTimedOut": "{agent} 실행이 시간을 초과했어요.",
 	"comment.runTimedOutWithError": "{agent} 실행이 시간을 초과했어요: {error}",
 	"comment.statusChanged": "{actor} 님이 상태를 {from}에서 {to}(으)로 변경했어요",

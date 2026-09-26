@@ -1079,7 +1079,7 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 				cacheReadTokens: settled.cacheRead + streaming.cacheRead,
 				outputTokens: settled.output + streaming.output,
 			}),
-			allowance,
+			...(allowance ? { allowance } : {}),
 		};
 	};
 	// Kept past the session line so the runner can persist it on the run row and

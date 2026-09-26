@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "查看完整错误",
 	"comment.runFailed": "{agent} 的运行失败。",
 	"comment.runFailedWithError": "{agent} 的运行失败：{error}",
+	"comment.runSizeStop": "此任务的一次运行因规模过大，在工作完成前被停止。在管理员回复之前，任何智能体都不会处理此任务。先缩小范围或拆分任务，可避免下一次运行以同样方式停止。",
 	"comment.runTimedOut": "{agent} 的运行超时。",
 	"comment.runTimedOutWithError": "{agent} 的运行超时：{error}",
 	"comment.statusChanged": "{actor} 将状态从 {from} 更改为 {to}",

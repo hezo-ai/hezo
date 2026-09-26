@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Show the full error",
 	"comment.runFailed": "Run for {agent} failed.",
 	"comment.runFailedWithError": "Run for {agent} failed: {error}",
+	"comment.runSizeStop": "A run on this task was stopped for its size before its work was done. No agent will run on it until the admin replies. Scoping it down or splitting it first keeps the next run from stopping the same way.",
 	"comment.runTimedOut": "Run for {agent} timed out.",
 	"comment.runTimedOutWithError": "Run for {agent} timed out: {error}",
 	"comment.statusChanged": "{actor} changed status from {from} to {to}",

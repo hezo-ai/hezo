@@ -230,6 +230,17 @@ const turnUsing = (inputTokens: number) =>
 		},
 	})}\n`;
 
+/** A stopped run's reason lands on its row from tracked background work. */
+async function waitForStopReason(runId: string, reason: string): Promise<void> {
+	await vi.waitFor(async () => {
+		const r = await db.query<{ stop_reason: string | null }>(
+			'SELECT stop_reason FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(r.rows[0].stop_reason).toBe(reason);
+	});
+}
+
 describe('run timeout classification (runAgent)', () => {
 	it('finalizes a run aborted for run_timeout as timed_out and flags result.timedOut', async () => {
 		const ac = new AbortController();
@@ -292,6 +303,7 @@ describe('run timeout classification (runAgent)', () => {
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 		expect(run.rows[0].error).toContain('tool-call ceiling');
+		await waitForStopReason(result.heartbeatRunId as string, 'tool_call_ceiling');
 	});
 
 	it('leaves a run under the ceiling alone', async () => {
@@ -358,6 +370,8 @@ describe('run timeout classification (runAgent)', () => {
 		expect(run.rows[0].error).toContain(
 			`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
 		);
+		// Recorded structurally, for the task hold that reads it.
+		await waitForStopReason(result.heartbeatRunId as string, 'token_ceiling');
 	});
 
 	it('leaves a run under the token ceiling alone', async () => {

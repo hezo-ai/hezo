@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Afficher l'erreur complète",
 	"comment.runFailed": "L'exécution pour {agent} a échoué.",
 	"comment.runFailedWithError": "L'exécution pour {agent} a échoué : {error}",
+	"comment.runSizeStop": "Une exécution de cette tâche a été arrêtée pour sa taille avant la fin du travail. Aucun agent ne s'en occupera tant que l'admin n'aura pas répondu. La réduire ou la découper d'abord évite que la prochaine exécution s'arrête de la même façon.",
 	"comment.runTimedOut": "L'exécution pour {agent} a expiré.",
 	"comment.runTimedOutWithError": "L'exécution pour {agent} a expiré : {error}",
 	"comment.statusChanged": "{actor} a changé le statut de {from} à {to}",

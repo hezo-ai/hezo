@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Pokaż pełny błąd",
 	"comment.runFailed": "Uruchomienie dla {agent} nie powiodło się.",
 	"comment.runFailedWithError": "Uruchomienie dla {agent} nie powiodło się: {error}",
+	"comment.runSizeStop": "Uruchomienie tego zadania zatrzymano z powodu jego rozmiaru, zanim praca się skończyła. Żaden agent nie zajmie się nim, dopóki admin nie odpowie. Zawężenie lub podzielenie zadania wcześniej sprawi, że kolejne uruchomienie nie zatrzyma się z tego samego powodu.",
 	"comment.runTimedOut": "Uruchomienie dla {agent} przekroczyło limit czasu.",
 	"comment.runTimedOutWithError": "Uruchomienie dla {agent} przekroczyło limit czasu: {error}",
 	"comment.statusChanged": "{actor} zmienił status z {from} na {to}",

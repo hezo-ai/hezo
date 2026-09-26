@@ -364,6 +364,7 @@
 	"comment.runErrorExpand": "Volledige fout tonen",
 	"comment.runFailed": "Run voor {agent} is mislukt.",
 	"comment.runFailedWithError": "Run voor {agent} is mislukt: {error}",
+	"comment.runSizeStop": "Een run op deze taak is gestopt vanwege zijn omvang voordat het werk klaar was. Geen agent werkt er verder aan tot de admin reageert. Door de taak eerst kleiner te maken of op te splitsen stopt de volgende run niet op dezelfde manier.",
 	"comment.runTimedOut": "Run voor {agent} is verlopen.",
 	"comment.runTimedOutWithError": "Run voor {agent} is verlopen: {error}",
 	"comment.statusChanged": "{actor} heeft de status gewijzigd van {from} naar {to}",
