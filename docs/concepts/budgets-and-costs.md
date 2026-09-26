@@ -73,6 +73,9 @@ agent, whether or not it has a budget:
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
   wakes the task's assignee and allows another 100 million, and **Run now** starts one
   agent yourself. A teammate who is not an admin cannot release it either way.
+- **A subscription's allowance is spread across its window.** Hezo reads how much of the
+  week a Codex or Claude Code subscription has used and holds agent work that gets ahead of
+  an even pace. See [How Hezo paces a subscription](/docs/ai-models#how-hezo-paces-a-subscription).
 - **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
   a reply from you, the task waits for you. See
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).

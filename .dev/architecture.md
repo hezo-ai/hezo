@@ -3243,7 +3243,10 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   With no stated time the hold is `USAGE_HOLD_UNSTATED_MIN` (30); every hold is floored at
   `USAGE_HOLD_FLOOR_MIN` (5) so a stated time already past cannot release the queue at
   dispatch rate. The refusal that starts a hold files one `fileProviderUsageLimitNotice`, and
-  a usage refusal never reaches the two-hour give-up.
+  a usage refusal never reaches the two-hour give-up. Every usage-limit verdict holds, through
+  `holdForUsageLimit` in `runAgent`: a refusal with zero tokens is handed back, and one after
+  the run spent tokens or wrote something fails on its merits but holds the credential all the
+  same, so the runs already queued behind it meet the hold rather than each being refused.
 - **Runs check it before the run row exists.** `runAgent` resolves its credential
   (`resolveRunCredential`, shared with chat) before `createHeartbeatRun`, and `usageHoldWait`
   hands a held run back with no row, container or provider call. Judged on the database
@@ -3255,7 +3258,7 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   is claimed. Compared against the hold read before the wait, so the probe's own window does
   not hold the probe.
 - **A turn lifts it.** A run that started under a hold (the probe, or one a person asked
-  for) and got a turn calls `liftUsageHold`, which clears the column and releases the
+  for) and got a turn, and was not itself refused for usage, calls `liftUsageHold`, which clears the column and releases the
   wakeups held on that credential through `releaseUsageHeldWakeups`. The handback records the
   credential (`agent_wakeup_requests.held_config_id`, migration 081, cleared on claim), so a
   wakeup held on another credential stays held. The release is paced: oldest first,
@@ -3263,11 +3266,44 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   first refusal renews the hold and the wakeups still waiting meet it before claiming a
   container. A wakeup handed back before 081 has no credential and is released by any lift.
   Replacing the credential through the PATCH route clears the hold in
-  `updateAiProviderConfig` and releases the same way. Pacing slows the restart; the handoff
-  limit and the token ceilings bound the total.
+  `updateAiProviderConfig` and releases the same way. The spacing slows the restart; the
+  allowance pace below bounds what follows it.
 - **A person bypasses it.** A run whose wakeup payload carries `triggered_by` (Run now,
   Retry) or that has no wakeup (a manual run) skips both checks; its outcome lifts or renews
   the hold.
+
+**The allowance pace.** A hold answers "is the allowance spent?"; nothing about a run, a task
+or an agent bounds how fast an instance spends a refilled one, and a week's Codex allowance
+went in fifteen hours (`.dev/codex-allowance-burn-2026-09-24.md`). The pace bounds it per
+credential, in the provider's own unit:
+
+- **The provider's figure, not Hezo's tokens.** Codex writes the percent used, the window's
+  length and its reset on every `token_count` event (`rate_limits`), and the rollout parser
+  keeps the newest report of the longest window. Claude Code states its windows on its stream
+  as a `rate_limit_event` (`rate_limit_info.unifiedWindows.seven_day`, a fraction used and a
+  unix-seconds reset, an internal shape of the CLI's read defensively). Either way the report
+  rides on `AgentRunUsage.allowance`, and the runner stores each change on the credential
+  through `recordCredentialAllowance` (`allowance_*` columns, migration 082) from the stream,
+  the 60 s usage poll and the end-of-run recovery. Tokens could not
+  do this: the allowance's price per token moves with the model, and its size has moved week to
+  week.
+- **The line.** `allowancePace` (`@hezo/shared`) allows `share x (days elapsed + 1)` percent,
+  capped at `100 - ALLOWANCE_PACE_RESERVE_PERCENT` so a person's run always has room. The share
+  is the admin's per-credential setting (`allowance_daily_share_percent`), or the window spread
+  evenly. One day's share is there from the window's first minute, and an unspent share carries
+  forward. Windows under a day are left to the hold.
+- **The gate.** Right after the hold check, before any row or container, `allowancePaceWait`
+  hands a non-person run on a credential ahead of its line back with
+  `WakeupSkipReason.ProviderAllowancePace` and `held_config_id`, waiting until the line catches
+  up or `ALLOWANCE_PACE_RECHECK_MIN` (30), whichever is sooner. The recheck is what picks up a
+  reset, a manual refill or a raised share without a release path of its own. A person's run is
+  not paced, and its report moves the line for everyone.
+- **One notice per window.** The first paced run files `fileAllowancePaceNotice`, claimed per
+  credential and reset time in `system_meta` in the same statement, so it is filed once.
+- **Beside budgets, not in them.** Budgets count Hezo's own tokens per agent and project over
+  UTC windows and pause the agent; the pace reads the provider's figure per credential and
+  delays work. Both gates run, the budget at claim and the pace in `runAgent`, and neither
+  reads the other's data.
 
 **Credential wait — two separate properties.** A credential raises two independent
 questions, and collapsing them was a bug the measurements caught. **Does the CLI rewrite its

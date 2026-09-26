@@ -160,6 +160,27 @@ token stays usable across concurrent runs, so Hezo runs as many at once as your 
 allow and keeps the stored token current as they go. Nothing here limits how many agents
 share one Codex subscription.
 
+### How Hezo paces a subscription
+
+A subscription gives you a usage allowance over a window, a week for Codex and for Claude
+Code, and the provider tells Hezo how much of it you have used on every response. Hezo uses
+that figure to spread the allowance across the window, so a fresh week lasts the week
+instead of going in the first few hours.
+
+By default Hezo lets agents use one day's share of the window straight away, and one more
+day's share each day after that. A share they do not use carries forward, so the whole
+allowance is still usable by the end of the window. The last 5% is kept for runs you start
+yourself.
+
+When agents get ahead of that pace, their work waits in the queue and starts again as the
+day's share opens up. You get one notice in your inbox the first time this happens in a
+window. **Run now** is never paced: a run you start yourself goes ahead, and what it
+reports keeps the pace current for everyone.
+
+Budgets still apply as well. A budget limits one agent or project in tokens, and the pace
+limits the whole subscription in the provider's own measure. Work runs only when both
+allow it. See [Budgets and costs](/docs/concepts/budgets-and-costs).
+
 **An Anthropic subscription does not refresh.** Hezo stores the single long-lived token
 `claude setup-token` prints and passes it to Claude Code as-is. There is no refresh token
 behind it, so when that token expires or you revoke it, no run can renew it - sign in again

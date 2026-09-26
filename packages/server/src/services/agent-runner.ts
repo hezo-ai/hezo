@@ -82,6 +82,7 @@ import {
 	getAiProviderConfig,
 	readActiveUsageHold,
 	readAiProviderCredentialValue,
+	recordCredentialAllowance,
 	resolveRunCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
@@ -154,6 +155,7 @@ import {
 } from './no-work-backoff';
 import {
 	clearAgentErrorApprovalsOnRecovery,
+	fileAllowancePaceNotice,
 	fileProviderCredentialRejectedApproval,
 	fileProviderRefusalApproval,
 	fileProviderUsageLimitNotice,
@@ -171,7 +173,9 @@ import {
 	type PromptSection,
 } from './prompt-budget';
 import {
+	allowancePaceWait,
 	condemnRejectedProviderCredential,
+	describeAllowancePace,
 	describeUsageHold,
 	formatUsageHold,
 	holdCredentialForUsageLimit,
@@ -1666,6 +1670,34 @@ export async function runAgent(
 				},
 			};
 		}
+		// A credential spending ahead of its pace across the provider's window holds
+		// agent work the same way, before any row or container: a week's allowance
+		// is otherwise the fleet's to spend in hours. A person's run is not paced.
+		const paced = allowancePaceWait(
+			selection.config.allowance,
+			selection.config.allowanceDailySharePercent,
+		);
+		if (paced) {
+			const message = describeAllowancePace(paced.pace);
+			await fileAllowancePaceNotice(
+				deps.db,
+				{ memberId: agent.id, teamId: project.team_id, taskId: task?.id ?? null },
+				{
+					configId: selection.config.configId,
+					label: selection.config.label,
+					resetsAt: paced.pace.resetsAt,
+					message,
+				},
+			).catch((e) => log.error(`Could not file the allowance pace notice for ${agent.slug}:`, e));
+			return {
+				...failedResult(message, startTime),
+				requeue: {
+					reason: WakeupSkipReason.ProviderAllowancePace,
+					notBefore: paced.until,
+					heldConfigId: selection.config.configId,
+				},
+			};
+		}
 	}
 
 	// The run executes in the project's team (see buildRunContext); for instance
@@ -1891,35 +1923,50 @@ export async function runAgent(
 	 * holds the work is a control signal, and deriving one from prose is the defect
 	 * this whole path was careful to avoid.
 	 */
+	/**
+	 * Hold the credential a usage-limit refusal came from, and tell a person when
+	 * the refusal starts the hold. Every such refusal holds, whether or not the run
+	 * spent tokens first: a run served for a while and then refused has found the
+	 * allowance spent as surely as one refused at once, and each run dispatched
+	 * before the hold stands is refused the same way.
+	 */
+	const holdForUsageLimit = async (
+		verdict: RuntimeErrorVerdict,
+		refused: { configId: string; provider: AiProvider },
+	): Promise<{ until: Date; heldUntil: string }> => {
+		const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
+		const heldUntil = formatUsageHold(hold.until);
+		if (hold.started) {
+			const config = await getAiProviderConfig(deps.db, refused.configId);
+			await fileProviderUsageLimitNotice(
+				deps.db,
+				{
+					runId: heartbeatRunId,
+					memberId: agent.id,
+					teamId: runTeamId,
+					taskId: task?.id ?? null,
+				},
+				{
+					providerName: AI_PROVIDER_INFO[refused.provider]?.name ?? refused.provider,
+					label: config?.label ?? refused.provider,
+					heldUntil,
+				},
+			).catch((e) => log.error(`Run ${heartbeatRunId}: could not file a usage-limit notice:`, e));
+		}
+		return { until: hold.until, heldUntil };
+	};
+
 	const providerRefusalHandback = async (
 		verdict: RuntimeErrorVerdict,
 		refused: { configId: string; provider: AiProvider },
 	): Promise<{ message: string; cause: HandbackCause } | null> => {
 		if (verdict.family === 'usage_limit') {
-			const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
-			const heldUntil = formatUsageHold(hold.until);
-			if (hold.started) {
-				const config = await getAiProviderConfig(deps.db, refused.configId);
-				await fileProviderUsageLimitNotice(
-					deps.db,
-					{
-						runId: heartbeatRunId,
-						memberId: agent.id,
-						teamId: runTeamId,
-						taskId: task?.id ?? null,
-					},
-					{
-						providerName: AI_PROVIDER_INFO[refused.provider]?.name ?? refused.provider,
-						label: config?.label ?? refused.provider,
-						heldUntil,
-					},
-				).catch((e) => log.error(`Run ${heartbeatRunId}: could not file a usage-limit notice:`, e));
-			}
+			const { until, heldUntil } = await holdForUsageLimit(verdict, refused);
 			return {
 				message: `${verdict.message} Every run on this credential waits until ${heldUntil}`,
 				cause: {
 					reason: WakeupSkipReason.ProviderUsageLimit,
-					notBefore: hold.until,
+					notBefore: until,
 					heldConfigId: refused.configId,
 				},
 			};
@@ -2656,6 +2703,24 @@ export async function runAgent(
 		// killed by the wall clock, a cancel or a handback recorded zero tokens for
 		// work that really happened. The file survives however the run ended.
 		let recoveredUsage: AgentRunUsage | null | undefined;
+		// The credential's usage window as the run last read it, stored for the pace
+		// every later dispatch reads. Tracked rather than awaited on the poll path:
+		// the run does not wait on it, and a failed write only leaves the older
+		// figure in place until the next read.
+		let storedAllowanceKey = '';
+		const storeAllowance = (usage: AgentRunUsage | null) => {
+			if (!usage?.allowance) return;
+			// Once per change: a streaming runtime restates its window on every
+			// response, and this is called per chunk.
+			const key = `${usage.allowance.usedPercent}|${usage.allowance.resetsAt.getTime()}`;
+			if (key === storedAllowanceKey) return;
+			storedAllowanceKey = key;
+			trackBackground(
+				recordCredentialAllowance(deps.db, credential.configId, usage.allowance).catch((e) =>
+					log.error(`Run ${heartbeatRunId}: could not store the credential's usage window:`, e),
+				),
+			);
+		};
 		const recoverUsageOnce = async (): Promise<AgentRunUsage | null> => {
 			if (recoveredUsage !== undefined) return recoveredUsage;
 			recoveredUsage = await recoverOffStreamRunUsage(
@@ -2663,6 +2728,7 @@ export async function runAgent(
 				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
 				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
+			storeAllowance(recoveredUsage);
 			return recoveredUsage;
 		};
 
@@ -2831,7 +2897,10 @@ export async function runAgent(
 			const refreshUsage = () => {
 				// Surfaced to the log flush so it's persisted crash-safely (see
 				// currentUsage / onFlush above).
-				currentUsage = parser.getUsage() ?? polledUsage;
+				const streamed = parser.getUsage();
+				currentUsage = streamed ?? polledUsage;
+				// A runtime reports its window on its stream or in its usage file.
+				storeAllowance(streamed?.allowance ? streamed : polledUsage);
 			};
 
 			// The same stop as the tool-call ceiling, measured in what the run has used
@@ -3379,6 +3448,14 @@ export async function runAgent(
 					return finalizeRequeue(handback.message, handback.cause);
 				}
 			}
+			// A usage-limit refusal the gate above did not hand back - the run spent
+			// tokens, or wrote something, before the provider refused it - still means
+			// the allowance is spent. The run fails on its merits below, and the
+			// credential is held now, so the runs already queued behind it meet the
+			// hold instead of each being refused in turn.
+			if (refusalVerdict?.family === 'usage_limit') {
+				await holdForUsageLimit(refusalVerdict, { configId: credential.configId, provider });
+			}
 
 			// Ordered by what the human has to act on. Stranded commits come first
 			// because they are the only one where the fix is time-sensitive: the work
@@ -3490,8 +3567,11 @@ export async function runAgent(
 			// back. Lifting the hold lets the work waiting behind it dispatch now rather
 			// than at the stated reset. A success counts too, for the runtimes that
 			// report no usage. Caught: the run's outcome does not turn on it.
+			// A run the provider refused for usage has proved the opposite, whatever
+			// tokens it spent before the refusal, and lifts nothing.
 			if (
 				usageHoldSeen &&
+				parser.getTerminalVerdict()?.family !== 'usage_limit' &&
 				(success || (finalUsage?.inputTokens ?? 0) + (finalUsage?.outputTokens ?? 0) > 0)
 			) {
 				await liftUsageHold(deps.db, credential.configId).catch((e) =>

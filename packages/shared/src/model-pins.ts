@@ -42,18 +42,20 @@ export interface ModelPinSpec {
  * Per-provider families, chosen as the sensible default tier for agent work
  * rather than the cheapest or the most capable.
  *
- * A provider absent here gets no pin and no default model, which is correct for
- * the local runners: their catalog is whatever the operator has pulled, so there
- * is nothing to know here and the CLI's own default is the honest answer.
+ * A provider absent here gets no pin, which is correct for the local runners:
+ * their catalog is whatever the operator has pulled, so there is nothing to know
+ * here. The operator picks one of those models when adding the credential.
  */
 export const MODEL_PIN_SPECS: Partial<Record<AiProvider, ModelPinSpec>> = {
 	// The top tier, chosen deliberately: agent work is the case Opus is for, and a
 	// team that wants to spend less moves individual agents down rather than
 	// starting everyone on a weaker model.
 	[AiProvider.Anthropic]: { family: /^claude-opus-[\d.-]+$/, fallback: 'claude-opus-5' },
-	// A codex-family id, because this credential drives the Codex CLI - it warns
+	// A Codex agent model, because this credential drives the Codex CLI - it warns
 	// "model metadata not found" for a general chat model and guesses its limits.
-	[AiProvider.OpenAI]: { family: /^gpt-[\d.]+-codex$/, fallback: 'gpt-5.3-codex' },
+	// The Sol line rather than Astra: Astra draws a subscription's allowance down
+	// about twice as fast per token, and an agent fleet is priced by its allowance.
+	[AiProvider.OpenAI]: { family: /^gpt-[\d.]+-(?:sol|codex)$/, fallback: 'gpt-5.6-sol' },
 	[AiProvider.Google]: { family: /^gemini-[\d.]+-flash$/, fallback: 'gemini-3.6-flash' },
 	[AiProvider.DeepSeek]: { family: /^deepseek-v[\d.]+-pro$/, fallback: 'deepseek-v4-pro' },
 	// Case-insensitive: z.ai's catalog answers `glm-5.2` while its own docs and

@@ -64,7 +64,7 @@ describe('pickLatestModel', () => {
 		expect(pickLatestModel(AiProvider.Anthropic, catalog)).toBe('claude-opus-5');
 	});
 
-	it('picks a codex-family OpenAI model, never a general chat one', () => {
+	it('picks a Codex agent model, never a general chat one', () => {
 		const catalog = [
 			'gpt-4o-mini',
 			'gpt-5',
@@ -76,6 +76,17 @@ describe('pickLatestModel', () => {
 		// gpt-5.4-mini is the higher version but drives the Codex CLI badly - it
 		// warns "model metadata not found" and guesses the model's limits.
 		expect(pickLatestModel(AiProvider.OpenAI, catalog)).toBe('gpt-5.3-codex');
+	});
+
+	it('climbs to the Sol line and never to Astra, which spends an allowance twice as fast', () => {
+		const catalog = [
+			'gpt-5.3-codex',
+			'gpt-5.6-luna',
+			'gpt-5.6-sol',
+			'gpt-5.6-sol-pro',
+			'gpt-6-astra',
+		];
+		expect(pickLatestModel(AiProvider.OpenAI, catalog)).toBe('gpt-5.6-sol');
 	});
 
 	it('skips Google preview and non-text families', () => {

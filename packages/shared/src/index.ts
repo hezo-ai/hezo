@@ -1,3 +1,4 @@
+export * from './allowance-pace.js';
 export * from './avatar/name-gender.js';
 export * from './avatar/pixel-avatar.js';
 export * from './budget.js';

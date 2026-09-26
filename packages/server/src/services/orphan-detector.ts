@@ -551,7 +551,7 @@ export async function retryOrEscalateLostRun(
  */
 async function fileLostRunApproval(
 	db: Db,
-	run: { runId: string; memberId: string; teamId: string; taskId?: string | null },
+	run: { runId: string | null; memberId: string; teamId: string; taskId?: string | null },
 	knownLogTail?: string,
 	/** Override for a give-up that is not the retry ceiling, so the record stays true. */
 	message = `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
@@ -622,6 +622,37 @@ export async function fileProviderRefusalApproval(
  * for a person to fix, only a pause they should know about. The agent's next
  * successful run clears it through {@link clearAgentErrorApprovalsOnRecovery}.
  */
+/**
+ * Tell a person, once per provider window, that Hezo has started holding agent
+ * work on a credential because its spending ran ahead of its pace.
+ *
+ * Claimed per credential and window in `system_meta` before anything is filed,
+ * in one statement, so the runs that meet the pace after the first cannot file it
+ * again, and a new window files it afresh. Filed on the agent whose run met the
+ * pace first, and there is no run to name: a paced run is held before its row
+ * exists.
+ */
+export async function fileAllowancePaceNotice(
+	db: Db,
+	held: { memberId: string; teamId: string; taskId?: string | null },
+	credential: { configId: string; label: string; resetsAt: Date; message: string },
+): Promise<void> {
+	const claim = await db.query(
+		`INSERT INTO system_meta (key, value) VALUES ($1, $2)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+		  WHERE system_meta.value IS DISTINCT FROM EXCLUDED.value
+		 RETURNING key`,
+		[`allowance_pace_notice:${credential.configId}`, credential.resetsAt.toISOString()],
+	);
+	if (claim.rows.length === 0) return;
+	await fileLostRunApproval(
+		db,
+		{ runId: null, ...held },
+		undefined,
+		`Hezo is pacing the credential "${credential.label}". ${credential.message}. To change how fast its usage window may be spent, edit the credential's pacing in Settings > AI providers.`,
+	);
+}
+
 export async function fileProviderUsageLimitNotice(
 	db: Db,
 	run: { runId: string; memberId: string; teamId: string; taskId?: string | null },
@@ -631,7 +662,7 @@ export async function fileProviderUsageLimitNotice(
 		db,
 		run,
 		undefined,
-		`The usage allowance on the ${credential.providerName} credential "${credential.label}" is spent. Hezo is holding every run on this credential until ${credential.heldUntil}, when the provider says it resets, and starts them again then. To try sooner, for example after adding credits, press Run now on a waiting task. This credential is shared across every team on this instance.`,
+		`The usage allowance on the ${credential.providerName} credential "${credential.label}" is spent. Hezo is holding every run on this credential until ${credential.heldUntil}, when the provider says it resets, and starts them again then, paced across the new window. Run now on a waiting task asks the provider again: if it is served, the hold lifts for every agent on this credential. This credential is shared across every team on this instance.`,
 	);
 }
 

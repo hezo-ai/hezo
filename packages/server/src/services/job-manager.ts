@@ -134,6 +134,7 @@ import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updat
 import {
 	absorbQueuedTaskWakeups,
 	assignmentWakeupAlreadyServed,
+	CREDENTIAL_HOLD_REASONS,
 	createProgressUpdateWakeup,
 	createWakeup,
 	type HandbackCause,
@@ -1879,9 +1880,9 @@ export class JobManager {
 	 * Record why a wakeup was not dispatched, and refresh its task for the team
 	 * that owns it (not the agent's: the CEO and the Coach wake in HQ).
 	 *
-	 * A wakeup still held for a provider usage limit keeps that reason: the paced
-	 * release finds its rows by it, and a "Run now" that met a busy task must not
-	 * take the row out of the release it is waiting on.
+	 * A wakeup still held on its credential keeps that reason: the paced release
+	 * finds its rows by it, and a "Run now" that met a busy task must not take the
+	 * row out of the release it is waiting on.
 	 */
 	private async markWakeupSkipped(
 		wakeupId: string,
@@ -1894,11 +1895,11 @@ export class JobManager {
 			`UPDATE agent_wakeup_requests
 			 SET last_skipped_at = now(),
 			     last_skipped_reason = CASE
-			       WHEN last_skipped_reason = $4 AND not_before > now() THEN last_skipped_reason
+			       WHEN last_skipped_reason = ANY($4::text[]) AND not_before > now() THEN last_skipped_reason
 			       ELSE $2 END,
 			     last_skipped_blocker_task_id = $3
 			 WHERE id = $1`,
-			[wakeupId, reason, blockerTaskId, WakeupSkipReason.ProviderUsageLimit],
+			[wakeupId, reason, blockerTaskId, [...CREDENTIAL_HOLD_REASONS]],
 		);
 		if (taskId) {
 			const refreshed = await db.query<Record<string, unknown> & { team_id: string }>(

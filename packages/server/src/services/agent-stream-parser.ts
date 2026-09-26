@@ -21,6 +21,7 @@ import {
 	AgentRuntime,
 	type AiProvider,
 	claudeCodeProviderUsesCustomEndpoint,
+	type ProviderAllowance,
 	qualifiedMcpToolName,
 	type TokenBuckets,
 } from '@hezo/shared';
@@ -46,6 +47,11 @@ export interface AgentRunUsage {
 	buckets: TokenBuckets | null;
 	/** The model that did the work, or null where the runtime named none. */
 	model: string | null;
+	/**
+	 * The credential's usage window as the provider last reported it during the
+	 * run, where the runtime records one. Absent where it records none.
+	 */
+	allowance?: ProviderAllowance | null;
 }
 
 /**
@@ -91,7 +97,23 @@ export function mergeRunUsage(a: AgentRunUsage, b: AgentRunUsage): AgentRunUsage
 		outputTokens: a.outputTokens + b.outputTokens,
 		buckets,
 		model: (weight(a) >= weight(b) ? a.model : b.model) ?? a.model ?? b.model,
+		allowance: laterAllowance(a.allowance ?? null, b.allowance ?? null),
 	};
+}
+
+/**
+ * The newer of two reports of one credential's window: the later reset first (a
+ * window that has since reset is over), then the higher percent, since use
+ * within one window only grows.
+ */
+function laterAllowance(
+	a: ProviderAllowance | null,
+	b: ProviderAllowance | null,
+): ProviderAllowance | null {
+	if (!a || !b) return a ?? b;
+	const byReset = a.resetsAt.getTime() - b.resetsAt.getTime();
+	if (byReset !== 0) return byReset > 0 ? a : b;
+	return a.usedPercent >= b.usedPercent ? a : b;
 }
 
 export interface AgentStreamParser {
@@ -267,8 +289,7 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 		match:
 			/at capacity|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|\b(502|503|504|529)\b/,
 		failure: RunFailureClass.Transient,
-		describe: (text) =>
-			`The model provider is temporarily at capacity - this run never got a turn. (${text})`,
+		describe: (text) => `The model provider is temporarily at capacity. (${text})`,
 	},
 	{
 		family: 'rate_limit',
@@ -284,8 +305,7 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 		// which is why it earns a longer cooldown than the two above.
 		match: /usage limit|resets at/,
 		failure: RunFailureClass.Transient,
-		describe: (text) =>
-			`The provider subscription's usage limit is spent - this run never got a turn. (${text})`,
+		describe: (text) => `The provider subscription's usage limit is spent. (${text})`,
 	},
 ];
 
@@ -778,6 +798,37 @@ interface ClaudeStreamEvent {
 	summary?: string;
 	status?: string;
 	patch?: { status?: string };
+	/** On `rate_limit_event` only: the subscription's usage windows as the CLI last read them. */
+	rate_limit_info?: unknown;
+}
+
+/**
+ * The week a Claude Code `rate_limit_event` reports, as a {@link ProviderAllowance},
+ * or null when it names none.
+ *
+ * The CLI reads the `anthropic-ratelimit-unified-*` response headers and states
+ * each window in `unifiedWindows` as a fraction used (it can run past 1) with a
+ * unix-seconds reset. Older releases carried only the currently limiting window
+ * at the top level, so a top-level seven-day report is read too. The field is the
+ * CLI's own internal shape, so anything missing or mistyped reads as no report.
+ */
+function claudeRateLimitAllowance(info: unknown): ProviderAllowance | null {
+	if (!info || typeof info !== 'object') return null;
+	const rec = info as Record<string, unknown>;
+	const windows = rec.unifiedWindows as Record<string, unknown> | undefined;
+	const week = (windows?.seven_day ?? (rec.rateLimitType === 'seven_day' ? rec : null)) as
+		| { utilization?: unknown; resetsAt?: unknown }
+		| null
+		| undefined;
+	if (!week || typeof week.utilization !== 'number' || typeof week.resetsAt !== 'number') {
+		return null;
+	}
+	if (!Number.isFinite(week.utilization) || !Number.isFinite(week.resetsAt)) return null;
+	return {
+		usedPercent: Math.min(100, Math.max(0, week.utilization * 100)),
+		windowMinutes: 7 * 24 * 60,
+		resetsAt: new Date(week.resetsAt * 1000),
+	};
 }
 
 /** One model's cumulative usage in a `result` event's `modelUsage`. */
@@ -1018,13 +1069,18 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	// a `task_updated` to `killed` / `task_notification` `stopped` after the
 	// result. The same pair before the result is the model stopping its own task.
 	const backgroundTasks = new Map<string, string>();
+	// The subscription's week as the CLI last reported it, carried on the usage.
+	let allowance: ProviderAllowance | null = null;
 	const recordUsage = () => {
-		usage = toRunUsage(modelId, {
-			inputTokens: settled.input + streaming.input,
-			cacheCreationTokens: settled.cacheCreation + streaming.cacheCreation,
-			cacheReadTokens: settled.cacheRead + streaming.cacheRead,
-			outputTokens: settled.output + streaming.output,
-		});
+		usage = {
+			...toRunUsage(modelId, {
+				inputTokens: settled.input + streaming.input,
+				cacheCreationTokens: settled.cacheCreation + streaming.cacheCreation,
+				cacheReadTokens: settled.cacheRead + streaming.cacheRead,
+				outputTokens: settled.output + streaming.output,
+			}),
+			allowance,
+		};
 	};
 	// Kept past the session line so the runner can persist it on the run row and
 	// `list_connectors` can answer, from inside the run, what each connector
@@ -1139,6 +1195,15 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 			return out;
 		}
 
+		if (event.type === 'rate_limit_event') {
+			const reported = claudeRateLimitAllowance(event.rate_limit_info);
+			if (reported) {
+				allowance = reported;
+				if (usage) usage = { ...usage, allowance };
+			}
+			return out;
+		}
+
 		if (event.type === 'result') {
 			betweenTurns = true;
 			// `result` is Claude Code's authoritative final assistant message on a
@@ -1190,7 +1255,13 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	};
 
 	const base = createJsonlParser(renderEvent, {
-		getUsage: () => usage,
+		// A week reported before any tokens moved still reaches the runner, which reads
+		// a spent allowance from it.
+		getUsage: () =>
+			usage ??
+			(allowance
+				? { inputTokens: 0, outputTokens: 0, buckets: null, model: modelId ?? null, allowance }
+				: null),
 		getTerminalVerdict: () => terminalError,
 		getFinalAssistantMessage: () => finalMessage,
 		getMcpToolCounts: () => mcpCounts,
@@ -2164,6 +2235,54 @@ export function codexRolloutModel(head: string): string | undefined {
 	return undefined;
 }
 
+/** One usage window from a Codex `token_count` event's `rate_limits`. */
+interface CodexRateLimitWindow {
+	used_percent?: number;
+	window_minutes?: number;
+	/** Unix seconds. */
+	resets_at?: number;
+	/** Seconds from the event, the spelling older releases wrote. */
+	resets_in_seconds?: number;
+}
+
+/**
+ * The longest window a Codex `rate_limits` snapshot reports, as a
+ * {@link ProviderAllowance}, or null when it carries no usable window.
+ *
+ * Codex reports a short window (five hours) and a long one (a week) as `primary`
+ * and `secondary`; which slot holds which is the backend's choice, so the longest
+ * is picked by its stated length rather than by slot. The long window is the one
+ * a week's pace is measured against.
+ */
+function codexRolloutAllowance(
+	rateLimits: unknown,
+	eventAt: string | undefined,
+): ProviderAllowance | null {
+	if (!rateLimits || typeof rateLimits !== 'object') return null;
+	const snapshot = rateLimits as Record<string, unknown>;
+	let best: ProviderAllowance | null = null;
+	for (const slot of ['primary', 'secondary']) {
+		const w = snapshot[slot] as CodexRateLimitWindow | null | undefined;
+		if (!w || typeof w.used_percent !== 'number' || typeof w.window_minutes !== 'number') continue;
+		if (!Number.isFinite(w.used_percent) || !(w.window_minutes > 0)) continue;
+		let resetsAtMs: number | null = null;
+		if (typeof w.resets_at === 'number' && Number.isFinite(w.resets_at)) {
+			resetsAtMs = w.resets_at * 1000;
+		} else if (typeof w.resets_in_seconds === 'number' && eventAt) {
+			const base = Date.parse(eventAt);
+			if (Number.isFinite(base)) resetsAtMs = base + w.resets_in_seconds * 1000;
+		}
+		if (resetsAtMs === null) continue;
+		if (best && best.windowMinutes >= w.window_minutes) continue;
+		best = {
+			usedPercent: Math.min(100, Math.max(0, w.used_percent)),
+			windowMinutes: w.window_minutes,
+			resetsAt: new Date(resetsAtMs),
+		};
+	}
+	return best;
+}
+
 /** One cumulative `total_token_usage` snapshot from a Codex rollout. */
 interface CodexRolloutTotals {
 	input_tokens?: number;
@@ -2216,11 +2335,12 @@ export function extractCodexUsageFromRollout(
 	let model: string | undefined = openingModel;
 	let prev: CodexRolloutTotals | null = null;
 	let saw = false;
+	let allowance: ProviderAllowance | null = null;
 
 	for (const line of contents.split('\n')) {
 		const trimmed = line.trim();
 		if (!trimmed.startsWith('{')) continue;
-		let event: { type?: string; payload?: Record<string, unknown> };
+		let event: { type?: string; timestamp?: string; payload?: Record<string, unknown> };
 		try {
 			event = JSON.parse(trimmed);
 		} catch {
@@ -2232,8 +2352,12 @@ export function extractCodexUsageFromRollout(
 			continue;
 		}
 		if (event.type !== 'event_msg') continue;
-		const payload = event.payload as { type?: string; info?: Record<string, unknown> } | undefined;
+		const payload = event.payload as
+			| { type?: string; info?: Record<string, unknown>; rate_limits?: unknown }
+			| undefined;
 		if (payload?.type !== 'token_count') continue;
+		// The rollout is in time order, so the last report read is the newest.
+		allowance = codexRolloutAllowance(payload.rate_limits, event.timestamp) ?? allowance;
 		const totals = payload.info?.total_token_usage as CodexRolloutTotals | undefined;
 		if (!totals) continue;
 
@@ -2260,7 +2384,13 @@ export function extractCodexUsageFromRollout(
 		acc.outputTokens += output;
 		perModel.set(key, acc);
 	}
-	if (!saw) return null;
+	// A session refused before any tokens moved still reports where the window
+	// stands, and that report is the one a spent allowance is read from.
+	if (!saw) {
+		return allowance
+			? { inputTokens: 0, outputTokens: 0, buckets: null, model: model ?? null, allowance }
+			: null;
+	}
 
 	// Summed across models: a rollout can switch models mid-session, and the
 	// reported model is the one that moved the most tokens.
@@ -2290,6 +2420,7 @@ export function extractCodexUsageFromRollout(
 		outputTokens: summed.outputTokens,
 		buckets: summed,
 		model: dominant?.key || null,
+		allowance,
 	};
 }
 

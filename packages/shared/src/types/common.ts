@@ -1064,6 +1064,12 @@ export const WakeupSkipReason = {
 	 * cooldown before the dispatcher tries again.
 	 */
 	ProviderUsageLimit: 'provider_usage_limit',
+	/**
+	 * The credential has spent more of its provider's usage window than its pace
+	 * line allows by now. The wakeup waits for the line to catch up, rechecked
+	 * every half hour, and a person's Run now overrides it.
+	 */
+	ProviderAllowancePace: 'provider_allowance_pace',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 

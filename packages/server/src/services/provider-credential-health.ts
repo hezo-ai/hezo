@@ -14,7 +14,14 @@
  * place that decides a stored credential is dead.
  */
 
-import type { AiAuthMethod, AiProvider } from '@hezo/shared';
+import {
+	type AiAuthMethod,
+	type AiProvider,
+	type AllowancePace,
+	allowancePace,
+	englishCount,
+	type ProviderAllowance,
+} from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import {
@@ -174,4 +181,48 @@ export function formatUsageHold(until: Date): string {
 /** Why a run on a held credential did not start, as its run record states it. */
 export function describeUsageHold(until: Date): string {
 	return `The provider subscription's usage limit is spent until ${formatUsageHold(until)}`;
+}
+
+/**
+ * The longest a wakeup held for pacing waits before it checks the pace again.
+ *
+ * The line itself says when work may resume, but three things can move that time
+ * earlier: the provider resetting the window, the operator resetting it by hand,
+ * and the operator raising the daily share. Rechecking on this interval picks
+ * each up without a release path of its own, at the cost of one credential read
+ * per held wakeup per interval - no container, no run row.
+ */
+export const ALLOWANCE_PACE_RECHECK_MIN = 30;
+
+/**
+ * Where a credential stands against its pace line, and the time a run on it must
+ * wait until, or null when it may run now.
+ *
+ * `allowance` and `dailySharePercent` are the values read with the credential row,
+ * so a credential never reported costs nothing here.
+ */
+export function allowancePaceWait(
+	allowance: ProviderAllowance | null,
+	dailySharePercent: number | null,
+	now = new Date(),
+): { pace: AllowancePace; until: Date } | null {
+	const pace = allowancePace(allowance, dailySharePercent, now);
+	if (!pace?.holdUntil) return null;
+	const recheck = now.getTime() + ALLOWANCE_PACE_RECHECK_MIN * MINUTE_MS;
+	return { pace, until: new Date(Math.min(pace.holdUntil.getTime(), recheck)) };
+}
+
+/** A percent as an operator reads it: whole numbers, one decimal below ten. */
+function formatPercent(value: number): string {
+	return value < 10 ? value.toFixed(1) : englishCount(Math.round(value));
+}
+
+/** Why a run on a credential ahead of its pace did not start, as its run record states it. */
+export function describeAllowancePace(pace: AllowancePace): string {
+	return (
+		`This credential has used ${formatPercent(pace.usedPercent)}% of its provider's usage window, ` +
+		`ahead of the ${formatPercent(pace.limitPercent)}% its pace allows by now ` +
+		`(${formatPercent(pace.dailySharePercent)}% a day). Agent work waits until ` +
+		`${formatUsageHold(pace.holdUntil ?? pace.resetsAt)}; a person's Run now still runs`
+	);
 }

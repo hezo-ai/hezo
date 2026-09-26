@@ -6,6 +6,7 @@ import {
 	effectiveRuntime,
 	isAgentRuntime,
 	PROVIDER_RUNTIME_ADAPTERS,
+	type ProviderAllowance,
 } from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
@@ -136,6 +137,8 @@ export interface AiProviderCredentialAndModel extends AiProviderCredential {
  */
 export interface SelectedProviderConfig {
 	configId: string;
+	/** The operator's name for this credential, as a notice names it. */
+	label: string;
 	authMethod: AiAuthMethod;
 	defaultModel: string | null;
 	baseUrl: string | null;
@@ -145,16 +148,49 @@ export interface SelectedProviderConfig {
 	resolvedRuntime: AgentRuntime | null;
 	/** When the provider said this credential's spent usage allowance resets, if it is held. */
 	usageLimitedUntil: Date | null;
+	/** The usage window the provider last reported for this credential, if any. */
+	allowance: ProviderAllowance | null;
+	/** The admin's daily share of that window; null is the even default. */
+	allowanceDailySharePercent: number | null;
 }
 
 interface ProviderConfigRow {
 	id: string;
+	label: string;
 	auth_method: AiAuthMethod;
 	encrypted_credential: string;
 	default_model: string | null;
 	metadata: Record<string, unknown> | null;
 	runtime: string | null;
 	usage_limited_until: Date | string | null;
+	allowance_used_percent: number | null;
+	allowance_window_minutes: number | null;
+	allowance_resets_at: Date | string | null;
+	allowance_daily_share_percent: number | null;
+}
+
+/** The allowance columns a credential read selects, in one place. */
+const ALLOWANCE_COLUMNS_SQL = `allowance_used_percent, allowance_window_minutes, allowance_resets_at,
+		        allowance_daily_share_percent`;
+
+/** A credential row's stored usage window, or null when none was ever reported. */
+export function rowAllowance(row: {
+	allowance_used_percent: number | null;
+	allowance_window_minutes: number | null;
+	allowance_resets_at: Date | string | null;
+}): ProviderAllowance | null {
+	if (
+		row.allowance_used_percent === null ||
+		row.allowance_window_minutes === null ||
+		!row.allowance_resets_at
+	) {
+		return null;
+	}
+	return {
+		usedPercent: Number(row.allowance_used_percent),
+		windowMinutes: Number(row.allowance_window_minutes),
+		resetsAt: new Date(row.allowance_resets_at),
+	};
 }
 
 /**
@@ -174,8 +210,8 @@ async function selectProviderConfigRow(
 	// that fails the test and report "no credential". Widen the window instead and
 	// let the ordering pick the winner among the matches.
 	const result = await db.query<ProviderConfigRow>(
-		`SELECT id, auth_method, encrypted_credential, default_model, metadata, runtime,
-		        usage_limited_until
+		`SELECT id, label, auth_method, encrypted_credential, default_model, metadata, runtime,
+		        usage_limited_until, ${ALLOWANCE_COLUMNS_SQL}
 		 FROM ai_provider_configs
 		 WHERE provider = $1::ai_provider AND status = $2
 		 ORDER BY is_default DESC, created_at ASC
@@ -202,12 +238,16 @@ export async function selectProviderConfig(
 	if (!row) return null;
 	return {
 		configId: row.id,
+		label: row.label,
 		authMethod: row.auth_method,
 		defaultModel: row.default_model,
 		baseUrl: readConfigBaseUrl(row.metadata),
 		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
 		resolvedRuntime: row.resolvedRuntime,
 		usageLimitedUntil: toDateOrNull(row.usage_limited_until),
+		allowance: rowAllowance(row),
+		allowanceDailySharePercent:
+			row.allowance_daily_share_percent === null ? null : Number(row.allowance_daily_share_percent),
 	};
 }
 
@@ -336,6 +376,29 @@ export async function readActiveUsageHold(db: Db, configId: string): Promise<Dat
 		[configId],
 	);
 	return toDateOrNull(r.rows[0]?.usage_limited_until);
+}
+
+/**
+ * Store the usage window a run just read for its credential. Writes nothing when
+ * the report matches what is stored, so a run polling every minute writes only
+ * when the provider's figure moved. `allowance_seen_at` moves with a write, and
+ * says when the stored figure was last true.
+ */
+export async function recordCredentialAllowance(
+	db: Db,
+	configId: string,
+	allowance: ProviderAllowance,
+): Promise<void> {
+	await db.query(
+		`UPDATE ai_provider_configs
+		    SET allowance_used_percent = $2, allowance_window_minutes = $3,
+		        allowance_resets_at = $4, allowance_seen_at = now()
+		  WHERE id = $1
+		    AND (allowance_used_percent IS DISTINCT FROM $2::real
+		      OR allowance_window_minutes IS DISTINCT FROM $3::int
+		      OR allowance_resets_at IS DISTINCT FROM $4::timestamptz)`,
+		[configId, allowance.usedPercent, allowance.windowMinutes, allowance.resetsAt],
+	);
 }
 
 /** Remove a credential's hold. Returns whether there was one to remove. */

@@ -131,6 +131,34 @@ describe('recoverOffStreamRunUsage', () => {
 			expect(errors).toEqual([]);
 		});
 
+		it("carries the provider's usage window through, the newest across the run's rollouts", async () => {
+			const withWeek = (input: number, used: number, resetsAt: number): string =>
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: { total_token_usage: { input_tokens: input, output_tokens: 1 } },
+						rate_limits: {
+							primary: { used_percent: 80, window_minutes: 300, resets_at: resetsAt - 3600 },
+							secondary: { used_percent: used, window_minutes: 10_080, resets_at: resetsAt },
+						},
+					},
+				});
+			const reset = Date.parse('2026-10-01T02:42:00Z') / 1000;
+			// A helper session's rollout read the window a moment later, higher.
+			seedRollout(withWeek(100, 21, reset), 'sessions', 'main');
+			seedRollout(withWeek(40, 23, reset), 'sessions', 'helper');
+
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), onError);
+
+			expect(usage?.inputTokens).toBe(140);
+			expect(usage?.allowance).toEqual({
+				usedPercent: 23,
+				windowMinutes: 10_080,
+				resetsAt: new Date(reset * 1000),
+			});
+		});
+
 		it('reports nothing rather than failing when there is no rollout at all', async () => {
 			expect(await recoverOffStreamRunUsage(AgentRuntime.Codex, mount(), onError)).toBeNull();
 			expect(errors).toEqual([]);

@@ -18,8 +18,13 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import { recordCredentialAllowance } from '../src/services/ai-provider-keys';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { USAGE_HOLD_PROBE_MIN, usageHoldWait } from '../src/services/provider-credential-health';
+import {
+	ALLOWANCE_PACE_RECHECK_MIN,
+	USAGE_HOLD_PROBE_MIN,
+	usageHoldWait,
+} from '../src/services/provider-credential-health';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { settleWakeupForRun } from '../src/services/wakeup';
 import { safeClose } from './helpers';
@@ -500,6 +505,60 @@ describe('runAgent usage-limit hold', () => {
 		expect(released.rows[0].not_before?.getTime()).toBeLessThanOrEqual(Date.now());
 	});
 
+	it('holds the credential when the provider refuses a run that had already spent tokens', async () => {
+		// The run is served once, then refused: it fails on its merits, and the
+		// credential is held at once rather than after the next zero-token refusal.
+		const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60_000);
+		resetAt.setUTCSeconds(0, 0);
+		const result = await runAgent(
+			deps(
+				refusalDocker([
+					{ type: 'thread.started', model: 'gpt-5-codex' },
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'Checking.' } },
+					{ ...usageLimitTurn(resetAt), usage: { input_tokens: 5400, output_tokens: 20 } },
+				]),
+			),
+			agent(),
+			await makeTask('Refused after one reply'),
+			project(),
+		);
+
+		expect(result.requeue).toBeUndefined();
+		const row = await runRow(result.heartbeatRunId as string);
+		expect(row.status).toBe('failed');
+		expect(row.error).not.toContain('never got a turn');
+		expect((await storedHold())?.getTime()).toBe(resetAt.getTime() + 60_000);
+		expect(await usageLimitNotices()).toHaveLength(1);
+	});
+
+	it('lifts nothing when a run a person asked for is itself refused for usage', async () => {
+		await setHold(120);
+		const resetAt = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+		resetAt.setUTCSeconds(0, 0);
+		const task = await makeTask('Run now into a spent allowance');
+		const wakeupId = await claimedWakeup(task.id, {
+			triggered_by: { member_id: null, name: 'Admin' },
+		});
+
+		await runAgent(
+			deps(
+				refusalDocker([
+					{ type: 'thread.started', model: 'gpt-5-codex' },
+					{ ...usageLimitTurn(resetAt), usage: { input_tokens: 800, output_tokens: 5 } },
+				]),
+			),
+			agent(),
+			task,
+			project(),
+			{ task_id: task.id, triggered_by: { member_id: null, name: 'Admin' } },
+			undefined,
+			undefined,
+			wakeupId,
+		);
+
+		expect((await storedHold())?.getTime()).toBe(resetAt.getTime() + 60_000);
+	});
+
 	it('lets one run test a lapsed hold and holds the others behind it', async () => {
 		const id = await configId();
 		const lapsed = await setHold(-1);
@@ -512,5 +571,162 @@ describe('runAgent usage-limit hold', () => {
 
 		// No hold read with the row costs nothing and holds nothing.
 		expect(await usageHoldWait(db, id, null)).toBeNull();
+	});
+});
+
+/** Where the test credential's week stands: `elapsedDays` into a week, `used` percent spent. */
+async function setAllowance(used: number, elapsedDays: number, share: number | null = null) {
+	await db.query(
+		`UPDATE ai_provider_configs
+		    SET allowance_used_percent = $2, allowance_window_minutes = 10080,
+		        allowance_resets_at = now() + make_interval(secs => $3::float8),
+		        allowance_seen_at = now(), allowance_daily_share_percent = $4
+		  WHERE id = $1`,
+		[await configId(), used, (7 - elapsedDays) * 86_400, share],
+	);
+}
+
+async function paceNotices(): Promise<string[]> {
+	const r = await db.query<{ message: string }>(
+		`SELECT payload->>'message' AS message FROM approvals
+		  WHERE team_id = $1 AND payload->>'type' = 'agent_error'
+		    AND payload->>'message' LIKE '%is pacing the credential%'`,
+		[teamId],
+	);
+	return r.rows.map((row) => row.message);
+}
+
+describe('runAgent allowance pace', () => {
+	beforeEach(async () => {
+		await db.query('UPDATE ai_provider_configs SET usage_limited_until = NULL');
+		await db.query(`DELETE FROM approvals WHERE team_id = $1`, [teamId]);
+		await db.query(`DELETE FROM system_meta WHERE key LIKE 'allowance_pace_notice:%'`);
+	});
+
+	afterAll(async () => {
+		await db.query(
+			`UPDATE ai_provider_configs
+			    SET allowance_used_percent = NULL, allowance_window_minutes = NULL,
+			        allowance_resets_at = NULL, allowance_seen_at = NULL,
+			        allowance_daily_share_percent = NULL`,
+		);
+	});
+
+	it('holds agent work ahead of the pace with no run row and no container, and tells a person once', async () => {
+		// Half a day into the week the even line allows 1.5 days' share, about 21%.
+		await setAllowance(30, 0.5);
+		const task = await makeTask('Ahead of the pace');
+		const wakeupId = await claimedWakeup(task.id);
+		const docker = refusalDocker(WORKED_TURN, 0);
+
+		const before = Date.now();
+		const result = await runAgent(
+			deps(docker),
+			agent(),
+			task,
+			project(),
+			{ task_id: task.id },
+			undefined,
+			undefined,
+			wakeupId,
+		);
+
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ProviderAllowancePace);
+		expect(result.requeue?.heldConfigId).toBe(await configId());
+		// The line reaches 30% well past the half-hour recheck, so the recheck wins.
+		const waitMin = ((result.requeue?.notBefore?.getTime() ?? 0) - before) / 60_000;
+		expect(waitMin).toBeGreaterThan(29);
+		expect(waitMin).toBeLessThanOrEqual(ALLOWANCE_PACE_RECHECK_MIN + 0.1);
+		expect(result.heartbeatRunId).toBeUndefined();
+		expect(docker.execStart).not.toHaveBeenCalled();
+		expect(await paceNotices()).toHaveLength(1);
+
+		// The next held run in the same window files nothing more.
+		const again = await makeTask('Also ahead of the pace');
+		await runAgent(
+			deps(refusalDocker(WORKED_TURN, 0)),
+			agent(),
+			again,
+			project(),
+			{ task_id: again.id },
+			undefined,
+			undefined,
+			await claimedWakeup(again.id),
+		);
+		expect(await paceNotices()).toHaveLength(1);
+	});
+
+	it('lets work on or under the line run', async () => {
+		await setAllowance(15, 0.5);
+		const task = await makeTask('On pace');
+		const result = await runAgent(
+			deps(refusalDocker(WORKED_TURN, 0)),
+			agent(),
+			task,
+			project(),
+			{ task_id: task.id },
+			undefined,
+			undefined,
+			await claimedWakeup(task.id),
+		);
+		expect(result.requeue).toBeUndefined();
+		expect(result.heartbeatRunId).toBeDefined();
+	});
+
+	it("reads the admin's daily share: a raised share lets the same work through", async () => {
+		await setAllowance(30, 0.5, 100);
+		const task = await makeTask('Paced by a raised share');
+		const result = await runAgent(
+			deps(refusalDocker(WORKED_TURN, 0)),
+			agent(),
+			task,
+			project(),
+			{ task_id: task.id },
+			undefined,
+			undefined,
+			await claimedWakeup(task.id),
+		);
+		expect(result.requeue).toBeUndefined();
+	});
+
+	it('lets a run a person asked for through the pace', async () => {
+		await setAllowance(60, 0.5);
+		const task = await makeTask('Run now past the pace');
+		const payload = { task_id: task.id, triggered_by: { member_id: null, name: 'Admin' } };
+		const result = await runAgent(
+			deps(refusalDocker(WORKED_TURN, 0)),
+			agent(),
+			task,
+			project(),
+			payload,
+			undefined,
+			undefined,
+			await claimedWakeup(task.id, payload),
+		);
+		expect(result.requeue).toBeUndefined();
+		expect(result.heartbeatRunId).toBeDefined();
+	});
+
+	it('stores a reported window only when it moved', async () => {
+		const id = await configId();
+		const resetsAt = new Date(Date.now() + 3 * 86_400_000);
+		resetsAt.setUTCMilliseconds(0);
+		const seenAt = async () =>
+			(
+				await db.query<{ allowance_seen_at: Date; allowance_used_percent: number }>(
+					'SELECT allowance_seen_at, allowance_used_percent FROM ai_provider_configs WHERE id = $1',
+					[id],
+				)
+			).rows[0];
+
+		await recordCredentialAllowance(db, id, { usedPercent: 42, windowMinutes: 10_080, resetsAt });
+		const first = await seenAt();
+		expect(first.allowance_used_percent).toBeCloseTo(42);
+
+		await recordCredentialAllowance(db, id, { usedPercent: 42, windowMinutes: 10_080, resetsAt });
+		expect((await seenAt()).allowance_seen_at).toEqual(first.allowance_seen_at);
+
+		await recordCredentialAllowance(db, id, { usedPercent: 43, windowMinutes: 10_080, resetsAt });
+		expect((await seenAt()).allowance_used_percent).toBeCloseTo(43);
 	});
 });

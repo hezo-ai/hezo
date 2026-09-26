@@ -124,7 +124,7 @@ function withServerKeys(serverBlock: string, d: McpDescriptor): string {
  * Codex sends the value as the Responses API's `reasoning.effort` unchanged and
  * does not clamp it, so an unsupported value fails the turn. Its model catalog
  * lists no `minimal` for any model, lists `xhigh` for every one, and lacks `max`
- * on the models Hezo pins (gpt-5.5, gpt-5.4, gpt-5.3-codex).
+ * on several of them.
  */
 const CODEX_REASONING_EFFORT: Record<AgentEffort, string> = {
 	[AgentEffort.Minimal]: 'low',
