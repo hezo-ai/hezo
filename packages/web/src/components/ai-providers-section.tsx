@@ -259,7 +259,6 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 	return (
 		<ModelPicker
 			configId={config.id}
-			authMethod={config.auth_method}
 			value={config.default_model}
 			// Persisted on pick rather than behind a save: the row has no submit, and
 			// the failure surfaces as a toast with the previous value still rendered.

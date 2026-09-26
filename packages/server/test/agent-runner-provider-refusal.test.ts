@@ -283,6 +283,24 @@ describe('runAgent provider refusal', () => {
 		expect(row.error).toContain('sandbox refused this command');
 	});
 
+	it('fails a run on a credential with no model rather than letting its CLI choose', async () => {
+		await db.query(
+			`UPDATE ai_provider_configs SET default_model = NULL WHERE label = 'openai-refusal'`,
+		);
+		try {
+			const docker = refusalDocker(WORKED_TURN, 0);
+			const result = await runAgent(deps(docker), agent(), await makeTask('No model'), project());
+			const row = await runRow(result.heartbeatRunId as string);
+			expect(row.status).toBe('failed');
+			expect(row.error).toContain('has no default model');
+			expect(docker.execStart).not.toHaveBeenCalled();
+		} finally {
+			await db.query(
+				`UPDATE ai_provider_configs SET default_model = 'gpt-5.6-sol' WHERE label = 'openai-refusal'`,
+			);
+		}
+	});
+
 	it('does not hand back a refusal that arrived after the run had already spent tokens', async () => {
 		// The precondition carrying the most weight. "Never got a turn" is a fact the
 		// run reports about itself; a mid-stream 503 after real work must not

@@ -50,6 +50,12 @@ export interface PoolMember {
 	 * built to the wrong size and treated the same way.
 	 */
 	memoryBytes: number | null;
+	/**
+	 * The agent image this container was built from, or null when never recorded.
+	 * A container keeps the CLIs of the image it was built from for life, so one
+	 * from an older image runs older CLIs than the release driving it.
+	 */
+	imageVersion: string | null;
 }
 
 export type PoolDecision =
@@ -92,7 +98,11 @@ export interface PoolCapacity {
  * Pick a container for a run, or say to create, recycle or queue one.
  *
  * Ahead of the ladder: **any member not provisioned to the cap it would be
- * provisioned to now is recycled**, not reused. The cap is a memory guarantee
+ * provisioned to now, or built from another agent image, is recycled**, not
+ * reused. An image carries the pinned CLIs, and a container keeps its image for
+ * life: after an upgrade, a reused old container ran the previous CLI - on one
+ * instance a different model than every new container - with nothing recording
+ * which. The cap is a memory guarantee
  * the run is sized and budgeted against, and no backend can resize a container
  * in place, so a container built to a different figure cannot be made to satisfy
  * the current one. Both directions matter - a smaller container fails the run it
@@ -141,9 +151,12 @@ export function selectPoolMember(
 	members: readonly PoolMember[],
 	capacity: PoolCapacity,
 	requiredMemoryBytes: number,
+	requiredImageVersion: string,
 ): PoolDecision {
 	const mismatched = members.filter(
-		(m) => m.state !== 'busy' && m.memoryBytes !== requiredMemoryBytes,
+		(m) =>
+			m.state !== 'busy' &&
+			(m.memoryBytes !== requiredMemoryBytes || m.imageVersion !== requiredImageVersion),
 	);
 	if (mismatched.length > 0) return { kind: 'recycle', members: mismatched };
 

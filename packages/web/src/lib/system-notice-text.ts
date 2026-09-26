@@ -2,6 +2,7 @@ import type {
 	SystemBudgetConversionContent,
 	SystemBudgetPausedContent,
 	SystemContent,
+	SystemCredentialModelContent,
 	SystemHandoffLimitContent,
 	SystemTaskTokenCeilingContent,
 } from '../components/comment-content';
@@ -56,7 +57,16 @@ type NoticeContent = {
 	task_token_ceiling: SystemTaskTokenCeilingContent;
 	budget_paused: SystemBudgetPausedContent;
 	budget_conversion: SystemBudgetConversionContent;
+	default_model_backfill: SystemCredentialModelContent;
+	credential_model_unlisted: SystemCredentialModelContent;
 };
+
+/** The opening sentence of a credential-model notice, by its kind. */
+export const CREDENTIAL_MODEL_INTRO_KEYS: Record<SystemCredentialModelContent['kind'], MessageKey> =
+	{
+		default_model_backfill: 'comment.defaultModelBackfill',
+		credential_model_unlisted: 'comment.credentialModelUnlisted',
+	};
 
 /** A notice as its catalog sentence plus the values that fill it. */
 export interface NoticeParts {
@@ -109,6 +119,16 @@ const NOTICE_PARTS: {
 	budget_conversion: (content, { formatNumber }) => ({
 		key: budgetConversionIntroKey(content),
 		vars: { rate: formatNumber(Math.round(Number(content.tokens_per_cent ?? 0) * 100)) },
+		agentSlugs: [],
+	}),
+	default_model_backfill: (content) => ({
+		key: CREDENTIAL_MODEL_INTRO_KEYS[content.kind],
+		vars: {},
+		agentSlugs: [],
+	}),
+	credential_model_unlisted: (content) => ({
+		key: CREDENTIAL_MODEL_INTRO_KEYS[content.kind],
+		vars: {},
 		agentSlugs: [],
 	}),
 };

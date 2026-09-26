@@ -13,6 +13,7 @@ import {
 	setMonthlyContainerHours,
 	setSystemMeta,
 } from '../src/lib/system-meta';
+import { currentAgentImageVersion } from '../src/services/image-registry';
 import {
 	countActiveRunsInProject,
 	getActiveContainers,
@@ -94,10 +95,10 @@ describe('container capacity', () => {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, disk_used_bytes,
-			    disk_ceiling_bytes, memory_bytes, last_released_at, created_at)
+			    disk_ceiling_bytes, memory_bytes, last_released_at, created_at, image_version)
 			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6,
 			         now() - ($7 || ' minutes')::interval,
-			         now() - ($8 || ' minutes')::interval)`,
+			         now() - ($8 || ' minutes')::interval, $9)`,
 			[
 				projectId,
 				containerId,
@@ -107,6 +108,7 @@ describe('container capacity', () => {
 				over.memory_bytes === undefined ? 2 * 1024 ** 3 : over.memory_bytes,
 				over.idle_for_min ?? 0,
 				over.age_min ?? 60,
+				currentAgentImageVersion(),
 			],
 		);
 	}

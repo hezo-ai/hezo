@@ -13,6 +13,7 @@ import {
 	poolDiskCeilingBytes,
 } from '@hezo/shared';
 import type { Db } from '../../db/database';
+import { currentAgentImageVersion } from '../image-registry';
 import {
 	type PoolCapacity,
 	type PoolDecision,
@@ -154,10 +155,11 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 		disk_used_bytes: string | number;
 		disk_ceiling_bytes: string | number;
 		memory_bytes: string | number | null;
+		image_version: string | null;
 		has_unpushed_commits: boolean;
 	}>(
 		`SELECT container_id, state::text AS state, last_task_id, disk_used_bytes,
-		        disk_ceiling_bytes, memory_bytes, has_unpushed_commits
+		        disk_ceiling_bytes, memory_bytes, image_version, has_unpushed_commits
 		   FROM container_pool_members
 		  WHERE project_id = $1
 		  ORDER BY created_at ASC`,
@@ -181,6 +183,7 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 			// Null stays null rather than becoming zero: "never recorded" is a
 			// distinct answer from any allocation, and the ladder recycles on it.
 			memoryBytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
+			imageVersion: row.image_version,
 		});
 	}
 	return members;
@@ -221,23 +224,29 @@ export async function upsertPoolMember(
 		diskGb?: number;
 		/** The memory cap this container was built to cover, in bytes. */
 		memoryBytes?: number;
+		/** The agent image it was built from. */
+		imageVersion?: string;
 	} = {},
 ): Promise<void> {
 	const ceiling = allocation.diskGb === undefined ? null : poolDiskCeilingBytes(allocation.diskGb);
 	const memory = allocation.memoryBytes ?? null;
+	const image = allocation.imageVersion ?? null;
 	await db.query(
-		`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes, memory_bytes)
-		 VALUES ($1, $2, $3::container_pool_state, COALESCE($4, ${DEFAULT_DISK_CEILING_SQL}), $5)
+		`INSERT INTO container_pool_members
+		   (project_id, container_id, state, disk_ceiling_bytes, memory_bytes, image_version)
+		 VALUES ($1, $2, $3::container_pool_state, COALESCE($4, ${DEFAULT_DISK_CEILING_SQL}), $5, $6)
 		 ON CONFLICT (container_id) DO UPDATE
 		    SET state = EXCLUDED.state, project_id = EXCLUDED.project_id,
 		        disk_ceiling_bytes = COALESCE($4, container_pool_members.disk_ceiling_bytes),
 		        memory_bytes = COALESCE($5, container_pool_members.memory_bytes),
+		        image_version = COALESCE($6, container_pool_members.image_version),
 		        updated_at = now()
 		  WHERE container_pool_members.state IS DISTINCT FROM EXCLUDED.state
 		     OR container_pool_members.project_id IS DISTINCT FROM EXCLUDED.project_id
 		     OR container_pool_members.disk_ceiling_bytes IS DISTINCT FROM COALESCE($4, container_pool_members.disk_ceiling_bytes)
-		     OR container_pool_members.memory_bytes IS DISTINCT FROM COALESCE($5, container_pool_members.memory_bytes)`,
-		[projectId, containerId, state, ceiling, memory],
+		     OR container_pool_members.memory_bytes IS DISTINCT FROM COALESCE($5, container_pool_members.memory_bytes)
+		     OR container_pool_members.image_version IS DISTINCT FROM COALESCE($6, container_pool_members.image_version)`,
+		[projectId, containerId, state, ceiling, memory, image],
 	);
 	// After the member write, never before: the ledger reads the container's
 	// shape, owner and chat pin straight off the row this just settled.
@@ -870,6 +879,7 @@ export async function decidePoolAcquisition(
 		await loadPoolMembers(db, projectId),
 		capacity,
 		requiredMemoryBytes,
+		currentAgentImageVersion(),
 	);
 }
 

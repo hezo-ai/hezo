@@ -227,7 +227,9 @@ export function ProviderConfigForm({
 				await updateProvider.mutateAsync({
 					label: name.trim(),
 					runtime,
-					default_model: defaultModel,
+					// A credential is never saved without a model; one with none yet (a
+					// local runner the upgrade could not pin) keeps none until one is picked.
+					...(defaultModel ? { default_model: defaultModel } : {}),
 					// A blank credential means "keep the stored one" — sending it would ask
 					// the server to store an empty key.
 					...(rotating ? { api_key: credential, auth_method: authMethod } : {}),
@@ -407,7 +409,6 @@ export function ProviderConfigForm({
 					<span className="text-eyebrow text-text-2">{t('settings.provider.model.label')}</span>
 					<ModelPicker
 						configId={editing.id}
-						authMethod={authMethod}
 						value={defaultModel}
 						onChange={setDefaultModel}
 						ariaLabel={t('settings.provider.model.ariaFor', { name: editing.label })}

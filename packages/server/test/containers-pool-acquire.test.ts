@@ -9,6 +9,7 @@ import {
 	PoolHoursExhaustedError,
 	prewarmChatContainer,
 } from '../src/services/containers';
+import { currentAgentImageVersion } from '../src/services/image-registry';
 import { listAllContainers } from '../src/services/sandbox/pool-db';
 import type { ContainerConfig, ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
@@ -338,9 +339,9 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, memory_bytes, has_unpushed_commits,
-			    last_released_at, created_at)
+			    last_released_at, created_at, image_version)
 			 VALUES ($1, $2, 'idle', $3, $4, now() - ($5 || ' minutes')::interval,
-			         now() - ($6 || ' minutes')::interval)`,
+			         now() - ($6 || ' minutes')::interval, $7)`,
 			[
 				project,
 				containerId,
@@ -348,6 +349,7 @@ describe('acquireRunContainer reclaiming from another project', () => {
 				over.unpushed ?? false,
 				idleMin,
 				over.ageMin ?? Math.max(60, idleMin),
+				currentAgentImageVersion(),
 			],
 		);
 	}

@@ -52,11 +52,28 @@ function pinKey(provider: AiProvider): string {
  *
  * The refreshed pin when there is one, else the compile-time fallback. Null for
  * a provider with no pin at all - the local runners, whose catalog is whatever
- * the operator has pulled, where the CLI's own default is the honest answer.
+ * the operator has pulled, so the operator picks from it.
  */
 export async function getPinnedModel(db: Db, provider: AiProvider): Promise<string | null> {
 	const stored = (await getSystemMeta(db, pinKey(provider)))?.trim();
 	return stored || fallbackPinnedModel(provider);
+}
+
+/**
+ * The model a credential starts on when whoever adds it names none. An API key
+ * takes the refreshed pin, which was read from the same catalog it lists from. A
+ * subscription takes the compile-time fallback: its models come from a different
+ * list (Codex's own backend, for OpenAI), and the refreshed pin may name a model
+ * the API catalog offers and the subscription does not.
+ */
+export async function initialDefaultModel(
+	db: Db,
+	provider: AiProvider,
+	authMethod: AiAuthMethod,
+): Promise<string | null> {
+	return authMethod === AiAuthMethod.Subscription
+		? fallbackPinnedModel(provider)
+		: getPinnedModel(db, provider);
 }
 
 export interface ModelPinRefreshResult {

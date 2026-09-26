@@ -71,6 +71,7 @@ export async function storeAiProviderKey(
 	label?: string,
 	metadata: Record<string, unknown> = {},
 	runtime: AgentRuntime | null = null,
+	defaultModel: string | null = null,
 ): Promise<string> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
@@ -90,8 +91,9 @@ export async function storeAiProviderKey(
 	const resolvedLabel = label?.trim() || deriveLabel(provider, existingForProvider.rows.length);
 
 	const configResult = await db.query<{ id: string }>(
-		`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, metadata, runtime)
-		 VALUES ($1::ai_provider, $2::ai_auth_method, $3, $4, $5, $6::jsonb, $7::agent_runtime)
+		`INSERT INTO ai_provider_configs
+		   (provider, auth_method, label, encrypted_credential, is_default, metadata, runtime, default_model)
+		 VALUES ($1::ai_provider, $2::ai_auth_method, $3, $4, $5, $6::jsonb, $7::agent_runtime, $8)
 		 RETURNING id`,
 		[
 			provider,
@@ -101,6 +103,7 @@ export async function storeAiProviderKey(
 			isDefault,
 			JSON.stringify(metadata),
 			runtime,
+			defaultModel,
 		],
 	);
 

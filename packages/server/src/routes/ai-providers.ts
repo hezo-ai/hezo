@@ -7,7 +7,6 @@ import {
 	ALL_AI_PROVIDERS,
 	AuthType,
 	isAgentRuntime,
-	parseProviderModels,
 	providerRuntimes,
 	providerSupportsRuntime,
 	type SubscriptionLoginFailure,
@@ -29,12 +28,9 @@ import {
 	storeAiProviderKey,
 	updateAiProviderConfig,
 } from '../services/ai-provider-keys';
-import { getPinnedModel, refreshModelPins } from '../services/model-pins';
-import {
-	fetchProviderCatalog,
-	probeProvesCredentialDead,
-	probeProviderCatalog,
-} from '../services/provider-catalog';
+import { listCredentialModels } from '../services/credential-models';
+import { initialDefaultModel, refreshModelPins } from '../services/model-pins';
+import { probeProvesCredentialDead, probeProviderCatalog } from '../services/provider-catalog';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
 import {
 	LOGIN_FLOW_TTL_MS,
@@ -241,6 +237,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		auth_method?: string;
 		base_url?: string;
 		runtime?: string | null;
+		default_model?: string | null;
 	}>();
 
 	if (!body.provider || !VALID_PROVIDERS.has(body.provider)) {
@@ -276,6 +273,13 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	}
 
 	try {
+		// A credential always starts on a model: the one the person picked, else the
+		// provider's pin, so no run is left to its CLI's own choice. Only ever set
+		// here, on creation: an existing config's model is the operator's choice and
+		// no refresh may move it (see services/model-pins).
+		const chosenModel =
+			(typeof body.default_model === 'string' && body.default_model.trim()) ||
+			(await initialDefaultModel(db, provider, authMethod));
 		const configId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
@@ -285,18 +289,8 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			body.label?.trim(),
 			prepared.baseUrl ? { base_url: prepared.baseUrl } : {},
 			runtimeChoice.value,
+			chosenModel,
 		);
-
-		// A new credential starts on the provider's pinned model rather than on
-		// "none". Only ever here, on creation: an existing config's model is the
-		// operator's choice and no refresh may move it (see services/model-pins).
-		// A subscription picks its own model inside the CLI, so it gets none.
-		if (authMethod !== AiAuthMethod.Subscription) {
-			const pinned = await getPinnedModel(db, provider);
-			if (pinned) {
-				await updateAiProviderConfig(db, configId, { defaultModel: pinned });
-			}
-		}
 
 		// The created row, not just its id: the caller's next step is usually
 		// something keyed on the stored config (listing its model catalog), and a
@@ -479,12 +473,17 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'label must be a non-empty string', 400);
 	}
 
-	const model =
-		body.default_model === null || body.default_model === undefined
-			? null
-			: typeof body.default_model === 'string'
-				? body.default_model.trim() || null
-				: null;
+	// A credential always has a model, so a run is never left to its CLI's own
+	// choice: an edit may change it, never clear it.
+	const model = typeof body.default_model === 'string' ? body.default_model.trim() : '';
+	if (hasModel && !model) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'default_model must name a model; a credential cannot be left without one',
+			400,
+		);
+	}
 
 	// The CLI choice and the credential are both only meaningful against this
 	// config's own provider, which the request doesn't carry — read the row once and
@@ -599,48 +598,40 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 		return err(c, 'LOCKED', 'Server must be unlocked', 401);
 	}
 
-	const cred = await getProviderConfigCredential(db, masterKeyManager, configId);
-	if (!cred) {
+	// Read live every time: the list a default model is picked from must be the
+	// list this credential can run now, subscription or API key alike.
+	const listed = await listCredentialModels({ db, masterKeyManager }, configId);
+	if (!listed) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
-
-	const provider = cred.provider as AiProvider;
-
-	// Subscription sign-in stores an OAuth/CLI blob, not an API key the catalog
-	// endpoint accepts — a live listing call would only 401. Signal the caller to
-	// fall back to the CLI's default model instead of surfacing a spurious error.
-	if (cred.authMethod === AiAuthMethod.Subscription) {
-		return err(
-			c,
-			'SUBSCRIPTION_UNSUPPORTED',
-			'Model listing is unavailable for subscription sign-in; the CLI default model is used',
-			400,
-		);
-	}
-
-	const catalog = await fetchProviderCatalog(provider, cred.value, cred.baseUrl, cred.authMethod);
-	if (!catalog.ok) {
-		if (catalog.reason === 'unsupported') {
-			return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);
+	if (!listed.ok) {
+		if (listed.reason === 'unsupported') {
+			return err(c, 'UNSUPPORTED', 'This provider offers no model list for this credential', 400);
 		}
-		if (catalog.reason === 'unreachable') {
+		if (listed.reason === 'unreachable') {
 			return err(c, 'PROVIDER_UNREACHABLE', 'Could not reach provider to list models', 503);
 		}
-		if (catalog.reason === 'rejected') {
-			return err(c, 'INVALID_KEY', 'Provider rejected the stored credential', 401);
+		if (listed.reason === 'rejected') {
+			return err(
+				c,
+				'INVALID_KEY',
+				listed.detail
+					? `Provider rejected the stored credential: ${listed.detail}`
+					: 'Provider rejected the stored credential',
+				401,
+			);
 		}
 		return err(
 			c,
 			'PROVIDER_ERROR',
-			catalog.status
-				? `Provider returned status ${catalog.status}`
-				: 'Provider returned unparseable response',
+			listed.detail ??
+				(listed.status
+					? `Provider returned status ${listed.status}`
+					: 'Provider returned unparseable response'),
 			503,
 		);
 	}
-
-	const models = parseProviderModels(provider, catalog.json);
-	return ok(c, models);
+	return ok(c, listed.models);
 });
 
 /**
@@ -798,15 +789,18 @@ aiProvidersRoutes.get('/ai-providers/subscription-login/:flowId', async (c) => {
 				code: 'credential_rejected' satisfies SubscriptionLoginFailure,
 			});
 		}
-		pending = storeAiProviderKey(
-			db,
-			masterKeyManager,
-			flow.provider,
-			prepared.value,
-			AiAuthMethod.Subscription,
-			flowLabels.get(flowId),
-			{},
-			flow.runtime,
+		pending = initialDefaultModel(db, flow.provider, AiAuthMethod.Subscription).then((model) =>
+			storeAiProviderKey(
+				db,
+				masterKeyManager,
+				flow.provider,
+				prepared.value,
+				AiAuthMethod.Subscription,
+				flowLabels.get(flowId),
+				{},
+				flow.runtime,
+				model,
+			),
 		);
 		persistedFlows.set(flowId, pending);
 	}

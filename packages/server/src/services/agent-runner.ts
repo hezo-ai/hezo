@@ -134,6 +134,7 @@ import {
 } from './git';
 import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
+import { currentAgentImageVersion } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { HEZO_MCP_CLI_SOURCE } from './mcp-cli/cli-source';
 import {
@@ -2116,6 +2117,14 @@ export async function runAgent(
 	const usageHoldSeen = selection.config.usageLimitedUntil;
 
 	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
+	// Every run names its model. Left to choose, a CLI picks whatever its release
+	// defaults to, and one upgrade moved a whole fleet onto a model that spends an
+	// allowance about twice as fast.
+	if (!modelOverride) {
+		return finalizeFailure(
+			`The ${provider} credential "${credential.label}" has no default model. Choose one in Settings > AI Providers.`,
+		);
+	}
 
 	if (signal?.aborted) return finalizeAbort();
 
@@ -5887,7 +5896,9 @@ async function markHeartbeatRunRunning(
 ): Promise<boolean> {
 	// Stamp the resolved AI adapter config on the run so recordRunUsageAndEnforce
 	// can attribute the run's usage to it without re-resolving, and the container
-	// so a container's death can fail only the runs it was actually carrying.
+	// so a container's death can fail only the runs it was actually carrying. The
+	// image version names the CLIs the run had: the pool hands out only containers
+	// built from the current image.
 	//
 	// `queued_reason` is cleared on the way past: it describes what the run was
 	// waiting for, so carrying it onto a started row - and from there onto the
@@ -5896,7 +5907,7 @@ async function markHeartbeatRunRunning(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
 		        ai_provider_config_id = $4, provider = $5::ai_provider,
-		        container_id = $6, queued_reason = NULL
+		        container_id = $6, image_version = $7, queued_reason = NULL
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -5906,6 +5917,7 @@ async function markHeartbeatRunRunning(
 			adapter.aiProviderConfigId,
 			adapter.provider,
 			containerId,
+			containerId ? currentAgentImageVersion() : null,
 		],
 	);
 	// Guarded on the row still being `queued`, so whoever declared an outcome

@@ -248,8 +248,10 @@ tasks and a frontier model for the hard ones, or having a fallback.
 When a key is stored it's checked against the provider and shown as **verified** (the
 Verify action re-checks it any time), and Hezo then asks which model the connection should
 run. That question comes last because the list of models is read from the provider using the
-key you just gave it. Leave it on the CLI default if you'd rather not choose; either way you
-can change it later from the connection's row or its Edit panel. Mark one provider as the **default** with the star:
+key you just gave it. A sensible model is already selected, so you can keep it; either way you
+can change it later from the connection's row or its Edit panel. A connection always has a
+model, and every run names it, so updating a coding CLI never changes the model your agents
+run on. Mark one provider as the **default** with the star:
 that's the single global default every agent uses unless it has its own model override.
 
 Adding a connection does **not** make it the default - use the star for that. Once you do,
@@ -295,8 +297,9 @@ Wherever you pick a specific model - a provider's default model, or an agent's o
 Hezo loads the list of choices **live from that provider**, so you always see the models
 your key can actually use. The list is alphabetical and has a search box at the top, which
 matters on a provider like OpenRouter that offers several hundred: type any part of a model's
-name or its id to narrow it. Providers you signed in to with a subscription instead of an API
-key use the model their CLI selects, so there's no list to choose from there.
+name or its id to narrow it. This works for a subscription too: a Claude subscription lists the
+models your plan offers, and a ChatGPT subscription lists the models the Codex version Hezo
+runs supports. The list is read again each time you open it.
 
 ## How the starting model is chosen
 
@@ -317,4 +320,10 @@ model per request instead of fixing one. That is the routing you signed up for; 
 specific model from the list if you would rather choose yourself.
 
 Local model servers have no pinned default: the catalog is whatever you have pulled, so
-the CLI's own choice applies until you pick one.
+you pick one of those models when you add the connection. A run on a connection with no
+model fails and says so, rather than leaving the choice to the CLI.
+
+**After an update, Hezo checks each connection's model** against what its provider offers
+now. If a model is no longer offered, you get one notice in your inbox listing the affected
+connections. The model stays as you set it until you pick another, and runs on it fail at the
+provider until you do.

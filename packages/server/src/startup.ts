@@ -482,6 +482,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	} catch (err) {
 		log.error('Failed to post the budget conversion notice:', err);
 	}
+	try {
+		const { postDefaultModelBackfillNotice } = await import(
+			'./services/credential-model-notices.js'
+		);
+		await postDefaultModelBackfillNotice(db, wsManager);
+	} catch (err) {
+		log.error('Failed to post the default model notice:', err);
+	}
 
 	// Before the app serves a request, and regardless of lock state: the API must
 	// never show a run as `running` when the process driving it is gone. Both
@@ -517,6 +525,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 						.catch((err) => log.error('Failed to warm HQ container on startup:', err)),
 				);
 			});
+		// Reading a credential's live model list needs the master key, so the check
+		// that a release left every credential on a model its provider offers runs
+		// here, once per release.
+		trackBackground(
+			import('./services/credential-model-notices.js')
+				.then(({ checkCredentialModelsForRelease }) =>
+					checkCredentialModelsForRelease({ db, masterKeyManager, wsManager }),
+				)
+				.catch((err) => log.error('Failed to check credential models for this release:', err)),
+		);
 		// Re-encode any legacy plaintext webhook secret (migration 050) before the
 		// adapters come up. Needs the master key, which migrations at boot do not
 		// have — this is the first moment it exists. Idempotent: a no-op once every

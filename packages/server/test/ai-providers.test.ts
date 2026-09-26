@@ -1,15 +1,19 @@
 import { AiProvider } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
+import { getProviderConfigCredential } from '../src/services/ai-provider-keys';
 import { getPinnedModel } from '../src/services/model-pins';
+import { CODEX_CLI_VERSION } from '../src/services/runtime-adapters/codex';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
 let db: Db;
+let masterKeyManager: MasterKeyManager;
 let token: string;
 let nonSuperuserToken: string;
 
@@ -19,6 +23,7 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
+	masterKeyManager = ctx.masterKeyManager;
 	token = ctx.token;
 
 	const nonAdmin = await db.query<{ id: string }>(
@@ -497,13 +502,20 @@ describe('AI providers default model', () => {
 		);
 		expect(row2?.default_model).toBe('claude-opus-4-7');
 
-		const clear = await app.request(`/api/ai-providers/${configId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ default_model: null }),
-		});
-		expect(clear.status).toBe(200);
-		expect((await clear.json()).data.default_model).toBeNull();
+		// A credential always has a model: an edit may change it, never clear it.
+		for (const cleared of [null, '', '   ']) {
+			const clear = await app.request(`/api/ai-providers/${configId}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ default_model: cleared }),
+			});
+			expect(clear.status).toBe(400);
+		}
+		const row3 = (
+			(await (await app.request('/api/ai-providers', { headers: authHeader(token) })).json())
+				.data as Array<{ id: string; default_model: string }>
+		).find((r) => r.id === configId);
+		expect(row3?.default_model).toBe('claude-opus-4-7');
 	});
 
 	it('PATCH rejects non-superuser', async () => {
@@ -751,12 +763,16 @@ describe('AI providers models endpoint', () => {
 		expect(res.status).toBe(503);
 	});
 
-	it('short-circuits subscription auth without a live provider call', async () => {
-		const codexBlob = JSON.stringify({
+	/** A JWT carrying only an expiry, which is all the listing reads from it. */
+	const jwt = (expSeconds: number) =>
+		`h.${Buffer.from(JSON.stringify({ exp: expSeconds })).toString('base64url')}.s`;
+
+	async function addCodexSubscription(label: string, accessExp: number): Promise<string> {
+		const blob = JSON.stringify({
 			tokens: {
-				id_token: 'header.payload.sig',
-				access_token: 'header.payload.sig',
-				refresh_token: 'rt-test-token-1',
+				id_token: jwt(accessExp),
+				access_token: jwt(accessExp),
+				refresh_token: `rt-${label}`,
 				account_id: 'acct-123',
 			},
 		});
@@ -765,28 +781,149 @@ describe('AI providers models endpoint', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				provider: 'openai',
-				api_key: codexBlob,
+				api_key: blob,
 				auth_method: 'subscription',
-				label: 'openai-subscription-models',
+				label,
 			}),
 		});
 		expect(created.status).toBe(201);
-		const subConfigId = (await created.json()).data.id;
+		return (await created.json()).data.id;
+	}
 
-		// Even if the provider were reachable, subscription auth must not attempt a
-		// catalog call — a throwing fetch would surface as 503 if we didn't skip it.
-		const fetchSpy = vi
-			.fn()
-			.mockRejectedValue(new Error('should not be called')) as unknown as typeof fetch;
+	const codexModels = {
+		models: [
+			{ slug: 'gpt-6-astra', display_name: 'GPT-6 Astra', visibility: 'list', priority: 2 },
+			{ slug: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol', visibility: 'list', priority: 1 },
+			{ slug: 'codex-auto-review', display_name: 'Auto review', visibility: 'hide', priority: 0 },
+		],
+	};
+
+	it('lists a Codex subscription live, from the backend the pinned CLI lists from', async () => {
+		const subConfigId = await addCodexSubscription(
+			'codex-live',
+			Math.floor(Date.now() / 1000) + 3600,
+		);
+		const fetchSpy = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => codexModels,
+		}) as unknown as typeof fetch;
 		globalThis.fetch = fetchSpy;
 
 		const res = await app.request(`/api/ai-providers/${subConfigId}/models`, {
 			headers: authHeader(token),
 		});
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(200);
+		// The CLI's own picker order, without the models it hides.
+		expect((await res.json()).data).toEqual([
+			{ id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+			{ id: 'gpt-6-astra', label: 'GPT-6 Astra' },
+		]);
+		const calls = (fetchSpy as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+		expect(calls).toHaveLength(1);
+		expect(calls[0][0]).toBe(
+			`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`,
+		);
+		const headers = calls[0][1].headers as Record<string, string>;
+		expect(headers.Authorization).toMatch(/^Bearer h\./);
+		expect(headers['ChatGPT-Account-ID']).toBe('acct-123');
+	});
+
+	it('renews an expired Codex access token before listing, and stores the renewal', async () => {
+		const subConfigId = await addCodexSubscription(
+			'codex-expired',
+			Math.floor(Date.now() / 1000) - 60,
+		);
+		const renewed = jwt(Math.floor(Date.now() / 1000) + 3600);
+		const fetchSpy = vi.fn(async (url: string) => {
+			if (url === 'https://auth.openai.com/oauth/token') {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({ access_token: renewed, refresh_token: 'rt-next' }),
+				};
+			}
+			return { ok: true, status: 200, json: async () => codexModels };
+		}) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		const res = await app.request(`/api/ai-providers/${subConfigId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const calls = (fetchSpy as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+		expect(calls.map((c) => c[0])).toEqual([
+			'https://auth.openai.com/oauth/token',
+			`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`,
+		]);
+		expect(JSON.parse(calls[0][1].body as string)).toEqual({
+			client_id: 'app_EMoamEEZ73f0CkXaXp7hrann',
+			grant_type: 'refresh_token',
+			refresh_token: 'rt-codex-expired',
+		});
+		expect((calls[1][1].headers as Record<string, string>).Authorization).toBe(`Bearer ${renewed}`);
+
+		const stored = await getProviderConfigCredential(db, masterKeyManager, subConfigId);
+		const tokens = JSON.parse(stored?.value ?? '{}').tokens;
+		expect(tokens.access_token).toBe(renewed);
+		expect(tokens.refresh_token).toBe('rt-next');
+		expect(tokens.account_id).toBe('acct-123');
+	});
+
+	it('says to sign in again when the Codex sign-in cannot be renewed', async () => {
+		const subConfigId = await addCodexSubscription(
+			'codex-revoked',
+			Math.floor(Date.now() / 1000) - 60,
+		);
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 400,
+			json: async () => ({ error: 'invalid_grant' }),
+		}) as unknown as typeof fetch;
+
+		const res = await app.request(`/api/ai-providers/${subConfigId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(401);
 		const body = await res.json();
-		expect(body.error.code).toBe('SUBSCRIPTION_UNSUPPORTED');
-		expect(fetchSpy).not.toHaveBeenCalled();
+		expect(body.error.code).toBe('INVALID_KEY');
+		expect(body.error.message).toContain('sign in again');
+	});
+
+	it('lists an Anthropic subscription through its catalog, with the token as a bearer', async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
+		const created = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-oat01-listing-token',
+				auth_method: 'subscription',
+				label: 'claude-subscription-models',
+			}),
+		});
+		expect(created.status).toBe(201);
+		const subConfigId = (await created.json()).data.id;
+
+		const fetchSpy = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ data: [{ id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' }] }),
+		}) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		const res = await app.request(`/api/ai-providers/${subConfigId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data).toEqual([{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }]);
+		const call = (fetchSpy as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+			.calls[0];
+		expect((call[1].headers as Record<string, string>).Authorization).toBe(
+			'Bearer sk-ant-oat01-listing-token',
+		);
 	});
 });
 

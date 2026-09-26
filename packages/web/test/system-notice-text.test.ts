@@ -52,6 +52,16 @@ test('a conversion notice reads as its opening sentence, by where its rate came 
 	expect(text).toContain('no priced runs in the last 30 days');
 });
 
+test('a credential-model notice reads as its opening sentence, by its kind', () => {
+	const locale = localeFor(Language.En);
+	expect(systemNoticeText({ kind: 'credential_model_unlisted' }, locale)).toContain(
+		'a model their provider no longer offers',
+	);
+	expect(systemNoticeText({ kind: 'default_model_backfill' }, locale)).toContain(
+		'gave a default model to each AI provider',
+	);
+});
+
 test('any other system comment has no notice text, so the row keeps its own words', () => {
 	const locale = localeFor(Language.En);
 	expect(systemNoticeText({ kind: 'status_change' } as SystemContent, locale)).toBeNull();

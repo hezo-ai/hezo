@@ -62,7 +62,7 @@ A run's usage is the token buckets each runtime reports (regular input, cache re
 
 **Recovery runs on the failure path too, not only on a clean exit.** It used to be called once, after a successful exec, so a run of any of these three killed by the wall clock, a cancel or a handback recorded zero tokens for work that really happened — twelve such runs on one instance made 2,927 tool calls between them and were all accounted as nothing. The call is memoised, because it scrubs what it reads, and the abort path flags what it writes as `usage_partial`.
 
-**Codex is also where the run's model comes from.** Its `exec --json` stream names no model anywhere, and a subscription credential is given no `default_model` by design. The rollout's `turn_context` names the model once per turn.
+**Codex is also where the run's recorded model comes from.** Its `exec --json` stream names no model anywhere, even though every run now passes `--model`. The rollout's `turn_context` names the model once per turn.
 
 Rules for that parsing, each a trap that otherwise counts runs silently wrong:
 

@@ -247,6 +247,11 @@ As a sizing rule of thumb, one working agent (its coding CLI plus the helper too
 spawns) typically uses 300-350 MB of memory, and the container cap bounds the total
 regardless of how many agents share it.
 
+**After an update, containers are rebuilt as they are next needed.** Each release carries
+the versions of the coding CLIs its agents run, and a container keeps the versions it was
+built with. So the first run in each project after an update gets a freshly built container,
+which costs one cold start, and every run uses the coding CLIs of the release you are on.
+
 ## What is not available on either backend
 
 - **Dev-server previews.** Mapping a port out of a container to a browser is not currently

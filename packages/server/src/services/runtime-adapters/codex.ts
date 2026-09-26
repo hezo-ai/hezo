@@ -121,6 +121,16 @@ function withServerKeys(serverBlock: string, d: McpDescriptor): string {
 }
 
 /**
+ * The Codex CLI version the agent image pins (`CODEX_VERSION` in
+ * `docker/Dockerfile.agent-base`, held equal by `agent-cli-pins.test.ts`).
+ *
+ * The server asks Codex's backend for the models a subscription can run with
+ * this as the client version, so the list a person picks a default model from is
+ * the list the pinned CLI supports.
+ */
+export const CODEX_CLI_VERSION = '0.156.0';
+
+/**
  * Codex sends the value as the Responses API's `reasoning.effort` unchanged and
  * does not clamp it, so an unsupported value fails the turn. Its model catalog
  * lists no `minimal` for any model, lists `xhigh` for every one, and lacks `max`

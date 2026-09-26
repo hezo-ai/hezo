@@ -4504,8 +4504,12 @@ it, and `setDefaultAiProvider` moves it atomically.
 serves all three surfaces: the providers-table cell, the Edit dialog and the last step of the
 Add dialog. It owns the lazy catalog fetch (`GET /api/ai-providers/:configId/models`, enabled
 on hover intent or on panel open, never on mount - a settings page with several rows would
-otherwise fire a live provider call per row) and builds the option list: the CLI-default
-fallback pinned first, then a stored model the provider no longer lists, then the catalog.
+otherwise fire a live provider call per row, and read again on every later open) and builds
+the option list: a stored model the provider no longer lists, then the catalog. There is no
+"let the CLI choose" row. A config always has a model: the create route sets one, `PATCH`
+refuses to clear it, and `runAgent` fails a run whose agent and config name none rather than
+passing no `--model` - a CLI left to choose picks whatever its release defaults to, and one
+Codex upgrade moved a fleet onto a model that spends an allowance twice as fast.
 Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`. The
 catalog is only
 listable against a stored credential, which is why the Add dialog asks for the model *after*
@@ -4534,16 +4538,26 @@ passing the flag there fails the run outright and the id travels on `KIMI_MODEL_
 
 **Live model listing.** Every UI surface that picks a specific model — the provider
 `default_model` selector and the per-agent model override — populates its options from
-`GET /api/ai-providers/:configId/models`, which decrypts the stored key and fetches the
-provider's live catalog (`AI_PROVIDER_INFO[provider].verifyEndpoint`, the same URL the add
-flow verifies against, normalized by `parseProviderModels` in `@hezo/shared`). No model list
-is hardcoded. The call is server-initiated and goes **direct** (not through the agent egress
-proxy). Subscription-auth configs short-circuit with `SUBSCRIPTION_UNSUPPORTED` (their blob is
-not an API key the catalog endpoint accepts), and the pickers degrade to the CLI's default
-model.
+`GET /api/ai-providers/:configId/models`, which `listCredentialModels`
+(`services/credential-models.ts`) answers live. An API key reads the provider's catalog
+(`AI_PROVIDER_INFO[provider].verifyEndpoint`, normalized by `parseProviderModels`). A
+subscription lists through its provider's row in `SUBSCRIPTION_MODEL_LISTERS`: Anthropic's
+catalog takes the subscription token on its `subscriptionHeaders` shape; a Codex sign-in lists
+from the ChatGPT backend the Codex CLI uses (`/backend-api/codex/models?client_version=`
+`CODEX_CLI_VERSION`, held equal to the Dockerfile pin by `agent-cli-pins.test.ts`), so the list
+is what the pinned CLI supports. Its access token is short-lived: an expired one is renewed the
+way the CLI renews it and stored through `casUpdateAiProviderCredential`, which already
+tolerates a run rotating the same sign-in. No model list is hardcoded. The calls are
+server-initiated and go **direct** (not through the agent egress proxy).
 
 **Pinned starting model.** A newly created config does not start on `NULL`: the create route
-sets `default_model` from that provider's *pin* (`services/model-pins.ts`). A pin names a
+and the guided sign-in set `default_model` to the model the person picked, else
+`initialDefaultModel` - the provider's *pin* (`services/model-pins.ts`) for an API key, and the
+compile-time fallback for a subscription, whose list is not the API catalog the refreshed pin
+was read from. Once per release, after unlock, `checkCredentialModelsForRelease` reads every
+hosted config's live list and files one notice naming any config whose model its provider no
+longer offers; migration 082 gave a model to every config that had none and its first boot
+lists them (`postDefaultModelBackfillNotice`). A pin names a
 **family** rather than a model (`MODEL_PIN_SPECS` in `@hezo/shared`) — `claude-opus-*`,
 `*-codex`, `gemini-*-flash` — and the daily `model-pin-refresh` cron re-reads each configured
 provider's catalog and moves the pin to the highest version inside that family, storing it in

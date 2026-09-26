@@ -36,6 +36,7 @@ one to read: where it says *nothing*, no test will catch you.
 | A `.dev/` guide added, renamed or removed | the `.dev/` map table in `AGENTS.md`, the link from its section there, and this table | **nothing - on you** |
 | A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
 | `CODEX_VERSION` moved | `RUNTIME_PROMPT_MAX_CHARS[Codex]`, which mirrors that release's `MAX_USER_INPUT_TEXT_CHARS` - re-read it on every bump, and treat a *lowered* upstream cap as the dangerous direction | **nothing - on you** |
+| `CODEX_VERSION` moved | `CODEX_CLI_VERSION` (`runtime-adapters/codex.ts`), the client version subscription model lists are read for | `agent-cli-pins.test.ts` |
 | A section added to a run prompt | a `PROMPT_SECTION_CEILINGS` entry and a `budget.take` for it - an unbudgeted section reopens the hole the budget exists to close, and does it silently | `prompt-budget.test.ts` asserts the total, so an unbudgeted section is caught only once it is large |
 | A rule `AGENTS.md` states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
 | A new rule added to `AGENTS.md` | that file's byte budget - fitting it in usually means cutting something else down | `agents-md-budget.test.ts` |
