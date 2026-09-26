@@ -38,7 +38,7 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Checking what else a change must touch | `mirrored-surfaces.md` |
 | What the hosted control plane depends on | `hezo-cloud-requirements.md` |
 
-Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`.
+Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`, `codex-allowance-burn-2026-09-24.md`.
 
 ## Commands
 
