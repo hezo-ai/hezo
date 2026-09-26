@@ -78,7 +78,8 @@ agent, whether or not it has a budget:
   agent yourself. A teammate who is not an admin cannot release it either way.
 - **A subscription's allowance is spread across its window.** Hezo reads how much of the
   week a Codex or Claude Code subscription has used and holds agent work that gets ahead of
-  an even pace. See [How Hezo paces a subscription](/docs/ai-models#how-hezo-paces-a-subscription).
+  an even pace. The Budget page shows where each subscription's week stands, under
+  **Subscription usage**. See [How Hezo paces a subscription](/docs/ai-models#how-hezo-paces-a-subscription).
 - **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
   a reply from you, the task waits for you. See
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).

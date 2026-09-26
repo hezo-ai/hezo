@@ -182,9 +182,10 @@ reports keeps the pace current for everyone.
 default), over five days, or no pacing, or type any daily share from 5% to 100% of the week.
 It says what that share means in days, and shows where the week stands now. The providers
 list shows the same line under each subscription, for example "42% of this week used,
-resets Oct 1, 02:42. Agents are paced to 30% now." A new setting takes effect within half
-an hour, as waiting work checks the pace again. A week appears once a run has read it from
-the provider.
+resets Oct 1, 02:42. Agents are paced to 30% now." Each project's **Budget** page shows it
+too, under **Subscription usage**, since every project shares the same weeks. A new setting
+takes effect within half an hour, as waiting work checks the pace again. A week appears once
+a run has read it from the provider.
 
 Budgets still apply as well. A budget limits one agent or project in tokens, and the pace
 limits the whole subscription in the provider's own measure. Work runs only when both
