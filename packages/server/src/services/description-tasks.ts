@@ -130,14 +130,19 @@ async function createLabeledInternalTask(
 	body: string,
 	label: string,
 	priority: TaskPriority,
-	autoStart = true,
+	opts: {
+		autoStart: boolean;
+		/** The agent run whose change filed the task, when an agent made it. */
+		createdByRunId: string | null;
+	},
 ): Promise<string | null> {
+	const { autoStart, createdByRunId } = opts;
 	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.teamProjectId);
 
 	const insertResult = await db.query<{ id: string }>(
 		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
-		                     title, description, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
+		                     title, description, status, priority, labels, created_by_run_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb, $11)
 		 RETURNING id`,
 		[
 			ctx.teamId,
@@ -150,6 +155,7 @@ async function createLabeledInternalTask(
 			TaskStatus.Backlog,
 			priority,
 			JSON.stringify(['internal', label]),
+			createdByRunId,
 		],
 	);
 
@@ -160,9 +166,15 @@ async function createLabeledInternalTask(
 	// it and then calls `start_team_setup` to assign it to itself and begin the run.
 	if (autoStart) {
 		try {
-			await createWakeup(db, assigneeMemberId, ctx.teamId, WakeupSource.Assignment, {
-				task_id: taskId,
-			});
+			await createWakeup(
+				db,
+				assigneeMemberId,
+				ctx.teamId,
+				WakeupSource.Assignment,
+				{ task_id: taskId },
+				undefined,
+				createdByRunId,
+			);
 		} catch (e) {
 			log.error(`Failed to wake assignee for ${label}:`, e);
 		}
@@ -366,7 +378,15 @@ export async function enqueueTeamCoherenceReviewTask(
 			const assignee = await appendCoherenceChange(db, existing, reason, opts.changeSummary);
 			if (assignee) {
 				try {
-					await createWakeup(db, assignee, teamId, WakeupSource.Assignment, { task_id: existing });
+					await createWakeup(
+						db,
+						assignee,
+						teamId,
+						WakeupSource.Assignment,
+						{ task_id: existing },
+						undefined,
+						opts.byRunId,
+					);
 				} catch (e) {
 					log.error('Failed to re-wake assignee for coalesced coherence change:', e);
 				}
@@ -402,6 +422,6 @@ export async function enqueueTeamCoherenceReviewTask(
 		body,
 		COHERENCE_LABEL,
 		TaskPriority.High,
-		autoStart,
+		{ autoStart, createdByRunId: opts.byRunId ?? null },
 	);
 }

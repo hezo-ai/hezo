@@ -110,7 +110,6 @@ function DefaultModelStep({ config, onDone }: { config: AiProviderConfig; onDone
 				<span className="text-eyebrow text-text-2">{t('settings.provider.model.label')}</span>
 				<ModelPicker
 					configId={config.id}
-					authMethod={config.auth_method}
 					value={model}
 					onChange={(next) => {
 						setModel(next);

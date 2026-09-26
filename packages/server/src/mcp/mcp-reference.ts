@@ -1,4 +1,5 @@
 import { HEZO_DOCS_URL } from '@hezo/shared';
+import { LARGE_TEXT_ASSET_SIZE } from './paging';
 
 /**
  * Generates the user-facing **MCP API reference** (`docs/reference/mcp-api.md`)
@@ -285,13 +286,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review.',
+			'`{ applied: true, document_id }`, or `{ error }` if denied, if the agent is not in the team, or if the prompt would hold more than 20 Learned Rules and more than it held before. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review or only the Learned Rules section changed.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	update_agent_system_prompts: {
 		category: 'Agent prompts & context',
 		returns:
-			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
+			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). An item over the Learned Rules cap fails on its own. Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising every change to more than the Learned Rules section, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	get_project_custom_prompt: {
@@ -481,12 +482,11 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_assets: {
 		category: 'Project docs & assets',
 		returns:
-			"Project asset entries (`id`, `filename`, `content_type`, `created_at`, `width?`, `height?`); raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"Project asset entries (`id`, `filename`, `content_type`, `created_at`, `width?`, `height?`); raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`); `name_prefix` narrows the list to paths starting with it. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
-		returns:
-			"For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it - pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets - PDFs, media, and archives (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`, `.rar`) - return `{ filename, content_type, byte_size, binary: true, url }` - a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. An archive is unpacked in the run container after download. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+		returns: `For a text asset, \`{ filename, content_type, content }\`. A text asset over ${LARGE_TEXT_ASSET_SIZE} read without \`offset\` returns \`{ filename, content_type, byte_size, url, hint }\` instead: download the \`url\` with plain \`curl\` and work on the file in the run container. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of \`{ filename, content_type, byte_size, binary: true, width, height, url }\` so a vision-capable model can see it - pass \`include_image: false\` (or exceed the size cap) for that metadata alone with no image block. Other binary assets - PDFs, media, and archives (\`.zip\`, \`.tar\`, \`.tar.gz\`/\`.tgz\`, \`.7z\`, \`.rar\`) - return \`{ filename, content_type, byte_size, binary: true, url }\` - a signed download URL valid for 24h; fetch it with plain \`curl\` (no auth header), and re-call the tool for a fresh one if it expires. An archive is unpacked in the run container after download. Either shape also carries \`review_comments: [{ id, quote?, occurrence?, comment, created_at }]\` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact \`quote\` snippet (\`occurrence\` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns \`{ error }\` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match \`filter\` (default \`'active'\`, so archived assets need \`filter: 'archived'\` or \`'all'\`; an archived read carries \`archived: true\`).`,
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',

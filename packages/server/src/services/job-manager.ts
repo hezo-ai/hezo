@@ -96,6 +96,8 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	runSizeStopHold,
+	runSizeStopNotice,
 	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
@@ -134,6 +136,7 @@ import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updat
 import {
 	absorbQueuedTaskWakeups,
 	assignmentWakeupAlreadyServed,
+	CREDENTIAL_HOLD_REASONS,
 	createProgressUpdateWakeup,
 	createWakeup,
 	type HandbackCause,
@@ -276,6 +279,7 @@ const HOLDS_WAITING_ON_A_PERSON: ReadonlySet<WakeupSkipReason> = new Set([
 	WakeupSkipReason.RetrospectiveHold,
 	WakeupSkipReason.HandoffRoundsExhausted,
 	WakeupSkipReason.TaskTokenCeiling,
+	WakeupSkipReason.RunSizeStop,
 ]);
 
 /**
@@ -1879,9 +1883,9 @@ export class JobManager {
 	 * Record why a wakeup was not dispatched, and refresh its task for the team
 	 * that owns it (not the agent's: the CEO and the Coach wake in HQ).
 	 *
-	 * A wakeup still held for a provider usage limit keeps that reason: the paced
-	 * release finds its rows by it, and a "Run now" that met a busy task must not
-	 * take the row out of the release it is waiting on.
+	 * A wakeup still held on its credential keeps that reason: the paced release
+	 * finds its rows by it, and a "Run now" that met a busy task must not take the
+	 * row out of the release it is waiting on.
 	 */
 	private async markWakeupSkipped(
 		wakeupId: string,
@@ -1894,11 +1898,11 @@ export class JobManager {
 			`UPDATE agent_wakeup_requests
 			 SET last_skipped_at = now(),
 			     last_skipped_reason = CASE
-			       WHEN last_skipped_reason = $4 AND not_before > now() THEN last_skipped_reason
+			       WHEN last_skipped_reason = ANY($4::text[]) AND not_before > now() THEN last_skipped_reason
 			       ELSE $2 END,
 			     last_skipped_blocker_task_id = $3
 			 WHERE id = $1`,
-			[wakeupId, reason, blockerTaskId, WakeupSkipReason.ProviderUsageLimit],
+			[wakeupId, reason, blockerTaskId, [...CREDENTIAL_HOLD_REASONS]],
 		);
 		if (taskId) {
 			const refreshed = await db.query<Record<string, unknown> & { team_id: string }>(
@@ -1972,6 +1976,14 @@ export class JobManager {
 				reason: WakeupSkipReason.TaskTokenCeiling,
 				detail: `is held on ${at} after ${usage.tokens} tokens since the admin last replied (ceiling ${TASK_TOKEN_CEILING})`,
 				notice: { content: taskTokenCeilingNotice(usage), unlessPostedSince: usage.noticeSince },
+			};
+		}
+		const sized = runSizeStopHold(spend);
+		if (sized) {
+			return {
+				reason: WakeupSkipReason.RunSizeStop,
+				detail: `is held on ${at} after ${sized.stops} run(s) on it were stopped for size since the admin last replied`,
+				notice: { content: runSizeStopNotice(sized), unlessPostedSince: sized.noticeSince },
 			};
 		}
 		return null;
@@ -3172,7 +3184,7 @@ export class JobManager {
 		// changes its status — `done` is now the final completed state (there is
 		// no `closed`), so the task stays `done` after the Coach run.
 
-		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
+		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId, result.heartbeatRunId);
 	}
 
 	/**
@@ -4037,6 +4049,8 @@ export class JobManager {
 		agentSlug: string,
 		justCompletedTaskId: string,
 		teamId: string,
+		/** The run that just finished, recorded as the one that queued the next. */
+		finishedRunId: string | null | undefined,
 	): Promise<void> {
 		const { db } = this.deps;
 		// Pick the next non-terminal task for this agent that we aren't already
@@ -4121,10 +4135,15 @@ export class JobManager {
 		if (next.rows.length === 0) return;
 
 		try {
-			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
-				task_id: next.rows[0].id,
-				reason: 'chain_after_completion',
-			});
+			await createWakeup(
+				db,
+				memberId,
+				teamId,
+				WakeupSource.Timer,
+				{ task_id: next.rows[0].id, reason: 'chain_after_completion' },
+				undefined,
+				finishedRunId,
+			);
 		} catch (e) {
 			log.error(`Failed to chain wakeup for agent ${ref(agentSlug, memberId)}:`, e);
 		}

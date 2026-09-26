@@ -22,6 +22,8 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	runSizeStopHold,
+	runSizeStopNotice,
 	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
@@ -1221,6 +1223,67 @@ describe('handoffHold', () => {
 			sinceAdminReply: null,
 			handoffRounds: 0,
 		});
+	});
+});
+
+describe('runSizeStopHold', () => {
+	/** A finished run on the shared task, stopped for `stop` when given. */
+	async function insertRun(minutesAgo: number, stop: string | null): Promise<void> {
+		await db.query(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, task_id, status, started_at, finished_at, stop_reason)
+			 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status,
+			         now() - ($4 || ' minutes')::interval,
+			         now() - ($4 || ' minutes')::interval + interval '30 seconds', $5)`,
+			[teamId, agentId, taskId, String(minutesAgo), stop],
+		);
+	}
+
+	it('holds a task whose run was stopped for its size, for tokens or tool calls', async () => {
+		await clearRuns();
+		await insertRun(30, 'run_timeout');
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))).toBeNull();
+
+		await insertRun(20, 'token_ceiling');
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))).toEqual({
+			stops: 1,
+			noticeSince: null,
+		});
+		await insertRun(10, 'tool_call_ceiling');
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))?.stops).toBe(2);
+	});
+
+	it('lifts when a person speaks, and holds again on the next stop after it', async () => {
+		await clearRuns();
+		await insertRun(30, 'token_ceiling');
+		await insertAgentComment({ minutesAgo: 25 });
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))).not.toBeNull();
+
+		await insertHumanReply(20);
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))).toBeNull();
+		await insertRun(10, 'token_ceiling');
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))?.stops).toBe(1);
+	});
+
+	it('asks the admin once per hold', async () => {
+		await clearRuns();
+		await insertRun(10, 'token_ceiling');
+		const held = runSizeStopHold(await loadTaskSpend(db, taskId));
+		if (!held) throw new Error('expected the task to be held');
+		const post = () =>
+			postAdminNotice({
+				db,
+				teamId,
+				taskId,
+				content: runSizeStopNotice(held),
+				unlessPostedSince: held.noticeSince,
+			});
+		expect(await post()).not.toBeNull();
+		expect(await post()).toBeNull();
+		await db.query(
+			`DELETE FROM task_comments WHERE task_id = $1 AND content->>'kind' = 'run_size_stop'`,
+			[taskId],
+		);
 	});
 });
 

@@ -160,6 +160,37 @@ token stays usable across concurrent runs, so Hezo runs as many at once as your 
 allow and keeps the stored token current as they go. Nothing here limits how many agents
 share one Codex subscription.
 
+### How Hezo paces a subscription
+
+A subscription gives you a usage allowance over a window, a week for Codex and for Claude
+Code, and the provider tells Hezo how much of it you have used on every response. Hezo uses
+that figure to spread the allowance across the window, so a fresh week lasts the week
+instead of going in the first few hours.
+
+By default Hezo lets agents use one day's share of the window straight away, and one more
+day's share each day after that. A share they do not use carries forward, so the whole
+allowance is still usable by the end of the window. The last 5% is kept for runs you start
+yourself.
+
+When agents get ahead of that pace, their work waits in the queue and starts again as the
+day's share opens up. You get one notice in your inbox the first time this happens in a
+window. **Run now** is never paced: a run you start yourself goes ahead, and what it
+reports keeps the pace current for everyone.
+
+**You set the pace per subscription.** Open the subscription's **Edit** dialog in
+**Settings -> AI providers**. The pacing section lets you pick even over the week (the
+default), over five days, or no pacing, or type any daily share from 5% to 100% of the week.
+It says what that share means in days, and shows where the week stands now. The providers
+list shows the same line under each subscription, for example "42% of this week used,
+resets Oct 1, 02:42. Agents are paced to 30% now." Each project's **Budget** page shows it
+too, under **Subscription usage**, since every project shares the same weeks. A new setting
+takes effect within half an hour, as waiting work checks the pace again. A week appears once
+a run has read it from the provider.
+
+Budgets still apply as well. A budget limits one agent or project in tokens, and the pace
+limits the whole subscription in the provider's own measure. Work runs only when both
+allow it. See [Budgets and costs](/docs/concepts/budgets-and-costs).
+
 **An Anthropic subscription does not refresh.** Hezo stores the single long-lived token
 `claude setup-token` prints and passes it to Claude Code as-is. There is no refresh token
 behind it, so when that token expires or you revoke it, no run can renew it - sign in again
@@ -227,8 +258,10 @@ tasks and a frontier model for the hard ones, or having a fallback.
 When a key is stored it's checked against the provider and shown as **verified** (the
 Verify action re-checks it any time), and Hezo then asks which model the connection should
 run. That question comes last because the list of models is read from the provider using the
-key you just gave it. Leave it on the CLI default if you'd rather not choose; either way you
-can change it later from the connection's row or its Edit panel. Mark one provider as the **default** with the star:
+key you just gave it. A sensible model is already selected, so you can keep it; either way you
+can change it later from the connection's row or its Edit panel. A connection always has a
+model, and every run names it, so updating a coding CLI never changes the model your agents
+run on. Mark one provider as the **default** with the star:
 that's the single global default every agent uses unless it has its own model override.
 
 Adding a connection does **not** make it the default - use the star for that. Once you do,
@@ -274,8 +307,9 @@ Wherever you pick a specific model - a provider's default model, or an agent's o
 Hezo loads the list of choices **live from that provider**, so you always see the models
 your key can actually use. The list is alphabetical and has a search box at the top, which
 matters on a provider like OpenRouter that offers several hundred: type any part of a model's
-name or its id to narrow it. Providers you signed in to with a subscription instead of an API
-key use the model their CLI selects, so there's no list to choose from there.
+name or its id to narrow it. This works for a subscription too: a Claude subscription lists the
+models your plan offers, and a ChatGPT subscription lists the models the Codex version Hezo
+runs supports. The list is read again each time you open it.
 
 ## How the starting model is chosen
 
@@ -296,4 +330,10 @@ model per request instead of fixing one. That is the routing you signed up for; 
 specific model from the list if you would rather choose yourself.
 
 Local model servers have no pinned default: the catalog is whatever you have pulled, so
-the CLI's own choice applies until you pick one.
+you pick one of those models when you add the connection. A run on a connection with no
+model fails and says so, rather than leaving the choice to the CLI.
+
+**After an update, Hezo checks each connection's model** against what its provider offers
+now. If a model is no longer offered, you get one notice in your inbox listing the affected
+connections. The model stays as you set it until you pick another, and runs on it fail at the
+provider until you do.

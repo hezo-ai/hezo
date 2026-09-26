@@ -739,7 +739,7 @@ test('the default-model picker loads models dynamically on hover intent', async 
 	);
 });
 
-test('the default-model picker lists the catalog alphabetically under a pinned CLI default', async () => {
+test('the default-model picker lists the catalog alphabetically, under the stored model it no longer lists', async () => {
 	// Deliberately unsorted, and mixed-case, so provider order and casing are both
 	// ruled out as the thing producing the assertion below.
 	stubProviderCatalog(['zeta-model', 'alpha-model', 'Beta-model', 'gamma-9', 'gamma-10']);
@@ -765,10 +765,9 @@ test('the default-model picker lists the catalog alphabetically under a pinned C
 	await waitFor(
 		() => {
 			expect(openPickerOptions()).toEqual([
-				// Both pins sit above the catalog rather than sorting into it: the
-				// fallback, then the model this config is actually running, which the
-				// stubbed catalog does not list.
-				'CLI default',
+				// The model this config is actually running sits above the catalog
+				// rather than sorting into it, since the stubbed catalog does not list
+				// it. There is no "let the CLI choose" row: every run names its model.
 				'claude-opus-5',
 				'alpha-model',
 				'Beta-model',
@@ -904,10 +903,11 @@ test('the Edit dialog carries the default model and saves it with the rest of th
 	});
 });
 
-test('a subscription provider shows a disabled CLI-default trigger instead of a model list', async () => {
-	// No catalog stub: subscription auth must not attempt the live listing at all,
-	// so a real fetch would be the bug this asserts against.
-	const { findByRole, findByText, queryByText } = await renderApp({
+test('a subscription provider starts on a model and lists its models live', async () => {
+	// A subscription lists like an API key: its catalog is read live when the
+	// picker opens, and it starts on a model rather than the CLI's own choice.
+	stubProviderCatalog(['claude-opus-5', 'claude-opus-5-5']);
+	const { findByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -922,16 +922,74 @@ test('a subscription provider shows a disabled CLI-default trigger instead of a 
 	});
 
 	await findByRole('heading', { name: 'AI providers' });
-	await findByText('anthropic-sub');
-
-	// The row states the answer on the trigger itself and offers nothing to open;
-	// no error is surfaced.
 	const trigger = (await findByRole('button', {
 		name: 'Default model for anthropic-sub',
 	})) as HTMLButtonElement;
-	expect(trigger.textContent).toContain('CLI default (subscription)');
-	expect(trigger.disabled).toBe(true);
-	expect(queryByText('Failed to load models')).toBeNull();
+	expect(trigger.disabled).toBe(false);
+	expect(trigger.textContent).toContain('claude-opus-5');
+	expect(await storedDefaultModel('anthropic-sub')).toBe('claude-opus-5');
+
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
+	await waitFor(
+		() => {
+			expect(openPickerOptions()).toEqual(['claude-opus-5', 'claude-opus-5-5']);
+		},
+		{ timeout: 10_000 },
+	);
+});
+
+test('a subscription shows its week on the list, and the Edit dialog saves a pacing preset', async () => {
+	const { findByRole, findByTestId, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-oat01-pacing-token',
+				auth_method: 'subscription',
+				label: 'anthropic-paced',
+			});
+			expect(res.status).toBe(201);
+			const { db } = getTestContext();
+			// Half a day into a week, 40% spent: the even line allows 1.5 days, about 21%.
+			await db.query(
+				`UPDATE ai_provider_configs
+				    SET allowance_used_percent = 40, allowance_window_minutes = 10080,
+				        allowance_resets_at = now() + interval '6.5 days', allowance_seen_at = now()
+				  WHERE label = 'anthropic-paced'`,
+			);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const rows = await findByRole('table');
+	const week = within(rows).getByText(/40% of this week used/);
+	expect(week.textContent).toContain('Agents are paced to 21% now.');
+
+	await user.click(getByRole('button', { name: 'Edit anthropic-paced' }));
+	const dialog = await findByRole('dialog');
+	const pacing = await findByTestId('allowance-pacing');
+	expect(within(pacing).getByText('Spreads the week over about 7 days.')).toBeTruthy();
+
+	const share = within(pacing).getByTestId('allowance-share-input') as HTMLInputElement;
+	fireEvent.change(share, { target: { value: '3' } });
+	expect(within(pacing).getByText('Enter a number from 5 to 100.')).toBeTruthy();
+
+	await user.click(within(pacing).getByRole('button', { name: 'Over five days' }));
+	expect(share.value).toBe('20');
+	expect(within(pacing).getByText('Spreads the week over about 5 days.')).toBeTruthy();
+	// Judged against the share being edited: 1.5 days of 20% is 30%.
+	expect(within(pacing).getByText(/Agents are paced to 30% now\./)).toBeTruthy();
+
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+	await waitFor(async () => {
+		const { db } = getTestContext();
+		const stored = await db.query<{ allowance_daily_share_percent: number | null }>(
+			`SELECT allowance_daily_share_percent FROM ai_provider_configs WHERE label = 'anthropic-paced'`,
+		);
+		expect(stored.rows[0].allowance_daily_share_percent).toBe(20);
+	});
 });
 
 test('adding a provider ends on a default-model step for the config it just created', async () => {

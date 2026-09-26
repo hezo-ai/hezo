@@ -117,6 +117,13 @@ export interface SystemTaskTokenCeilingContent {
 	text?: string;
 }
 
+/** A run on the task was stopped for its size, so it waits for the admin. */
+export interface SystemRunSizeStopContent {
+	kind: 'run_size_stop';
+	stops?: number;
+	text?: string;
+}
+
 /** A budget paused an agent. Posted once per pause, with an inbox row. */
 export interface SystemBudgetPausedContent {
 	kind: 'budget_paused';
@@ -180,6 +187,25 @@ export interface SystemGenericContent {
 	text?: string;
 }
 
+/** One AI provider a credential-model notice names. */
+export interface CredentialModelLine {
+	label: string;
+	provider: string;
+	/** The model it runs on, or null when it still needs one chosen. */
+	model: string | null;
+}
+
+/**
+ * A notice about AI providers' default models, posted once on an HQ task: the
+ * models an upgrade gave providers that had none, or the providers whose model
+ * their provider no longer offers.
+ */
+export interface SystemCredentialModelContent {
+	kind: 'default_model_backfill' | 'credential_model_unlisted';
+	credentials?: CredentialModelLine[];
+	text?: string;
+}
+
 export type SystemContent =
 	| SystemStatusChangeContent
 	| SystemTaskLinkContent
@@ -189,8 +215,10 @@ export type SystemContent =
 	| SystemRunAbandonedContent
 	| SystemHandoffLimitContent
 	| SystemTaskTokenCeilingContent
+	| SystemRunSizeStopContent
 	| SystemBudgetPausedContent
 	| SystemBudgetConversionContent
+	| SystemCredentialModelContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;
 

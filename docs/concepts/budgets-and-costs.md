@@ -68,11 +68,18 @@ agent, whether or not it has a budget:
 - **A single run stops at 30 million tokens.** A run that long spends most of its tokens
   re-reading its own context. This applies to every runtime. For Codex, Grok and Kimi Code,
   Hezo reads the usage once a minute, so a run can go a little past the limit before it
-  stops. A run that has already finished its work is never stopped.
+  stops. A run that has already finished its work is never stopped. When a run is stopped
+  this way, or at the tool-call ceiling below, its task waits for your reply before any agent
+  runs on it again, since the next run would start the same oversized work. You get a notice
+  in your inbox; scope the task down or split it, then reply.
 - **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
   wakes the task's assignee and allows another 100 million, and **Run now** starts one
   agent yourself. A teammate who is not an admin cannot release it either way.
+- **A subscription's allowance is spread across its window.** Hezo reads how much of the
+  week a Codex or Claude Code subscription has used and holds agent work that gets ahead of
+  an even pace. The Budget page shows where each subscription's week stands, under
+  **Subscription usage**. See [How Hezo paces a subscription](/docs/ai-models#how-hezo-paces-a-subscription).
 - **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
   a reply from you, the task waits for you. See
   [Comments and mentions](/docs/concepts/tasks#comments-and-mentions).

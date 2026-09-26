@@ -326,7 +326,10 @@ is the per-run progress history (one row per goal touched by a run, snapshotting
 percent/health/blurb) — the source of each goal's progress chart and the project-wide progress-update
 list on the project dashboard. `tasks.goal_id` optionally links a ticket to the goal it advances
 (traceability only; it does **not** gate or alter how the task runs), and `tasks.created_by_run_id`
-/ `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it.
+/ `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it, and
+`agent_wakeup_requests.created_by_run_id` a wakeup to the run that raised it, including the
+follow-up timer `chainNextTaskWakeup` queues after a run finishes. A coalesced wakeup names the
+latest run folded into it, which the no-wake-exit check needs to credit that run.
 Together these back the goal detail page's per-goal **run activity** feed (`listGoalRunActivity`):
 the progress-update runs that estimated *that* goal, created tickets linked to it, or commented on its
 linked tickets. During a progress-update run the Captain may comment on an in-flight ticket instead of
@@ -822,7 +825,13 @@ usage, and the work is done by then. Claude Code's running usage is counted once
 since the CLI restates a message's usage on every content-block event. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
 dispatch suppression: the tokens of every run on the task since the admin last spoke
 (`adminSpokeAtSql`), held for every agent until the admin speaks, with one `task_token_ceiling`
-notice per hold.
+notice per hold. **A run stopped for its size holds its task too.** `stopRunForSize` records
+`heartbeat_runs.stop_reason` (`token_ceiling` or `tool_call_ceiling`) the moment either ceiling
+fires, and `runSizeStopHold` - the third hard stop in `dispatchSuppression`, read from the same
+`loadTaskSpend` round trip - holds the task for every agent until the admin speaks, with one
+`run_size_stop` notice. Without it the ceiling bounded a run and nothing else: the next heartbeat
+or mention restarted the same oversized work, and on production three runs spent 72M after a
+stopped 31M one.
 
 **What else bounds a single run is `runs.maxToolCalls` (default 600), plus wall-clock
 `run_timeout_min`.** Tool calls because they are what grows the tokens: every tool result stays in the conversation and is re-sent on the next call, so a run's
@@ -3243,7 +3252,10 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   With no stated time the hold is `USAGE_HOLD_UNSTATED_MIN` (30); every hold is floored at
   `USAGE_HOLD_FLOOR_MIN` (5) so a stated time already past cannot release the queue at
   dispatch rate. The refusal that starts a hold files one `fileProviderUsageLimitNotice`, and
-  a usage refusal never reaches the two-hour give-up.
+  a usage refusal never reaches the two-hour give-up. Every usage-limit verdict holds, through
+  `holdForUsageLimit` in `runAgent`: a refusal with zero tokens is handed back, and one after
+  the run spent tokens or wrote something fails on its merits but holds the credential all the
+  same, so the runs already queued behind it meet the hold rather than each being refused.
 - **Runs check it before the run row exists.** `runAgent` resolves its credential
   (`resolveRunCredential`, shared with chat) before `createHeartbeatRun`, and `usageHoldWait`
   hands a held run back with no row, container or provider call. Judged on the database
@@ -3255,7 +3267,7 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   is claimed. Compared against the hold read before the wait, so the probe's own window does
   not hold the probe.
 - **A turn lifts it.** A run that started under a hold (the probe, or one a person asked
-  for) and got a turn calls `liftUsageHold`, which clears the column and releases the
+  for) and got a turn, and was not itself refused for usage, calls `liftUsageHold`, which clears the column and releases the
   wakeups held on that credential through `releaseUsageHeldWakeups`. The handback records the
   credential (`agent_wakeup_requests.held_config_id`, migration 081, cleared on claim), so a
   wakeup held on another credential stays held. The release is paced: oldest first,
@@ -3263,11 +3275,49 @@ two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
   first refusal renews the hold and the wakeups still waiting meet it before claiming a
   container. A wakeup handed back before 081 has no credential and is released by any lift.
   Replacing the credential through the PATCH route clears the hold in
-  `updateAiProviderConfig` and releases the same way. Pacing slows the restart; the handoff
-  limit and the token ceilings bound the total.
+  `updateAiProviderConfig` and releases the same way. The spacing slows the restart; the
+  allowance pace below bounds what follows it.
 - **A person bypasses it.** A run whose wakeup payload carries `triggered_by` (Run now,
   Retry) or that has no wakeup (a manual run) skips both checks; its outcome lifts or renews
   the hold.
+
+**The allowance pace.** A hold answers "is the allowance spent?"; nothing about a run, a task
+or an agent bounds how fast an instance spends a refilled one, and a week's Codex allowance
+went in fifteen hours (`.dev/codex-allowance-burn-2026-09-24.md`). The pace bounds it per
+credential, in the provider's own unit:
+
+- **The provider's figure, not Hezo's tokens.** Codex writes the percent used, the window's
+  length and its reset on every `token_count` event (`rate_limits`), and the rollout parser
+  keeps the newest report of the longest window. Claude Code states its windows on its stream
+  as a `rate_limit_event` (`rate_limit_info.unifiedWindows.seven_day`, a fraction used and a
+  unix-seconds reset, an internal shape of the CLI's read defensively). Either way the report
+  rides on `AgentRunUsage.allowance`, and the runner stores each change on the credential
+  through `recordCredentialAllowance` (`allowance_*` columns, migration 082) from the stream,
+  the 60 s usage poll and the end-of-run recovery. Tokens could not
+  do this: the allowance's price per token moves with the model, and its size has moved week to
+  week.
+- **The line.** `allowancePace` (`@hezo/shared`) allows `share x (days elapsed + 1)` percent,
+  capped at `100 - ALLOWANCE_PACE_RESERVE_PERCENT` so a person's run always has room. The share
+  is the admin's per-credential setting (`allowance_daily_share_percent`), or the window spread
+  evenly. One day's share is there from the window's first minute, and an unspent share carries
+  forward. Windows under a day are left to the hold.
+- **The gate.** Right after the hold check, before any row or container, `allowancePaceWait`
+  hands a non-person run on a credential ahead of its line back with
+  `WakeupSkipReason.ProviderAllowancePace` and `held_config_id`, waiting until the line catches
+  up or `ALLOWANCE_PACE_RECHECK_MIN` (30), whichever is sooner. The recheck is what picks up a
+  reset, a manual refill or a raised share without a release path of its own. A person's run is
+  not paced, and its report moves the line for everyone.
+- **One notice per window.** The first paced run files `fileAllowancePaceNotice`, claimed per
+  credential and reset time in `system_meta` in the same statement, so it is filed once.
+- **The admin sets the share.** The credential's Edit dialog (`AllowancePacingField`) writes
+  `allowance_daily_share_percent` through `PATCH /api/ai-providers/:configId`, validated by the
+  same `validateAllowanceDailyShare` the dialog uses; the list and the dialog show the week
+  through `allowancePace`. Replacing the credential clears the stored window, which may belong
+  to another account, and keeps the share.
+- **Beside budgets, not in them.** Budgets count Hezo's own tokens per agent and project over
+  UTC windows and pause the agent; the pace reads the provider's figure per credential and
+  delays work. Both gates run, the budget at claim and the pace in `runAgent`, and neither
+  reads the other's data.
 
 **Credential wait — two separate properties.** A credential raises two independent
 questions, and collapsing them was a bug the measurements caught. **Does the CLI rewrite its
@@ -3590,8 +3640,17 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 knows what changed and why the review was triggered — regardless of who made the change (agent or
 admin). The one exception is a change made by a run working that team's coherence review
 (`byRunId` names the calling run): it is part of the review, so it is neither recorded on the
-ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. A finished
-coherence review does not wake the Coach, and the missed-review sweep skips it too.
+ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. The two
+prompt tools skip the review, too, for an edit that changes only the `## Learned Rules` section
+(`learnedRulesOnlyChange`, `@hezo/shared`): the role's duties are unchanged, so there is nothing to
+reconcile. The batch tool files one review for the items that changed more. A review filed by an
+agent's run records that run as the ticket's `created_by_run_id`, and each wakeup it raises names
+the run too. A finished coherence review does not wake the Coach, and the missed-review sweep skips
+it too.
+
+**Learned Rules cap.** Both prompt tools refuse a write that leaves more than `MAX_LEARNED_RULES`
+(20) top-level bullets under the heading, unless it holds no more than the prompt held before, so
+an overfull section can be trimmed in steps. The admin's REST edit is not capped.
 
 **Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
 wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
@@ -4468,8 +4527,12 @@ it, and `setDefaultAiProvider` moves it atomically.
 serves all three surfaces: the providers-table cell, the Edit dialog and the last step of the
 Add dialog. It owns the lazy catalog fetch (`GET /api/ai-providers/:configId/models`, enabled
 on hover intent or on panel open, never on mount - a settings page with several rows would
-otherwise fire a live provider call per row) and builds the option list: the CLI-default
-fallback pinned first, then a stored model the provider no longer lists, then the catalog.
+otherwise fire a live provider call per row, and read again on every later open) and builds
+the option list: a stored model the provider no longer lists, then the catalog. There is no
+"let the CLI choose" row. A config always has a model: the create route sets one, `PATCH`
+refuses to clear it, and `runAgent` fails a run whose agent and config name none rather than
+passing no `--model` - a CLI left to choose picks whatever its release defaults to, and one
+Codex upgrade moved a fleet onto a model that spends an allowance twice as fast.
 Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`. The
 catalog is only
 listable against a stored credential, which is why the Add dialog asks for the model *after*
@@ -4498,16 +4561,26 @@ passing the flag there fails the run outright and the id travels on `KIMI_MODEL_
 
 **Live model listing.** Every UI surface that picks a specific model — the provider
 `default_model` selector and the per-agent model override — populates its options from
-`GET /api/ai-providers/:configId/models`, which decrypts the stored key and fetches the
-provider's live catalog (`AI_PROVIDER_INFO[provider].verifyEndpoint`, the same URL the add
-flow verifies against, normalized by `parseProviderModels` in `@hezo/shared`). No model list
-is hardcoded. The call is server-initiated and goes **direct** (not through the agent egress
-proxy). Subscription-auth configs short-circuit with `SUBSCRIPTION_UNSUPPORTED` (their blob is
-not an API key the catalog endpoint accepts), and the pickers degrade to the CLI's default
-model.
+`GET /api/ai-providers/:configId/models`, which `listCredentialModels`
+(`services/credential-models.ts`) answers live. An API key reads the provider's catalog
+(`AI_PROVIDER_INFO[provider].verifyEndpoint`, normalized by `parseProviderModels`). A
+subscription lists through its provider's row in `SUBSCRIPTION_MODEL_LISTERS`: Anthropic's
+catalog takes the subscription token on its `subscriptionHeaders` shape; a Codex sign-in lists
+from the ChatGPT backend the Codex CLI uses (`/backend-api/codex/models?client_version=`
+`CODEX_CLI_VERSION`, held equal to the Dockerfile pin by `agent-cli-pins.test.ts`), so the list
+is what the pinned CLI supports. Its access token is short-lived: an expired one is renewed the
+way the CLI renews it and stored through `casUpdateAiProviderCredential`, which already
+tolerates a run rotating the same sign-in. No model list is hardcoded. The calls are
+server-initiated and go **direct** (not through the agent egress proxy).
 
 **Pinned starting model.** A newly created config does not start on `NULL`: the create route
-sets `default_model` from that provider's *pin* (`services/model-pins.ts`). A pin names a
+and the guided sign-in set `default_model` to the model the person picked, else
+`initialDefaultModel` - the provider's *pin* (`services/model-pins.ts`) for an API key, and the
+compile-time fallback for a subscription, whose list is not the API catalog the refreshed pin
+was read from. Once per release, after unlock, `checkCredentialModelsForRelease` reads every
+hosted config's live list and files one notice naming any config whose model its provider no
+longer offers; migration 082 gave a model to every config that had none and its first boot
+lists them (`postDefaultModelBackfillNotice`). A pin names a
 **family** rather than a model (`MODEL_PIN_SPECS` in `@hezo/shared`) — `claude-opus-*`,
 `*-codex`, `gemini-*-flash` — and the daily `model-pin-refresh` cron re-reads each configured
 provider's catalog and moves the pin to the highest version inside that family, storing it in
@@ -4829,9 +4902,9 @@ or a filed hire proposal / opened approval pending an admin decision — with th
 non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
 a `hire-resolved:<id>` wakeup for the requester), so it need not spin re-reporting no work.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
-each provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
-`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model) / OpenAI `gpt-4o-mini`). There is
-no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
+each Claude Code provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
+`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model)), and Codex judges with the run's
+own model. There is no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
 (DeepSeek/Z.ai/Kimi) the judge — and the Claude Code subagent default
 (`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
 (`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
@@ -4841,8 +4914,13 @@ runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes th
 itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
 and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
 scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
-Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
-call the provider API. Codex runs a user-config hook only when its hash is saved as trusted, and
+Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`), each
+spec supplying how the script asks its model. Kimi's calls Moonshot's API with the key the CLI
+uses. Codex's starts a `codex exec` of its own, because a ChatGPT subscription has no API key:
+`--ignore-user-config` leaves out the run's MCP servers and hooks while the sign-in still comes
+from the run's `CODEX_HOME`, `--output-schema` fixes the verdict shape, and the model is the one
+the Stop payload names. Its rollout lands beside the run's, so its tokens count toward the run,
+and it marks its own environment so a hook inside it exits at once. Codex runs a user-config hook only when its hash is saved as trusted, and
 drops an untrusted one silently, so its adapter passes `--dangerously-bypass-hook-trust` whenever
 it writes the hook; without it no Codex run was ever judged. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
@@ -7010,7 +7088,12 @@ the MCP endpoint, so a plain in-container `curl` works), signed with the long ag
 columns (migration `036_asset_dimensions.sql`), backfilled lazily on first `read_project_asset`
 for rows written before the feature. At or under `MCP_INLINE_IMAGE_MAX_BYTES` (~4 MB) the image
 itself is returned **inline** as an MCP image content block so a vision-capable runtime can review
-it (opt out with `include_image: false`; larger images fall back to the URL). The `tool()` wrapper
+it (opt out with `include_image: false`; larger images fall back to the URL). A text asset over
+`LARGE_TEXT_ASSET_BYTES` (`mcp/paging.ts`) read without `offset` also comes back as a signed URL
+with a hint to fetch it and work on it with shell tools, since every window read stays in the
+conversation and is re-sent on each later turn; an explicit `offset` still returns one window.
+`list_project_assets` narrows by `name_prefix` in SQL (`likePrefixPattern`, `lib/sql.ts`, served by
+the `text_pattern_ops` index 082 adds) and pages every sort by keyset (`lib/asset-sort.ts`). The `tool()` wrapper
 (`mcp/tools.ts`) normally serialises a handler result to a single text block, but passes a
 handler's `{ __mcpContent: [...] }` marker through untouched to carry the image block. Project
 deletion sweeps blobs via `deleteProjectAssets` (S3: paginated list + 1000-key batch

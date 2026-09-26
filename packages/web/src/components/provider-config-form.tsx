@@ -16,6 +16,7 @@ import {
 } from '../hooks/use-ai-providers';
 import { useI18n } from '../lib/i18n';
 import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
+import { AllowancePacingField } from './allowance-pacing-field';
 import { ApiKeyInstructions } from './api-key-instructions';
 import { ModelPicker } from './model-picker';
 import { SubscriptionLoginPanel } from './subscription-login-panel';
@@ -154,6 +155,10 @@ export function ProviderConfigForm({
 	// Editing only: a new credential has no config id yet, so there is no catalog
 	// to list against. The add flow asks for the model in its own step afterwards.
 	const [defaultModel, setDefaultModel] = useState<string | null>(editing?.default_model ?? null);
+	// Editing a subscription only: the daily share of its usage window, null for even.
+	const [allowanceShare, setAllowanceShare] = useState<number | null>(
+		editing?.allowance_daily_share_percent ?? null,
+	);
 	// The guided sign-in panel is mounted only after an explicit click, because
 	// starting a flow creates a container.
 	const [signingIn, setSigningIn] = useState(false);
@@ -227,7 +232,12 @@ export function ProviderConfigForm({
 				await updateProvider.mutateAsync({
 					label: name.trim(),
 					runtime,
-					default_model: defaultModel,
+					// A credential is never saved without a model; one with none yet (a
+					// local runner the upgrade could not pin) keeps none until one is picked.
+					...(defaultModel ? { default_model: defaultModel } : {}),
+					...(allowanceShare !== (editing.allowance_daily_share_percent ?? null)
+						? { allowance_daily_share_percent: allowanceShare }
+						: {}),
 					// A blank credential means "keep the stored one" — sending it would ask
 					// the server to store an empty key.
 					...(rotating ? { api_key: credential, auth_method: authMethod } : {}),
@@ -407,7 +417,6 @@ export function ProviderConfigForm({
 					<span className="text-eyebrow text-text-2">{t('settings.provider.model.label')}</span>
 					<ModelPicker
 						configId={editing.id}
-						authMethod={authMethod}
 						value={defaultModel}
 						onChange={setDefaultModel}
 						ariaLabel={t('settings.provider.model.ariaFor', { name: editing.label })}
@@ -416,6 +425,14 @@ export function ProviderConfigForm({
 					/>
 					<p className="text-[13px] text-text-3">{t('settings.provider.model.hint')}</p>
 				</div>
+			)}
+
+			{editing && editing.auth_method === AiAuthMethod.Subscription && (
+				<AllowancePacingField
+					config={editing}
+					value={allowanceShare}
+					onChange={setAllowanceShare}
+				/>
 			)}
 
 			{hasAdvanced && (

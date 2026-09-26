@@ -82,6 +82,7 @@ import {
 	getAiProviderConfig,
 	readActiveUsageHold,
 	readAiProviderCredentialValue,
+	recordCredentialAllowance,
 	resolveRunCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
@@ -133,6 +134,7 @@ import {
 } from './git';
 import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
+import { currentAgentImageVersion } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { HEZO_MCP_CLI_SOURCE } from './mcp-cli/cli-source';
 import {
@@ -150,10 +152,12 @@ import {
 import {
 	loadTaskUsageSoFar,
 	PROVIDER_CAPACITY_COOLDOWN_MIN,
+	type RunSizeStopReason,
 	type TaskUsageSoFar,
 } from './no-work-backoff';
 import {
 	clearAgentErrorApprovalsOnRecovery,
+	fileAllowancePaceNotice,
 	fileProviderCredentialRejectedApproval,
 	fileProviderRefusalApproval,
 	fileProviderUsageLimitNotice,
@@ -171,7 +175,9 @@ import {
 	type PromptSection,
 } from './prompt-budget';
 import {
+	allowancePaceWait,
 	condemnRejectedProviderCredential,
+	describeAllowancePace,
 	describeUsageHold,
 	formatUsageHold,
 	holdCredentialForUsageLimit,
@@ -1353,8 +1359,7 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 export type RunAbortReason =
 	| ContainerExitAbortReason
 	| 'run_timeout'
-	| 'tool_call_ceiling'
-	| 'token_ceiling'
+	| RunSizeStopReason
 	| 'tunnel_lost'
 	| 'server_shutdown';
 
@@ -1666,6 +1671,34 @@ export async function runAgent(
 				},
 			};
 		}
+		// A credential spending ahead of its pace across the provider's window holds
+		// agent work the same way, before any row or container: a week's allowance
+		// is otherwise the fleet's to spend in hours. A person's run is not paced.
+		const paced = allowancePaceWait(
+			selection.config.allowance,
+			selection.config.allowanceDailySharePercent,
+		);
+		if (paced) {
+			const message = describeAllowancePace(paced.pace);
+			await fileAllowancePaceNotice(
+				deps.db,
+				{ memberId: agent.id, teamId: project.team_id, taskId: task?.id ?? null },
+				{
+					configId: selection.config.configId,
+					label: selection.config.label,
+					resetsAt: paced.pace.resetsAt,
+					message,
+				},
+			).catch((e) => log.error(`Could not file the allowance pace notice for ${agent.slug}:`, e));
+			return {
+				...failedResult(message, startTime),
+				requeue: {
+					reason: WakeupSkipReason.ProviderAllowancePace,
+					notBefore: paced.until,
+					heldConfigId: selection.config.configId,
+				},
+			};
+		}
 	}
 
 	// The run executes in the project's team (see buildRunContext); for instance
@@ -1891,35 +1924,50 @@ export async function runAgent(
 	 * holds the work is a control signal, and deriving one from prose is the defect
 	 * this whole path was careful to avoid.
 	 */
+	/**
+	 * Hold the credential a usage-limit refusal came from, and tell a person when
+	 * the refusal starts the hold. Every such refusal holds, whether or not the run
+	 * spent tokens first: a run served for a while and then refused has found the
+	 * allowance spent as surely as one refused at once, and each run dispatched
+	 * before the hold stands is refused the same way.
+	 */
+	const holdForUsageLimit = async (
+		verdict: RuntimeErrorVerdict,
+		refused: { configId: string; provider: AiProvider },
+	): Promise<{ until: Date; heldUntil: string }> => {
+		const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
+		const heldUntil = formatUsageHold(hold.until);
+		if (hold.started) {
+			const config = await getAiProviderConfig(deps.db, refused.configId);
+			await fileProviderUsageLimitNotice(
+				deps.db,
+				{
+					runId: heartbeatRunId,
+					memberId: agent.id,
+					teamId: runTeamId,
+					taskId: task?.id ?? null,
+				},
+				{
+					providerName: AI_PROVIDER_INFO[refused.provider]?.name ?? refused.provider,
+					label: config?.label ?? refused.provider,
+					heldUntil,
+				},
+			).catch((e) => log.error(`Run ${heartbeatRunId}: could not file a usage-limit notice:`, e));
+		}
+		return { until: hold.until, heldUntil };
+	};
+
 	const providerRefusalHandback = async (
 		verdict: RuntimeErrorVerdict,
 		refused: { configId: string; provider: AiProvider },
 	): Promise<{ message: string; cause: HandbackCause } | null> => {
 		if (verdict.family === 'usage_limit') {
-			const hold = await holdCredentialForUsageLimit(deps.db, refused.configId, verdict.retryAt);
-			const heldUntil = formatUsageHold(hold.until);
-			if (hold.started) {
-				const config = await getAiProviderConfig(deps.db, refused.configId);
-				await fileProviderUsageLimitNotice(
-					deps.db,
-					{
-						runId: heartbeatRunId,
-						memberId: agent.id,
-						teamId: runTeamId,
-						taskId: task?.id ?? null,
-					},
-					{
-						providerName: AI_PROVIDER_INFO[refused.provider]?.name ?? refused.provider,
-						label: config?.label ?? refused.provider,
-						heldUntil,
-					},
-				).catch((e) => log.error(`Run ${heartbeatRunId}: could not file a usage-limit notice:`, e));
-			}
+			const { until, heldUntil } = await holdForUsageLimit(verdict, refused);
 			return {
 				message: `${verdict.message} Every run on this credential waits until ${heldUntil}`,
 				cause: {
 					reason: WakeupSkipReason.ProviderUsageLimit,
-					notBefore: hold.until,
+					notBefore: until,
 					heldConfigId: refused.configId,
 				},
 			};
@@ -2069,6 +2117,14 @@ export async function runAgent(
 	const usageHoldSeen = selection.config.usageLimitedUntil;
 
 	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
+	// Every run names its model. Left to choose, a CLI picks whatever its release
+	// defaults to, and one upgrade moved a whole fleet onto a model that spends an
+	// allowance about twice as fast.
+	if (!modelOverride) {
+		return finalizeFailure(
+			`The ${provider} credential "${credential.label}" has no default model. Choose one in Settings > AI Providers.`,
+		);
+	}
 
 	if (signal?.aborted) return finalizeAbort();
 
@@ -2656,6 +2712,24 @@ export async function runAgent(
 		// killed by the wall clock, a cancel or a handback recorded zero tokens for
 		// work that really happened. The file survives however the run ended.
 		let recoveredUsage: AgentRunUsage | null | undefined;
+		// The credential's usage window as the run last read it, stored for the pace
+		// every later dispatch reads. Tracked rather than awaited on the poll path:
+		// the run does not wait on it, and a failed write only leaves the older
+		// figure in place until the next read.
+		let storedAllowanceKey = '';
+		const storeAllowance = (usage: AgentRunUsage | null) => {
+			if (!usage?.allowance) return;
+			// Once per change: a streaming runtime restates its window on every
+			// response, and this is called per chunk.
+			const key = `${usage.allowance.usedPercent}|${usage.allowance.resetsAt.getTime()}`;
+			if (key === storedAllowanceKey) return;
+			storedAllowanceKey = key;
+			trackBackground(
+				recordCredentialAllowance(deps.db, credential.configId, usage.allowance).catch((e) =>
+					log.error(`Run ${heartbeatRunId}: could not store the credential's usage window:`, e),
+				),
+			);
+		};
 		const recoverUsageOnce = async (): Promise<AgentRunUsage | null> => {
 			if (recoveredUsage !== undefined) return recoveredUsage;
 			recoveredUsage = await recoverOffStreamRunUsage(
@@ -2663,6 +2737,7 @@ export async function runAgent(
 				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
 				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
+			storeAllowance(recoveredUsage);
 			return recoveredUsage;
 		};
 
@@ -2831,23 +2906,41 @@ export async function runAgent(
 			const refreshUsage = () => {
 				// Surfaced to the log flush so it's persisted crash-safely (see
 				// currentUsage / onFlush above).
-				currentUsage = parser.getUsage() ?? polledUsage;
+				const streamed = parser.getUsage();
+				currentUsage = streamed ?? polledUsage;
+				// A runtime reports its window on its stream or in its usage file.
+				storeAllowance(streamed?.allowance ? streamed : polledUsage);
 			};
 
 			// The same stop as the tool-call ceiling, measured in what the run has used
 			// rather than what it has called. Never once the stream has stated the
 			// run's end: that is where a runtime reporting only at the end first
 			// reports anything, and the work it reports on is already done.
+			// Stop a run that grew too large, and record why on its row: a task whose
+			// run was stopped for size is held until a person looks, and that hold reads
+			// the reason from here rather than from the error text.
+			const stopRunForSize = (reason: RunSizeStopReason, message: string) => {
+				ceilingHit = true;
+				emit('stderr', message);
+				trackBackground(
+					deps.db
+						.query('UPDATE heartbeat_runs SET stop_reason = $2 WHERE id = $1', [
+							heartbeatRunId,
+							reason,
+						])
+						.catch((e) => log.error(`Run ${heartbeatRunId}: could not record its stop reason:`, e)),
+				);
+				runAbort.abort(reason);
+			};
+
 			const enforceTokenCeiling = () => {
 				if (ceilingHit || parser.hasEnded()) return;
 				const used = currentUsage ? currentUsage.inputTokens + currentUsage.outputTokens : 0;
 				if (used < RUN_TOKEN_CEILING) return;
-				ceilingHit = true;
-				emit(
-					'stderr',
+				stopRunForSize(
+					'token_ceiling',
 					`[runner] Run stopped at its token ceiling (${englishCount(RUN_TOKEN_CEILING)}). A single run this long is spending most of its allowance re-reading its own context.\n`,
 				);
-				runAbort.abort('token_ceiling');
 			};
 
 			const onChunk = async (chunk: ExecLogChunk) => {
@@ -2859,12 +2952,10 @@ export async function runAgent(
 				await persistMcpToolCounts();
 
 				if (!ceilingHit && maxToolCalls > 0 && parser.getToolCallTotal() >= maxToolCalls) {
-					ceilingHit = true;
-					emit(
-						'stderr',
+					stopRunForSize(
+						'tool_call_ceiling',
 						`[runner] Run stopped at its tool-call ceiling (${maxToolCalls}). Every tool result stays in the conversation and is re-sent on the next call, so a run this long spends most of its allowance re-reading its own context.\n`,
 					);
-					runAbort.abort('tool_call_ceiling');
 				}
 				enforceTokenCeiling();
 			};
@@ -3379,6 +3470,14 @@ export async function runAgent(
 					return finalizeRequeue(handback.message, handback.cause);
 				}
 			}
+			// A usage-limit refusal the gate above did not hand back - the run spent
+			// tokens, or wrote something, before the provider refused it - still means
+			// the allowance is spent. The run fails on its merits below, and the
+			// credential is held now, so the runs already queued behind it meet the
+			// hold instead of each being refused in turn.
+			if (refusalVerdict?.family === 'usage_limit') {
+				await holdForUsageLimit(refusalVerdict, { configId: credential.configId, provider });
+			}
 
 			// Ordered by what the human has to act on. Stranded commits come first
 			// because they are the only one where the fix is time-sensitive: the work
@@ -3490,8 +3589,11 @@ export async function runAgent(
 			// back. Lifting the hold lets the work waiting behind it dispatch now rather
 			// than at the stated reset. A success counts too, for the runtimes that
 			// report no usage. Caught: the run's outcome does not turn on it.
+			// A run the provider refused for usage has proved the opposite, whatever
+			// tokens it spent before the refusal, and lifts nothing.
 			if (
 				usageHoldSeen &&
+				parser.getTerminalVerdict()?.family !== 'usage_limit' &&
 				(success || (finalUsage?.inputTokens ?? 0) + (finalUsage?.outputTokens ?? 0) > 0)
 			) {
 				await liftUsageHold(deps.db, credential.configId).catch((e) =>
@@ -5807,7 +5909,9 @@ async function markHeartbeatRunRunning(
 ): Promise<boolean> {
 	// Stamp the resolved AI adapter config on the run so recordRunUsageAndEnforce
 	// can attribute the run's usage to it without re-resolving, and the container
-	// so a container's death can fail only the runs it was actually carrying.
+	// so a container's death can fail only the runs it was actually carrying. The
+	// image version names the CLIs the run had: the pool hands out only containers
+	// built from the current image.
 	//
 	// `queued_reason` is cleared on the way past: it describes what the run was
 	// waiting for, so carrying it onto a started row - and from there onto the
@@ -5816,7 +5920,7 @@ async function markHeartbeatRunRunning(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
 		        ai_provider_config_id = $4, provider = $5::ai_provider,
-		        container_id = $6, queued_reason = NULL
+		        container_id = $6, image_version = $7, queued_reason = NULL
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -5826,6 +5930,7 @@ async function markHeartbeatRunRunning(
 			adapter.aiProviderConfigId,
 			adapter.provider,
 			containerId,
+			containerId ? currentAgentImageVersion() : null,
 		],
 	);
 	// Guarded on the row still being `queued`, so whoever declared an outcome

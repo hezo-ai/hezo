@@ -11,6 +11,66 @@ import {
 } from '../src/services/agent-stream-parser';
 import { RunFailureClass } from '../src/services/run-failure-classification';
 
+describe('Claude Code rate_limit_event', () => {
+	const RESET_S = Date.parse('2026-10-01T02:42:00Z') / 1000;
+	const rateLimitEvent = (info: Record<string, unknown>) =>
+		`${JSON.stringify({ type: 'rate_limit_event', rate_limit_info: info, session_id: 's' })}\n`;
+	const result = `${JSON.stringify({
+		type: 'result',
+		subtype: 'success',
+		result: 'Done.',
+		num_turns: 1,
+		usage: { input_tokens: 100, output_tokens: 10 },
+	})}\n`;
+
+	it('reads the week from the unified windows, as a percent, onto the usage', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = parser.onStdout(
+			rateLimitEvent({
+				status: 'allowed',
+				rateLimitType: 'five_hour',
+				utilization: 0.8,
+				unifiedWindows: {
+					five_hour: { utilization: 0.8, resetsAt: RESET_S - 86_400 },
+					seven_day: { utilization: 0.32, resetsAt: RESET_S },
+				},
+			}),
+		);
+		// A status message the reader has no use for in the run log.
+		expect(out).toBe('');
+		parser.onStdout(result);
+		expect(parser.getUsage()?.inputTokens).toBe(100);
+		expect(parser.getUsage()?.allowance).toEqual({
+			usedPercent: 32,
+			windowMinutes: 10_080,
+			resetsAt: new Date(RESET_S * 1000),
+		});
+	});
+
+	it('reads a top-level seven-day report, and reports the week before any tokens move', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			rateLimitEvent({
+				status: 'rejected',
+				rateLimitType: 'seven_day',
+				utilization: 1,
+				resetsAt: RESET_S,
+			}),
+		);
+		expect(parser.getUsage()?.inputTokens).toBe(0);
+		expect(parser.getUsage()?.allowance?.usedPercent).toBe(100);
+	});
+
+	it('ignores a report that names no week', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			rateLimitEvent({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.5 }),
+		);
+		parser.onStdout(rateLimitEvent({ unifiedWindows: { seven_day: { utilization: 'x' } } }));
+		expect(parser.getUsage()).toBeNull();
+	});
+});
+
 describe('agent-stream-parser', () => {
 	it('buffers partial lines and parses when a newline arrives', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
@@ -1876,6 +1936,84 @@ describe('extractCodexUsageFromRollout', () => {
 	it('returns null when the rollout carries no usage at all', () => {
 		expect(extractCodexUsageFromRollout('')).toBeNull();
 		expect(extractCodexUsageFromRollout(turnContext('gpt-5-codex'))).toBeNull();
+	});
+
+	describe('the usage window', () => {
+		const RESET_S = Date.parse('2026-10-01T02:42:00Z') / 1000;
+		/** A `token_count` record in the shape Codex 0.156 writes, rate limits included. */
+		const withLimits = (
+			input: number,
+			rateLimits: Record<string, unknown> | null,
+			info: 'totals' | 'none' = 'totals',
+		): string =>
+			`${JSON.stringify({
+				timestamp: '2026-09-24T03:00:00.000Z',
+				type: 'event_msg',
+				payload: {
+					type: 'token_count',
+					info:
+						info === 'none'
+							? null
+							: { total_token_usage: { input_tokens: input, output_tokens: 1 } },
+					rate_limits: rateLimits,
+				},
+			})}\n`;
+		const limits = (weeklyUsed: number, extra: Record<string, unknown> = {}) => ({
+			limit_id: 'codex',
+			primary: { used_percent: 60, window_minutes: 300, resets_at: RESET_S - 86_400 * 6 },
+			secondary: { used_percent: weeklyUsed, window_minutes: 10_080, resets_at: RESET_S },
+			plan_type: 'pro',
+			...extra,
+		});
+
+		it('keeps the newest report of the longest window', () => {
+			const usage = extractCodexUsageFromRollout(
+				[withLimits(100, limits(12)), withLimits(200, limits(15))].join(''),
+			);
+			expect(usage?.allowance).toEqual({
+				usedPercent: 15,
+				windowMinutes: 10_080,
+				resetsAt: new Date(RESET_S * 1000),
+			});
+		});
+
+		it('picks the week by its stated length, whichever slot carries it', () => {
+			const swapped = {
+				primary: { used_percent: 33, window_minutes: 10_080, resets_at: RESET_S },
+				secondary: { used_percent: 90, window_minutes: 300, resets_at: RESET_S - 3600 },
+			};
+			expect(extractCodexUsageFromRollout(withLimits(10, swapped))?.allowance?.usedPercent).toBe(
+				33,
+			);
+		});
+
+		it('reads the older resets_in_seconds spelling against the event time', () => {
+			const older = {
+				secondary: { used_percent: 40, window_minutes: 10_080, resets_in_seconds: 3600 },
+			};
+			expect(extractCodexUsageFromRollout(withLimits(10, older))?.allowance?.resetsAt).toEqual(
+				new Date('2026-09-24T04:00:00.000Z'),
+			);
+		});
+
+		it('keeps the last report when a later event carries none', () => {
+			const usage = extractCodexUsageFromRollout(
+				[withLimits(100, limits(20)), withLimits(200, null)].join(''),
+			);
+			expect(usage?.allowance?.usedPercent).toBe(20);
+		});
+
+		it('reports the window of a session refused before any tokens moved', () => {
+			const usage = extractCodexUsageFromRollout(withLimits(0, limits(100), 'none'));
+			expect(usage?.inputTokens).toBe(0);
+			expect(usage?.allowance?.usedPercent).toBe(100);
+		});
+
+		it('reports no window when the rollout carries none', () => {
+			expect(
+				extractCodexUsageFromRollout(tokenCount({ input: 5, output: 1 }))?.allowance,
+			).toBeNull();
+		});
 	});
 });
 

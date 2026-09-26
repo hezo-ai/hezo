@@ -20,6 +20,7 @@ import {
 import { toast } from '../hooks/use-toast';
 import { useI18n } from '../lib/i18n';
 import { AddAiProviderDialog } from './add-ai-provider-dialog';
+import { AllowanceWeekLine } from './allowance-pacing-field';
 import { EditAiProviderDialog } from './edit-ai-provider-dialog';
 import { ModelPicker } from './model-picker';
 import { Badge } from './ui/badge';
@@ -71,9 +72,14 @@ export function AiProvidersSection() {
 			key: 'name',
 			header: 'Name',
 			render: (c) => (
-				<span className="flex items-center gap-2">
-					<span className="font-mono text-[13px]">{c.label}</span>
-					{c.is_default && <Badge color="accent">Default</Badge>}
+				<span className="flex flex-col gap-0.5">
+					<span className="flex items-center gap-2">
+						<span className="font-mono text-[13px]">{c.label}</span>
+						{c.is_default && <Badge color="accent">Default</Badge>}
+					</span>
+					{/* Where a subscription's week stands, on every width: it is what says
+					    whether agent work on it is being held. */}
+					<AllowanceWeekLine config={c} className="text-xs text-text-3" />
 				</span>
 			),
 		},
@@ -259,7 +265,6 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 	return (
 		<ModelPicker
 			configId={config.id}
-			authMethod={config.auth_method}
 			value={config.default_model}
 			// Persisted on pick rather than behind a save: the row has no submit, and
 			// the failure surfaces as a toast with the previous value still rendered.

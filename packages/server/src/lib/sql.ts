@@ -98,3 +98,11 @@ export function isUniqueViolation(err: unknown, constraintName?: string): boolea
 	if (constraintName && e.constraint !== constraintName) return false;
 	return true;
 }
+
+/**
+ * A caller's text as a LIKE prefix pattern, its own `%`, `_` and backslash taken
+ * literally. Pair it with `ESCAPE '\\'` in the query.
+ */
+export function likePrefixPattern(prefix: string): string {
+	return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}

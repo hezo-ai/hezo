@@ -1,3 +1,4 @@
+export * from './allowance-pace.js';
 export * from './avatar/name-gender.js';
 export * from './avatar/pixel-avatar.js';
 export * from './budget.js';
@@ -10,6 +11,7 @@ export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';
 export * from './crypto/sso.js';
 export * from './documents/injected-text-caps.js';
+export * from './documents/learned-rules.js';
 export * from './documents/text.js';
 export * from './i18n/format.js';
 export * from './marketplace.js';
