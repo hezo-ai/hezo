@@ -8,9 +8,12 @@
  * condition" is satisfied and forces an `{ok, reason}` answer, so `ok: false`
  * is the block; the command-script judges answer `{"decision":"block"}`
  * instead. Codex's `Stop` hook shares this block-and-loop shape — only Claude Code supports the
- * elegant `type: "prompt"` sub-LLM call directly; Codex supports
- * `type: "command"` only, so the judge LLM call has to be made by a small Node
- * script Hezo writes alongside the hook config (`buildCodexJudgeScript`).
+ * elegant `type: "prompt"` sub-LLM call directly; Codex and Kimi Code support
+ * `type: "command"` only, so the judge call has to be made by a small Node
+ * script Hezo writes alongside the hook config (`buildJudgeScriptForRuntime`).
+ * Codex's script asks the CLI itself, in a `codex exec` of its own, so the
+ * judge works on whatever credential the run signed in with, a ChatGPT
+ * subscription included.
  *
  * The judge runs inside the container against the team's existing
  * provider credential. No server-side LLM client. The hook is on for every
@@ -18,13 +21,12 @@
  * and Grok cannot (their hooks do not fire, or only warn, in headless mode), and
  * Antigravity's can from agy 1.2 but is not wired, so those three runtimes run
  * with no completeness judge.
- * The judge model is chosen per provider so the
- * call resolves against the team's own upstream — see
- * CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code runtimes and the
- * OpenAI constant below. If a judge is genuinely unreachable
- * (subscription auth with no API key, or an upstream outage) the script
- * fails open — exits 0 with no output, which the runtimes treat as "allow"
- * — and the agent stops normally.
+ * The judge model is chosen per provider so the call resolves against the
+ * team's own upstream: CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code
+ * runtimes, the run's own model for Codex. If a judge is genuinely unreachable
+ * (no key for its API, or an upstream outage) the script fails open - exits 0
+ * with no output, which the runtimes treat as "allow" - and the agent stops
+ * normally.
  */
 
 import {
@@ -35,11 +37,11 @@ import {
 	KIMI_DEFAULT_MODEL,
 } from '@hezo/shared';
 import { DOC_WRITE_GUARD_MATCHER } from './doc-write-guard';
+import { CODEX_FEATURES_OFF } from './runtime-adapters/codex-features';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
-export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 // Shared by both ways of running Kimi. On the Claude Code runtime (against
 // Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"` Stop hook
 // judges with it; on Moonshot's own CLI the command-script judge calls their
@@ -113,8 +115,8 @@ export function judgeModelForProvider(
  * the assistant's final message in its `last_assistant_message` field (alongside
  * `stop_hook_active`), and STOP_HOOK_PROMPT points the judge explicitly at that
  * field so a weaker judge model evaluates the message, not the surrounding
- * metadata. Codex gets the rules as the system prompt and the
- * assistant's final message as the user message (see the judge scripts).
+ * metadata. The command-script judges send the rules together with the
+ * assistant's final message (see the judge scripts).
  */
 export const STOP_HOOK_RULES = `You are a quality gate. The agent is about to stop working on a Hezo task. Review its final message and decide whether the work is truly complete.
 
@@ -312,8 +314,6 @@ interface JudgeRuntimeSpec {
 	 * installed version actually reads.
 	 */
 	blockReasonToStderr?: boolean;
-	/** API key env var(s), checked in order; first non-empty wins. */
-	apiKeyEnvVars: string[];
 	/**
 	 * Field(s) on the parsed stdin JSON that may carry the agent's final
 	 * message, probed in order (first non-empty string wins). A list lets a
@@ -372,22 +372,18 @@ interface JudgeRuntimeSpec {
 		homeEnvVar: string;
 		basename: string;
 	};
-	/** Judge model identifier passed to the upstream API. */
-	model: string;
 	/**
-	 * JS expression (as a string) evaluating to the fetch request. Receives
-	 * `apiKey`, `JUDGE_MODEL`, `SYSTEM_PROMPT`, and `message` in scope.
+	 * Source of `async function ask(message, input)`: put the rules and the
+	 * agent's final `message` to the judge model and return its verdict as JSON
+	 * text, or undefined to fail open. `input` is the parsed hook payload, and
+	 * `SYSTEM_PROMPT` (the rules plus the decision format) is in scope. How the
+	 * model is reached is the runtime's own affair: an API call with the key the
+	 * CLI uses, or the CLI itself.
 	 */
-	fetchExpr: string;
-	/**
-	 * JS expression (as a string) extracting the verdict JSON text from the
-	 * parsed response `data`.
-	 */
-	extractTextExpr: string;
+	askFn: string;
 }
 
 function buildJudgeScript(spec: JudgeRuntimeSpec): string {
-	const apiKeyExpr = spec.apiKeyEnvVars.map((v) => `process.env.${v}`).join(' || ');
 	const guard = spec.loopGuardFile;
 	const lookup = spec.sessionLogLookup;
 	// Both extras are emitted as no-op constants when unset, so the script body
@@ -477,14 +473,17 @@ function messageFromSessionLog(sessionId) {
 	// which every runtime reads as a broken hook and fails open — the judge would
 	// silently never fire.
 	return `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const SYSTEM_PROMPT = ${JSON.stringify(`${STOP_HOOK_RULES}\n\n${STOP_HOOK_DECISION_FORMAT}`)};
-const JUDGE_MODEL = ${JSON.stringify(spec.model)};
 const MESSAGE_FIELDS = ${JSON.stringify(spec.inputFields)};
-const apiKey = ${apiKeyExpr};
+const JUDGE_ACTIVE_ENV = ${JSON.stringify(JUDGE_ACTIVE_ENV)};
 ${extrasDecl}
+${spec.askFn}
+
 async function readStdin() {
 	let buf = '';
 	for await (const chunk of process.stdin) buf += chunk;
@@ -492,7 +491,8 @@ async function readStdin() {
 }
 
 async function main() {
-	if (!apiKey) return; // no api key — fail open
+	// A session the judge itself started: never judge the judge.
+	if (process.env[JUDGE_ACTIVE_ENV]) return;
 	const raw = await readStdin();
 	if (!raw.trim()) return;
 	let input;
@@ -512,10 +512,7 @@ async function main() {
 
 	let verdict;
 	try {
-		const res = await ${spec.fetchExpr};
-		if (!res.ok) return;
-		const data = await res.json();
-		const text = ${spec.extractTextExpr};
+		const text = await ask(message, input);
 		if (!text) return;
 		verdict = JSON.parse(text);
 	} catch { return; }
@@ -535,55 +532,155 @@ main().catch(() => {});
 }
 
 /**
- * Judge specs for the runtimes that need a Node command script (their hook
- * runner can't make the sub-LLM call itself). Claude Code is absent — it uses
- * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding another
- * command-hook provider is one entry here, not a new build function.
+ * Set in the environment of a session the judge starts, so a hook firing inside
+ * that session exits at once instead of judging the judge.
  */
+const JUDGE_ACTIVE_ENV = 'HEZO_STOP_JUDGE_ACTIVE';
+
 /**
- * Build a JudgeRuntimeSpec for any OpenAI-compatible Chat Completions upstream
- * (Codex/OpenAI). Only the base URL, key env, model, and stdin field names vary
- * — the request/response shape is identical.
+ * Build a JudgeRuntimeSpec for an OpenAI-compatible Chat Completions upstream.
+ * Only the base URL, key env, model, and stdin field names vary - the
+ * request/response shape is identical.
  */
 function openAiCompatJudgeSpec(opts: {
 	baseUrl: string;
+	/** API key env var(s), checked in order; first non-empty wins. */
 	apiKeyEnvVars: string[];
 	model: string;
 	inputFields: string[];
 }): JudgeRuntimeSpec {
 	const url = `${opts.baseUrl.replace(/\/$/, '')}/chat/completions`;
+	const apiKeyExpr = opts.apiKeyEnvVars.map((v) => `process.env.${v}`).join(' || ');
 	return {
-		// Codex's `Stop` hook continues the turn on `block`.
 		blockDecision: 'block',
-		apiKeyEnvVars: opts.apiKeyEnvVars,
 		inputFields: opts.inputFields,
-		model: opts.model,
-		fetchExpr: `fetch(${JSON.stringify(url)}, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-			body: JSON.stringify({
-				model: JUDGE_MODEL,
-				messages: [
-					{ role: 'system', content: SYSTEM_PROMPT },
-					{ role: 'user', content: "Agent's final response:\\n" + message },
-				],
-				response_format: { type: 'json_object' },
-				temperature: 0,
-			}),
-			signal: AbortSignal.timeout(25_000),
-		})`,
-		extractTextExpr: `data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content`,
+		askFn: `async function ask(message) {
+	const apiKey = ${apiKeyExpr};
+	if (!apiKey) return undefined; // no api key - fail open
+	const res = await fetch(${JSON.stringify(url)}, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+		body: JSON.stringify({
+			model: ${JSON.stringify(opts.model)},
+			messages: [
+				{ role: 'system', content: SYSTEM_PROMPT },
+				{ role: 'user', content: "Agent's final response:\\n" + message },
+			],
+			response_format: { type: 'json_object' },
+			temperature: 0,
+		}),
+		signal: AbortSignal.timeout(25_000),
+	});
+	if (!res.ok) return undefined;
+	const data = await res.json();
+	return data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+}`,
 	};
 }
 
+/** How long the Codex `Stop` hook may run: long enough for a `codex exec` turn. */
+export const CODEX_JUDGE_HOOK_TIMEOUT_SEC = 120;
+
+/**
+ * How long the judge waits for its `codex exec`, a little under the hook's own
+ * limit, so a slow judge fails open rather than being killed by the hook runner.
+ */
+const CODEX_JUDGE_EXEC_TIMEOUT_MS = (CODEX_JUDGE_HOOK_TIMEOUT_SEC - 20) * 1000;
+
+/**
+ * The flags the judge's own `codex exec` runs with, beside its model, working
+ * folder and output files.
+ *
+ * - `--ignore-user-config` skips the run's `config.toml`, so the judge session
+ *   has none of the run's MCP servers and none of its hooks, while its sign-in
+ *   still comes from the run's `CODEX_HOME`. Codex keeps no auth setting there.
+ * - Low reasoning, no web search, a read-only sandbox, and the features no Hezo
+ *   session uses switched off: the judge reads one message and answers.
+ */
+const CODEX_JUDGE_EXEC_ARGS = [
+	'--ignore-user-config',
+	'--skip-git-repo-check',
+	'--sandbox',
+	'read-only',
+	'-c',
+	'model_reasoning_effort=low',
+	'-c',
+	'web_search=disabled',
+	...CODEX_FEATURES_OFF.flatMap((f) => ['-c', `features.${f}=false`]),
+];
+
+/** The verdict shape the judge's `codex exec` must answer in, as a strict schema. */
+const CODEX_JUDGE_VERDICT_SCHEMA = {
+	type: 'object',
+	properties: {
+		decision: { type: 'string', enum: ['block', 'allow'] },
+		reason: { type: 'string' },
+	},
+	required: ['decision', 'reason'],
+	additionalProperties: false,
+};
+
+/**
+ * Codex's judge asks the CLI, not an API. A ChatGPT subscription has no API key,
+ * so an API call could never judge a subscription run; the CLI reaches the model
+ * with whatever the run signed in with. The session runs under the run's own
+ * `CODEX_HOME`, so its rollout sits beside the run's and its tokens count toward
+ * the run like any other. It judges with the run's own model, which the payload
+ * names and the credential can always run.
+ */
+const CODEX_EXEC_ASK_FN = `const CODEX_JUDGE_ARGS = ${JSON.stringify(CODEX_JUDGE_EXEC_ARGS)};
+const CODEX_JUDGE_SCHEMA = ${JSON.stringify(CODEX_JUDGE_VERDICT_SCHEMA)};
+const CODEX_JUDGE_TIMEOUT_MS = ${CODEX_JUDGE_EXEC_TIMEOUT_MS};
+
+async function ask(message, input) {
+	const model = input && typeof input.model === 'string' ? input.model.trim() : '';
+	if (!model) return undefined; // no run model to judge with - fail open
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hezo-judge-'));
+	try {
+		const schemaPath = path.join(dir, 'verdict.schema.json');
+		const outPath = path.join(dir, 'verdict.json');
+		fs.writeFileSync(schemaPath, JSON.stringify(CODEX_JUDGE_SCHEMA));
+		const args = ['exec', ...CODEX_JUDGE_ARGS, '-C', dir, '-m', model,
+			'--output-schema', schemaPath, '-o', outPath, '-'];
+		const code = await new Promise((resolve) => {
+			// stdout and stderr are dropped: this hook's stdout is its verdict, and
+			// anything else written there reads to Codex as a broken hook.
+			const child = spawn('codex', args, {
+				stdio: ['pipe', 'ignore', 'ignore'],
+				env: { ...process.env, [JUDGE_ACTIVE_ENV]: '1' },
+			});
+			const timer = setTimeout(() => child.kill('SIGKILL'), CODEX_JUDGE_TIMEOUT_MS);
+			child.on('error', () => { clearTimeout(timer); resolve(-1); });
+			child.on('close', (c) => { clearTimeout(timer); resolve(c); });
+			child.stdin.on('error', () => {});
+			child.stdin.end(SYSTEM_PROMPT
+				+ '\\n\\nJudge from the message alone: run no commands and change no files.'
+				+ "\\n\\nAgent's final response:\\n" + message);
+		});
+		if (code !== 0) return undefined;
+		return fs.readFileSync(outPath, 'utf8');
+	} catch {
+		return undefined;
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}`;
+
+/**
+ * Judge specs for the runtimes that need a Node command script (their hook
+ * runner can't make the sub-LLM call itself). Claude Code is absent - it uses
+ * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding another
+ * command-hook provider is one entry here, not a new build function.
+ */
+
 const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
-	// Codex `Stop` hook → OpenAI Chat Completions, judging `last_assistant_message`.
-	[AgentRuntime.Codex]: openAiCompatJudgeSpec({
-		baseUrl: 'https://api.openai.com/v1',
-		apiKeyEnvVars: ['OPENAI_API_KEY'],
-		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
+	// Codex `Stop` hook → a `codex exec` of its own, judging `last_assistant_message`
+	// with the run's model. Codex continues the turn on `block`.
+	[AgentRuntime.Codex]: {
+		blockDecision: 'block',
 		inputFields: ['last_assistant_message'],
-	}),
+		askFn: CODEX_EXEC_ASK_FN,
+	},
 	// No Antigravity (Google) entry: from agy 1.2 its Stop hook fires headless, but
 	// the payload carries no final message (only a `transcriptPath`) and no judge
 	// is wired, so the runtime ships fail-open like Grok and OpenCode. JUDGE_SPECS is
@@ -661,8 +758,8 @@ export function buildJudgeScriptForRuntime(runtime: AgentRuntime): string | null
 
 /**
  * Node script that runs inside the Codex container as the `Stop` hook
- * command. Reads Codex's StopCommandInput JSON from stdin and asks the
- * OpenAI Chat Completions API to judge completeness.
+ * command. Reads Codex's StopCommandInput JSON from stdin and asks the Codex
+ * CLI, in a session of its own, to judge completeness.
  */
 export function buildCodexJudgeScript(): string {
 	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Codex] as JudgeRuntimeSpec);

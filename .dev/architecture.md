@@ -4902,9 +4902,9 @@ or a filed hire proposal / opened approval pending an admin decision — with th
 non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
 a `hire-resolved:<id>` wakeup for the requester), so it need not spin re-reporting no work.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
-each provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
-`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model) / OpenAI `gpt-4o-mini`). There is
-no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
+each Claude Code provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
+`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model)), and Codex judges with the run's
+own model. There is no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
 (DeepSeek/Z.ai/Kimi) the judge — and the Claude Code subagent default
 (`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
 (`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
@@ -4914,8 +4914,13 @@ runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes th
 itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
 and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
 scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
-Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
-call the provider API. Codex runs a user-config hook only when its hash is saved as trusted, and
+Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`), each
+spec supplying how the script asks its model. Kimi's calls Moonshot's API with the key the CLI
+uses. Codex's starts a `codex exec` of its own, because a ChatGPT subscription has no API key:
+`--ignore-user-config` leaves out the run's MCP servers and hooks while the sign-in still comes
+from the run's `CODEX_HOME`, `--output-schema` fixes the verdict shape, and the model is the one
+the Stop payload names. Its rollout lands beside the run's, so its tokens count toward the run,
+and it marks its own environment so a hook inside it exits at once. Codex runs a user-config hook only when its hash is saved as trusted, and
 drops an untrusted one silently, so its adapter passes `--dangerously-bypass-hook-trust` whenever
 it writes the hook; without it no Codex run was ever judged. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
