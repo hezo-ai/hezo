@@ -1,4 +1,10 @@
-import { AgentRuntime, INJECTED_TEXT_CAPS, RUNTIME_PROMPT_MAX_CHARS } from '@hezo/shared';
+import {
+	AgentRuntime,
+	INJECTED_TEXT_CAPS,
+	LEARNED_RULES_HEADING,
+	MAX_LEARNED_RULES,
+	RUNTIME_PROMPT_MAX_CHARS,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -639,6 +645,102 @@ describe('the agent system-prompt ceiling', () => {
 		expect(JSON.stringify(await res.json())).toContain(
 			String(INJECTED_TEXT_CAPS.agent_system_prompt),
 		);
+	});
+});
+
+// The cap bounds what the Coach appends, so it counts only the rules under the
+// heading and lets an overfull section be written down towards it. An edit to the
+// rules alone changes no duties, so it files no team coherence review.
+describe('the Learned Rules cap', () => {
+	const body = 'You are the architect. Design the change before anyone builds it.';
+	const withRules = (count: number, tag: string) =>
+		`${body}\n\n${LEARNED_RULES_HEADING}\n\n${Array.from(
+			{ length: count },
+			(_, i) => `- ${tag} rule ${i}: name the file the change touched.`,
+		).join('\n')}`;
+
+	const callTool = async (name: string, args: Record<string, unknown>) => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(captainToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				id: 1,
+				params: { name, arguments: { project: projectId, ...args } },
+			}),
+		});
+		return JSON.parse((await res.json()).result.content?.[0]?.text ?? '{}');
+	};
+	const write = (prompt: string, summary: string) =>
+		callTool('update_agent_system_prompt', {
+			agent_id: architectId,
+			new_system_prompt: prompt,
+			change_summary: summary,
+		});
+	const reviewMentions = async (summary: string) => {
+		await waitForBackground();
+		const r = await db.query(
+			`SELECT 1 FROM tasks WHERE labels ? $1 AND description LIKE '%' || $2 || '%'`,
+			[COHERENCE_LABEL, summary],
+		);
+		return r.rows.length;
+	};
+
+	it('refuses a write that takes the rules past the cap', async () => {
+		expect((await write(withRules(MAX_LEARNED_RULES, 'cap'), 'cap at the limit')).applied).toBe(
+			true,
+		);
+		const over = await write(withRules(MAX_LEARNED_RULES + 1, 'cap'), 'cap one over');
+		expect(over.error).toContain(`at most ${MAX_LEARNED_RULES} rules`);
+		expect(over.applied).toBeUndefined();
+	});
+
+	it('lets an overfull section be written down, but not grown', async () => {
+		await app.request(`/api/projects/${projectSlug}/agents/${architectId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: withRules(30, 'overfull') }),
+		});
+		expect((await write(withRules(31, 'overfull'), 'overfull grown')).error).toContain('at most');
+		expect((await write(withRules(25, 'overfull'), 'overfull trimmed')).applied).toBe(true);
+	});
+
+	it('files no coherence review for an edit to the rules alone', async () => {
+		await write(withRules(3, 'review'), 'review baseline');
+		expect((await write(withRules(4, 'review'), 'review rules only')).applied).toBe(true);
+		expect(await reviewMentions('review rules only')).toBe(0);
+
+		const reworded = withRules(4, 'review').replace(body, `${body} Keep designs short.`);
+		expect((await write(reworded, 'review duties changed')).applied).toBe(true);
+		expect(await reviewMentions('review duties changed')).toBe(1);
+	});
+
+	it('applies both kinds in a batch but reviews only the change to duties', async () => {
+		await write(withRules(2, 'batch'), 'batch baseline');
+		const result = await callTool('update_agent_system_prompts', {
+			updates: [
+				{
+					agent_id: architectId,
+					new_system_prompt: withRules(3, 'batch'),
+					change_summary: 'batch rules only',
+				},
+				{
+					agent_id: captainId,
+					new_system_prompt: `${body} Hold the team to its plan.`,
+					change_summary: 'batch duties changed',
+				},
+				{
+					agent_id: engineerId,
+					new_system_prompt: withRules(MAX_LEARNED_RULES + 1, 'batch'),
+					change_summary: 'batch over the cap',
+				},
+			],
+		});
+		expect(result.applied_count).toBe(2);
+		expect(result.results[2].error).toContain('at most');
+		expect(await reviewMentions('batch rules only')).toBe(0);
+		expect(await reviewMentions('batch duties changed')).toBe(1);
 	});
 });
 

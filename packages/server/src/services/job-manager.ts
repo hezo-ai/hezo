@@ -3184,7 +3184,7 @@ export class JobManager {
 		// changes its status — `done` is now the final completed state (there is
 		// no `closed`), so the task stays `done` after the Coach run.
 
-		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
+		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId, result.heartbeatRunId);
 	}
 
 	/**
@@ -4049,6 +4049,8 @@ export class JobManager {
 		agentSlug: string,
 		justCompletedTaskId: string,
 		teamId: string,
+		/** The run that just finished, recorded as the one that queued the next. */
+		finishedRunId: string | null | undefined,
 	): Promise<void> {
 		const { db } = this.deps;
 		// Pick the next non-terminal task for this agent that we aren't already
@@ -4133,10 +4135,15 @@ export class JobManager {
 		if (next.rows.length === 0) return;
 
 		try {
-			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
-				task_id: next.rows[0].id,
-				reason: 'chain_after_completion',
-			});
+			await createWakeup(
+				db,
+				memberId,
+				teamId,
+				WakeupSource.Timer,
+				{ task_id: next.rows[0].id, reason: 'chain_after_completion' },
+				undefined,
+				finishedRunId,
+			);
 		} catch (e) {
 			log.error(`Failed to chain wakeup for agent ${ref(agentSlug, memberId)}:`, e);
 		}

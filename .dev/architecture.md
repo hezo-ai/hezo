@@ -326,7 +326,10 @@ is the per-run progress history (one row per goal touched by a run, snapshotting
 percent/health/blurb) — the source of each goal's progress chart and the project-wide progress-update
 list on the project dashboard. `tasks.goal_id` optionally links a ticket to the goal it advances
 (traceability only; it does **not** gate or alter how the task runs), and `tasks.created_by_run_id`
-/ `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it.
+/ `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it, and
+`agent_wakeup_requests.created_by_run_id` a wakeup to the run that raised it, including the
+follow-up timer `chainNextTaskWakeup` queues after a run finishes. A coalesced wakeup names the
+latest run folded into it, which the no-wake-exit check needs to credit that run.
 Together these back the goal detail page's per-goal **run activity** feed (`listGoalRunActivity`):
 the progress-update runs that estimated *that* goal, created tickets linked to it, or commented on its
 linked tickets. During a progress-update run the Captain may comment on an in-flight ticket instead of
@@ -3637,8 +3640,17 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 knows what changed and why the review was triggered — regardless of who made the change (agent or
 admin). The one exception is a change made by a run working that team's coherence review
 (`byRunId` names the calling run): it is part of the review, so it is neither recorded on the
-ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. A finished
-coherence review does not wake the Coach, and the missed-review sweep skips it too.
+ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. The two
+prompt tools skip the review, too, for an edit that changes only the `## Learned Rules` section
+(`learnedRulesOnlyChange`, `@hezo/shared`): the role's duties are unchanged, so there is nothing to
+reconcile. The batch tool files one review for the items that changed more. A review filed by an
+agent's run records that run as the ticket's `created_by_run_id`, and each wakeup it raises names
+the run too. A finished coherence review does not wake the Coach, and the missed-review sweep skips
+it too.
+
+**Learned Rules cap.** Both prompt tools refuse a write that leaves more than `MAX_LEARNED_RULES`
+(20) top-level bullets under the heading, unless it holds no more than the prompt held before, so
+an overfull section can be trimmed in steps. The admin's REST edit is not capped.
 
 **Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
 wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
@@ -7071,7 +7083,12 @@ the MCP endpoint, so a plain in-container `curl` works), signed with the long ag
 columns (migration `036_asset_dimensions.sql`), backfilled lazily on first `read_project_asset`
 for rows written before the feature. At or under `MCP_INLINE_IMAGE_MAX_BYTES` (~4 MB) the image
 itself is returned **inline** as an MCP image content block so a vision-capable runtime can review
-it (opt out with `include_image: false`; larger images fall back to the URL). The `tool()` wrapper
+it (opt out with `include_image: false`; larger images fall back to the URL). A text asset over
+`LARGE_TEXT_ASSET_BYTES` (`mcp/paging.ts`) read without `offset` also comes back as a signed URL
+with a hint to fetch it and work on it with shell tools, since every window read stays in the
+conversation and is re-sent on each later turn; an explicit `offset` still returns one window.
+`list_project_assets` narrows by `name_prefix` in SQL (`likePrefixPattern`, `lib/sql.ts`, served by
+the `text_pattern_ops` index 082 adds) and pages every sort by keyset (`lib/asset-sort.ts`). The `tool()` wrapper
 (`mcp/tools.ts`) normally serialises a handler result to a single text block, but passes a
 handler's `{ __mcpContent: [...] }` marker through untouched to carry the image block. Project
 deletion sweeps blobs via `deleteProjectAssets` (S3: paginated list + 1000-key batch

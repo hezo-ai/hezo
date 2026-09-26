@@ -15,7 +15,9 @@ import type { CodeMigration } from '../../migrate';
  *    size holds its task until a person replies, and the image names the CLI
  *    versions the run had.
  * 3. **The image a pooled container was built from**, so a container from an
- *    older release is rebuilt rather than reused with an older CLI.
+ *    older release is rebuilt rather than reused with an older CLI; and an index
+ *    for finding a project's assets by path prefix, which the asset list tool
+ *    filters on in SQL.
  * 4. **A model on every credential that had none.** A credential with no model
  *    let its CLI choose, and a CLI upgrade moved a whole fleet onto a model that
  *    spends an allowance about twice as fast. Each such credential gets its
@@ -69,6 +71,8 @@ export const migration082AllowancePacing: CodeMigration = {
 				ADD COLUMN IF NOT EXISTS image_version TEXT;
 			ALTER TABLE container_pool_members
 				ADD COLUMN IF NOT EXISTS image_version TEXT;
+			CREATE INDEX IF NOT EXISTS idx_assets_project_filename
+				ON assets (project_id, original_filename text_pattern_ops);
 		`);
 
 		const missing = await db.query<{

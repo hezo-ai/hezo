@@ -118,12 +118,17 @@ describe('082_allowance_pacing migration', () => {
 			[DEFAULT_MODEL_BACKFILL_META_KEY],
 		);
 		const record = JSON.parse(meta.rows[0].value) as DefaultModelBackfill[];
-		expect(record).toEqual([
-			{ label: 'OpenAI', provider: 'openai', model: 'gpt-5.6-sol' },
-			{ label: 'Work', provider: 'openai', model: 'gpt-5.3-codex' },
-			{ label: 'Anthropic', provider: 'anthropic', model: 'claude-opus-5-5' },
-			{ label: 'Local', provider: 'ollama', model: null },
-		]);
+		// Rows seeded in the same instant tie on created_at, so compare as a set.
+		const byLabel = (a: DefaultModelBackfill, b: DefaultModelBackfill) =>
+			a.label.localeCompare(b.label);
+		expect([...record].sort(byLabel)).toEqual(
+			[
+				{ label: 'OpenAI', provider: 'openai', model: 'gpt-5.6-sol' },
+				{ label: 'Work', provider: 'openai', model: 'gpt-5.3-codex' },
+				{ label: 'Anthropic', provider: 'anthropic', model: 'claude-opus-5-5' },
+				{ label: 'Local', provider: 'ollama', model: null },
+			].sort(byLabel),
+		);
 	});
 
 	it('keeps each credential row and its hold, and starts the pacing columns empty', async () => {
@@ -152,5 +157,9 @@ describe('082_allowance_pacing migration', () => {
 			  ORDER BY column_name`,
 		);
 		expect(cols.rows.map((r) => r.column_name)).toEqual(['image_version', 'stop_reason']);
+		const index = await h.db.query(
+			`SELECT 1 FROM pg_indexes WHERE indexname = 'idx_assets_project_filename'`,
+		);
+		expect(index.rows).toHaveLength(1);
 	});
 });
