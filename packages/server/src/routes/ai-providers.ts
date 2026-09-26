@@ -10,6 +10,7 @@ import {
 	providerRuntimes,
 	providerSupportsRuntime,
 	type SubscriptionLoginFailure,
+	validateAllowanceDailyShare,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -454,17 +455,23 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		api_key?: string;
 		auth_method?: string;
 		base_url?: string;
+		allowance_daily_share_percent?: number | null;
 	}>();
 	const hasLabel = 'label' in body;
 	const hasModel = 'default_model' in body;
 	const hasRuntime = 'runtime' in body;
+	const hasShare = 'allowance_daily_share_percent' in body;
+	if (hasShare) {
+		const invalid = validateAllowanceDailyShare(body.allowance_daily_share_percent);
+		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
+	}
 	// A blank key is the dialog's "leave the credential alone" state, not a request
 	// to store an empty one — treat it as absent rather than rejecting the save.
 	const hasCredential = Boolean(body.api_key?.trim());
 	// A local runner's server URL is editable on its own: it is the field most
 	// likely to change (a moved port, a new host) and needs no new credential.
 	const hasBaseUrl = Boolean(body.base_url?.trim());
-	if (!hasLabel && !hasModel && !hasRuntime && !hasCredential && !hasBaseUrl) {
+	if (!hasLabel && !hasModel && !hasRuntime && !hasCredential && !hasBaseUrl && !hasShare) {
 		return err(c, 'INVALID_REQUEST', 'Nothing to update', 400);
 	}
 
@@ -550,6 +557,9 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 			...(hasModel ? { defaultModel: model } : {}),
 			...(hasRuntime ? { runtime } : {}),
 			...(baseUrl ? { baseUrl } : {}),
+			...(hasShare
+				? { allowanceDailySharePercent: body.allowance_daily_share_percent ?? null }
+				: {}),
 			...(credential
 				? {
 						credential: { value: credential.value, masterKeyManager },
@@ -581,6 +591,9 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		...(hasLabel ? { label } : {}),
 		...(hasModel ? { default_model: model } : {}),
 		...(hasRuntime ? { runtime } : {}),
+		...(hasShare
+			? { allowance_daily_share_percent: body.allowance_daily_share_percent ?? null }
+			: {}),
 		...(credential ? { credential_updated: true } : {}),
 	});
 });

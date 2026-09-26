@@ -927,6 +927,81 @@ describe('AI providers models endpoint', () => {
 	});
 });
 
+describe('AI providers allowance pacing', () => {
+	async function codexSubscription(label: string): Promise<string> {
+		const created = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: JSON.stringify({ tokens: { refresh_token: `rt-${label}`, account_id: 'a' } }),
+				auth_method: 'subscription',
+				label,
+			}),
+		});
+		expect(created.status).toBe(201);
+		return (await created.json()).data.id;
+	}
+
+	const patch = (configId: string, body: Record<string, unknown>) =>
+		app.request(`/api/ai-providers/${configId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+
+	const listed = async (configId: string) =>
+		(
+			(await (await app.request('/api/ai-providers', { headers: authHeader(token) })).json())
+				.data as Array<Record<string, unknown>>
+		).find((r) => r.id === configId);
+
+	it('stores a daily share, refuses one out of range, and clears back to even', async () => {
+		const configId = await codexSubscription('pace-share');
+
+		const set = await patch(configId, { allowance_daily_share_percent: 20 });
+		expect(set.status).toBe(200);
+		expect((await listed(configId))?.allowance_daily_share_percent).toBe(20);
+
+		for (const bad of [4, 101, '20']) {
+			expect((await patch(configId, { allowance_daily_share_percent: bad })).status).toBe(400);
+		}
+		expect((await listed(configId))?.allowance_daily_share_percent).toBe(20);
+
+		expect((await patch(configId, { allowance_daily_share_percent: null })).status).toBe(200);
+		expect((await listed(configId))?.allowance_daily_share_percent).toBeNull();
+	});
+
+	it("reports the credential's week, and forgets it when the sign-in is replaced", async () => {
+		const configId = await codexSubscription('pace-week');
+		await patch(configId, { allowance_daily_share_percent: 30 });
+		await db.query(
+			`UPDATE ai_provider_configs
+			    SET allowance_used_percent = 42, allowance_window_minutes = 10080,
+			        allowance_resets_at = '2026-10-01T02:42:00Z', allowance_seen_at = now()
+			  WHERE id = $1`,
+			[configId],
+		);
+		const week = await listed(configId);
+		expect(week?.allowance_used_percent).toBe(42);
+		expect(week?.allowance_window_minutes).toBe(10080);
+		expect(new Date(String(week?.allowance_resets_at)).toISOString()).toBe(
+			'2026-10-01T02:42:00.000Z',
+		);
+
+		const replaced = await patch(configId, {
+			api_key: JSON.stringify({ tokens: { refresh_token: 'rt-other-account', account_id: 'b' } }),
+			auth_method: 'subscription',
+		});
+		expect(replaced.status).toBe(200);
+		const after = await listed(configId);
+		expect(after?.allowance_used_percent).toBeNull();
+		expect(after?.allowance_resets_at).toBeNull();
+		// The pace is the admin's setting, not a reading of the old account.
+		expect(after?.allowance_daily_share_percent).toBe(30);
+	});
+});
+
 describe('AI providers single global default invariant', () => {
 	async function addProvider(provider: string, apiKey: string, label: string): Promise<string> {
 		const res = await app.request('/api/ai-providers', {

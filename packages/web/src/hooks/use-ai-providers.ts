@@ -20,6 +20,12 @@ export interface AiProviderConfig {
 	 */
 	runtime: AgentRuntime | null;
 	created_at: string;
+	/** The provider's last report of this credential's usage window, when a run has read one. */
+	allowance_used_percent: number | null;
+	allowance_window_minutes: number | null;
+	allowance_resets_at: string | null;
+	/** The admin's daily share of that window; null is the even default. */
+	allowance_daily_share_percent: number | null;
 }
 
 export interface AiProviderStatus {
@@ -132,6 +138,8 @@ export function useUpdateAiProviderConfig(configId: string) {
 			auth_method?: string;
 			/** Locally-hosted providers only (Ollama, LM Studio): the operator's server URL. */
 			base_url?: string;
+			/** The daily share of the usage window; null restores the even default. */
+			allowance_daily_share_percent?: number | null;
 		}) =>
 			api.patch<{
 				updated: boolean;

@@ -56,6 +56,12 @@ export interface AiProviderConfig {
 	/** Chosen CLI, or null to follow the provider default. */
 	runtime: AgentRuntime | null;
 	created_at: string;
+	/** The provider's last report of this credential's usage window, when one was read. */
+	allowance_used_percent: number | null;
+	allowance_window_minutes: number | null;
+	allowance_resets_at: string | null;
+	/** The admin's daily share of that window; null is the even default. */
+	allowance_daily_share_percent: number | null;
 }
 
 function deriveLabel(provider: AiProvider, existingCount: number): string {
@@ -574,7 +580,9 @@ export async function getProviderCredentialAndModel(
  * credential. Shared by the list and single-row reads so a create's 201 body and
  * a subsequent list can never disagree about a config's shape.
  */
-const CONFIG_COLUMNS = `id, provider, auth_method, label, is_default, status, default_model, metadata, runtime, created_at::text`;
+const CONFIG_COLUMNS = `id, provider, auth_method, label, is_default, status, default_model, metadata, runtime, created_at::text,
+	allowance_used_percent, allowance_window_minutes, allowance_resets_at::text,
+	allowance_daily_share_percent`;
 
 export async function listAiProviders(db: Db): Promise<AiProviderConfig[]> {
 	const result = await db.query<AiProviderConfig>(
@@ -616,6 +624,8 @@ export interface AiProviderConfigUpdate {
 	 * replacing it, so unrelated metadata keys survive a credential rotation.
 	 */
 	baseUrl?: string;
+	/** The admin's daily share of the usage window; null restores the even default. */
+	allowanceDailySharePercent?: number | null;
 }
 
 export async function updateAiProviderConfig(
@@ -637,8 +647,18 @@ export async function updateAiProviderConfig(
 		{ column: 'encrypted_credential', value: encryptedCredential },
 		{ column: 'auth_method', value: fields.authMethod, cast: 'ai_auth_method' },
 		{ column: 'status', value: fields.status },
-		// A replacement credential is a different allowance, so it starts unheld.
+		// A replacement credential is a different allowance, so it starts unheld and
+		// with no reading of a window it may not share. The admin's pace stays.
 		{ column: 'usage_limited_until', value: encryptedCredential === undefined ? undefined : null },
+		...(
+			[
+				'allowance_used_percent',
+				'allowance_window_minutes',
+				'allowance_resets_at',
+				'allowance_seen_at',
+			] as const
+		).map((column) => ({ column, value: encryptedCredential === undefined ? undefined : null })),
+		{ column: 'allowance_daily_share_percent', value: fields.allowanceDailySharePercent },
 	]);
 
 	// `buildUpdateSet` can only assign, and the base URL has to merge — overwriting

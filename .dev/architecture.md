@@ -3300,6 +3300,11 @@ credential, in the provider's own unit:
   not paced, and its report moves the line for everyone.
 - **One notice per window.** The first paced run files `fileAllowancePaceNotice`, claimed per
   credential and reset time in `system_meta` in the same statement, so it is filed once.
+- **The admin sets the share.** The credential's Edit dialog (`AllowancePacingField`) writes
+  `allowance_daily_share_percent` through `PATCH /api/ai-providers/:configId`, validated by the
+  same `validateAllowanceDailyShare` the dialog uses; the list and the dialog show the week
+  through `allowancePace`. Replacing the credential clears the stored window, which may belong
+  to another account, and keeps the share.
 - **Beside budgets, not in them.** Budgets count Hezo's own tokens per agent and project over
   UTC windows and pause the agent; the pace reads the provider's figure per credential and
   delays work. Both gates run, the budget at claim and the pace in `runAgent`, and neither

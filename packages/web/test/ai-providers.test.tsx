@@ -939,6 +939,59 @@ test('a subscription provider starts on a model and lists its models live', asyn
 	);
 });
 
+test('a subscription shows its week on the list, and the Edit dialog saves a pacing preset', async () => {
+	const { findByRole, findByTestId, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-oat01-pacing-token',
+				auth_method: 'subscription',
+				label: 'anthropic-paced',
+			});
+			expect(res.status).toBe(201);
+			const { db } = getTestContext();
+			// Half a day into a week, 40% spent: the even line allows 1.5 days, about 21%.
+			await db.query(
+				`UPDATE ai_provider_configs
+				    SET allowance_used_percent = 40, allowance_window_minutes = 10080,
+				        allowance_resets_at = now() + interval '6.5 days', allowance_seen_at = now()
+				  WHERE label = 'anthropic-paced'`,
+			);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const rows = await findByRole('table');
+	const week = within(rows).getByText(/40% of this week used/);
+	expect(week.textContent).toContain('Agents are paced to 21% now.');
+
+	await user.click(getByRole('button', { name: 'Edit anthropic-paced' }));
+	const dialog = await findByRole('dialog');
+	const pacing = await findByTestId('allowance-pacing');
+	expect(within(pacing).getByText('Spreads the week over about 7 days.')).toBeTruthy();
+
+	const share = within(pacing).getByTestId('allowance-share-input') as HTMLInputElement;
+	fireEvent.change(share, { target: { value: '3' } });
+	expect(within(pacing).getByText('Enter a number from 5 to 100.')).toBeTruthy();
+
+	await user.click(within(pacing).getByRole('button', { name: 'Over five days' }));
+	expect(share.value).toBe('20');
+	expect(within(pacing).getByText('Spreads the week over about 5 days.')).toBeTruthy();
+	// Judged against the share being edited: 1.5 days of 20% is 30%.
+	expect(within(pacing).getByText(/Agents are paced to 30% now\./)).toBeTruthy();
+
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+	await waitFor(async () => {
+		const { db } = getTestContext();
+		const stored = await db.query<{ allowance_daily_share_percent: number | null }>(
+			`SELECT allowance_daily_share_percent FROM ai_provider_configs WHERE label = 'anthropic-paced'`,
+		);
+		expect(stored.rows[0].allowance_daily_share_percent).toBe(20);
+	});
+});
+
 test('adding a provider ends on a default-model step for the config it just created', async () => {
 	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
 

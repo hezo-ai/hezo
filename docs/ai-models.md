@@ -177,6 +177,15 @@ day's share opens up. You get one notice in your inbox the first time this happe
 window. **Run now** is never paced: a run you start yourself goes ahead, and what it
 reports keeps the pace current for everyone.
 
+**You set the pace per subscription.** Open the subscription's **Edit** dialog in
+**Settings -> AI providers**. The pacing section lets you pick even over the week (the
+default), over five days, or no pacing, or type any daily share from 5% to 100% of the week.
+It says what that share means in days, and shows where the week stands now. The providers
+list shows the same line under each subscription, for example "42% of this week used,
+resets Oct 1, 02:42. Agents are paced to 30% now." A new setting takes effect within half
+an hour, as waiting work checks the pace again. A week appears once a run has read it from
+the provider.
+
 Budgets still apply as well. A budget limits one agent or project in tokens, and the pace
 limits the whole subscription in the provider's own measure. Work runs only when both
 allow it. See [Budgets and costs](/docs/concepts/budgets-and-costs).
