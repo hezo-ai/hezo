@@ -326,7 +326,10 @@ is the per-run progress history (one row per goal touched by a run, snapshotting
 percent/health/blurb) — the source of each goal's progress chart and the project-wide progress-update
 list on the project dashboard. `tasks.goal_id` optionally links a ticket to the goal it advances
 (traceability only; it does **not** gate or alter how the task runs), and `tasks.created_by_run_id`
-/ `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it.
+/ `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it, and
+`agent_wakeup_requests.created_by_run_id` a wakeup to the run that raised it, including the
+follow-up timer `chainNextTaskWakeup` queues after a run finishes. A coalesced wakeup names the
+latest run folded into it, which the no-wake-exit check needs to credit that run.
 Together these back the goal detail page's per-goal **run activity** feed (`listGoalRunActivity`):
 the progress-update runs that estimated *that* goal, created tickets linked to it, or commented on its
 linked tickets. During a progress-update run the Captain may comment on an in-flight ticket instead of
@@ -822,7 +825,13 @@ usage, and the work is done by then. Claude Code's running usage is counted once
 since the CLI restates a message's usage on every content-block event. `TASK_TOKEN_CEILING` (100M, `no-work-backoff.ts`) is a
 dispatch suppression: the tokens of every run on the task since the admin last spoke
 (`adminSpokeAtSql`), held for every agent until the admin speaks, with one `task_token_ceiling`
-notice per hold.
+notice per hold. **A run stopped for its size holds its task too.** `stopRunForSize` records
+`heartbeat_runs.stop_reason` (`token_ceiling` or `tool_call_ceiling`) the moment either ceiling
+fires, and `runSizeStopHold` - the third hard stop in `dispatchSuppression`, read from the same
+`loadTaskSpend` round trip - holds the task for every agent until the admin speaks, with one
+`run_size_stop` notice. Without it the ceiling bounded a run and nothing else: the next heartbeat
+or mention restarted the same oversized work, and on production three runs spent 72M after a
+stopped 31M one.
 
 **What else bounds a single run is `runs.maxToolCalls` (default 600), plus wall-clock
 `run_timeout_min`.** Tool calls because they are what grows the tokens: every tool result stays in the conversation and is re-sent on the next call, so a run's
@@ -3631,8 +3640,17 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 knows what changed and why the review was triggered — regardless of who made the change (agent or
 admin). The one exception is a change made by a run working that team's coherence review
 (`byRunId` names the calling run): it is part of the review, so it is neither recorded on the
-ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. A finished
-coherence review does not wake the Coach, and the missed-review sweep skips it too.
+ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. The two
+prompt tools skip the review, too, for an edit that changes only the `## Learned Rules` section
+(`learnedRulesOnlyChange`, `@hezo/shared`): the role's duties are unchanged, so there is nothing to
+reconcile. The batch tool files one review for the items that changed more. A review filed by an
+agent's run records that run as the ticket's `created_by_run_id`, and each wakeup it raises names
+the run too. A finished coherence review does not wake the Coach, and the missed-review sweep skips
+it too.
+
+**Learned Rules cap.** Both prompt tools refuse a write that leaves more than `MAX_LEARNED_RULES`
+(20) top-level bullets under the heading, unless it holds no more than the prompt held before, so
+an overfull section can be trimmed in steps. The admin's REST edit is not capped.
 
 **Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
 wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
@@ -4884,9 +4902,9 @@ or a filed hire proposal / opened approval pending an admin decision — with th
 non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
 a `hire-resolved:<id>` wakeup for the requester), so it need not spin re-reporting no work.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
-each provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
-`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model) / OpenAI `gpt-4o-mini`). There is
-no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
+each Claude Code provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
+`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model)), and Codex judges with the run's
+own model. There is no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
 (DeepSeek/Z.ai/Kimi) the judge — and the Claude Code subagent default
 (`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
 (`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
@@ -4896,8 +4914,13 @@ runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes th
 itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
 and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
 scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
-Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
-call the provider API. Codex runs a user-config hook only when its hash is saved as trusted, and
+Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`), each
+spec supplying how the script asks its model. Kimi's calls Moonshot's API with the key the CLI
+uses. Codex's starts a `codex exec` of its own, because a ChatGPT subscription has no API key:
+`--ignore-user-config` leaves out the run's MCP servers and hooks while the sign-in still comes
+from the run's `CODEX_HOME`, `--output-schema` fixes the verdict shape, and the model is the one
+the Stop payload names. Its rollout lands beside the run's, so its tokens count toward the run,
+and it marks its own environment so a hook inside it exits at once. Codex runs a user-config hook only when its hash is saved as trusted, and
 drops an untrusted one silently, so its adapter passes `--dangerously-bypass-hook-trust` whenever
 it writes the hook; without it no Codex run was ever judged. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
@@ -7065,7 +7088,12 @@ the MCP endpoint, so a plain in-container `curl` works), signed with the long ag
 columns (migration `036_asset_dimensions.sql`), backfilled lazily on first `read_project_asset`
 for rows written before the feature. At or under `MCP_INLINE_IMAGE_MAX_BYTES` (~4 MB) the image
 itself is returned **inline** as an MCP image content block so a vision-capable runtime can review
-it (opt out with `include_image: false`; larger images fall back to the URL). The `tool()` wrapper
+it (opt out with `include_image: false`; larger images fall back to the URL). A text asset over
+`LARGE_TEXT_ASSET_BYTES` (`mcp/paging.ts`) read without `offset` also comes back as a signed URL
+with a hint to fetch it and work on it with shell tools, since every window read stays in the
+conversation and is re-sent on each later turn; an explicit `offset` still returns one window.
+`list_project_assets` narrows by `name_prefix` in SQL (`likePrefixPattern`, `lib/sql.ts`, served by
+the `text_pattern_ops` index 082 adds) and pages every sort by keyset (`lib/asset-sort.ts`). The `tool()` wrapper
 (`mcp/tools.ts`) normally serialises a handler result to a single text block, but passes a
 handler's `{ __mcpContent: [...] }` marker through untouched to carry the image block. Project
 deletion sweeps blobs via `deleteProjectAssets` (S3: paginated list + 1000-key batch

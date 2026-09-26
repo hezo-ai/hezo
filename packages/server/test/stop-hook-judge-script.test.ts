@@ -17,8 +17,8 @@ import { buildJudgeScriptForRuntime } from '../src/services/stop-hook-prompt';
  * never fires, with nothing in the run log to say so. Only executing the script
  * catches it.
  *
- * No API key is set in the environment for these runs, so each script takes its
- * documented fail-open path and exits 0 without making a network call. That is
+ * The shared cases give each script no final message and no API key, so it takes
+ * its documented fail-open path and exits 0 without asking any model. That is
  * exactly the property under test: fail open, never crash.
  */
 describe('generated stop-hook judge scripts', () => {
@@ -115,6 +115,133 @@ describe('generated stop-hook judge scripts', () => {
 			});
 			expect(out.trim()).toBe('');
 			rmSync(home, { recursive: true, force: true });
+		});
+	});
+
+	describe('codex judge', () => {
+		// Codex's judge asks the CLI itself in a session of its own, so it works on a
+		// ChatGPT subscription, which has no API key. A stand-in `codex` on PATH
+		// records what it was asked and answers as the real one does: the final
+		// message, shaped by the schema, in the file named by `-o`.
+		const FAKE_CODEX = `#!/usr/bin/env node
+import fs from 'node:fs';
+let stdin = '';
+for await (const chunk of process.stdin) stdin += chunk;
+const argv = process.argv.slice(2);
+const at = (flag) => argv[argv.indexOf(flag) + 1];
+fs.writeFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({
+	argv,
+	stdin,
+	judgeActive: process.env.HEZO_STOP_JUDGE_ACTIVE ?? null,
+	schema: JSON.parse(fs.readFileSync(at('--output-schema'), 'utf8')),
+}));
+if (process.env.FAKE_CODEX_VERDICT) fs.writeFileSync(at('-o'), process.env.FAKE_CODEX_VERDICT);
+process.exitCode = Number(process.env.FAKE_CODEX_EXIT ?? 0);
+`;
+
+		const judge = (
+			payload: Record<string, unknown>,
+			opts: { verdict?: unknown; exit?: number; env?: Record<string, string> } = {},
+		) => {
+			const home = mkdtempSync(join(tmpdir(), 'hezo-codex-judge-'));
+			const bin = join(home, 'bin');
+			mkdirSync(bin);
+			writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
+			const log = join(home, 'codex-call.json');
+			const script = join(home, 'judge.mjs');
+			writeFileSync(script, buildJudgeScriptForRuntime(AgentRuntime.Codex) ?? '', { mode: 0o700 });
+			const result = spawnSync(process.execPath, [script], {
+				input: JSON.stringify(payload),
+				encoding: 'utf8',
+				env: {
+					PATH: `${bin}:${process.env.PATH ?? ''}`,
+					FAKE_CODEX_LOG: log,
+					...(opts.verdict === undefined
+						? {}
+						: { FAKE_CODEX_VERDICT: JSON.stringify(opts.verdict) }),
+					...(opts.exit === undefined ? {} : { FAKE_CODEX_EXIT: String(opts.exit) }),
+					...opts.env,
+				},
+			});
+			let call: {
+				argv: string[];
+				stdin: string;
+				judgeActive: string | null;
+				schema: { required: string[] };
+			} | null = null;
+			try {
+				call = JSON.parse(readFileSync(log, 'utf8'));
+			} catch {}
+			rmSync(home, { recursive: true, force: true });
+			return { ...result, call };
+		};
+
+		// The payload as Codex 0.156 sends it to a Stop hook.
+		const stop = {
+			hook_event_name: 'Stop',
+			session_id: 's1',
+			turn_id: 't1',
+			cwd: '/workspace/repo',
+			model: 'gpt-5.6-sol',
+			permission_mode: 'bypassPermissions',
+			transcript_path: null,
+			stop_hook_active: false,
+			last_assistant_message: 'DONE: the report is written.',
+		};
+
+		it('asks a codex exec of its own, with the run model and none of the run config', () => {
+			const { stdout, status, call } = judge(stop, {
+				verdict: { decision: 'block', reason: 'Post the report to the task first.' },
+			});
+			expect(status).toBe(0);
+			expect(JSON.parse(stdout)).toEqual({
+				decision: 'block',
+				reason: 'Post the report to the task first.',
+			});
+			const argv = call?.argv ?? [];
+			expect(argv[0]).toBe('exec');
+			expect(argv).toContain('--ignore-user-config');
+			expect(argv[argv.indexOf('-m') + 1]).toBe('gpt-5.6-sol');
+			expect(argv).toContain('features.plugins=false');
+			expect(argv).toContain('features.apps=false');
+			expect(argv).not.toContain('--dangerously-bypass-hook-trust');
+			expect(argv.at(-1)).toBe('-');
+			expect(call?.schema.required).toEqual(['decision', 'reason']);
+			expect(call?.stdin).toContain('quality gate');
+			expect(call?.stdin).toContain("Agent's final response:\nDONE: the report is written.");
+			// Marks its own session, so a hook inside it cannot judge the judge.
+			expect(call?.judgeActive).toBe('1');
+		});
+
+		it('allows the stop when the judge allows it', () => {
+			const { stdout, call } = judge(stop, { verdict: { decision: 'allow', reason: '' } });
+			expect(call).not.toBeNull();
+			expect(stdout.trim()).toBe('');
+		});
+
+		it('fails open when its codex exec fails', () => {
+			const { stdout, status, call } = judge(stop, {
+				verdict: { decision: 'block', reason: 'unused' },
+				exit: 1,
+			});
+			expect(call).not.toBeNull();
+			expect(status).toBe(0);
+			expect(stdout.trim()).toBe('');
+		});
+
+		it('fails open without starting a session when the payload names no model', () => {
+			const { stdout, call } = judge({ ...stop, model: '' }, { verdict: { decision: 'block' } });
+			expect(call).toBeNull();
+			expect(stdout.trim()).toBe('');
+		});
+
+		it('does nothing inside a session the judge started', () => {
+			const { stdout, call } = judge(stop, {
+				verdict: { decision: 'block', reason: 'unused' },
+				env: { HEZO_STOP_JUDGE_ACTIVE: '1' },
+			});
+			expect(call).toBeNull();
+			expect(stdout.trim()).toBe('');
 		});
 	});
 

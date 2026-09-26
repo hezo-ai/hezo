@@ -4,6 +4,7 @@ import type {
 	SystemContent,
 	SystemCredentialModelContent,
 	SystemHandoffLimitContent,
+	SystemRunSizeStopContent,
 	SystemTaskTokenCeilingContent,
 } from '../components/comment-content';
 import type { MessageKey } from './i18n';
@@ -55,6 +56,7 @@ export function budgetConversionIntroKey(content: SystemBudgetConversionContent)
 type NoticeContent = {
 	handoff_limit: SystemHandoffLimitContent;
 	task_token_ceiling: SystemTaskTokenCeilingContent;
+	run_size_stop: SystemRunSizeStopContent;
 	budget_paused: SystemBudgetPausedContent;
 	budget_conversion: SystemBudgetConversionContent;
 	default_model_backfill: SystemCredentialModelContent;
@@ -104,6 +106,7 @@ const NOTICE_PARTS: {
 		},
 		agentSlugs: [],
 	}),
+	run_size_stop: () => ({ key: 'comment.runSizeStop', vars: {}, agentSlugs: [] }),
 	budget_paused: (content, { t, formatNumber }) => {
 		const slug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 		return {

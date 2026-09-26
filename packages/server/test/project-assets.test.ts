@@ -1334,6 +1334,53 @@ describe('asset sort order (REST + MCP)', () => {
 		]);
 	});
 
+	it('MCP finds assets by name prefix, taking pattern characters literally', async () => {
+		// A browser upload keeps only the file's own name, so the paths are set here.
+		const placed: string[] = [];
+		for (const [i, path] of ['launch/hero.png', 'launch/logo.png', 'launch_notes.png'].entries()) {
+			const id = await uploadTo(sortProjectId, `placed-${i}.png`, 43 + i);
+			await db.query('UPDATE assets SET original_filename = $1 WHERE id = $2', [path, id]);
+			placed.push(id);
+		}
+		expect(await mcpList({ name_prefix: 'launch/', sort: 'alphabetical' })).toEqual([
+			'launch/hero.png',
+			'launch/logo.png',
+		]);
+		// An underscore is a literal here, not LIKE's any-character wildcard.
+		expect(await mcpList({ name_prefix: 'launch_' })).toEqual(['launch_notes.png']);
+		expect(await mcpList({ name_prefix: 'nothing-starts-like-this' })).toEqual([]);
+		await db.query('DELETE FROM assets WHERE id = ANY($1::uuid[])', [placed]);
+	});
+
+	it('MCP hands a large text asset over as a download link, and reads a slice on request', async () => {
+		const big = `${'0123456789abcdef'.repeat(20_000)}\n`; // ~320 KB
+		const written = (await callToolViaMcp(sortAgentToken, 'write_project_asset', {
+			filename: 'ledgers/big.json',
+			content: big,
+		})) as { error?: string };
+		expect(written.error).toBeUndefined();
+
+		const whole = (await callToolViaMcp(sortAgentToken, 'read_project_asset', {
+			filename: 'ledgers/big.json',
+		})) as { url?: string; content?: string; byte_size?: number; hint?: string };
+		expect(whole.content).toBeUndefined();
+		expect(whole.url).toMatch(/^https?:\/\//);
+		expect(whole.byte_size).toBe(Buffer.byteLength(big));
+		expect(whole.hint).toContain('curl');
+
+		const slice = (await callToolViaMcp(sortAgentToken, 'read_project_asset', {
+			filename: 'ledgers/big.json',
+			offset: 16,
+			max_bytes: 32,
+		})) as { content?: string };
+		expect(slice.content).toBe('0123456789abcdef0123456789abcdef');
+
+		await db.query(
+			`DELETE FROM assets WHERE project_id = $1 AND original_filename = 'ledgers/big.json'`,
+			[sortProjectId],
+		);
+	});
+
 	it('MCP composes filter and sort', async () => {
 		await db.query(`UPDATE assets SET archived_at = now() WHERE id = $1`, [ids.apple]);
 		// Active (default) excludes the archived apple, still newest-first.
@@ -1439,6 +1486,26 @@ describe('asset sort order mirrors the shared comparator', () => {
 		it(`REST and MCP both order '${sort}' the way the comparator does`, async () => {
 			expect(await restList(sort)).toEqual(expected(sort));
 			expect(await mcpList(sort)).toEqual(expected(sort));
+		});
+
+		it('MCP pages every order two at a time, meeting each asset once, in order', async () => {
+			// Keyset in SQL on mixed-direction keys: a cursor that compared only the
+			// first key, or rounded a timestamp, would skip or repeat a row here.
+			for (const sort of Object.values(AssetSortOrder)) {
+				const seen: string[] = [];
+				let cursor: string | undefined;
+				for (let page = 0; page < 10; page++) {
+					const out = (await callToolViaMcp(mirrorAgentToken, 'list_project_assets', {
+						sort,
+						limit: 2,
+						...(cursor ? { cursor } : {}),
+					})) as { items: Array<{ filename: string }>; next_cursor: string | null };
+					seen.push(...out.items.map((f) => f.filename));
+					if (!out.next_cursor) break;
+					cursor = out.next_cursor;
+				}
+				expect(seen, sort).toEqual(expected(sort));
+			}
 		});
 	}
 });

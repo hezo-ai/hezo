@@ -65,7 +65,10 @@ rather than here, is how a codebase ends up with two of everything.
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | A system row in a chat thread, or a task's chat-origin stamp + receipt | `postChatSystemMessage` / `recordChatTaskOrigin` / `postTaskStatusBreadcrumb` (`services/chat-breadcrumbs.ts`) - the writers that have only (db, wsManager); the manager's own turns use its `postSystemMessage` |
 | The suggested-replies trailer contract (parse, caps, strip) | `parseSuggestedReplies` (`@hezo/shared`) - the server parses with it, the web renders what it stored; never a second parser |
-| Paging (lists and large content), and excerpting one field | `mcp/paging.ts` - `excerpt()` lives here rather than in `mcp/tools.ts`, which imports from `agent-runner` |
+| Paging (lists and large content), and excerpting one field | `mcp/paging.ts` - `excerpt()` lives here rather than in `mcp/tools.ts`, which imports from `agent-runner`. `LARGE_TEXT_ASSET_BYTES` / `LARGE_TEXT_ASSET_SIZE`: where a text asset stops being windowed and is handed over as a URL, for the tool and every prose line naming the size |
+| Matching a path or name by its leading text in SQL | `likePrefixPattern` (`lib/sql.ts`), paired with `ESCAPE '\\'` - never a raw `${prefix}%` |
+| An asset list's sort and keyset cursor | `lib/asset-sort.ts` - one row per sort in `assetSortKeys`; the order both the REST route and `list_project_assets` use, and the tool's keyset cursor |
+| "How many Learned Rules does this prompt hold, and did an edit touch only them?" | `countLearnedRules` / `learnedRulesOnlyChange` / `learnedRulesCapError` (`@hezo/shared`), with the heading `LEARNED_RULES_HEADING` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
 | "Did the deployer fix this setting, rather than the operator?" | `pinnedSetting` / `isPinned` (`lib/system-meta.ts`), which every pinnable getter routes through - never a direct `runtimeConfig().policy` read at a call site, and never a branch on `managedBy` |

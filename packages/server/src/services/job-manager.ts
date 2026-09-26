@@ -96,6 +96,8 @@ import {
 	noWorkCooldownActive,
 	parkedOnAdminAsk,
 	retrospectiveHoldActive,
+	runSizeStopHold,
+	runSizeStopNotice,
 	type SuppressionExemption,
 	TASK_ATTEMPT_WINDOW_HOURS,
 	TASK_TOKEN_CEILING,
@@ -277,6 +279,7 @@ const HOLDS_WAITING_ON_A_PERSON: ReadonlySet<WakeupSkipReason> = new Set([
 	WakeupSkipReason.RetrospectiveHold,
 	WakeupSkipReason.HandoffRoundsExhausted,
 	WakeupSkipReason.TaskTokenCeiling,
+	WakeupSkipReason.RunSizeStop,
 ]);
 
 /**
@@ -1975,6 +1978,14 @@ export class JobManager {
 				notice: { content: taskTokenCeilingNotice(usage), unlessPostedSince: usage.noticeSince },
 			};
 		}
+		const sized = runSizeStopHold(spend);
+		if (sized) {
+			return {
+				reason: WakeupSkipReason.RunSizeStop,
+				detail: `is held on ${at} after ${sized.stops} run(s) on it were stopped for size since the admin last replied`,
+				notice: { content: runSizeStopNotice(sized), unlessPostedSince: sized.noticeSince },
+			};
+		}
 		return null;
 	}
 
@@ -3173,7 +3184,7 @@ export class JobManager {
 		// changes its status — `done` is now the final completed state (there is
 		// no `closed`), so the task stays `done` after the Coach run.
 
-		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
+		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId, result.heartbeatRunId);
 	}
 
 	/**
@@ -4038,6 +4049,8 @@ export class JobManager {
 		agentSlug: string,
 		justCompletedTaskId: string,
 		teamId: string,
+		/** The run that just finished, recorded as the one that queued the next. */
+		finishedRunId: string | null | undefined,
 	): Promise<void> {
 		const { db } = this.deps;
 		// Pick the next non-terminal task for this agent that we aren't already
@@ -4122,10 +4135,15 @@ export class JobManager {
 		if (next.rows.length === 0) return;
 
 		try {
-			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
-				task_id: next.rows[0].id,
-				reason: 'chain_after_completion',
-			});
+			await createWakeup(
+				db,
+				memberId,
+				teamId,
+				WakeupSource.Timer,
+				{ task_id: next.rows[0].id, reason: 'chain_after_completion' },
+				undefined,
+				finishedRunId,
+			);
 		} catch (e) {
 			log.error(`Failed to chain wakeup for agent ${ref(agentSlug, memberId)}:`, e);
 		}

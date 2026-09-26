@@ -23,6 +23,7 @@ import type {
 	SystemRepoDesignatedContent,
 	SystemRunAbandonedContent,
 	SystemRunFailedContent,
+	SystemRunSizeStopContent,
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
 	SystemTaskTokenCeilingContent,
@@ -51,8 +52,11 @@ function isRunAbandoned(c: SystemContent): c is SystemRunAbandonedContent {
 function isHandoffLimit(c: SystemContent): c is SystemHandoffLimitContent {
 	return c.kind === 'handoff_limit';
 }
-function isTaskTokenCeiling(c: SystemContent): c is SystemTaskTokenCeilingContent {
-	return c.kind === 'task_token_ceiling';
+/** A notice whose whole body is its one translated sentence. */
+function isSentenceNotice(
+	c: SystemContent,
+): c is SystemTaskTokenCeilingContent | SystemRunSizeStopContent {
+	return c.kind === 'task_token_ceiling' || c.kind === 'run_size_stop';
 }
 function isBudgetPaused(c: SystemContent): c is SystemBudgetPausedContent {
 	return c.kind === 'budget_paused';
@@ -114,8 +118,8 @@ export function SystemComment({ comment, projectId }: Props) {
 		return <HandoffLimitBody content={content} projectId={projectId} timestamp={timestamp} />;
 	}
 
-	if (content && isTaskTokenCeiling(content)) {
-		return <TaskTokenCeilingBody content={content} timestamp={timestamp} />;
+	if (content && isSentenceNotice(content)) {
+		return <SentenceNoticeBody content={content} timestamp={timestamp} />;
 	}
 
 	if (content && isBudgetPaused(content)) {
@@ -524,11 +528,11 @@ function HandoffLimitBody({
 }
 
 /** The per-task token ceiling notice: what was used against the ceiling. */
-function TaskTokenCeilingBody({
+function SentenceNoticeBody({
 	content,
 	timestamp,
 }: {
-	content: SystemTaskTokenCeilingContent;
+	content: SystemTaskTokenCeilingContent | SystemRunSizeStopContent;
 	timestamp: React.ReactNode;
 }) {
 	const i18n = useI18n();
@@ -537,7 +541,7 @@ function TaskTokenCeilingBody({
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
-			data-testid="task-token-ceiling-comment"
+			data-testid={`${content.kind.replaceAll('_', '-')}-comment`}
 		>
 			<span className="text-xs text-text-2">{i18n.t(parts.key, parts.vars)}</span>
 			{timestamp}

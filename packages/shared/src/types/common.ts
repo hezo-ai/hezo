@@ -1022,6 +1022,13 @@ export const WakeupSkipReason = {
 	 */
 	TaskTokenCeiling: 'task_token_ceiling',
 	/**
+	 * A run on this task was stopped for its size - its tokens or its tool calls
+	 * outgrew the per-run ceiling - since the admin last spoke, so every agent is
+	 * held off it until the admin replies or runs it. See `runSizeStopHold` in
+	 * `services/no-work-backoff.ts`.
+	 */
+	RunSizeStop: 'run_size_stop',
+	/**
 	 * Another run still held the rotating provider credential when this one gave
 	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
 	 * on different clocks: capacity frees when the idle pass reclaims a container,

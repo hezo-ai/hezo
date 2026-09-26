@@ -152,6 +152,7 @@ import {
 import {
 	loadTaskUsageSoFar,
 	PROVIDER_CAPACITY_COOLDOWN_MIN,
+	type RunSizeStopReason,
 	type TaskUsageSoFar,
 } from './no-work-backoff';
 import {
@@ -1358,8 +1359,7 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 export type RunAbortReason =
 	| ContainerExitAbortReason
 	| 'run_timeout'
-	| 'tool_call_ceiling'
-	| 'token_ceiling'
+	| RunSizeStopReason
 	| 'tunnel_lost'
 	| 'server_shutdown';
 
@@ -2916,16 +2916,31 @@ export async function runAgent(
 			// rather than what it has called. Never once the stream has stated the
 			// run's end: that is where a runtime reporting only at the end first
 			// reports anything, and the work it reports on is already done.
+			// Stop a run that grew too large, and record why on its row: a task whose
+			// run was stopped for size is held until a person looks, and that hold reads
+			// the reason from here rather than from the error text.
+			const stopRunForSize = (reason: RunSizeStopReason, message: string) => {
+				ceilingHit = true;
+				emit('stderr', message);
+				trackBackground(
+					deps.db
+						.query('UPDATE heartbeat_runs SET stop_reason = $2 WHERE id = $1', [
+							heartbeatRunId,
+							reason,
+						])
+						.catch((e) => log.error(`Run ${heartbeatRunId}: could not record its stop reason:`, e)),
+				);
+				runAbort.abort(reason);
+			};
+
 			const enforceTokenCeiling = () => {
 				if (ceilingHit || parser.hasEnded()) return;
 				const used = currentUsage ? currentUsage.inputTokens + currentUsage.outputTokens : 0;
 				if (used < RUN_TOKEN_CEILING) return;
-				ceilingHit = true;
-				emit(
-					'stderr',
+				stopRunForSize(
+					'token_ceiling',
 					`[runner] Run stopped at its token ceiling (${englishCount(RUN_TOKEN_CEILING)}). A single run this long is spending most of its allowance re-reading its own context.\n`,
 				);
-				runAbort.abort('token_ceiling');
 			};
 
 			const onChunk = async (chunk: ExecLogChunk) => {
@@ -2937,12 +2952,10 @@ export async function runAgent(
 				await persistMcpToolCounts();
 
 				if (!ceilingHit && maxToolCalls > 0 && parser.getToolCallTotal() >= maxToolCalls) {
-					ceilingHit = true;
-					emit(
-						'stderr',
+					stopRunForSize(
+						'tool_call_ceiling',
 						`[runner] Run stopped at its tool-call ceiling (${maxToolCalls}). Every tool result stays in the conversation and is re-sent on the next call, so a run this long spends most of its allowance re-reading its own context.\n`,
 					);
-					runAbort.abort('tool_call_ceiling');
 				}
 				enforceTokenCeiling();
 			};

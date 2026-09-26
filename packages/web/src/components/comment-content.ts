@@ -117,6 +117,13 @@ export interface SystemTaskTokenCeilingContent {
 	text?: string;
 }
 
+/** A run on the task was stopped for its size, so it waits for the admin. */
+export interface SystemRunSizeStopContent {
+	kind: 'run_size_stop';
+	stops?: number;
+	text?: string;
+}
+
 /** A budget paused an agent. Posted once per pause, with an inbox row. */
 export interface SystemBudgetPausedContent {
 	kind: 'budget_paused';
@@ -208,6 +215,7 @@ export type SystemContent =
 	| SystemRunAbandonedContent
 	| SystemHandoffLimitContent
 	| SystemTaskTokenCeilingContent
+	| SystemRunSizeStopContent
 	| SystemBudgetPausedContent
 	| SystemBudgetConversionContent
 	| SystemCredentialModelContent
