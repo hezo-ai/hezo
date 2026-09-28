@@ -26,6 +26,18 @@ export type DecodedCursor = { value: string; id: string };
  * follow `next_cursor`/`next_offset` to the end from the response alone.
  */
 
+/**
+ * Above this many bytes, a text asset is handed over as a signed download URL
+ * rather than windowed into the agent's context. Each window read stays in the
+ * conversation and is re-sent on every later call, so the agent fetches a large
+ * file once into its container and works on it with shell tools there. An
+ * explicit `offset` still returns one window.
+ */
+export const LARGE_TEXT_ASSET_BYTES = 256 * 1024;
+
+/** {@link LARGE_TEXT_ASSET_BYTES} as the size prose names it. */
+export const LARGE_TEXT_ASSET_SIZE = `${LARGE_TEXT_ASSET_BYTES / 1024} KB`;
+
 /** Rows returned when a caller does not ask for a specific page size. */
 export const DEFAULT_LIST_LIMIT = 50;
 

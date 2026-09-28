@@ -336,3 +336,63 @@ test("Team settings lists each agent's usage under the name the roster gives it"
 		{ timeout: 15_000 },
 	);
 });
+
+test("Budget page shows each subscription's week, which every project shares", async () => {
+	let teamSlug = '';
+	let pacedId = '';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			const { apiBase, db } = getTestContext();
+			await db.query('DELETE FROM ai_provider_configs');
+			const add = async (label: string) => {
+				const res = await apiBase('/api/ai-providers', {
+					method: 'POST',
+					headers: ws.headers,
+					body: JSON.stringify({
+						provider: 'anthropic',
+						api_key: `sk-ant-oat01-${label}`,
+						auth_method: 'subscription',
+						label,
+					}),
+				});
+				if (res.status !== 201) throw new Error(`seed: adding ${label} failed (${res.status})`);
+				return ((await res.json()) as { data: { id: string } }).data.id;
+			};
+			pacedId = await add('budget-paced');
+			await add('budget-unreported');
+			const lapsedId = await add('budget-lapsed');
+			// Half a day into a week with 40% spent: the even pace allows about 21%.
+			await db.query(
+				`UPDATE ai_provider_configs
+				    SET allowance_used_percent = 40, allowance_window_minutes = 10080,
+				        allowance_resets_at = now() + interval '6.5 days', allowance_seen_at = now()
+				  WHERE id = $1`,
+				[pacedId],
+			);
+			// A window that has already reset says nothing about this week.
+			await db.query(
+				`UPDATE ai_provider_configs
+				    SET allowance_used_percent = 90, allowance_window_minutes = 10080,
+				        allowance_resets_at = now() - interval '1 hour', allowance_seen_at = now() - interval '2 days'
+				  WHERE id = $1`,
+				[lapsedId],
+			);
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	const card = await findByTestId(`subscription-usage-${pacedId}`, undefined, { timeout: 15_000 });
+	expect(card.textContent).toContain('budget-paced');
+	expect(card.textContent).toContain('40% of this week used');
+	expect(card.textContent).toContain('Agents are paced to 21% now.');
+	expect(card.querySelector('a')?.getAttribute('href')).toBe('/settings/ai-providers');
+	// Only a subscription with a current week is listed.
+	const section = await findByTestId('subscription-usage');
+	expect(section.textContent).not.toContain('budget-unreported');
+	expect(section.textContent).not.toContain('budget-lapsed');
+});

@@ -302,9 +302,10 @@ export async function buildSubscriptionMount(
  * execution uses it, and return the value the execution will run on.
  *
  * A waiter on the credential lock snapshots the credential before it waits, and
- * the holder it waited on may have rotated the single-use token in the meantime
- * - so by the time the waiter holds the lock, the file it mounted (or is about
- * to mount) can be a rotation behind and the first refresh against it fails.
+ * the holder it waited on may have rotated the token in the meantime - so by the
+ * time the waiter holds the lock, the file it mounted (or is about to mount) can
+ * be a rotation behind, and for a CLI that serialises because a rotated token
+ * stops working, the first refresh against it fails.
  * Called only once the lock is held, so nothing can rotate it again between the
  * read and the exec. Ownership is handed back to the run user because the write
  * comes from the host side, exactly as the original mount write did.

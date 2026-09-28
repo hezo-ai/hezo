@@ -43,10 +43,12 @@ describe('stop-hook judge spec registry', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
 	});
 
-	it('the Codex judge script targets its OpenAI upstream', () => {
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(
-			'api.openai.com/v1/chat/completions',
-		);
+	it('the Codex judge asks the Codex CLI, which reaches the model on any sign-in', () => {
+		// An API call needs a key, and a ChatGPT subscription has none.
+		const script = buildJudgeScriptForRuntime(AgentRuntime.Codex) ?? '';
+		expect(script).toContain("spawn('codex'");
+		expect(script).toContain('--ignore-user-config');
+		expect(script).not.toContain('api.openai.com');
 	});
 
 	it('Kimi judges via the native Claude Code prompt hook with the Moonshot model', () => {

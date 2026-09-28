@@ -49,6 +49,8 @@ import {
 	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
 	isTextAssetMime,
+	learnedRulesCapError,
+	learnedRulesOnlyChange,
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
@@ -82,7 +84,13 @@ import {
 import { canCoordinateTeam, isHqInstanceAgent } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSearchTextFromBlob } from '../lib/asset-search-text';
-import { assetSortOrderBy } from '../lib/asset-sort';
+import {
+	assetKeysetPredicate,
+	assetSortKeySelect,
+	assetSortKeyValues,
+	assetSortOrderBy,
+	decodeAssetCursor,
+} from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
@@ -128,7 +136,7 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
-import { isUniqueViolation, withTransaction } from '../lib/sql';
+import { isUniqueViolation, likePrefixPattern, withTransaction } from '../lib/sql';
 import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
@@ -257,6 +265,8 @@ import {
 	type KeysetRow,
 	keysetOrderBy,
 	keysetPredicate,
+	LARGE_TEXT_ASSET_BYTES,
+	LARGE_TEXT_ASSET_SIZE,
 	listPagingArgs,
 	pagedList,
 	parseListLimit,
@@ -5021,6 +5031,11 @@ export function registerTools(
 
 			const styleError = authoredPromptError(args.new_system_prompt as string);
 			if (styleError) return { error: styleError };
+			const rulesError = learnedRulesCapError(
+				currentPrompt?.content ?? null,
+				args.new_system_prompt as string,
+			);
+			if (rulesError) return { error: rulesError };
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
@@ -5035,14 +5050,18 @@ export function registerTools(
 				authorMemberId: callerMemberId,
 			});
 
-			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-					changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
-					byRunId: auth.type === AuthType.Agent ? auth.runId : null,
-				}).catch((e) =>
-					log.error('Failed to enqueue team coherence review after prompt update:', e),
-				),
-			);
+			// A change to the Learned Rules alone leaves the role's duties as they
+			// were, so there is nothing for a team coherence review to reconcile.
+			if (!learnedRulesOnlyChange(currentPrompt?.content ?? '', args.new_system_prompt as string)) {
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+						changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
+						byRunId: auth.type === AuthType.Agent ? auth.runId : null,
+					}).catch((e) =>
+						log.error('Failed to enqueue team coherence review after prompt update:', e),
+					),
+				);
+			}
 
 			const styleWarning = authoredPromptWarning(args.new_system_prompt as string);
 			return {
@@ -5058,7 +5077,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_agent_system_prompts',
-		`Apply system prompt changes to MULTIPLE agents in one call - the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises all the updates, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} at once.`,
+		`Apply system prompt changes to MULTIPLE agents in one call - the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises every update changing more than the Learned Rules section, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} at once.`,
 		{
 			project: projectArg(),
 			updates: z
@@ -5099,6 +5118,7 @@ export function registerTools(
 
 			const results: Array<Record<string, unknown>> = [];
 			const applied: Array<{ slug: string; change_summary: string }> = [];
+			const dutiesChanged: Array<{ slug: string; change_summary: string }> = [];
 			for (let i = 0; i < updates.length; i++) {
 				const u = updates[i];
 				const agentId = await resolveAgentId(db, teamId, u.agent_id);
@@ -5139,6 +5159,14 @@ export function registerTools(
 					results.push({ index: i, agent_id: u.agent_id, ok: false, error: styleError });
 					continue;
 				}
+				const rulesError = learnedRulesCapError(
+					currentPrompt?.content ?? null,
+					u.new_system_prompt,
+				);
+				if (rulesError) {
+					results.push({ index: i, agent_id: u.agent_id, ok: false, error: rulesError });
+					continue;
+				}
 				const doc = await upsertDocument(db, undefined, {
 					scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: agentId },
 					content: u.new_system_prompt,
@@ -5147,10 +5175,15 @@ export function registerTools(
 				});
 				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.row.id });
 				applied.push({ slug, change_summary: u.change_summary });
+				// A change to the Learned Rules alone leaves the role's duties as
+				// they were, so there is nothing for a coherence review to reconcile.
+				if (!learnedRulesOnlyChange(currentPrompt?.content ?? '', u.new_system_prompt)) {
+					dutiesChanged.push({ slug, change_summary: u.change_summary });
+				}
 			}
 
-			if (applied.length > 0) {
-				const summary = `Updated ${applied.length} agent prompt(s): ${applied
+			if (dutiesChanged.length > 0) {
+				const summary = `Updated ${dutiesChanged.length} agent prompt(s): ${dutiesChanged
 					.map((a) => `${a.slug} (${a.change_summary})`)
 					.join('; ')}`;
 				trackBackground(
@@ -6123,6 +6156,12 @@ export function registerTools(
 			project: projectArg(),
 			filter: archiveFilterArg(),
 			sort: assetSortArg(),
+			name_prefix: z
+				.string()
+				.optional()
+				.describe(
+					'Only assets whose path starts with this, e.g. "launch/" for a folder or "VELO/evidence/2026-09" for a set of files. Use it to find a file by name instead of paging the whole library.',
+				),
 			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
@@ -6131,12 +6170,20 @@ export function registerTools(
 			const filter = toArchiveFilter(args.filter);
 			const sort = toAssetSortOrder(args.sort);
 			const limit = parseListLimit(args.limit);
-			const where =
-				filter === ArchiveFilter.Active
-					? ' AND archived_at IS NULL'
-					: filter === ArchiveFilter.Archived
-						? ' AND archived_at IS NOT NULL'
-						: '';
+			const params: unknown[] = [scope.projectId];
+			const conditions = ['project_id = $1'];
+			if (filter === ArchiveFilter.Active) conditions.push('archived_at IS NULL');
+			else if (filter === ArchiveFilter.Archived) conditions.push('archived_at IS NOT NULL');
+			const namePrefix = typeof args.name_prefix === 'string' ? args.name_prefix : '';
+			if (namePrefix) {
+				conditions.push(
+					`original_filename LIKE $${params.push(likePrefixPattern(namePrefix))} ESCAPE '\\'`,
+				);
+			}
+			// Keyset in SQL on the caller's sort (by date, name, size or type): the
+			// cursor carries the row's sort keys and its id, the last tie-break.
+			const cursor = decodeAssetCursor(args.cursor as string | undefined);
+			if (cursor) conditions.push(assetKeysetPredicate(sort, cursor, params));
 			const assets = await db.query<{
 				id: string;
 				original_filename: string;
@@ -6147,14 +6194,15 @@ export function registerTools(
 				height: number | null;
 				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, created_at, byte_size, width, height, archived_at
-				 FROM assets WHERE project_id = $1${where}
-				 ORDER BY ${assetSortOrderBy(sort)}`,
-				[scope.projectId],
+				`SELECT id, original_filename, content_type, created_at, byte_size, width, height, archived_at,
+				        ${assetSortKeySelect(sort)}
+				 FROM assets WHERE ${conditions.join(' AND ')}
+				 ORDER BY ${assetSortOrderBy(sort)}, id ASC
+				 LIMIT $${params.push(limit + 1)}`,
+				params,
 			);
-			// The caller picks the sort (by date, name, size or type), so the
-			// cursor anchors on row identity rather than a fixed sort column.
 			const rows = assets.rows.map((a) => ({
+				cursor_keys: JSON.stringify(assetSortKeyValues(a, sort)),
 				id: a.id,
 				filename: a.original_filename,
 				content_type: a.content_type,
@@ -6166,9 +6214,11 @@ export function registerTools(
 				...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
 				...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
 			}));
-			const cursor = decodeCursor(args.cursor as string | undefined);
-			const from = cursor ? rows.findIndex((a) => a.id === cursor.id) + 1 : 0;
-			return pagedList(rows.slice(from, from + limit + 1), limit, 'list_project_assets');
+			const page = pagedList(rows, limit, 'list_project_assets', { column: 'cursor_keys' });
+			return {
+				...page,
+				items: page.items.map(({ cursor_keys: _keys, ...item }) => item),
+			};
 		},
 		db,
 	);
@@ -6395,7 +6445,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media, archives) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - `unzip`, `tar` and `7z` are preinstalled. If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. Large text assets come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null (`list_project_assets` reports each asset's `byte_size`, so you can tell in advance whether that will be needed). For markdown project docs use read_project_doc instead.",
+		`Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as \`content\`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel \`width\`/\`height\` AND the image itself inline, so a vision-capable model can see it to review it - pass \`include_image: false\` to skip the pixels and get metadata only, and images above ~4 MB return metadata + \`url\` only. Other binary assets (PDFs, media, archives) are not inlined, and neither is a text asset over ${LARGE_TEXT_ASSET_SIZE}; the response gives a signed download \`url\` - fetch it with a plain \`curl -fsSL '<url>' -o /tmp/<filename>\` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one) and work on a large text file there with shell tools (grep, jq, python) rather than reading it into your context. An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - \`unzip\`, \`tar\` and \`7z\` are preinstalled. If an admin has left review comments on the asset they come back as \`review_comments\`: for text assets (markdown, plain text) each anchors to an exact \`quote\` (with \`occurrence\` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. A text asset larger than one read but under ${LARGE_TEXT_ASSET_SIZE} comes back one byte-window at a time: when \`truncated\` is true, call again with \`offset\` set to the returned \`next_offset\` (\`list_project_assets\` reports each asset's \`byte_size\`, so you can tell in advance). For a larger one, pass \`offset\` only to read one known slice. For markdown project docs use read_project_doc instead.`,
 		{
 			project: projectArg(),
 			filename: z
@@ -6546,6 +6596,20 @@ export function registerTools(
 					};
 				}
 				return metadata;
+			}
+
+			// A large text asset is fetched, not paged: see LARGE_TEXT_ASSET_BYTES.
+			const textBytes = Number(asset.byte_size);
+			if (textBytes > LARGE_TEXT_ASSET_BYTES && args.offset === undefined) {
+				return {
+					filename: asset.original_filename,
+					content_type: asset.content_type,
+					byte_size: textBytes,
+					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentOrigin()),
+					hint: `This text asset is ${textBytes} bytes, too large to read into your context. Download it with curl -fsSL '<url>' -o /tmp/<filename> and work on it with shell tools (grep, jq, python). To read one slice, call again with offset.`,
+					...(archived ? { archived: true } : {}),
+					...reviewField,
+				};
 			}
 
 			const buf = await assets.read(projectId, asset.id);

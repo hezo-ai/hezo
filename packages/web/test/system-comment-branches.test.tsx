@@ -643,6 +643,24 @@ test('parent_change renders an end without a project slug as plain text', async 
 	);
 });
 
+// ─── credential model notices ───────────────────────────────────────────────
+
+test('a credential-model notice lists each provider and its model, or that it needs one', async () => {
+	const { findByTestId } = renderSystem(
+		comment({
+			kind: 'default_model_backfill',
+			credentials: [
+				{ label: 'OpenAI', provider: 'openai', model: 'gpt-5.6-sol' },
+				{ label: 'Local', provider: 'ollama', model: null },
+			],
+		}),
+	);
+	const text = (await findByTestId('credential-model-comment')).textContent ?? '';
+	expect(text).toContain('This upgrade gave a default model to each AI provider that had none');
+	expect(text).toContain('OpenAI (openai) runs gpt-5.6-sol');
+	expect(text).toContain('Local (ollama) needs a model chosen');
+});
+
 // ─── budget_conversion ──────────────────────────────────────────────────────
 
 test('budget_conversion names each budget by scope and punctuates dollars by the number format', async () => {

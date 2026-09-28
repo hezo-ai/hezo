@@ -17,6 +17,7 @@ import {
 import { CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH } from '../src/services/runtime-adapters/claude-code';
 import type { McpInjectionFile } from '../src/services/runtime-adapters/types';
 import {
+	CODEX_JUDGE_HOOK_TIMEOUT_SEC,
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
 	STOP_HOOK_JUDGE_MODEL_KIMI,
@@ -349,7 +350,16 @@ describe('codex adapter', () => {
 		expect(script.mode).toBe(0o700);
 		expect(script.contents).toContain('quality gate');
 		expect(script.contents).toContain('last_assistant_message');
-		expect(script.contents).toContain('api.openai.com');
+		expect(script.contents).toContain("spawn('codex'");
+	});
+
+	it('gives the judge hook long enough for a codex exec turn', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(config?.contents).toContain(`timeout = ${CODEX_JUDGE_HOOK_TIMEOUT_SEC}`);
 	});
 
 	it('omits the bearer env entry when the descriptor has no token', () => {

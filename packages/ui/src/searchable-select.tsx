@@ -78,6 +78,12 @@ export interface SearchableSelectProps {
 	onOpenChange?: (open: boolean) => void;
 	/** Accessible name for an option's `badge` dot. Pass a translated string. */
 	badgeLabel?: string;
+	/**
+	 * Build a row from the search text, for a caller that accepts a value its
+	 * options do not hold. Shown first while the text is not already an option's
+	 * value; return null to offer none. The caller writes the label, translated.
+	 */
+	queryOption?: (query: string) => SearchableSelectOption | null;
 }
 
 /**
@@ -104,20 +110,25 @@ export function SearchableSelect({
 	errorLabel = null,
 	onOpenChange,
 	badgeLabel = 'Unread',
+	queryOption,
 }: SearchableSelectProps) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState('');
 
 	const selected = options.find((o) => o.value === value) ?? null;
 	const filtered = useMemo(() => {
-		const q = query.trim().toLowerCase();
-		if (!q) return options;
-		return options.filter(
-			(o) =>
-				o.label.toLowerCase().includes(q) ||
-				(o.description ? o.description.toLowerCase().includes(q) : false),
-		);
-	}, [options, query]);
+		const typed = query.trim();
+		const q = typed.toLowerCase();
+		const matches = q
+			? options.filter(
+					(o) =>
+						o.label.toLowerCase().includes(q) ||
+						(o.description ? o.description.toLowerCase().includes(q) : false),
+				)
+			: options;
+		const extra = typed && queryOption ? queryOption(typed) : null;
+		return extra && !options.some((o) => o.value === extra.value) ? [extra, ...matches] : matches;
+	}, [options, query, queryOption]);
 
 	function handleSelect(next: string) {
 		onChange(next);

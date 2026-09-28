@@ -410,9 +410,17 @@ jobs:
   # *-complete rollup needed. Not (yet) in the main ruleset's required checks.
   test-s3:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       HEZO_TEST_ASSET_STORAGE_URL: "s3://hezo:hezo-secret-key@localhost:9000/hezo-test?tls=false&pathStyle=true"
+      # MinIO RELEASE.2025-09-07T16-13-09Z, as the Go module version of the
+      # commit that tag names. MinIO publishes no community image or binary any
+      # more: Docker Hub, quay.io and dl.min.io all refuse an anonymous
+      # download. So the server is built from source, which the archived
+      # repository keeps fixed and the Go checksum database verifies. The
+      # server under test is the one thing in this job with no lockfile behind
+      # it, so it is pinned here. Bump it as its own change.
+      MINIO_MODULE: github.com/minio/minio@v0.0.0-20250907161309-07c3a429bfed
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -424,25 +432,32 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      # A plain docker run, not a service container: services can't override
-      # the image command and MinIO requires `server /data`.
-      #
-      # Pulled from quay.io, which is MinIO's own registry. The Docker Hub
-      # mirror this used to name was withdrawn between 2026-09-11 and
-      # 2026-09-12 - an anonymous pull of `minio/minio` now answers 401 and
-      # docker reports it as "pull access denied", so every run failed here.
-      #
-      # Pinned by digest, tag alongside it for readability: the server under
-      # test is the one thing in this job with no lockfile behind it, and an
-      # image that moves on its own changes what the S3 driver is proved
-      # against with no commit and no signal. Bump it as its own change.
+      # The built server is cached per pinned version, so only a cache miss
+      # pays for the Go toolchain and the build.
+      - name: Cache MinIO
+        id: minio-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/minio-bin
+          key: minio-${{ runner.os }}-${{ env.MINIO_MODULE }}
+      - uses: actions/setup-go@v6
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        with:
+          go-version: "1.24.x"
+          cache: false
+      - name: Build MinIO
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/minio-bin" go install "$MINIO_MODULE"
       - name: Start MinIO
+        env:
+          MINIO_ROOT_USER: hezo
+          MINIO_ROOT_PASSWORD: hezo-secret-key
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=hezo -e MINIO_ROOT_PASSWORD=hezo-secret-key \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
-          timeout 60 bash -c 'until curl -sf http://127.0.0.1:9000/minio/health/ready; do sleep 1; done'
+          mkdir -p "$RUNNER_TEMP/minio-data"
+          nohup "$HOME/minio-bin/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 \
+            > "$RUNNER_TEMP/minio.log" 2>&1 &
+          timeout 60 bash -c 'until curl -sf http://127.0.0.1:9000/minio/health/ready; do sleep 1; done' \
+            || { cat "$RUNNER_TEMP/minio.log"; exit 1; }
       - name: Create test bucket
         env:
           AWS_ACCESS_KEY_ID: hezo

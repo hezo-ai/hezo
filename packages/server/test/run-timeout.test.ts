@@ -230,6 +230,18 @@ const turnUsing = (inputTokens: number) =>
 		},
 	})}\n`;
 
+/**
+ * A run's recorded stop reason, read the moment the run returns: the next
+ * dispatch may evaluate the task's hold straight away, so there is no waiting.
+ */
+async function stopReason(runId: string | undefined): Promise<string | null> {
+	const r = await db.query<{ stop_reason: string | null }>(
+		'SELECT stop_reason FROM heartbeat_runs WHERE id = $1',
+		[runId],
+	);
+	return r.rows[0].stop_reason;
+}
+
 describe('run timeout classification (runAgent)', () => {
 	it('finalizes a run aborted for run_timeout as timed_out and flags result.timedOut', async () => {
 		const ac = new AbortController();
@@ -255,6 +267,8 @@ describe('run timeout classification (runAgent)', () => {
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.TimedOut);
+		// The wall clock is not a size stop, so it holds nothing.
+		expect(await stopReason(result.heartbeatRunId)).toBeNull();
 	});
 
 	it('stops a run that will not stop calling tools, and fails it rather than timing it out', async () => {
@@ -292,6 +306,7 @@ describe('run timeout classification (runAgent)', () => {
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 		expect(run.rows[0].error).toContain('tool-call ceiling');
+		expect(await stopReason(result.heartbeatRunId)).toBe('tool_call_ceiling');
 	});
 
 	it('leaves a run under the ceiling alone', async () => {
@@ -358,6 +373,8 @@ describe('run timeout classification (runAgent)', () => {
 		expect(run.rows[0].error).toContain(
 			`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
 		);
+		// Recorded structurally, for the task hold that reads it.
+		expect(await stopReason(result.heartbeatRunId)).toBe('token_ceiling');
 	});
 
 	it('leaves a run under the token ceiling alone', async () => {

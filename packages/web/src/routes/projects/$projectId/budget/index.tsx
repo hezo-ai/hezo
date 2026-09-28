@@ -6,6 +6,7 @@ import { agentPageParams } from '../../../../components/agent-link';
 import { AgentRef } from '../../../../components/agent-ref';
 import { BudgetCharts } from '../../../../components/budget/budget-charts';
 import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
+import { SubscriptionUsagePanel } from '../../../../components/budget/subscription-usage-panel';
 import { formatDay } from '../../../../components/charts/chart-format';
 import {
 	type SeriesCell,
@@ -106,6 +107,9 @@ function BudgetPage() {
 		<div className="flex flex-col gap-8">
 			{/* Hero + per-window caps + binding-window banner. */}
 			<ProjectBudgetPanel projectId={projectId} variant="spend" />
+
+			{/* The subscriptions' weeks gate agent work alongside these budgets. */}
+			<SubscriptionUsagePanel />
 
 			<section>
 				<SectionHeader

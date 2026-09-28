@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ApprovalStatus, ApprovalType, DocumentType } from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, DocumentType, LEARNED_RULES_HEADING } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { logger } from '../logger';
 
@@ -23,9 +23,6 @@ const log = logger.child('role-prompt-sync');
  * files it for a person to accept, because the document belongs to the admin and
  * the agent, not to the release.
  */
-
-/** The heading agents append their learned rules under. */
-const LEARNED_RULES_HEADING = '## Learned Rules';
 
 export type RolePromptSplice =
 	/** The role doc has not moved since this agent was hired. */

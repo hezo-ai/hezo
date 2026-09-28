@@ -11,6 +11,7 @@ import {
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
+	fallbackPinnedModel,
 	HeartbeatRunStatus,
 	setCredentialSerializationRulesForTest,
 	TaskStatus,
@@ -379,7 +380,8 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		expect(completed!.status).toBe(HeartbeatRunStatus.Succeeded);
 
 		await db.query(
-			`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
+			`UPDATE ai_provider_configs SET default_model = $1 WHERE provider = 'anthropic'`,
+			[fallbackPinnedModel(AiProvider.Anthropic)],
 		);
 		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 	});
@@ -757,7 +759,8 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 				[agentId],
 			);
 			await db.query(
-				`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
+				`UPDATE ai_provider_configs SET default_model = $1 WHERE provider = 'anthropic'`,
+				[fallbackPinnedModel(AiProvider.Anthropic)],
 			);
 			await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 		}
@@ -1004,7 +1007,8 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 		expect(run.rows[0].input_tokens).toBe(400);
 		expect(run.rows[0].output_tokens).toBe(100);
 		await db.query(
-			`UPDATE ai_provider_configs SET default_model = NULL WHERE provider = 'anthropic'`,
+			`UPDATE ai_provider_configs SET default_model = $1 WHERE provider = 'anthropic'`,
+			[fallbackPinnedModel(AiProvider.Anthropic)],
 		);
 		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
 	});

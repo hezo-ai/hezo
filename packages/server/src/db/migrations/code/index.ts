@@ -2,6 +2,7 @@ import type { CodeMigration } from '../../migrate';
 import { migration013UserPassword } from './013_user_password';
 import { migration054AgentIdentity } from './054_agent_identity';
 import { migration081TokenBudgets } from './081_token_budgets';
+import { migration082AllowancePacing } from './082_allowance_pacing';
 
 /**
  * Registry of **code migrations** — schema/data migrations whose data transform
@@ -35,4 +36,5 @@ export const codeMigrations: Record<string, CodeMigration> = {
 	'013_user_password': migration013UserPassword,
 	'054_agent_identity': migration054AgentIdentity,
 	'081_token_budgets': migration081TokenBudgets,
+	'082_allowance_pacing': migration082AllowancePacing,
 };

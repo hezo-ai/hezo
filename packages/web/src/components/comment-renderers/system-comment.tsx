@@ -6,6 +6,7 @@ import { repoWebUrl } from '../../lib/github';
 import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
 import {
 	budgetConversionIntroKey,
+	CREDENTIAL_MODEL_INTRO_KEYS,
 	handoffAgentSlugs,
 	noticeParts,
 } from '../../lib/system-notice-text';
@@ -15,12 +16,14 @@ import type {
 	SystemBudgetConversionContent,
 	SystemBudgetPausedContent,
 	SystemContent,
+	SystemCredentialModelContent,
 	SystemDescriptionChangeContent,
 	SystemHandoffLimitContent,
 	SystemParentChangeContent,
 	SystemRepoDesignatedContent,
 	SystemRunAbandonedContent,
 	SystemRunFailedContent,
+	SystemRunSizeStopContent,
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
 	SystemTaskTokenCeilingContent,
@@ -49,14 +52,20 @@ function isRunAbandoned(c: SystemContent): c is SystemRunAbandonedContent {
 function isHandoffLimit(c: SystemContent): c is SystemHandoffLimitContent {
 	return c.kind === 'handoff_limit';
 }
-function isTaskTokenCeiling(c: SystemContent): c is SystemTaskTokenCeilingContent {
-	return c.kind === 'task_token_ceiling';
+/** A notice whose whole body is its one translated sentence. */
+function isSentenceNotice(
+	c: SystemContent,
+): c is SystemTaskTokenCeilingContent | SystemRunSizeStopContent {
+	return c.kind === 'task_token_ceiling' || c.kind === 'run_size_stop';
 }
 function isBudgetPaused(c: SystemContent): c is SystemBudgetPausedContent {
 	return c.kind === 'budget_paused';
 }
 function isBudgetConversion(c: SystemContent): c is SystemBudgetConversionContent {
 	return c.kind === 'budget_conversion';
+}
+function isCredentialModel(c: SystemContent): c is SystemCredentialModelContent {
+	return c.kind === 'default_model_backfill' || c.kind === 'credential_model_unlisted';
 }
 function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
@@ -109,8 +118,8 @@ export function SystemComment({ comment, projectId }: Props) {
 		return <HandoffLimitBody content={content} projectId={projectId} timestamp={timestamp} />;
 	}
 
-	if (content && isTaskTokenCeiling(content)) {
-		return <TaskTokenCeilingBody content={content} timestamp={timestamp} />;
+	if (content && isSentenceNotice(content)) {
+		return <SentenceNoticeBody content={content} timestamp={timestamp} />;
 	}
 
 	if (content && isBudgetPaused(content)) {
@@ -119,6 +128,10 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isBudgetConversion(content)) {
 		return <BudgetConversionBody content={content} timestamp={timestamp} />;
+	}
+
+	if (content && isCredentialModel(content)) {
+		return <CredentialModelBody content={content} timestamp={timestamp} />;
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -515,11 +528,11 @@ function HandoffLimitBody({
 }
 
 /** The per-task token ceiling notice: what was used against the ceiling. */
-function TaskTokenCeilingBody({
+function SentenceNoticeBody({
 	content,
 	timestamp,
 }: {
-	content: SystemTaskTokenCeilingContent;
+	content: SystemTaskTokenCeilingContent | SystemRunSizeStopContent;
 	timestamp: React.ReactNode;
 }) {
 	const i18n = useI18n();
@@ -528,7 +541,7 @@ function TaskTokenCeilingBody({
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
-			data-testid="task-token-ceiling-comment"
+			data-testid={`${content.kind.replaceAll('_', '-')}-comment`}
 		>
 			<span className="text-xs text-text-2">{i18n.t(parts.key, parts.vars)}</span>
 			{timestamp}
@@ -643,6 +656,39 @@ function BudgetConversionBody({
 							name: subject('hire_proposal', b.name, b.context),
 							value: b.value,
 						})}
+					</li>
+				))}
+			</ul>
+			{timestamp}
+		</div>
+	);
+}
+
+function CredentialModelBody({
+	content,
+	timestamp,
+}: {
+	content: SystemCredentialModelContent;
+	timestamp: React.ReactNode;
+}) {
+	const { t } = useI18n();
+	const credentials = Array.isArray(content.credentials) ? content.credentials : [];
+	return (
+		<div className="flex flex-col gap-1 leading-[22px]" data-testid="credential-model-comment">
+			<span className="text-xs text-text-2">{t(CREDENTIAL_MODEL_INTRO_KEYS[content.kind])}</span>
+			<ul className="ml-4 list-disc text-xs text-text-2 break-words">
+				{credentials.map((c) => (
+					<li key={`${c.provider}-${c.label}`}>
+						{c.model
+							? t('comment.credentialModel.runs', {
+									name: c.label,
+									provider: c.provider,
+									model: c.model,
+								})
+							: t('comment.credentialModel.lineNeedsChoice', {
+									name: c.label,
+									provider: c.provider,
+								})}
 					</li>
 				))}
 			</ul>

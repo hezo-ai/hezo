@@ -100,8 +100,11 @@ The Coach is deliberately conservative about what it writes:
 - **Rules earn their place** - a rule that adds a check says what the check costs. When a
   rule adds work to a task without catching a problem, the Coach marks it with that task. It
   removes the rule when this happens again on a different task, and clears the mark when the
-  rule catches a problem. The Coach keeps each agent to at most 20 learned rules, and merges
-  or removes one before it adds another at the cap.
+  rule catches a problem. Each agent holds at most 20 learned rules. Hezo refuses a change
+  that would take an agent past 20, and an agent already past 20 can only be trimmed, so the
+  Coach merges or removes a rule before it adds another.
+- **Rule changes stay small** - a change to an agent's learned rules alone does not start a
+  team coherence review, because the agent's own instructions are unchanged.
 - **No duplicates** - it reads an agent's current prompt first and skips anything already
   covered.
 - **When in doubt, it skips** - a false lesson is worse than a missed one, and a task

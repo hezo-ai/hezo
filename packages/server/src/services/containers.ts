@@ -40,7 +40,7 @@ import type { ContainerEngine } from './docker';
 import type { EgressProxy } from './egress';
 import { ensureImage } from './ensure-image';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
-import { resolveAgentBaseImage } from './image-registry';
+import { currentAgentImageVersion, resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -615,6 +615,7 @@ export async function provisionContainer(
 		await upsertPoolMember(db, project.id, Id, 'creating', {
 			diskGb,
 			memoryBytes: memoryCeilingBytes,
+			imageVersion: currentAgentImageVersion(),
 		});
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
@@ -785,6 +786,7 @@ export async function provisionContainer(
 		await upsertPoolMember(db, project.id, Id, 'idle', {
 			diskGb,
 			memoryBytes: memoryCeilingBytes,
+			imageVersion: currentAgentImageVersion(),
 		});
 
 		emit('stdout', '✓ Container ready');

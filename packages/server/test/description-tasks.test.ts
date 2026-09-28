@@ -366,6 +366,48 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(task.rows[0].description).toContain('Coach added a learned rule');
 		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
 	});
+
+	it('records the run whose change filed the review, and the run behind each re-wake', async () => {
+		const runs = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status, now()),
+			        ($1, $2, 'running'::heartbeat_run_status, now())
+			 RETURNING id`,
+			[teamId, ceoMemberId],
+		);
+		const [filer, later] = runs.rows.map((r) => r.id);
+
+		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Coach added a learned rule',
+			byRunId: filer,
+		})) as string;
+		const task = await db.query<{ created_by_run_id: string | null }>(
+			'SELECT created_by_run_id FROM tasks WHERE id = $1',
+			[review],
+		);
+		expect(task.rows[0].created_by_run_id).toBe(filer);
+		const wakeFor = async () =>
+			(
+				await db.query<{ created_by_run_id: string | null }>(
+					`SELECT created_by_run_id FROM agent_wakeup_requests
+					 WHERE member_id = $1 AND payload->>'task_id' = $2 AND status = 'queued'`,
+					[captainMemberId, review],
+				)
+			).rows.map((r) => r.created_by_run_id);
+		expect(await wakeFor()).toEqual([filer]);
+
+		await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Coach reworded a learned rule',
+			byRunId: later,
+		});
+		expect(await wakeFor()).toEqual([later]);
+
+		await db.query('DELETE FROM agent_wakeup_requests WHERE payload->>$1 = $2', [
+			'task_id',
+			review,
+		]);
+		await db.query('DELETE FROM heartbeat_runs WHERE id = ANY($1::uuid[])', [[filer, later]]);
+	});
 });
 
 describe('project creation', () => {

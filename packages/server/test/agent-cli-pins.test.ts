@@ -23,6 +23,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CODEX_CLI_VERSION } from '../src/services/runtime-adapters/codex';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const dockerfile = readFileSync(resolve(ROOT, 'docker/Dockerfile.agent-base'), 'utf8');
@@ -31,6 +32,13 @@ const dockerfile = readFileSync(resolve(ROOT, 'docker/Dockerfile.agent-base'), '
 const joined = dockerfile.replace(/\\\n\s*/g, ' ');
 
 describe('agent CLI pins', () => {
+	it('lists Codex subscription models for the Codex version the image pins', () => {
+		// A bump that left the server asking for the older version's models would
+		// offer a person models the running CLI no longer supports, or hide new ones.
+		const pinned = dockerfile.match(/^ARG CODEX_VERSION=(\S+)$/m)?.[1];
+		expect(pinned).toBe(CODEX_CLI_VERSION);
+	});
+
 	it('pins every global npm install to an ARG version', () => {
 		// `npm install -g pkg` and `npm install -g pkg@${VERSION}` look alike in a
 		// diff; this is what makes the difference enforceable.

@@ -22,6 +22,7 @@ import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
 	authHeader,
+	createAgentRun,
 	createStubDocker,
 	createTestApp,
 	createTestProject,
@@ -1814,6 +1815,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const nextTaskId = nextInsert.rows[0].id;
 
+			const finishedRunId = await createAgentRun(db, agentId, teamId, taskId);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
 			await (manager as any).onAgentComplete(
@@ -1829,11 +1831,16 @@ describe('JobManager workflow methods', () => {
 					exitCode: 0,
 					stdout: '',
 					stderr: '',
+					heartbeatRunId: finishedRunId,
 				},
 			);
 
-			const chain = await db.query<{ source: string; payload: Record<string, unknown> }>(
-				`SELECT source, payload FROM agent_wakeup_requests
+			const chain = await db.query<{
+				source: string;
+				payload: Record<string, unknown>;
+				created_by_run_id: string | null;
+			}>(
+				`SELECT source, payload, created_by_run_id FROM agent_wakeup_requests
 				 WHERE member_id = $1 AND status = $2::wakeup_status
 				 ORDER BY created_at DESC LIMIT 1`,
 				[agentId, WakeupStatus.Queued],
@@ -1842,6 +1849,8 @@ describe('JobManager workflow methods', () => {
 			expect(chain.rows[0].source).toBe('timer');
 			expect(chain.rows[0].payload.task_id).toBe(nextTaskId);
 			expect(chain.rows[0].payload.reason).toBe('chain_after_completion');
+			// The next task's run traces back to the run that queued it.
+			expect(chain.rows[0].created_by_run_id).toBe(finishedRunId);
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);

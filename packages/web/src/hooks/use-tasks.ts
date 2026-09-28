@@ -18,7 +18,8 @@ export interface QueuedWakeup {
 		| 'hours_exhausted'
 		| 'run_never_started'
 		| 'provider_at_capacity'
-		| 'provider_usage_limit';
+		| 'provider_usage_limit'
+		| 'provider_allowance_pace';
 	since: string;
 	blocker_task_id: string | null;
 	blocker_identifier: string | null;

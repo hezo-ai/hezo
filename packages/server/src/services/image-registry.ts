@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runtimeConfig } from '../config/runtime';
 import { logger } from '../logger';
-import { IS_PACKAGED_BUILD } from '../version';
+import { HEZO_VERSION, IS_PACKAGED_BUILD } from '../version';
 import type { ContainerEngine } from './docker';
 
 const log = logger.child('image-registry');
@@ -62,6 +62,18 @@ const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
  * exact image instead of building locally, which is the honest way to test
  * against what CI produced rather than against your working tree.
  */
+/**
+ * Which agent image a container built now comes from, as the pool records it: the
+ * operator's pinned image when one is set, else the release's own (a packaged
+ * build fetches the floating tag afresh each boot, so a release is its image).
+ * A pooled container built from any other is recycled rather than reused.
+ */
+export function currentAgentImageVersion(
+	overrideImage: string | undefined = runtimeConfig().containers.agentBaseImage,
+): string {
+	return overrideImage?.trim() || HEZO_VERSION;
+}
+
 /**
  * The published agent-base ref to fetch, or `null` when none should exist. Only a
  * compiled release binary (`IS_PACKAGED_BUILD`) uses the published image; dev

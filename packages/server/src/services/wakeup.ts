@@ -266,19 +266,30 @@ export async function assignmentWakeupAlreadyServed(
 }
 
 /**
- * Why work goes back to the queue, and when it may be claimed again. A provider
- * usage hold names the credential whose hold it waits on and when that lifts -
- * both required, so a handback cannot leave the paced release unable to find
- * it; no other cause carries a credential.
+ * The reasons that hold work on one credential rather than on one task or run:
+ * its spent allowance, and its pace across the provider's window. A wakeup held
+ * for either names the credential and keeps the reason while its wait stands.
+ */
+export const CREDENTIAL_HOLD_REASONS = [
+	WakeupSkipReason.ProviderUsageLimit,
+	WakeupSkipReason.ProviderAllowancePace,
+] as const;
+export type CredentialHoldReason = (typeof CREDENTIAL_HOLD_REASONS)[number];
+
+/**
+ * Why work goes back to the queue, and when it may be claimed again. A hold on a
+ * credential names the credential it waits on and when that lifts - both
+ * required, so a handback cannot leave the paced release unable to find it; no
+ * other cause carries a credential.
  */
 export type HandbackCause =
 	| {
-			reason: typeof WakeupSkipReason.ProviderUsageLimit;
+			reason: CredentialHoldReason;
 			notBefore: Date;
 			heldConfigId: string;
 	  }
 	| {
-			reason: Exclude<WakeupSkipReason, typeof WakeupSkipReason.ProviderUsageLimit>;
+			reason: Exclude<WakeupSkipReason, CredentialHoldReason>;
 			notBefore?: Date;
 			heldConfigId?: never;
 	  };

@@ -32,6 +32,7 @@ import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { ChatSessionManager } from '../../src/services/chat-session-manager';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
 import { createFakeDockerClient } from '../../src/services/fake-docker';
+import { currentAgentImageVersion } from '../../src/services/image-registry';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
 import { getMarketplaceTeam } from '../../src/services/marketplace';
@@ -671,12 +672,18 @@ export async function seedProjectContainer(
 		[projectId, containerId, opts.containerStatus ?? 'running'],
 	);
 	await db.query(
-		`INSERT INTO container_pool_members (project_id, container_id, state, memory_bytes)
-		 VALUES ($1, $2, $3::container_pool_state, $4)
+		`INSERT INTO container_pool_members (project_id, container_id, state, memory_bytes, image_version)
+		 VALUES ($1, $2, $3::container_pool_state, $4, $5)
 		 ON CONFLICT (container_id) DO UPDATE
 		    SET project_id = EXCLUDED.project_id, state = EXCLUDED.state,
-		        memory_bytes = EXCLUDED.memory_bytes`,
-		[projectId, containerId, opts.state ?? 'idle', String(capGb * 1024 ** 3)],
+		        memory_bytes = EXCLUDED.memory_bytes, image_version = EXCLUDED.image_version`,
+		[
+			projectId,
+			containerId,
+			opts.state ?? 'idle',
+			String(capGb * 1024 ** 3),
+			currentAgentImageVersion(),
+		],
 	);
 }
 

@@ -60,9 +60,12 @@ deliverable such as a blog post or report straight into the library (`write_proj
 over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)) and read any asset back later - folder
 paths included (`scripts/deploy-check.sh`). To change part of a text asset, such as tweaking a
 line in an HTML mockup, an agent uses `edit_project_asset` rather than re-sending the whole
-file. Large text assets are read back a window at a time, so a mockup too big for one read is
-still fully reachable, and `list_project_assets` reports each asset's size so an agent knows in
-advance. Agents can also write **binary** deliverables the
+file. A text asset too big for one read comes back a window at a time, so a large mockup is
+still fully reachable. A very large text file, such as a data export, comes back as a download
+link instead: the agent fetches it into its container and searches or transforms it there with
+shell tools, so the file never fills its conversation. `list_project_assets` reports each
+asset's size, so an agent knows in advance, and can narrow the list to one folder or name
+prefix. Agents can also write **binary** deliverables the
 same way (a rendered **image**, chart, screenshot, **PDF**, or media file), so a picture an
 agent generates lands in the library and shows up inline, ready for you to review, without any
 manual download-and-re-upload step. Generated deliverables live here rather than

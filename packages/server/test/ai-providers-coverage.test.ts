@@ -108,24 +108,23 @@ describe('PATCH /ai-providers/:configId branches', () => {
 		expect((await res.json()).error.message).toMatch(/Nothing to update/);
 	});
 
-	it('coerces a blank-string default_model to null', async () => {
+	it('refuses a blank default_model rather than leaving the credential without one', async () => {
 		const res = await app.request(`/api/ai-providers/${configId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ default_model: '   ' }),
 		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.default_model).toBeNull();
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('cannot be left without one');
 	});
 
-	it('coerces a non-string default_model to null', async () => {
+	it('refuses a non-string default_model', async () => {
 		const res = await app.request(`/api/ai-providers/${configId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ default_model: 42 }),
 		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.default_model).toBeNull();
+		expect(res.status).toBe(400);
 	});
 });
 
