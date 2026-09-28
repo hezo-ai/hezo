@@ -92,7 +92,8 @@ export function AddAiProviderDialog({ open, onOpenChange }: AddAiProviderDialogP
 
 /**
  * The final add step. The choice is saved as it is picked rather than on Done, so
- * dismissing the dialog keeps it — Done only closes.
+ * dismissing the dialog keeps it. Done waits for a saved model: a credential with
+ * none fails every run, and a local runner is created without one.
  */
 function DefaultModelStep({ config, onDone }: { config: AiProviderConfig; onDone: () => void }) {
 	const { t } = useI18n();
@@ -110,6 +111,7 @@ function DefaultModelStep({ config, onDone }: { config: AiProviderConfig; onDone
 				<span className="text-eyebrow text-text-2">{t('settings.provider.model.label')}</span>
 				<ModelPicker
 					configId={config.id}
+					provider={config.provider}
 					value={model}
 					onChange={(next) => {
 						setModel(next);
@@ -133,8 +135,13 @@ function DefaultModelStep({ config, onDone }: { config: AiProviderConfig; onDone
 				<p className="text-[13px] text-text-3">{t('settings.provider.model.hint')}</p>
 			</div>
 
-			<div className="flex justify-end">
-				<Button type="button" onClick={onDone} disabled={update.isPending}>
+			<div className="flex items-center justify-end gap-3">
+				{!model && (
+					<p className="text-[13px] text-text-2" data-testid="add-default-model-required">
+						{t('settings.provider.model.required')}
+					</p>
+				)}
+				<Button type="button" onClick={onDone} disabled={update.isPending || !model}>
 					{t('common.done')}
 				</Button>
 			</div>

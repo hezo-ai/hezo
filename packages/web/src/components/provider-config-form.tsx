@@ -417,6 +417,7 @@ export function ProviderConfigForm({
 					<span className="text-eyebrow text-text-2">{t('settings.provider.model.label')}</span>
 					<ModelPicker
 						configId={editing.id}
+						provider={editing.provider}
 						value={defaultModel}
 						onChange={setDefaultModel}
 						ariaLabel={t('settings.provider.model.ariaFor', { name: editing.label })}

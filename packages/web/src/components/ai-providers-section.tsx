@@ -76,6 +76,13 @@ export function AiProvidersSection() {
 					<span className="flex items-center gap-2">
 						<span className="font-mono text-[13px]">{c.label}</span>
 						{c.is_default && <Badge color="accent">Default</Badge>}
+						{/* Every run on it fails until one is chosen, so it shows on every
+						    width, not only in the model column. */}
+						{!c.default_model && (
+							<Badge color="warning" testId={`needs-model-${c.id}`}>
+								{t('settings.provider.model.missing')}
+							</Badge>
+						)}
 					</span>
 					{/* Where a subscription's week stands, on every width: it is what says
 					    whether agent work on it is being held. */}
@@ -265,6 +272,7 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 	return (
 		<ModelPicker
 			configId={config.id}
+			provider={config.provider}
 			value={config.default_model}
 			// Persisted on pick rather than behind a save: the row has no submit, and
 			// the failure surfaces as a toast with the previous value still rendered.

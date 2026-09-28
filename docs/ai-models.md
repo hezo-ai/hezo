@@ -85,6 +85,12 @@ To connect one, pick it in **Add AI provider** and fill in the **Server URL**. T
 only field: Ollama ignores an API key, and LM Studio only checks one if you turned on
 **Require Authentication** - if you did, put the key under **Advanced**.
 
+Then choose the model it runs. A local server has no standard model, so adding one finishes
+only once you pick one. If Hezo cannot load your server's model list, for example because
+the address works only from inside the agent containers, type the model's name (such as
+`qwen3:32b`) in the search box and choose **Use** with that name. A connection with no model
+shows **Needs a model** on the providers list, and its runs fail until you choose one.
+
 ### Use an address the agents can reach
 
 A `localhost` address is the common mistake. Agents run inside a container, so

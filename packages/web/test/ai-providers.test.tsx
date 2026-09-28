@@ -1049,6 +1049,80 @@ test('adding a provider ends on a default-model step for the config it just crea
 	});
 });
 
+test('adding a local runner finishes only with a model, typed when its list cannot load', async () => {
+	// The address a runner's agents use is often one the server cannot reach, so
+	// its model list fails: that is the case the typed name exists for.
+	const harnessFetch = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		const url = input instanceof Request ? input.url : String(input);
+		if (url.includes(':11434')) throw new TypeError('fetch failed');
+		return harnessFetch(input as RequestInfo | URL, init);
+	}) as typeof fetch;
+	try {
+		const { findByRole, getByRole, user } = await renderApp({
+			initialPath: '/settings/ai-providers',
+			seed: async () => {
+				const { db } = getTestContext();
+				await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'ollama'`);
+			},
+		});
+
+		await findByRole('heading', { name: 'AI providers' });
+		await user.click(getByRole('button', { name: 'Add provider' }));
+		const dialog = await findByRole('dialog');
+		await user.click(within(dialog).getByRole('button', { name: /Ollama/ }));
+		await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
+
+		// Created with no model, so the step cannot be finished yet.
+		await within(dialog).findByText('Credential saved', undefined, { timeout: 10_000 });
+		const done = within(dialog).getByRole('button', { name: 'Done' }) as HTMLButtonElement;
+		expect(done.disabled).toBe(true);
+		within(dialog).getByText('Choose a model to finish.');
+
+		const trigger = within(dialog).getByRole('button', { name: /^Default model for / });
+		await user.click(trigger);
+		await user.type(await findByRole('textbox', { name: 'Search models…' }), 'qwen3:32b');
+		await user.click(await findByRole('option', { name: 'Use "qwen3:32b"' }));
+
+		await waitFor(async () => {
+			const { db } = getTestContext();
+			const res = await db.query<{ default_model: string | null }>(
+				`SELECT default_model FROM ai_provider_configs WHERE provider = 'ollama'`,
+			);
+			expect(res.rows[0].default_model).toBe('qwen3:32b');
+		});
+		await waitFor(() => expect(done.disabled).toBe(false));
+		expect(within(dialog).queryByText('Choose a model to finish.')).toBeNull();
+	} finally {
+		globalThis.fetch = harnessFetch;
+	}
+});
+
+test('a credential with no model is flagged on the providers list', async () => {
+	let configId = '';
+	const { findByTestId, findByRole } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			const { db } = getTestContext();
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'lmstudio'`);
+			// A local runner is created with no model: there is no default to give it.
+			const res = await postProvider({ provider: 'lmstudio', label: 'lmstudio-no-model' });
+			expect(res.status).toBe(201);
+			configId = ((await res.json()) as { data: { id: string; default_model: string | null } }).data
+				.id;
+			const stored = await db.query<{ default_model: string | null }>(
+				'SELECT default_model FROM ai_provider_configs WHERE id = $1',
+				[configId],
+			);
+			expect(stored.rows[0].default_model).toBeNull();
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const badge = await findByTestId(`needs-model-${configId}`);
+	expect(badge.textContent).toBe('Needs a model');
+});
+
 test('re-raises the gate after deleting the last provider', async () => {
 	const { findByRole } = await renderApp({
 		initialPath: '/settings/ai-providers',

@@ -1,3 +1,4 @@
+import { AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useAiProviderModels } from '../hooks/use-ai-providers';
@@ -7,6 +8,8 @@ import { SearchableSelect, type SearchableSelectOption } from './ui/searchable-s
 interface ModelPickerProps {
 	/** The stored config whose models are listed. */
 	configId: string;
+	/** The config's provider, which says whether a typed model name is accepted. */
+	provider: string;
 	/** Selected model id, or null while none is chosen yet. */
 	value: string | null;
 	onChange: (value: string) => void;
@@ -33,9 +36,14 @@ interface ModelPickerProps {
  * Ordering is not decided here: the list arrives sorted from
  * `useAiProviderModels`, and this adds only one row that is not a model - a
  * stored id the provider no longer lists.
+ *
+ * A local runner also takes a typed model name. Its models are whatever its
+ * operator pulled, and the address its agents use is often one the server
+ * cannot reach, so its list may never load.
  */
 export function ModelPicker({
 	configId,
+	provider,
 	value,
 	onChange,
 	ariaLabel,
@@ -75,6 +83,8 @@ export function ModelPicker({
 		}
 		return opts;
 	}, [models.data, value, t]);
+
+	const acceptsTyped = Boolean(AI_PROVIDER_INFO[provider as AiProvider]?.local);
 
 	const selectedLabel = value
 		? (models.data?.find((m) => m.id === value)?.label ?? value)
@@ -126,6 +136,14 @@ export function ModelPicker({
 				contentClassName="w-[300px]"
 				testId={testId}
 				trigger={trigger}
+				queryOption={
+					acceptsTyped
+						? (typed) => ({
+								value: typed,
+								label: t('settings.provider.model.useTyped', { model: typed }),
+							})
+						: undefined
+				}
 			/>
 			{busy && <Loader2 className="w-3 h-3 animate-spin text-text-3" />}
 		</span>
