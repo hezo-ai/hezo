@@ -150,6 +150,7 @@ import {
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
 import {
+	isRunSizeStopReason,
 	loadTaskUsageSoFar,
 	PROVIDER_CAPACITY_COOLDOWN_MIN,
 	type RunSizeStopReason,
@@ -2916,20 +2917,13 @@ export async function runAgent(
 			// rather than what it has called. Never once the stream has stated the
 			// run's end: that is where a runtime reporting only at the end first
 			// reports anything, and the work it reports on is already done.
-			// Stop a run that grew too large, and record why on its row: a task whose
-			// run was stopped for size is held until a person looks, and that hold reads
-			// the reason from here rather than from the error text.
+			// Stop a run that grew too large. The abort reason carries why to the
+			// run's final write, which records it on the row: a task whose run was
+			// stopped for size is held until a person looks, and that hold reads the
+			// reason from there rather than from the error text.
 			const stopRunForSize = (reason: RunSizeStopReason, message: string) => {
 				ceilingHit = true;
 				emit('stderr', message);
-				trackBackground(
-					deps.db
-						.query('UPDATE heartbeat_runs SET stop_reason = $2 WHERE id = $1', [
-							heartbeatRunId,
-							reason,
-						])
-						.catch((e) => log.error(`Run ${heartbeatRunId}: could not record its stop reason:`, e)),
-				);
 				runAbort.abort(reason);
 			};
 
@@ -3687,6 +3681,9 @@ export async function runAgent(
 					// truth about what it reached for, and a died-early run is exactly the
 					// case worth being able to inspect.
 					toolCallCounts: parser.getToolCallCounts(),
+					// In this awaited write, so a dispatch after the run returns always
+					// sees the size stop that holds its task.
+					stopReason: isRunSizeStopReason(reason) ? reason : null,
 				},
 				runBroadcast,
 			);
@@ -5963,6 +5960,8 @@ async function updateHeartbeatRun(
 		 * instrumented" rather than "called nothing".
 		 */
 		toolCallCounts?: Record<string, number> | null;
+		/** Why a run was stopped for its size, when it was. */
+		stopReason?: RunSizeStopReason | null;
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
@@ -5986,7 +5985,8 @@ async function updateHeartbeatRun(
 		     cache_read_tokens = COALESCE($10, cache_read_tokens),
 		     cache_creation_tokens = COALESCE($11, cache_creation_tokens),
 		     tool_call_counts = COALESCE($12::jsonb, tool_call_counts),
-		     model = COALESCE($13, model)
+		     model = COALESCE($13, model),
+		     stop_reason = COALESCE($14, stop_reason)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
 		     -- party: terminateHeartbeatRun backfills operator_terminated while the
@@ -6011,6 +6011,7 @@ async function updateHeartbeatRun(
 			update.usage?.buckets?.cacheCreationTokens ?? null, // $11
 			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null, // $12
 			update.usage?.model ?? null, // $13
+			update.stopReason ?? null, // $14
 		],
 	);
 	if (applied.rows.length > 0) {

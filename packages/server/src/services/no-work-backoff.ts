@@ -854,6 +854,13 @@ export const TASK_TOKEN_CEILING_COMMENT_KIND = 'task_token_ceiling';
 export const RUN_SIZE_STOP_REASONS = ['token_ceiling', 'tool_call_ceiling'] as const;
 export type RunSizeStopReason = (typeof RUN_SIZE_STOP_REASONS)[number];
 
+/** Whether a run's abort reason is a stop for its size. */
+export function isRunSizeStopReason(
+	reason: string | null | undefined,
+): reason is RunSizeStopReason {
+	return (RUN_SIZE_STOP_REASONS as readonly string[]).includes(reason ?? '');
+}
+
 /** The system comment kind that tells the admin a task's run was stopped for size. */
 export const RUN_SIZE_STOP_COMMENT_KIND = 'run_size_stop';
 

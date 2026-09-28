@@ -230,15 +230,16 @@ const turnUsing = (inputTokens: number) =>
 		},
 	})}\n`;
 
-/** A stopped run's reason lands on its row from tracked background work. */
-async function waitForStopReason(runId: string, reason: string): Promise<void> {
-	await vi.waitFor(async () => {
-		const r = await db.query<{ stop_reason: string | null }>(
-			'SELECT stop_reason FROM heartbeat_runs WHERE id = $1',
-			[runId],
-		);
-		expect(r.rows[0].stop_reason).toBe(reason);
-	});
+/**
+ * A run's recorded stop reason, read the moment the run returns: the next
+ * dispatch may evaluate the task's hold straight away, so there is no waiting.
+ */
+async function stopReason(runId: string | undefined): Promise<string | null> {
+	const r = await db.query<{ stop_reason: string | null }>(
+		'SELECT stop_reason FROM heartbeat_runs WHERE id = $1',
+		[runId],
+	);
+	return r.rows[0].stop_reason;
 }
 
 describe('run timeout classification (runAgent)', () => {
@@ -266,6 +267,8 @@ describe('run timeout classification (runAgent)', () => {
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.TimedOut);
+		// The wall clock is not a size stop, so it holds nothing.
+		expect(await stopReason(result.heartbeatRunId)).toBeNull();
 	});
 
 	it('stops a run that will not stop calling tools, and fails it rather than timing it out', async () => {
@@ -303,7 +306,7 @@ describe('run timeout classification (runAgent)', () => {
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 		expect(run.rows[0].error).toContain('tool-call ceiling');
-		await waitForStopReason(result.heartbeatRunId as string, 'tool_call_ceiling');
+		expect(await stopReason(result.heartbeatRunId)).toBe('tool_call_ceiling');
 	});
 
 	it('leaves a run under the ceiling alone', async () => {
@@ -371,7 +374,7 @@ describe('run timeout classification (runAgent)', () => {
 			`more than ${RUN_TOKEN_CEILING.toLocaleString('en-US')} tokens`,
 		);
 		// Recorded structurally, for the task hold that reads it.
-		await waitForStopReason(result.heartbeatRunId as string, 'token_ceiling');
+		expect(await stopReason(result.heartbeatRunId)).toBe('token_ceiling');
 	});
 
 	it('leaves a run under the token ceiling alone', async () => {
