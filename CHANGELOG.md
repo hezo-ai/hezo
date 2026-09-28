@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.69.0 - 2026-09-28
+
+### Features
+
+- **agents:** link every GitHub PR, issue and commit an agent names ([#1141](https://github.com/hezo-ai/hezo/pull/1141))
+
+### Bug Fixes
+
+- **web:** let the status filter show or hide the In progress list ([#1142](https://github.com/hezo-ai/hezo/pull/1142))
+
+### Tests
+
+- **browser:** name each e2e server and trace its boot in CI ([#1147](https://github.com/hezo-ai/hezo/pull/1147))
+
+### Other
+
+- Pace each subscription across its provider's week, and always run a chosen model ([#1144](https://github.com/hezo-ai/hezo/pull/1144))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.68.2...0.69.0
+
 ## 0.68.2 - 2026-09-23
 
 ### Bug Fixes
