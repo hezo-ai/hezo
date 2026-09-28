@@ -443,10 +443,11 @@ export const getContainerSubscriptionRoot = getContainerSubscriptionRootImpl;
 export const getHostSubscriptionRoot = getHostSubscriptionRootImpl;
 
 /**
- * Some subscription credentials carry a single-use refresh token (Codex), so
- * two parallel runs against the same credential would mutually invalidate each
- * other. Runs serialise on the credential row's id when the provider's refresh
- * token rotates.
+ * Runs on a credential whose CLI cannot run twice at once serialise on the
+ * credential row's id, when a rule in the serialisation table selects it. None
+ * does today: Codex rewrites its credential file mid-run, but its refresh token
+ * stays usable across a wide reuse window (measured), so its runs go in parallel
+ * and the rotated value is read back with a compare-and-set.
  *
  * Held for the whole run rather than for the token read alone: the CLI rewrites
  * the file at a moment of its own choosing, and the rotated value is read back
@@ -2303,8 +2304,8 @@ export async function runAgent(
 		}
 		if (holder) emit('stdout', '[runner] Credential free, starting the run.\n');
 		// The value read before the wait can be a rotation behind by now: the holder
-		// this run queued behind rewrites the single-use token and stores the new
-		// one on its way out. Read it again while holding the lock, so the mount
+		// this run queued behind may rotate the token and store the new one on its
+		// way out. Read it again while holding the lock, so the mount
 		// this run writes and the read-back it compares against are both current.
 		const stored = await readAiProviderCredentialValue(
 			deps.db,
