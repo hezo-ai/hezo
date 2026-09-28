@@ -388,10 +388,15 @@ export async function readActiveUsageHold(db: Db, configId: string): Promise<Dat
 }
 
 /**
- * Store the usage window a run just read for its credential. Writes nothing when
- * the report matches what is stored, so a run polling every minute writes only
- * when the provider's figure moved. `allowance_seen_at` moves with a write, and
- * says when the stored figure was last true.
+ * Store the usage window a run just read for its credential, when it is newer
+ * than what is stored: a later window, or the same window further along.
+ *
+ * Several runs share a credential, and each reports the latest figure its own
+ * session holds, so a run that has been quiet reports an older, lower one. Within
+ * a window the provider's figure only rises, so a lower figure for the same
+ * window is stale and is ignored rather than moving the pace backwards. A report
+ * matching what is stored writes nothing. `allowance_seen_at` moves with a write,
+ * and says when the stored figure was last true.
  */
 export async function recordCredentialAllowance(
 	db: Db,
@@ -403,9 +408,10 @@ export async function recordCredentialAllowance(
 		    SET allowance_used_percent = $2, allowance_window_minutes = $3,
 		        allowance_resets_at = $4, allowance_seen_at = now()
 		  WHERE id = $1
-		    AND (allowance_used_percent IS DISTINCT FROM $2::real
-		      OR allowance_window_minutes IS DISTINCT FROM $3::int
-		      OR allowance_resets_at IS DISTINCT FROM $4::timestamptz)`,
+		    AND (allowance_resets_at IS NULL
+		      OR allowance_resets_at < $4::timestamptz
+		      OR (allowance_resets_at = $4::timestamptz
+		          AND allowance_used_percent < $2::real))`,
 		[configId, allowance.usedPercent, allowance.windowMinutes, allowance.resetsAt],
 	);
 }

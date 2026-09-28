@@ -725,8 +725,16 @@ describe('runAgent allowance pace', () => {
 		expect(result.heartbeatRunId).toBeDefined();
 	});
 
-	it('stores a reported window only when it moved', async () => {
+	it('stores a reported window only when it moved forward', async () => {
 		const id = await configId();
+		// Start from no reading: an earlier test's week may reset later than this one.
+		await db.query(
+			`UPDATE ai_provider_configs
+			    SET allowance_used_percent = NULL, allowance_window_minutes = NULL,
+			        allowance_resets_at = NULL, allowance_seen_at = NULL
+			  WHERE id = $1`,
+			[id],
+		);
 		const resetsAt = new Date(Date.now() + 3 * 86_400_000);
 		resetsAt.setUTCMilliseconds(0);
 		const seenAt = async () =>
@@ -746,5 +754,27 @@ describe('runAgent allowance pace', () => {
 
 		await recordCredentialAllowance(db, id, { usedPercent: 43, windowMinutes: 10_080, resetsAt });
 		expect((await seenAt()).allowance_used_percent).toBeCloseTo(43);
+
+		// A run that has been quiet reports the older, lower figure for the same week.
+		await recordCredentialAllowance(db, id, { usedPercent: 39, windowMinutes: 10_080, resetsAt });
+		expect((await seenAt()).allowance_used_percent).toBeCloseTo(43);
+
+		// A report from the week before cannot replace this week's.
+		const lastWeek = new Date(resetsAt.getTime() - 7 * 86_400_000);
+		await recordCredentialAllowance(db, id, {
+			usedPercent: 95,
+			windowMinutes: 10_080,
+			resetsAt: lastWeek,
+		});
+		expect((await seenAt()).allowance_used_percent).toBeCloseTo(43);
+
+		// A new week replaces it, however little of the week is spent.
+		const nextWeek = new Date(resetsAt.getTime() + 7 * 86_400_000);
+		await recordCredentialAllowance(db, id, {
+			usedPercent: 2,
+			windowMinutes: 10_080,
+			resetsAt: nextWeek,
+		});
+		expect((await seenAt()).allowance_used_percent).toBeCloseTo(2);
 	});
 });
