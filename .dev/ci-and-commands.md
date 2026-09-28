@@ -44,5 +44,6 @@ the canonical check rather than a local full run - are in `AGENTS.md`; this is t
 
 - **vitest:** the failing assertion and file:line print in the summary; re-run the one file for stack traces. For an unhelpful single line (timeouts, async), add `--reporter=verbose` or a `console.log` plus a name filter.
 - **Playwright:** the trace zip lands in `playwright-report/` and `test-results/` (`retain-on-failure`). Download the `playwright-report` artifact, then `bunx playwright show-report playwright-report/`.
+- **Playwright, zero tests run, `Timed out waiting 180000ms from config.webServer`:** a server never answered. The servers start one at a time in config order (`backend`, `web`, `gate-web`), each only after the one before it answered, and each prefixes its output with its name. The stalled one is the last `Starting WebServer process` line in CI's `pw:webserver` trace. The backend's readiness check is an HTTP request, so each `HTTP GET` line under it is followed by what came back (refused, or a status); the web servers' checks only probe the port.
 - **CI:** `gh run view --job=<job-id> --log 2>&1 | grep -E "✘|FAIL"`.
 

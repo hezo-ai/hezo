@@ -552,7 +552,15 @@ jobs:
       # measurement showing install got slow enough to be worth caching.
       - run: bun install --frozen-lockfile
         timeout-minutes: 5
+      # `pw:webserver` is Playwright's own trace of the webServer boot: each
+      # server's launch command, every readiness check (with the backend's HTTP
+      # result), and when each came up. Without it a boot that blows its budget
+      # leaves one line naming no server. It costs about 50 lines on a normal
+      # run, and only Playwright reads that namespace, so the servers print
+      # nothing extra.
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
+        env:
+          DEBUG: pw:webserver
       # Everything needed to diagnose a failure is in the artifact below, but
       # reading it means downloading a zip — a slow loop for a browser failure
       # that only reproduces on CI. So print the page-side evidence into the job

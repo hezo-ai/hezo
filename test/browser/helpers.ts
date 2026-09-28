@@ -17,9 +17,10 @@ import { TEST_MNEMONIC, TEST_PASSWORD } from './constants';
 const TEST_AUTH_KEYS = deriveAuthKeyPair(TEST_MNEMONIC);
 const TEST_UNLOCK_KEY = deriveUnlockKey(TEST_MNEMONIC);
 
-// Bun's webserver starts listening before Hono routes are mounted, so the very
-// first request during cold start can hit the default 404 ("404 Not Found"
-// plain text) and crash res.json(). Retry until we get a real JSON body.
+// Playwright's readiness check passes as soon as the server's port opens, and
+// until `startup()` finishes the server answers /api/status 200 with
+// `starting: true` (no `masterKeyState`) and every auth route 503 STARTING.
+// Retry until the boot is done and auth succeeds.
 // Returns the master-key *setup* token (password-setup-scoped, not a session).
 async function requestSetupToken(page: Page): Promise<string> {
 	const deadline = Date.now() + 30_000;
