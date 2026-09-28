@@ -40,18 +40,18 @@ const webCommand = (port: number) =>
 // buys (two retries, halved workers, the preview build) stops exactly where the
 // process starts, on the tightest budget in the config.
 //
-// `--reset` means PGlite initdb plus every migration plus seeding before
-// /api/status answers, and all three servers here boot concurrently against a
-// 2-core CI runner - the same contention the preview-build note above exists to
-// describe. A cold runner that lands several times slower than a laptop is not a
-// race to be fixed; it is a cold start that needs a budget, so give it the same
-// 180s the tests get rather than a third of it.
+// Playwright starts the servers below one at a time, in array order, launching
+// each only once the one before it answers, and each gets its own budget. So a
+// shard that times out with no `[backend]` line never got past the first server,
+// and the other two were never launched.
 //
-// The budget is not tight on the backend: measured cold, `--reset` to a 200 on
-// /api/status is ~1s, so even a 6x-slower runner spends single-digit seconds of
-// it. Every server below therefore pipes stdout, because when the budget *is*
-// blown the only question that matters is which of the three did it, and the
-// timeout itself names none of them.
+// The budget is not tight: 33 cold `--reset` boots of the backend on a dev box
+// each answered /api/status in 1.1-2.2s, and on CI each preview answers a few
+// seconds after launch. A cold runner several times slower than a laptop is a
+// cold start that needs a budget, not a race to fix, so each server gets the
+// 180s a test gets. When it is blown anyway, the timeout names no server: the
+// `name` prefix on each server's output, and the `pw:webserver` trace CI turns
+// on, say which one it was and what each readiness check got back.
 const WEB_SERVER_TIMEOUT_MS = 180_000;
 
 export default defineConfig({
@@ -147,19 +147,21 @@ export default defineConfig({
 	],
 	webServer: [
 		{
+			name: 'backend',
 			command: `bun run src/index.ts -- --config ${E2E_CONFIG_FILE} --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --reset --no-open`,
 			cwd: './packages/server',
-			// `Bun.serve` opens the port before `startup()` finishes registering
-			// routes, so a port-only check races against route mounting and the
-			// first auth call sees Hono's default "404 Not Found". /api/status is
-			// only mounted inside startup, so polling it waits for full readiness.
+			// Passes as soon as the port opens, not at full readiness: until
+			// `startup()` finishes, the server answers /api/status 200 with
+			// `starting: true` and every other /api route 503 STARTING. The login
+			// helper (`requestSetupToken`) retries through those 503s, so the tests
+			// wait out the rest of the boot there, and the web servers below boot
+			// alongside the migrations instead of after them.
 			url: `http://localhost:${SERVER_PORT}/api/status`,
 			reuseExistingServer: false,
 			timeout: WEB_SERVER_TIMEOUT_MS,
 			// Playwright ignores a webServer's stdout by default and pipes only its
 			// stderr, and Hezo's logger writes at INFO to stdout - so a boot that is
-			// slow rather than broken produces *nothing*. `test-browser (3)` died
-			// exactly that way, with not one line of log across the whole budget.
+			// slow rather than broken would print *nothing*.
 			//
 			// Cheap, because the log is activity-gated rather than per-tick: the 1Hz
 			// wakeup and heartbeat crons say nothing on a quiet tick, so this costs
@@ -189,16 +191,14 @@ export default defineConfig({
 			},
 		},
 		{
+			name: 'web',
 			command: webCommand(WEB_PORT),
 			cwd: './packages/web',
 			port: WEB_PORT,
 			reuseExistingServer: false,
 			timeout: WEB_SERVER_TIMEOUT_MS,
-			// Vite announces its listening URL on stdout, so piping it is the line
-			// that distinguishes "this preview came up and something else stalled"
-			// from "this preview is the one that never answered". Without it a
-			// preview that misses the budget is indistinguishable from the other
-			// two, which is how a shard dies leaving nothing to attribute it to.
+			// Vite announces its listening URL on stdout; that line is what tells
+			// "this preview came up" apart from "this preview never answered".
 			stdout: 'pipe',
 			env: {
 				HEZO_WEB_PORT: String(WEB_PORT),
@@ -206,6 +206,7 @@ export default defineConfig({
 			},
 		},
 		{
+			name: 'gate-web',
 			command: webCommand(GATE_WEB_PORT),
 			cwd: './packages/web',
 			port: GATE_WEB_PORT,
