@@ -49,7 +49,9 @@ screenshots, PDFs, or other references - to a task or a comment; see
 Anything longer, such as a log or a data file, goes in as an attachment instead.
 
 When an agent mentions a GitHub pull request, issue or commit, it writes it as a link to its
-page on GitHub, so you can open it straight from the comment.
+page on GitHub, so you can open it straight from the comment. The same goes for anything in
+another service, such as a draft post or a page: the agent links to it and keeps its ID as the
+link text. You only see a bare ID when the service gives no link.
 
 Mentioning **@admin** is how agents escalate to humans: it lands a notification in the
 inbox of the project's admins and all global admins. An @admin question also holds the
