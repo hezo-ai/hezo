@@ -40,14 +40,14 @@ let teamAId: string;
 async function list(as = token): Promise<{
 	status: number;
 	rows: ContainerRow[];
-	budget: { used_gb: number; total_gb: number };
+	budget: { used_gb: number; total_gb: number; chat_gb: number };
 }> {
 	const res = await app.request('/api/containers', { headers: authHeader(as) });
-	const empty = { used_gb: 0, total_gb: 0 };
+	const empty = { used_gb: 0, total_gb: 0, chat_gb: 0 };
 	if (res.status !== 200) return { status: res.status, rows: [], budget: empty };
 	const data = (await res.json()).data as {
 		containers: ContainerRow[];
-		budget: { used_gb: number; total_gb: number };
+		budget: { used_gb: number; total_gb: number; chat_gb: number };
 	};
 	return { status: res.status, rows: data.containers, budget: data.budget };
 }
@@ -206,6 +206,23 @@ describe('GET /api/containers', () => {
 		await addMember(projectA.id, 'a-unrecorded', 'idle', null);
 		const { rows } = await list();
 		expect(rows.find((r) => r.container_id === 'a-unrecorded')?.memory_bytes).toBeNull();
+	});
+
+	it('reports the chat lane apart from the task-run ceiling', async () => {
+		// `total_gb` is what task runs may fill; a chat turn admits into the lane
+		// above it, so `used_gb` can pass `total_gb`. Without the lane the page can
+		// only print that as "16 of 12 GB in use".
+		await db.query(
+			`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', '10')
+			 ON CONFLICT (key) DO UPDATE SET value = '10'`,
+		);
+		try {
+			const { budget } = await list();
+			expect(budget.total_gb).toBe(8);
+			expect(budget.chat_gb).toBe(2);
+		} finally {
+			await db.query(`DELETE FROM system_meta WHERE key = 'max_container_memory_gb'`);
+		}
 	});
 
 	it('is superuser-only, because it crosses every project', async () => {

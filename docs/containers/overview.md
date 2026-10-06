@@ -83,6 +83,11 @@ not count toward the total. Adding up the Memory column will not give you the nu
 the bar, and is not meant to. When an agent run says it is waiting for container
 capacity, this bar is where you find out why.
 
+The bar measures task runs. One container's worth of the budget is held back for chat, so
+the figure beside the bar counts against the budget less that share. When a chat reply
+uses the held-back memory, it shows apart from the task figure, for example
+**12 of 12 GB in use + 4 GB for chat**.
+
 A container that fails while it is being set up stays in the list as **Failed**, with the
 reason and whatever its output captured, so you can read what went wrong and remove it.
 

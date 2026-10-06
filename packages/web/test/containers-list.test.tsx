@@ -384,3 +384,57 @@ test('the page says what the budget is spending, and which containers are spendi
 	const figure = await findByTestId('containers-budget-figure');
 	await waitFor(() => expect(figure.textContent).toMatch(/\d+ of \d+ GB in use/));
 });
+
+/** Set the configured total. With the 2 GB default cap, 2 GB of it is the chat lane. */
+async function setMemoryBudgetGb(gb: number) {
+	const { db } = getTestContext();
+	await db.query(
+		`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', $1)
+		 ON CONFLICT (key) DO UPDATE SET value = $1`,
+		[String(gb)],
+	);
+}
+
+test('memory a chat reply holds above the task-run limit is shown apart, as chat', async () => {
+	// A chat turn admits against the full total while task runs stop one
+	// container's worth short of it, so with chat busy the instance spends more
+	// than the task-run limit. Printed as one figure that read "16 of 12 GB in
+	// use", which looks like the budget is broken.
+	const { findByTestId, findAllByText, user } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			await clearSeededContainers();
+			// 6 GB total: 4 GB for task runs, 2 GB held back for chat.
+			await setMemoryBudgetGb(6);
+			const seeded = await seedTwoProjects();
+			await addMember(seeded.alpha.id, 'alpha-run-1', { state: 'busy' });
+			await addMember(seeded.alpha.id, 'alpha-run-2', { state: 'busy' });
+			await addMember(seeded.beta.id, 'beta-chat', { state: 'busy' });
+		},
+	});
+
+	const figure = await findByTestId('containers-budget-figure', undefined, { timeout: 20_000 });
+	await waitFor(() => expect(figure.textContent).toBe('4 of 4 GB in use'));
+	expect((await findByTestId('containers-budget-chat')).textContent).toBe('+ 2 GB for chat');
+
+	await user.click(await findByTestId('containers-budget-chat-info'));
+	expect((await findAllByText(/2 GB of the budget is held back for chat/)).length).toBeGreaterThan(
+		0,
+	);
+});
+
+test('with task runs inside their limit, no chat figure is shown', async () => {
+	const { findByTestId, queryByTestId } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			await clearSeededContainers();
+			await setMemoryBudgetGb(6);
+			const seeded = await seedTwoProjects();
+			await addMember(seeded.alpha.id, 'alpha-run', { state: 'busy' });
+		},
+	});
+
+	const figure = await findByTestId('containers-budget-figure', undefined, { timeout: 20_000 });
+	await waitFor(() => expect(figure.textContent).toBe('2 of 4 GB in use'));
+	expect(queryByTestId('containers-budget-chat')).toBeNull();
+});
