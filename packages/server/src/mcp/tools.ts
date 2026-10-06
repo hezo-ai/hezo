@@ -2219,6 +2219,7 @@ export function registerTools(
 							db,
 							auth.memberId,
 							args.assignee_id as string,
+							teamId,
 						);
 						if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
 					}

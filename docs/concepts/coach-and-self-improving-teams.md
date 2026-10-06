@@ -75,6 +75,10 @@ again.
 - **The task stops being picked up until you answer.** A finding says work is not
   converging; letting that work carry on while the question sits unread would be the same
   week over again. Replying releases it, and so does **Run now**.
+- **The project's Captain files any tasks it proposes.** The Coach is not on the project's
+  team, so it cannot create or assign tasks there. When you agree to a change that needs
+  tasks created, split or reassigned, the Coach asks the Captain on that task, listing each
+  task and the role to own it.
 - **It gives you counts and shares**, not totals - "31 runs in 17 hours", "70% of the
   documents here were made this week" - because those are the figures you can act on.
 - **It does not repeat itself.** Something an earlier retrospective raised is not raised

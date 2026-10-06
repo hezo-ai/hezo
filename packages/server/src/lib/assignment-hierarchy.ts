@@ -1,3 +1,4 @@
+import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Db } from '../db/database';
 
 export type AssignmentHierarchyCheck = { ok: true } | { ok: false; message: string };
@@ -7,17 +8,44 @@ export function assignmentHierarchyError(assigneeSlug: string): string {
 }
 
 /**
+ * The refusal for an agent filing or assigning work in a project whose team it is
+ * not on (the instance Coach, or the CEO reaching below a Captain). Such a caller
+ * has no direct reports there, so the project's Captain files the work.
+ */
+export function outsideTeamAssignmentError(): string {
+	return `You are not on this project's team, so you cannot file or assign tasks in it. Ask its Captain instead: post a create_comment on the relevant task with an active @${CAPTAIN_AGENT_SLUG}, listing each task to create, the role to own it, and its scope. The Captain files them.`;
+}
+
+/** True when the agent belongs to a team other than `teamId`. */
+export async function isOutsideTeam(
+	db: Db,
+	agentMemberId: string,
+	teamId: string,
+): Promise<boolean> {
+	const result = await db.query<{ team_id: string }>(`SELECT team_id FROM members WHERE id = $1`, [
+		agentMemberId,
+	]);
+	const callerTeamId = result.rows[0]?.team_id;
+	return callerTeamId !== undefined && callerTeamId !== teamId;
+}
+
+/**
  * Enforce that an agent caller may only assign tasks to its direct subordinates.
  * Self-assignment is always allowed. Non-agent assignees (human members) are
  * unaffected — the rule is specifically about agent-to-agent delegation.
  *
  * Caller must already be authenticated as AuthType.Agent; the check is a no-op
  * for admin / API-key auth and should be gated by the caller.
+ *
+ * `taskTeamId` is the team of the project the task lives in. When given and the
+ * caller is not on that team, a refusal points at the project's Captain rather
+ * than at the assignee.
  */
 export async function assertSubordinateAssignee(
 	db: Db,
 	callerMemberId: string,
 	assigneeId: string,
+	taskTeamId?: string,
 ): Promise<AssignmentHierarchyCheck> {
 	if (callerMemberId === assigneeId) return { ok: true };
 
@@ -29,5 +57,8 @@ export async function assertSubordinateAssignee(
 
 	const row = result.rows[0];
 	if (row.reports_to === callerMemberId) return { ok: true };
+	if (taskTeamId && (await isOutsideTeam(db, callerMemberId, taskTeamId))) {
+		return { ok: false, message: outsideTeamAssignmentError() };
+	}
 	return { ok: false, message: assignmentHierarchyError(row.slug) };
 }
