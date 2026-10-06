@@ -6,6 +6,7 @@ import type { Db } from '../src/db/database';
 import {
 	assertSubordinateAssignee,
 	assignmentHierarchyError,
+	outsideTeamAssignmentError,
 } from '../src/lib/assignment-hierarchy';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
@@ -147,6 +148,82 @@ describe('assertSubordinateAssignee (unit)', () => {
 		// new guidance: discourage manager-as-stand-in, point to the breakdown path
 		expect(msg).toContain('stand-in');
 		expect(msg).toContain('breakdown task');
+	});
+});
+
+describe('agent outside the project team (the Coach)', () => {
+	async function coachToken(): Promise<string> {
+		const { token: t } = await mintAgentToken(db, masterKeyManager, coachId, teamId, null, {
+			projectId,
+		});
+		return t;
+	}
+
+	it('names the Captain, not the assignee, when the caller is off the task team', async () => {
+		const result = await assertSubordinateAssignee(db, coachId, engineerId, teamId);
+		if (result.ok) throw new Error('expected rejection');
+		expect(result.message).toBe(outsideTeamAssignmentError());
+		expect(result.message).toContain('active @captain');
+		expect(result.message).not.toContain('@engineer');
+	});
+
+	it('keeps the assignee message for a caller on the task team', async () => {
+		const result = await assertSubordinateAssignee(db, engineerId, qaEngineerId, teamId);
+		if (result.ok) throw new Error('expected rejection');
+		expect(result.message).toBe(assignmentHierarchyError('qa-engineer'));
+	});
+
+	it('create_task assigned to a project role points the Coach at the Captain', async () => {
+		const result = await callTool(await coachToken(), 'create_task', {
+			project: projectId,
+			title: 'Coach → Engineer (should fail)',
+			assignee_id: engineerId,
+		});
+		expect(result.error).toBe(outsideTeamAssignmentError());
+	});
+
+	it('create_task with no assignee points the Coach at the Captain', async () => {
+		const result = await callTool(await coachToken(), 'create_task', {
+			project: projectId,
+			title: 'Coach child task with no assignee (should fail)',
+		});
+		expect(result.error).toContain('Either assignee_id or assignee_slug is required');
+		expect(result.error).toContain(outsideTeamAssignmentError());
+	});
+
+	it('create_task with no assignee from a team member keeps the plain message', async () => {
+		const { token: engToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			engineerId,
+			teamId,
+			null,
+			{ projectId },
+		);
+		const result = await callTool(engToken, 'create_task', {
+			project: projectId,
+			title: 'Engineer task with no assignee (should fail)',
+		});
+		expect(result.error).toBe('Either assignee_id or assignee_slug is required');
+	});
+
+	it('update_task reassigning to a project role points the Coach at the Captain', async () => {
+		const created = await callTool(token, 'create_task', {
+			project: projectId,
+			title: 'Task the Coach tries to reassign',
+			assignee_id: engineerId,
+		});
+		const result = await callTool(await coachToken(), 'update_task', {
+			project: projectId,
+			task_id: created.id,
+			assignee_id: qaEngineerId,
+		});
+		expect(result.error).toBe(outsideTeamAssignmentError());
+		const row = await db.query<{ assignee_id: string }>(
+			'SELECT assignee_id FROM tasks WHERE id = $1',
+			[created.id],
+		);
+		expect(row.rows[0].assignee_id).toBe(engineerId);
 	});
 });
 

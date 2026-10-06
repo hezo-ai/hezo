@@ -432,6 +432,18 @@ describe('Coach review prompt builder', () => {
 		expect(template).toContain('Add no rule when the task completed smoothly');
 	});
 
+	it('sends the coach to the Captain for any task to file or assign', async () => {
+		const res = await db.query<{ system_prompt_template: string }>(
+			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
+		);
+		const template = res.rows[0].system_prompt_template;
+		// The Coach has no direct reports in any project, so the server refuses every
+		// task it tries to file there. The Captain files them once the admin agrees.
+		expect(template).toContain('You file and assign no tasks in a project; its Captain does.');
+		expect(template).toContain('When the admin agrees to a change that needs tasks created');
+		expect(template).toContain('comment on that task with an active `@captain`');
+	});
+
 	it('points the coach at the span-edit tool for an existing Custom Prompt', async () => {
 		const res = await db.query<{ system_prompt_template: string }>(
 			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",

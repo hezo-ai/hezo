@@ -1,7 +1,11 @@
 import { type AuditActorType, TaskPriority, TaskStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
-import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import {
+	assertSubordinateAssignee,
+	isOutsideTeam,
+	outsideTeamAssignmentError,
+} from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
@@ -110,11 +114,22 @@ export async function createTask(
 		assigneeId = r.rows[0].id;
 	}
 	if (!assigneeId) {
-		throw new CreateTaskError('INVALID_REQUEST', 'Either assignee_id or assignee_slug is required');
+		const required = 'Either assignee_id or assignee_slug is required';
+		const outside =
+			caller.agentMemberId !== undefined && (await isOutsideTeam(db, caller.agentMemberId, teamId));
+		throw new CreateTaskError(
+			'INVALID_REQUEST',
+			outside ? `${required}. ${outsideTeamAssignmentError()}` : required,
+		);
 	}
 
 	if (caller.agentMemberId) {
-		const subordinateCheck = await assertSubordinateAssignee(db, caller.agentMemberId, assigneeId);
+		const subordinateCheck = await assertSubordinateAssignee(
+			db,
+			caller.agentMemberId,
+			assigneeId,
+			teamId,
+		);
 		if (!subordinateCheck.ok) {
 			throw new CreateTaskError('FORBIDDEN', subordinateCheck.message);
 		}
