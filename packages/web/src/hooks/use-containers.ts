@@ -66,7 +66,11 @@ const CONTAINERS_POLL_MS = 5_000;
  */
 export interface ContainersView {
 	containers: ContainerSummary[];
-	budget: { used_gb: number; total_gb: number };
+	/**
+	 * `total_gb` is the task-run ceiling. `chat_gb` is the lane held back above
+	 * it for chat, so `used_gb` exceeds `total_gb` while chat holds a container.
+	 */
+	budget: { used_gb: number; total_gb: number; chat_gb: number };
 }
 
 export function useContainers() {

@@ -4,6 +4,7 @@ import { AlertTriangle, Box, Loader2 } from 'lucide-react';
 import { Badge } from '../../../components/ui/badge';
 import { type Column, DataTable } from '../../../components/ui/data-table';
 import { EmptyState } from '../../../components/ui/empty-state';
+import { InfoTooltip } from '../../../components/ui/info-tooltip';
 import { Progress } from '../../../components/ui/progress';
 import { RelativeTime } from '../../../components/ui/relative-time';
 import { type ContainerSummary, useContainers } from '../../../hooks/use-containers';
@@ -66,10 +67,20 @@ function BaseImageBuild() {
  * The numbers come from the server, computed by the same call the dispatch gate
  * makes. Summing the visible column here would produce a second answer that
  * disagrees with the one deciding whether runs start.
+ *
+ * **The chat lane is shown apart from the task-run figure.** `total` is the
+ * task-run ceiling; a chat turn admits into the container's worth held back above
+ * it, so `used` can pass `total`. Printed as one figure that read "16 of 12 GB",
+ * which looks like a fault. The task part is capped at its ceiling and the rest
+ * rides beside it as "+ N GB", with a tooltip naming it as chat.
  */
-function BudgetSummary({ used, total }: { used: number; total: number }) {
+function BudgetSummary({ used, total, chat }: { used: number; total: number; chat: number }) {
 	const { t } = useI18n();
-	const full = total > 0 && used >= total;
+	const taskUsed = Math.min(used, total);
+	// Rounded to a tenth because both figures are sums of byte counts in GB, and a
+	// float remainder would print as "+ 0.0000001 GB".
+	const extra = Math.round(Math.max(0, used - total) * 10) / 10;
+	const full = total > 0 && taskUsed >= total;
 
 	return (
 		<div
@@ -78,15 +89,29 @@ function BudgetSummary({ used, total }: { used: number; total: number }) {
 		>
 			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
 				<span className="font-medium">{t('containers.budget.label')}</span>
-				<span
-					data-testid="containers-budget-figure"
-					className={`ml-auto shrink-0 tabular-nums ${full ? 'text-warning' : 'text-text-2'}`}
-				>
-					{t('containers.budget.used', { used, total })}
+				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 tabular-nums">
+					<span
+						data-testid="containers-budget-figure"
+						className={full ? 'text-warning' : 'text-text-2'}
+					>
+						{t('containers.budget.used', { used: taskUsed, total })}
+					</span>
+					{extra > 0 && (
+						<>
+							<span data-testid="containers-budget-chat" className="text-text-2">
+								{t('containers.budget.chatExtra', { extra })}
+							</span>
+							<InfoTooltip
+								label={t('containers.budget.chatLabel')}
+								content={t('containers.budget.chatTooltip', { chat })}
+								data-testid="containers-budget-chat-info"
+							/>
+						</>
+					)}
 				</span>
 			</div>
 			<Progress
-				value={used}
+				value={taskUsed}
 				max={total}
 				label={t('containers.budget.label')}
 				barClassName={full ? 'bg-warning' : 'bg-info'}
@@ -225,7 +250,13 @@ function ContainersList() {
 	return (
 		<div data-testid="containers-list">
 			<BaseImageBuild />
-			{data && <BudgetSummary used={data.budget.used_gb} total={data.budget.total_gb} />}
+			{data && (
+				<BudgetSummary
+					used={data.budget.used_gb}
+					total={data.budget.total_gb}
+					chat={data.budget.chat_gb}
+				/>
+			)}
 			{!isLoading && containers?.length === 0 ? (
 				<EmptyState
 					icon={<Box className="size-6" />}

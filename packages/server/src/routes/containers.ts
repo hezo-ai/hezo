@@ -44,13 +44,21 @@ export function buildContainerRoutes(): Hono<Env> {
 		// `getActiveContainers`, the same call the dispatch gate makes, so the page
 		// reports the arithmetic that actually decides whether a run starts rather
 		// than a second one that agrees with it by inspection.
+		//
+		// `total_gb` is the task-run ceiling, not the configured total: a chat turn
+		// admits into the lane held back above it, so `used_gb` can exceed it.
+		// `chat_gb` names that lane so the page can show the overshoot as chat.
 		const [containers, active] = await Promise.all([
 			listAllContainers(db),
 			getActiveContainers(db, c.get('docker')),
 		]);
 		return ok(c, {
 			containers,
-			budget: { used_gb: active.usedMemoryGb, total_gb: active.budgetGb },
+			budget: {
+				used_gb: active.usedMemoryGb,
+				total_gb: active.budgetGb,
+				chat_gb: active.totalBudgetGb - active.budgetGb,
+			},
 		});
 	});
 
