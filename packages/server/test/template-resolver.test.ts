@@ -534,7 +534,8 @@ describe('template resolver', () => {
 		expect(result).toContain('**An item outside this workspace is a markdown link to its URL.**');
 		expect(result).toContain('[draft 10076742](<url>)');
 		expect(result).toContain('never build one from a guessed pattern');
-		expect(result).toContain('When no URL exists, write the ID and say that it has no link.');
+		expect(result).toContain('Never post a signed URL or a URL that carries a token or key.');
+		expect(result).toContain('When no link exists, write the ID and say that it has no link.');
 	});
 
 	// A marketing-lead delegated the content rewrites to content-writer as a sub-task,

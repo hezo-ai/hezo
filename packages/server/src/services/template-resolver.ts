@@ -156,7 +156,7 @@ const SHARED_INSTRUCTIONS = `
 
 **Rules.** Only teammates and the admin take the \`@\`/\`@@\` prefix — tasks, docs and assets are bare, and the UI detects them by shape. Always use a teammate's slug, never their title, even when an earlier part of this prompt names them by title; the Teammates block is the authoritative slug list. Never wrap any of these in backticks or a code fence, because inline code suppresses the link. Use backticks only for things that are *not* Hezo entities — repo file paths, package names, shell commands, code identifiers. A Hezo doc or asset you are *about to create* is still a Hezo entity: write it **bare even before it exists** — the bare form renders as plain text until the target is real, then links automatically the moment it does, whereas backticks make it inert *permanently*. An \`assets/<path>\` reference is never a repo path, so it is never backticked, **and it always keeps its \`assets/\` prefix**: a prefix-dropped folder path (\`diagrams/hero.svg\`) reads as a repo file and never links. The single deliberate exception is a mention token you are **quoting rather than using**, covered above; it never extends to tasks, docs or assets. The server returns an advisory warning whenever you backtick a Hezo reference, drop the \`assets/\` prefix on a real asset, write a live mention while describing a mention that lives elsewhere, **or** name a GitHub reference without its link — treat that warning as a defect to fix in place with \`update_comment\`/the matching update tool, not as noise.
 
-**An item outside this workspace is a markdown link to its URL.** This covers a draft, a post, a page, a record or a file in another service. Write its ID as the link text when the ID helps, such as \`[draft 10076742](<url>)\`. A bare ID sends the reader searching for it. Take the URL from the tool result or the service, and never build one from a guessed pattern. When no URL exists, write the ID and say that it has no link.
+**An item outside this workspace is a markdown link to its URL.** This covers a draft, a post, a page, a record or a file in another service. Write its ID as the link text when the ID helps, such as \`[draft 10076742](<url>)\`. A bare ID sends the reader searching for it. Take the URL from the tool result or the service, and never build one from a guessed pattern. Never post a signed URL or a URL that carries a token or key. An item with only such a URL has no link. When no link exists, write the ID and say that it has no link.
 
 **GitHub references are markdown links to their full URL.** Write every pull request, GitHub issue and commit you name in the linked form below. A bare \`PR #1135\`, \`issue #88\` or SHA in backticks links nowhere. Take \`<owner>/<repo>\` from the **Repository** section.
 - Pull request: \`[PR #1135](https://github.com/<owner>/<repo>/pull/1135)\`
@@ -360,7 +360,10 @@ const CHAT_SHARED_INSTRUCTIONS = `
 
 ### References & @-Mentions
 - Refer to every Hezo entity — projects, tasks, teams, docs, teammates — by its bare slug, identifier, or name (the project todo6, task TO-1, prd.md). Never paste raw UUIDs, and never wrap a reference in backticks: bare references render as clickable links, backticked ones go inert.
-- Write an item outside this workspace (a draft, a post, a page in another service) as a markdown link to its URL, with its ID as the link text when the ID helps. Write a bare ID only when no URL exists, and say so.
+- Write an item in another service as a markdown link to its URL. This covers a draft, a post or a page.
+- Use the item's ID as the link text when the ID helps.
+- Never post a signed URL or a URL that carries a token or key.
+- Write a bare ID only when the item has no safe link, and say so.
 - Write a GitHub pull request, issue or commit as a markdown link to its full URL, such as \`[PR #1135](https://github.com/<owner>/<repo>/pull/1135)\`. A bare \`PR #1135\` or SHA links nowhere.
 - Name a teammate as \`@@<slug>\` (passive) by default — for attribution, plans, and summaries. Use a single \`@<slug>\` only in a task comment where you need that teammate woken to act; a mention in this chat wakes nobody.
 
