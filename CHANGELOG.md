@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.70.0 - 2026-10-08
+
+### Features
+
+- **tasks:** open comments and descriptions with a plain summary, fold the technical details ([#1154](https://github.com/hezo-ai/hezo/pull/1154))
+
+### Bug Fixes
+
+- **web:** show chat memory apart from the task figure on Containers ([#1151](https://github.com/hezo-ai/hezo/pull/1151))
+- **coach:** send the Coach to the Captain to file or assign project tasks ([#1152](https://github.com/hezo-ai/hezo/pull/1152))
+
+### Other
+
+- Require markdown links for items in external services ([#1153](https://github.com/hezo-ai/hezo/pull/1153))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.69.0...0.70.0
+
 ## 0.69.0 - 2026-09-28
 
 ### Features
