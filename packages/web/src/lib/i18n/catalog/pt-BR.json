@@ -630,6 +630,8 @@
 	"locale.settings.pageDescription": "O idioma e os formatos usados em todas as telas desta instância.",
 	"locale.settings.save": "Salvar",
 	"locale.settings.title": "Idiomas e formatos",
+	"markdown.technicalDetails.hide": "Ocultar detalhes técnicos",
+	"markdown.technicalDetails.show": "Mostrar detalhes técnicos",
 	"marketplace.addDescription": "O CEO abre uma tarefa no projeto para contratar os papéis que você escolher e ajustá-los à equipe que já existe. Se o projeto já tiver esses papéis, ele os atualiza para esta versão.",
 	"marketplace.addFailed": "Falha ao adicionar a equipe",
 	"marketplace.addRoleAction": "Adicionar papel",

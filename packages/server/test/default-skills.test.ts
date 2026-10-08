@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadDefaultSkills, parseDefaultSkills } from '../src/db/default-skills';
 
@@ -33,6 +34,15 @@ describe('shipped default skills content', () => {
 			expect(/\bticket/i.test(d.content), d.slug).toBe(false);
 			expect(d.contentHash).toBe(createHash('sha256').update(d.content).digest('hex'));
 		}
+	});
+
+	// The humanizer pass runs over every task comment. It must keep the marker the
+	// UI collapses on, or a rewrite silently turns the details into visible text.
+	it('tells the humanizer pass to keep the technical-details marker as written', async () => {
+		const humanizer = (await loadDefaultSkills()).find((d) => d.slug === 'humanizer');
+		expect(humanizer?.content).toContain(
+			`Keep the \`${SUMMARY_DETAILS_HEADING}\` line exactly as written`,
+		);
 	});
 
 	it('carries pinned upstream source URLs on adapted skills and none on in-house ones', async () => {

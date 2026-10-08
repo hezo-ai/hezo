@@ -1,4 +1,4 @@
-import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
+import { HIGHLIGHT_SENTINEL, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { buildHighlightedSnippet } from '../src/lib/snippet';
 
@@ -32,6 +32,21 @@ describe('buildHighlightedSnippet', () => {
 		expect(matched).toBe(false);
 		expect(snippet).toBe('the quick brown fox');
 		expect(snippet).not.toContain(S);
+	});
+
+	it('leads with the summary, not the technical details, when nothing matches', () => {
+		const text = `Plain summary for people.\n\n${SUMMARY_DETAILS_HEADING}\n\nhash 0xdeadbeef`;
+		const { snippet, matched } = buildHighlightedSnippet(text, 'zzz');
+		expect(matched).toBe(false);
+		expect(snippet).toBe('Plain summary for people.');
+	});
+
+	it('finds a match inside the technical details and drops the marker line', () => {
+		const text = `Plain summary.\n\n${SUMMARY_DETAILS_HEADING}\n\nThe webhook retry failed.`;
+		const { snippet, matched } = buildHighlightedSnippet(text, 'webhook');
+		expect(matched).toBe(true);
+		expect(snippet).toContain(`${S}webhook${S}`);
+		expect(visible(snippet)).not.toContain('Technical details');
 	});
 
 	it('truncates the lead-text fallback with an ellipsis', () => {

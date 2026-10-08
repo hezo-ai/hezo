@@ -1,4 +1,10 @@
-import { TaskPriority, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource } from '@hezo/shared';
+import {
+	joinSummaryDetails,
+	TaskPriority,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
+	WakeupSource,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
@@ -27,6 +33,19 @@ export type TeamCoherenceReviewReason =
 	| 'role_updated'
 	| 'custom_prompt_updated'
 	| 'enabled_changed';
+
+/** Each review reason in plain words, for the summary a person reads above the technical details. */
+const COHERENCE_REASON_TEXT: Record<TeamCoherenceReviewReason, string> = {
+	initial: 'it was just created',
+	template_applied: 'a team template was applied to it',
+	agent_hired: 'an agent joined it',
+	agent_removed: 'an agent left it',
+	reports_to_changed: 'a reporting line changed',
+	prompt_updated: "an agent's instructions changed",
+	role_updated: "an agent's role changed",
+	custom_prompt_updated: "the project's custom instructions changed",
+	enabled_changed: 'an agent was turned on or off',
+};
 
 /**
  * Reasons that represent **initial team setup** — created first on team creation, blocks
@@ -220,7 +239,12 @@ ${coherenceChangeLine(reason, changeSummary)}`
 	const intro = isFirstRunSetup(reason)
 		? `The **${teamSlug}** project-team was just created. Set it up: audit its roster`
 		: `The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster`;
-	return `${draftBanner}${heading}
+	const summary = isFirstRunSetup(reason)
+		? `Set up the new **${teamSlug}** team. Check that each role reports to the right person and that someone other than the author checks its work. Then refresh the role descriptions teammates read.`
+		: `The **${teamSlug}** team changed: ${COHERENCE_REASON_TEXT[reason]}. Check that the roles still fit together and that someone other than the author checks each role's work. Then refresh the role descriptions teammates read.`;
+	return joinSummaryDetails(
+		summary,
+		`${draftBanner}${heading}
 
 ${intro} — including whether every role's output gets verified by someone other than its author — then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
 
@@ -249,7 +273,8 @@ ${ACTIVE_ADMIN_MENTION_RULE}
    - \`set_agent_team_context(agent_id, content="...")\` — write a relationships narrative addressed to that agent ("you"), up to ~30 lines, covering its manager (and how to escalate), direct reports (and how to delegate to each), peers (and typical handoffs), indirect reports / agents two+ levels away (and the correct routing path), and any humans on the admin (and when to involve them).
    - This blob is injected into the agent's own system prompt at the start of every run, so it doesn't need to derive its place in the org chart from scratch.
 7. \`set_team_summary(summary="...")\` — synthesise a team-level summary (≤20 lines, plain prose, may span paragraphs) covering reporting structure, handoffs, and escalation paths.
-8. Move this task to **done** once the audit and rewrites are complete.${changesSection}`;
+8. Move this task to **done** once the audit and rewrites are complete.${changesSection}`,
+	);
 }
 
 /**

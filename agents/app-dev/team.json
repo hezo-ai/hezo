@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 37,
+			"notes": "The Researcher's report summary is now the plain summary of its task comment, and the full findings go under the technical details line, which people see collapsed."
+		},
+		{
 			"version": 36,
 			"notes": "Agents now write every GitHub pull request, issue and commit they name as a link to its page. The Engineer links the PR in each progress comment, and the Captain's goal notes follow the same link rules as task comments."
 		},

@@ -1,9 +1,11 @@
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ReactElement, useState } from 'react';
 import { expect, test, vi } from 'vitest';
 import { MarkdownEditor } from '../src/components/markdown-editor';
+import { withI18n } from './helpers/i18n';
 
 /** The preview pane mounts <MarkdownProse>, whose mention hooks call useQuery. */
 function renderWithClient(ui: ReactElement) {
@@ -83,6 +85,29 @@ test('empty content renders the emptyPreviewText placeholder', async () => {
 
 	await user.click(getByRole('tab', { name: 'Preview' }));
 	expect(getByTestId('md-preview').textContent).toContain('nothing to preview');
+});
+
+test('the summary-details preview collapses the technical details; the plain preview shows the marker', async () => {
+	const user = userEvent.setup({ delay: null });
+	const text = `Short summary.\n\n${SUMMARY_DETAILS_HEADING}\n\nLong evidence.`;
+	const split = renderWithClient(
+		withI18n(
+			<Harness initial={text} ariaLabel="Split" previewTestId="split-preview" summaryDetails />,
+		),
+	);
+	await user.click(split.getAllByRole('tab', { name: 'Preview' })[0]);
+	const preview = split.getByTestId('split-preview');
+	expect(preview.textContent).toContain('Short summary.');
+	expect(preview.textContent).not.toContain('Long evidence.');
+	expect(split.getByTestId('technical-details-toggle')).toBeTruthy();
+	split.unmount();
+
+	const plain = renderWithClient(
+		<Harness initial={text} ariaLabel="Plain" previewTestId="plain-preview" />,
+	);
+	await user.click(plain.getByRole('tab', { name: 'Preview' }));
+	expect(plain.getByTestId('plain-preview').textContent).toContain('Long evidence.');
+	expect(plain.queryByTestId('technical-details-toggle')).toBeNull();
 });
 
 test('previewContent overrides the editor value in the preview pane', async () => {

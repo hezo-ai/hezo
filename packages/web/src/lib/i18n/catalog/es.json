@@ -630,6 +630,8 @@
 	"locale.settings.pageDescription": "El idioma y los formatos que usa cada pantalla de esta instancia.",
 	"locale.settings.save": "Guardar",
 	"locale.settings.title": "Idiomas y formatos",
+	"markdown.technicalDetails.hide": "Ocultar detalles técnicos",
+	"markdown.technicalDetails.show": "Mostrar detalles técnicos",
 	"marketplace.addDescription": "El CEO abre una tarea en el proyecto para contratar los roles que elijas y ajustarlos al equipo que ya existe. Si el proyecto ya tiene esos roles, los actualiza a esta versión.",
 	"marketplace.addFailed": "No se pudo añadir el equipo",
 	"marketplace.addRoleAction": "Añadir rol",

@@ -1,4 +1,4 @@
-import { COMMENT_TEXT_MAX_CHARS } from '@hezo/shared';
+import { COMMENT_TEXT_MAX_CHARS, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
@@ -611,6 +611,37 @@ test('reply icon focuses composer, shows in-response-to, and persists parent lin
 	// The follow-up comment's "replying to" badge appears on the follow-up
 	const replyingToBadges = document.querySelectorAll('[data-testid="replying-to"]');
 	expect(replyingToBadges.length).toBeGreaterThan(0);
+});
+
+test('the reply preview quotes only the summary of a comment with technical details', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Reply Split' });
+			const task = await seedTask(ws, project, { title: 'Reply Split Task' });
+			await seedComment(
+				ws,
+				task,
+				`Plain summary.\n\n${SUMMARY_DETAILS_HEADING}\n\nHidden evidence.`,
+			);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByText('Plain summary.');
+	const replyButton = document.querySelector('[data-testid="comment-reply"]') as HTMLElement;
+	await user.click(replyButton);
+	const indicator = await findByTestId('reply-indicator');
+	expect(indicator.textContent).toContain('Plain summary.');
+	expect(indicator.textContent).not.toContain('Hidden evidence');
+	expect(indicator.textContent).not.toContain(SUMMARY_DETAILS_HEADING);
 });
 
 test('copy button copies the comment body and confirms with a check icon', async () => {

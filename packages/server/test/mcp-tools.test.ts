@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ID } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -2171,6 +2171,23 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(target.description_length).toBe(longBody.length);
 	});
 
+	it('list_tasks returns a long description with technical details as its summary', async () => {
+		const longBody = `Fix the stale prices in six reports.\n\n${SUMMARY_DETAILS_HEADING}\n\n${'step '.repeat(300)}`;
+		const created = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Summary excerpt target',
+			description: longBody,
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const rows = await callListViaMcp('list_tasks', { project: projectId });
+		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
+		expect(target.description_excerpt).toBe('Fix the stale prices in six reports.');
+		expect(target.description_truncated).toBe(true);
+		expect(target.description_details_omitted).toBe(true);
+		expect(target.description_length).toBe(longBody.length);
+	});
+
 	it('list_tasks excerpts by default, returning a short description whole', async () => {
 		// Row width is bounded whether or not the caller asks: a page of long
 		// tickets must not be able to blow the result cap. A description under the
@@ -2267,6 +2284,32 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		// content.text, the same field a whole comment uses, so a reader who
 		// misses text_truncated would otherwise treat it as the entire comment.
 		expect(longRow.text_paging_hint).toContain('get_comment');
+
+		// A long comment with a technical-details section reads as its summary, and
+		// the row says the details were left out.
+		const summarized = `Review passed. Nothing for people to do.\n\n${SUMMARY_DETAILS_HEADING}\n\n${'evidence '.repeat(400)}`;
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content, created_at)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
+			         now() + interval '2 hours')`,
+			[task.id, JSON.stringify({ text: summarized })],
+		);
+		const withSummary = (
+			await callListViaMcp('list_comments', { project: projectId, task_id: task.id })
+		)[0] as {
+			content: { text: string };
+			text_truncated?: boolean;
+			text_length?: number;
+			details_omitted?: boolean;
+			text_paging_hint?: string;
+		};
+		expect(withSummary.content.text).toBe('Review passed. Nothing for people to do.');
+		expect(withSummary.text_truncated).toBe(true);
+		expect(withSummary.details_omitted).toBe(true);
+		expect(withSummary.text_length).toBe(summarized.length);
+		expect(withSummary.text_paging_hint).toContain('the technical details are left out');
+		expect(withSummary.text_paging_hint).toContain('get_comment');
+		expect(longRow).toMatchObject({ details_omitted: false });
 
 		// get_comment is that recovery call, and it must actually serve the body.
 		const full = (await callToolViaMcp('get_comment', {

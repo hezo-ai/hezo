@@ -170,6 +170,7 @@ import type { ProgressActivityCandidates, ProgressActivityKind } from './project
 import type { RetrospectiveSignals } from './project-retrospective';
 import {
 	budgetedSection,
+	detailsOmittedNote,
 	omittedRowsNote,
 	overflowNote,
 	PromptBudget,
@@ -4675,6 +4676,8 @@ export function renderCommentHistory(
 		budget?: PromptBudget;
 		section?: PromptSection;
 		shownAbove?: ReadonlySet<string>;
+		/** Cut a long row to its summary when it has a technical-details section. */
+		summaryFirst?: boolean;
 	} = {},
 ): string {
 	const section = opts.section ?? 'recentComment';
@@ -4690,11 +4693,13 @@ export function renderCommentHistory(
 			}
 			const raw =
 				c.content_type === 'text' ? extractCommentText(c.content) : JSON.stringify(c.content);
-			const cut = opts.budget?.take(section, raw);
+			const cut = opts.budget?.take(section, raw, {
+				summaryFirst: opts.summaryFirst && c.content_type === 'text' && !tag,
+			});
 			const text = cut ? cut.text : raw;
-			const overflow = cut?.truncated
-				? `\n  ${overflowNote(cut.text.length, cut.length, `get_comment(comment_id: "${c.id}")`)}`
-				: '';
+			const recovery = `get_comment(comment_id: "${c.id}")`;
+			const note = cut?.detailsOmitted ? detailsOmittedNote : overflowNote;
+			const overflow = cut?.truncated ? `\n  ${note(cut.text.length, cut.length, recovery)}` : '';
 			const base = `${head}: ${text}${tag}${overflow}`;
 			const reactionLine = formatReactionLine(c.reactions);
 			const attachmentLines = c.attachments.map(formatAttachmentLine);
@@ -5238,13 +5243,14 @@ export function buildTaskPrompt(
 				budget,
 				section: 'recentComment',
 				shownAbove: quotedAbove,
+				summaryFirst: true,
 			}),
 		);
 		parts.push('');
 		parts.push(
 			ctx.catchUp
-				? `These are only the most recent comments, and a long one is shown here as its opening only — the line under it gives the body's full length and the \`get_comment\` call that serves the rest. Before you start, catch up on the others with \`list_comments(task_id: "${task.identifier}", since: "${ctx.catchUp.since}")\` — see "Since your last run" below. \`list_comments\` excerpts the same way: a row with \`text_truncated: true\` is showing only the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`
-				: `These are only the most recent comments, and a long one is shown here as its opening only — the line under it gives the body's full length and the \`get_comment\` call that serves the rest. Before you start, call \`list_comments\` to read the thread — earlier comments may carry instructions that change this task. \`list_comments\` excerpts the same way: a row with \`text_truncated: true\` is showing only the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`,
+				? `These are only the most recent comments, and a long one is shown here as its summary when it has a technical-details section, and as its opening otherwise — the line under it gives the body's full length and the \`get_comment\` call that serves the rest. Before you start, catch up on the others with \`list_comments(task_id: "${task.identifier}", since: "${ctx.catchUp.since}")\` — see "Since your last run" below. \`list_comments\` excerpts the same way: a row with \`text_truncated: true\` is showing only its summary (\`details_omitted: true\`) or the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`
+				: `These are only the most recent comments, and a long one is shown here as its summary when it has a technical-details section, and as its opening otherwise — the line under it gives the body's full length and the \`get_comment\` call that serves the rest. Before you start, call \`list_comments\` to read the thread — earlier comments may carry instructions that change this task. \`list_comments\` excerpts the same way: a row with \`text_truncated: true\` is showing only its summary (\`details_omitted: true\`) or the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`,
 		);
 	}
 

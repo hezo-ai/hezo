@@ -1,6 +1,7 @@
 import {
 	CEO_AGENT_SLUG,
 	CommentContentType,
+	joinSummaryDetails,
 	type Language,
 	PROJECT_INTAKE_LABEL,
 	TaskPriority,
@@ -91,6 +92,8 @@ const BRIEF_FENCE = '---';
  * origin is one row and a missing one is a compile error.
  */
 interface OriginProse {
+	/** The plain summary a person reads above the technical details. */
+	summary: (input: CreateProjectIntakeInput) => string;
 	/** The greeting's second sentence, after the CEO introduces itself. */
 	opener: string;
 	/** The greeting's paragraph on where the brief is and what it is called. */
@@ -126,6 +129,8 @@ function quoteBrief(description: string): string {
 
 const ORIGIN_PROSE: Record<IntakeOrigin, OriginProse> = {
 	form: {
+		summary: (input) =>
+			`Plan the new project **${input.name}** with the admin in this thread. Agree its scope and team, then create it.`,
 		opener: 'Thanks for kicking off a new project.',
 		briefRead: (input) =>
 			input.baselineTeamTypeName
@@ -143,6 +148,8 @@ const ORIGIN_PROSE: Record<IntakeOrigin, OriginProse> = {
 			'**Get the go-ahead.** Post a short summary of the agreed shape (name, description, team type), @-mention the admin, and ask them to confirm. A plain reply approving it is all you need — this is a normal conversation, not an inbox approval.',
 	},
 	seed: {
+		summary: () =>
+			'Plan a first project from the brief the admin wrote at signup. Agree its name, scope and team in this thread, then create it.',
 		opener: 'Welcome to your instance.',
 		briefRead: (input) =>
 			`I've read the brief you wrote at signup on hezo.ai - it's captured in full in this task's description, so I won't repeat it here. I'm calling it **${input.name}** for now and will propose a proper name once we've talked it through. If this brief isn't yours, or you'd rather start from something else, say so and we'll begin again.`,
@@ -203,9 +210,11 @@ function buildLanguageLine(input: CreateProjectIntakeInput): string {
 
 function buildTaskDescription(input: CreateProjectIntakeInput): string {
 	const prose = ORIGIN_PROSE[input.origin];
-	return `${PROJECT_INTAKE_MARKER}
+	return joinSummaryDetails(
+		`${PROJECT_INTAKE_MARKER}
 
-## Open a new project
+${prose.summary(input)}`,
+		`## Open a new project
 
 ${prose.context}${buildLanguageLine(input)}
 
@@ -223,7 +232,8 @@ ${prose.brief(input.description)}
 2. ${prose.teamStep}
 3. ${prose.goAheadStep}
 4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen team source — \`template_id\`, \`source_team_id\`, or \`marketplace_slug\` — passing this task's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning task, and closes this task automatically.
-5. **Set up the team, then start it.** \`create_project\` returns the new project's planning **and** setup task identifiers. Because you created this project, the setup task does **not** start on its own: open it (the returned \`setup_task_identifier\`) and rewrite its description with \`update_task\` to capture the concrete setup you agreed here — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call \`start_team_setup(project)\` to begin the setup run. If the admin decides not to proceed, close this task as cancelled with a brief note.`;
+5. **Set up the team, then start it.** \`create_project\` returns the new project's planning **and** setup task identifiers. Because you created this project, the setup task does **not** start on its own: open it (the returned \`setup_task_identifier\`) and rewrite its description with \`update_task\` to capture the concrete setup you agreed here — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call \`start_team_setup(project)\` to begin the setup run. If the admin decides not to proceed, close this task as cancelled with a brief note.`,
+	);
 }
 
 /**

@@ -1,3 +1,5 @@
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
+import { fireEvent } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
@@ -65,4 +67,32 @@ test('task header renders colour-coded status/priority pills + a runs/duration/t
 	expect(summary.textContent).toContain('41s');
 	expect(summary.textContent).toContain('1.9M tokens');
 	expect(summary.className).toContain('font-mono');
+});
+
+test('the task description shows its summary with the technical details collapsed', async () => {
+	const ref = { projectSlug: '', taskId: '' };
+	const { findByTestId, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Split Description' });
+			const task = await seedTask(ws, project, {
+				title: 'Split task',
+				description: `Re-check the five stock reports and resubmit them.\n\n${SUMMARY_DETAILS_HEADING}\n\nGoal: close blocker R7-B34.`,
+			});
+			ref.projectSlug = project.slug;
+			ref.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ref.projectSlug, taskId: ref.taskId },
+	});
+
+	const description = await findByTestId('task-description');
+	expect(description.textContent).toContain('Re-check the five stock reports');
+	expect(description.textContent).not.toContain('R7-B34');
+	fireEvent.click(getByTestId('technical-details-toggle'));
+	expect((await findByTestId('task-description')).textContent).toContain('R7-B34');
 });

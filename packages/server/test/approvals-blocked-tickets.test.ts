@@ -1,3 +1,4 @@
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -149,13 +150,32 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 		expect(a?.agent_slug).toBe('alice-agent');
 		expect(a?.project_slug).toBe('repo-ops');
 		expect(a?.comment_id).toBe(commentAId);
-		expect(a?.snippet).toContain('there is no repo yet');
+		expect(a?.snippet).toBe('I tried to push the new migration but there is no repo yet.');
 
 		expect(b?.title).toBe('Add CI workflow');
 		expect(b?.agent_name).toBe('Bob Agent');
 		expect(b?.agent_slug).toBe('bob-agent');
 		expect(b?.comment_id).toBe(commentBId);
 		expect(b?.snippet).toBe('Needs a designated GitHub repo to start work');
+	});
+
+	it("previews the latest comment's summary as plain text, not its technical details", async () => {
+		await insertTextComment(
+			taskBId,
+			`**Blocked:** the CI workflow needs a repo.\n\n${SUMMARY_DETAILS_HEADING}\n\nRunner logs and exit codes.`,
+		);
+		const res = await app.request(
+			`/api/projects/${projectSlug}/approvals/${approvalId}/blocked-tickets`,
+			{ headers: authHeader(token) },
+		);
+		const body = (await res.json()) as { data: Array<{ task_id: string; snippet: string }> };
+		expect(body.data.find((r) => r.task_id === taskBId)?.snippet).toBe(
+			'Blocked: the CI workflow needs a repo.',
+		);
+		await db.query(
+			`DELETE FROM task_comments WHERE task_id = $1 AND content_type = 'text'::comment_content_type`,
+			[taskBId],
+		);
 	});
 
 	it('skips comments whose chosen_option is set (i.e. resolved)', async () => {

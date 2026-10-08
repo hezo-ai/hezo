@@ -67,7 +67,9 @@ connect, authenticate, and register for access, see
   with `_truncated`/`_length` companions, so one page cannot be dominated by a few
   large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops
   mid-sentence; always check the `_truncated` companion rather than judging from
-  whether the text reads as complete. To get the whole value, call the matching
+  whether the text reads as complete. A long comment or task description with a
+  `## Technical details` section comes back as its summary, with a
+  `details_omitted` companion set to true. To get the whole value, call the matching
   single-item read - `get_task` for a task, `get_comment` for a comment,
   `read_project_doc` for a doc - not a larger `excerpt_chars`.
 - **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the
@@ -289,7 +291,7 @@ List projects, by name. With CEO cross-team access (or as superuser) returns eve
 
 _Read-only._
 
-List a project's tasks, newest first. Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tasks in the current project - only call this if you need older or terminal tasks, another project, or a specific status filter. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. description and rules come back as excerpts capped at `excerpt_chars` (default 500) so one page cannot be dominated by a few long tasks - read a task's full text with get_task.
+List a project's tasks, newest first. Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tasks in the current project - only call this if you need older or terminal tasks, another project, or a specific status filter. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. description and rules come back as excerpts capped at `excerpt_chars` (default 500) so one page cannot be dominated by a few long tasks. A long description with a `## Technical details` section comes back as its summary, with `description_details_omitted: true`. Read a task's full text with get_task.
 
 **Parameters:**
 
@@ -303,7 +305,7 @@ List a project's tasks, newest first. Omit `project` to use the project your run
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions; read a task in full with `get_task`.
+**Returns:** Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions, and a long description with a technical-details section comes back as its summary with `description_details_omitted: true`; read a task in full with `get_task`.
 
 ### `get_task`
 
@@ -334,7 +336,7 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `title` | `string` | Yes | Task title |
-| `description` | `string` | No | Task description |
+| `description` | `string` | No | Task description. Text below a `## Technical details` line is shown collapsed to people. |
 | `priority` | `string` | No | Priority: low, medium, high, urgent |
 | `assignee_id` | `string` | No | Assignee member ID |
 | `assignee_slug` | `string` | No | Assignee agent slug (alternative to assignee_id) |
@@ -377,7 +379,7 @@ Update a task. Agents can use this to change status, update progress, set rules,
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
 | `title` | `string` | No | New title |
-| `description` | `string` | No | New description |
+| `description` | `string` | No | New description. Text below a `## Technical details` line is shown collapsed to people. |
 | `status` | `string` | No | New status (backlog, in_progress, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only. |
 | `priority` | `string` | No | New priority |
 | `assignee_id` | `string` | No | New assignee - an agent slug (e.g. "engineer") or a member UUID |
@@ -544,7 +546,7 @@ Read one comment in full by its id (the UUID from a list_comments row, or its pu
 
 _Read-only._
 
-List comments for a task, newest first. Returns the conversation and the task's own changes by default and leaves out the one-row-per-execution agent run markers - pass `categories` to change that, and prefer `list_task_runs`, which reports each run's status, exit code and log length rather than a bare marker. To catch up rather than re-read, pass `since` with the timestamp your last read ended at; a run prompt gives you the time of your previous run on the task. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. (`before`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at `excerpt_chars` (default 2000, narrowed to whatever a page of `limit` rows can carry and reported as `excerpt_chars_applied`); structured comments (system/option/task_link) are always returned whole. A truncated row sets `text_truncated: true` alongside `text_length` and a `text_paging_hint` naming the exact follow-up call - the excerpt sits in `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment. Read the full body with `get_comment`; raising `excerpt_chars` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A `run` row also carries `run_status` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.
+List comments for a task, newest first. Returns the conversation and the task's own changes by default and leaves out the one-row-per-execution agent run markers - pass `categories` to change that, and prefer `list_task_runs`, which reports each run's status, exit code and log length rather than a bare marker. To catch up rather than re-read, pass `since` with the timestamp your last read ended at; a run prompt gives you the time of your previous run on the task. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. (`before`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at `excerpt_chars` (default 2000, narrowed to whatever a page of `limit` rows can carry and reported as `excerpt_chars_applied`); structured comments (system/option/task_link) are always returned whole. A long comment with a `## Technical details` section comes back as its summary instead of its opening, with `details_omitted: true`. A truncated row sets `text_truncated: true` alongside `text_length` and a `text_paging_hint` naming the exact follow-up call - the excerpt sits in `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment. Read the full body with `get_comment`; raising `excerpt_chars` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A `run` row also carries `run_status` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.
 
 **Parameters:**
 
@@ -559,7 +561,7 @@ List comments for a task, newest first. Returns the conversation and the task's 
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. A `run` row carries `run_status` as well (`queued`, `running`, `succeeded`, `failed`, `cancelled` or `timed_out`, or null when the run no longer exists) - the row is written when the run starts, so its `content` cannot say how the run ended. `categories_applied` echoes which kinds of row the page holds: `conversation` (what people and agents wrote, plus anything awaiting a person), `events` (status, assignee, title and parent changes, task links, run-failure notices) and `runs` (one marker per agent execution). The default is `["conversation","events"]`, leaving run markers out - they are the bulk of a long thread, and `list_task_runs` reports the same executions with their outcome attached. Pass `since` with an ISO-8601 timestamp to read only what is newer. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000, ceiling 4000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call; `excerpt_chars_applied` reports the width actually used, narrowed when a page of `limit` rows could not otherwise fit the result cap. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`.
+**Returns:** Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. A `run` row carries `run_status` as well (`queued`, `running`, `succeeded`, `failed`, `cancelled` or `timed_out`, or null when the run no longer exists) - the row is written when the run starts, so its `content` cannot say how the run ended. `categories_applied` echoes which kinds of row the page holds: `conversation` (what people and agents wrote, plus anything awaiting a person), `events` (status, assignee, title and parent changes, task links, run-failure notices) and `runs` (one marker per agent execution). The default is `["conversation","events"]`, leaving run markers out - they are the bulk of a long thread, and `list_task_runs` reports the same executions with their outcome attached. Pass `since` with an ISO-8601 timestamp to read only what is newer. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000, ceiling 4000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call; `excerpt_chars_applied` reports the width actually used, narrowed when a page of `limit` rows could not otherwise fit the result cap. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`. A truncated comment that has a technical-details section comes back as its summary, with `details_omitted: true`.
 
 ### `add_reaction`
 
@@ -607,7 +609,7 @@ Add a comment to a task. In content, reference teammates with @<agent-slug>. Ref
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
-| `content` | `string` | Yes | Comment text, at most 16,000 characters. May be empty when attachment_ids is set. |
+| `content` | `string` | Yes | Comment text, at most 16,000 characters. May be empty when attachment_ids is set. Text below a `## Technical details` line is shown collapsed to people. |
 | `attachment_ids` | `string[]` | No | Ids of up to 10 assets to attach, from uploads to /mcp/assets or write_project_asset in this project. Readers get each file as a signed download link. |
 | `parent_comment_id` | `string` | No | The comment you are replying to - its id (UUID) or its public_id. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
 
@@ -626,7 +628,7 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID the comment belongs to |
 | `comment_id` | `string (uuid)` | Yes | UUID of the comment to edit, as returned by create_comment or list_comments. |
-| `content` | `string` | Yes | The replacement comment text (overwrites the existing body). |
+| `content` | `string` | Yes | The replacement comment text (overwrites the existing body). Text below a `## Technical details` line is shown collapsed to people. |
 
 **Returns:** An acknowledgement of the updated comment (same shape as `create_comment`), always with a `wake` receipt and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run, or the new text is over the `create_comment` length cap. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
 

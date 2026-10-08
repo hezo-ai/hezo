@@ -1,12 +1,13 @@
-import { HIGHLIGHT_SENTINEL, markdownToPreviewText } from '@hezo/shared';
+import { HIGHLIGHT_SENTINEL, markdownToPreviewText, splitSummaryDetails } from '@hezo/shared';
 
 /**
  * Builds the gray preview line for a search result. Full-text search matches by
  * keyword + stemming, so the typed term (or its stem) is usually present in the
  * text — we centre a window on the first occurrence and wrap each one in
  * {@link HIGHLIGHT_SENTINEL} so the web palette can render `<mark>`. When the
- * stemmer can't line the term up with the stored text we fall back to the lead
- * text with no markers.
+ * stemmer can't line the term up with the stored text we fall back to the
+ * summary's lead text with no markers. A match may sit in the collapsed technical
+ * details, so the window searches the whole body with the marker line removed.
  *
  * Pure (no DB) so it runs identically under Node (vitest) and Bun (prod), and is
  * unit-testable in isolation. Generalises `buildSnippet` in `routes/inbox.ts`,
@@ -141,12 +142,13 @@ export function buildHighlightedSnippet(
 	raw: string | null | undefined,
 	query: string,
 ): HighlightedSnippet {
-	const text = normalize(raw);
+	const { summary, details } = splitSummaryDetails(raw ?? '');
+	const text = normalize(details === null ? summary : `${summary}\n\n${details}`);
 	if (!text) return { snippet: '', matched: false };
 
 	const ranges = findRanges(text, queryTerms(query));
 	if (ranges.length === 0) {
-		return { snippet: truncateLead(text), matched: false };
+		return { snippet: truncateLead(normalize(summary) || text), matched: false };
 	}
 
 	const firstStart = ranges[0][0];

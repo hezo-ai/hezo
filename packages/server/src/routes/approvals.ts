@@ -1,4 +1,4 @@
-import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, AuthType, summaryPreviewLine, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
@@ -95,6 +95,10 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 	return ok(c, result.rows);
 });
 
+/** Chars of the previous comment scanned for a blocked task's preview line. */
+const BLOCKED_SNIPPET_SCAN_LIMIT = 4000;
+const BLOCKED_SNIPPET_MAX_LEN = 120;
+
 approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
@@ -137,7 +141,7 @@ approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets'
 			   ${agentDisplayNameSql('ma', 'm')} AS agent_name,
 			   ma.slug AS agent_slug,
 			   (
-			     SELECT LEFT(prev.content->>'text', 120)
+			     SELECT LEFT(prev.content->>'text', ${BLOCKED_SNIPPET_SCAN_LIMIT})
 			     FROM task_comments prev
 			     WHERE prev.task_id = i.id
 			       AND prev.content_type IN ('text'::comment_content_type, 'system'::comment_content_type)
@@ -170,7 +174,9 @@ approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets'
 		comment_created_at: r.comment_created_at,
 		agent_name: r.agent_name,
 		agent_slug: r.agent_slug,
-		snippet: r.snippet?.trim() || 'Needs a designated GitHub repo to start work',
+		snippet:
+			summaryPreviewLine(r.snippet ?? '', BLOCKED_SNIPPET_MAX_LEN) ||
+			'Needs a designated GitHub repo to start work',
 	}));
 
 	return ok(c, tickets);

@@ -1,4 +1,4 @@
-import { HEZO_DOCS_URL } from '@hezo/shared';
+import { HEZO_DOCS_URL, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { LARGE_TEXT_ASSET_SIZE } from './paging';
 
 /**
@@ -135,7 +135,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_tasks: {
 		category: 'Tasks',
 		returns:
-			'Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions; read a task in full with `get_task`.',
+			'Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions, and a long description with a technical-details section comes back as its summary with `description_details_omitted: true`; read a task in full with `get_task`.',
 	},
 	get_task: {
 		category: 'Tasks',
@@ -204,7 +204,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_comments: {
 		category: 'Comments & reactions',
 		returns:
-			'Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. A `run` row carries `run_status` as well (`queued`, `running`, `succeeded`, `failed`, `cancelled` or `timed_out`, or null when the run no longer exists) - the row is written when the run starts, so its `content` cannot say how the run ended. `categories_applied` echoes which kinds of row the page holds: `conversation` (what people and agents wrote, plus anything awaiting a person), `events` (status, assignee, title and parent changes, task links, run-failure notices) and `runs` (one marker per agent execution). The default is `["conversation","events"]`, leaving run markers out - they are the bulk of a long thread, and `list_task_runs` reports the same executions with their outcome attached. Pass `since` with an ISO-8601 timestamp to read only what is newer. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000, ceiling 4000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call; `excerpt_chars_applied` reports the width actually used, narrowed when a page of `limit` rows could not otherwise fit the result cap. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`.',
+			'Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. A `run` row carries `run_status` as well (`queued`, `running`, `succeeded`, `failed`, `cancelled` or `timed_out`, or null when the run no longer exists) - the row is written when the run starts, so its `content` cannot say how the run ended. `categories_applied` echoes which kinds of row the page holds: `conversation` (what people and agents wrote, plus anything awaiting a person), `events` (status, assignee, title and parent changes, task links, run-failure notices) and `runs` (one marker per agent execution). The default is `["conversation","events"]`, leaving run markers out - they are the bulk of a long thread, and `list_task_runs` reports the same executions with their outcome attached. Pass `since` with an ISO-8601 timestamp to read only what is newer. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000, ceiling 4000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call; `excerpt_chars_applied` reports the width actually used, narrowed when a page of `limit` rows could not otherwise fit the result cap. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`. A truncated comment that has a technical-details section comes back as its summary, with `details_omitted: true`.',
 	},
 	get_comment: {
 		category: 'Comments & reactions',
@@ -664,7 +664,9 @@ export function mcpConventionLines(surface: 'docs' | 'wire'): string[] {
 		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
 		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',
 		'  mid-sentence; always check the `_truncated` companion rather than judging from',
-		'  whether the text reads as complete. To get the whole value, call the matching',
+		'  whether the text reads as complete. A long comment or task description with a',
+		`  \`${SUMMARY_DETAILS_HEADING}\` section comes back as its summary, with a`,
+		'  `details_omitted` companion set to true. To get the whole value, call the matching',
 		'  single-item read - `get_task` for a task, `get_comment` for a comment,',
 		'  `read_project_doc` for a doc - not a larger `excerpt_chars`.',
 		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',

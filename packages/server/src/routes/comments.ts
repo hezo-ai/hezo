@@ -4,6 +4,7 @@ import {
 	commentHasContent,
 	commentTextFits,
 	parseThreadRowCategories,
+	SUMMARY_DETAILS_HEADING,
 	type ThreadRowCategory,
 	WakeupSource,
 	wsRoom,
@@ -102,7 +103,9 @@ async function attachAuthorIcons(
  *    reactions (one cheap query, the single source of truth for reaction state).
  *    Text comments omit their `content` body and `attachments` (the heavy parts —
  *    large markdown and per-attachment signed URLs), carrying instead a
- *    `text_length` hint (placeholder sizing) and an `attachment_count`. Non-text
+ *    `text_length` hint (placeholder sizing: the visible length, so a summary over
+ *    collapsed technical details reserves the summary's height) and an
+ *    `attachment_count`. Non-text
  *    comments keep their small structural `content` + `chosen_option`.
  *  - **body mode** (`?ids=a,b,c`): the deferred heavy payload — `content` and
  *    `attachments` for just the requested comments. Reactions stay on the skeleton
@@ -219,6 +222,20 @@ async function getCommentsFull(
 	return ok(c, result.rows);
 }
 
+/** Chars of a comment scanned for the technical-details marker when sizing its placeholder. */
+const MARKER_SCAN_CHARS = 4000;
+
+/**
+ * The length of a text comment as a person first sees it: the summary above the
+ * technical-details marker, or the whole text when there is none. Only a size
+ * hint for the loading placeholder, so the scan is bounded, case-folded and does
+ * not skip code fences; `splitSummaryDetails` in `@hezo/shared` is the parser.
+ */
+const VISIBLE_TEXT_LENGTH_SQL = `CASE WHEN ic.content_type = 'text' THEN COALESCE(
+                 NULLIF(strpos(lower(left(ic.content->>'text', ${MARKER_SCAN_CHARS})),
+                               lower(E'\\n${SUMMARY_DETAILS_HEADING}')), 0) - 1,
+                 length(ic.content->>'text'), 0) ELSE NULL END`;
+
 /**
  * `?view=skeleton` mode: metadata + reactions for every comment, with text
  * bodies and attachments omitted (replaced by `text_length` / `attachment_count`
@@ -248,8 +265,7 @@ async function getCommentSkeletons(
             ui.updated_at AS author_user_icon_updated_at,
             ma.avatar_spec AS author_avatar_spec,
             ic.parent_comment_id,
-            CASE WHEN ic.content_type = 'text'
-                 THEN COALESCE(length(ic.content->>'text'), 0) ELSE NULL END AS text_length,
+            ${VISIBLE_TEXT_LENGTH_SQL} AS text_length,
             COALESCE(att.n, 0) AS attachment_count
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id

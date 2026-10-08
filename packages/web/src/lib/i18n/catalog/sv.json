@@ -630,6 +630,8 @@
 	"locale.settings.pageDescription": "Språket och formaten som varje skärm i den här instansen använder.",
 	"locale.settings.save": "Spara",
 	"locale.settings.title": "Språk och format",
+	"markdown.technicalDetails.hide": "Dölj tekniska detaljer",
+	"markdown.technicalDetails.show": "Visa tekniska detaljer",
 	"marketplace.addDescription": "CEO öppnar en uppgift i projektet, anställer de roller du väljer och anpassar dem till teamet som redan finns. Har projektet redan rollerna uppdateras de i stället till den här versionen.",
 	"marketplace.addFailed": "Det gick inte att lägga till teamet",
 	"marketplace.addRoleAction": "Lägg till roll",

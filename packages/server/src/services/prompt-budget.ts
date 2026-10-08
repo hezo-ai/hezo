@@ -1,5 +1,5 @@
 import { INJECTED_TEXT_CAPS } from '@hezo/shared';
-import { excerpt } from '../mcp/paging';
+import { excerpt, type SummaryExcerpt, summaryExcerpt } from '../mcp/paging';
 
 /**
  * How much task-scoped text a run prompt may carry inline.
@@ -83,6 +83,8 @@ export interface BudgetedText {
 	truncated: boolean;
 	/** The full length of the source, whether or not it was cut. */
 	length: number;
+	/** True when the text is the summary and its technical details were left out. */
+	detailsOmitted?: boolean;
 }
 
 /**
@@ -109,16 +111,30 @@ export class PromptBudget {
 	/**
 	 * Take a section's text, cut to the lesser of its ceiling and the remainder.
 	 *
+	 * With `summaryFirst`, text too long for the allowance that has a technical
+	 * details section is cut to its summary instead (see `summaryExcerpt`).
+	 *
 	 * Returns the full `length` even when nothing was cut, because the caller
 	 * renders it either way: a reader who is told a body's real size can decide
 	 * not to fetch the rest, and one who is told only "there is more" cannot.
 	 */
-	take(section: PromptSection, text: string | null | undefined): BudgetedText {
-		const allowed = Math.min(PROMPT_SECTION_CEILINGS[section], this.remaining);
-		const cut = excerpt(text, Math.max(0, allowed));
+	take(
+		section: PromptSection,
+		text: string | null | undefined,
+		opts: { summaryFirst?: boolean } = {},
+	): BudgetedText {
+		const allowed = Math.max(0, Math.min(PROMPT_SECTION_CEILINGS[section], this.remaining));
+		const cut: SummaryExcerpt = opts.summaryFirst
+			? summaryExcerpt(text, allowed)
+			: { ...excerpt(text, allowed), detailsOmitted: false };
 		const out = cut.excerpt ?? '';
 		this.remaining = Math.max(0, this.remaining - out.length);
-		return { text: out, truncated: cut.truncated, length: cut.length };
+		return {
+			text: out,
+			truncated: cut.truncated,
+			length: cut.length,
+			...(cut.detailsOmitted ? { detailsOmitted: true } : {}),
+		};
 	}
 }
 
@@ -135,6 +151,14 @@ export class PromptBudget {
  */
 export function overflowNote(shown: number, total: number, recoveryCall: string): string {
 	return `_[showing the first ${shown} of ${total} characters - read the rest with \`${recoveryCall}\`]_`;
+}
+
+/**
+ * The line that follows a section cut to its summary, naming the technical
+ * details that were left out and the exact call that serves them.
+ */
+export function detailsOmittedNote(shown: number, total: number, recoveryCall: string): string {
+	return `_[showing the summary, ${shown} of ${total} characters; the technical details are left out - read them with \`${recoveryCall}\`]_`;
 }
 
 /**

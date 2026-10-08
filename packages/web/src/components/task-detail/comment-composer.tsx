@@ -6,6 +6,7 @@ import {
 	commentTextFits,
 	extractActiveAgentMentionSlugs,
 	hasActiveAdminMention,
+	summaryOf,
 } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { CornerDownRight, Loader2, Maximize2, Minimize2, Trash2 } from 'lucide-react';
@@ -47,7 +48,7 @@ function previewCommentText(c: Comment): string {
 		const t = (raw as { text?: unknown }).text;
 		text = typeof t === 'string' ? t : '';
 	}
-	text = text.trim().replace(/\s+/g, ' ');
+	text = summaryOf(text).replace(/\s+/g, ' ');
 	if (!text) return '(non-text comment)';
 	return text.length > 60 ? `${text.slice(0, 60)}…` : text;
 }

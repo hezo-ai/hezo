@@ -1,3 +1,4 @@
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -136,6 +137,27 @@ describe('comments skeleton mode (?view=skeleton)', () => {
 		// Non-text comments keep their small structural content on the skeleton.
 		expect((system.content as { kind?: string }).kind).toBe('status_change');
 		expect(system.text_length).toBeNull();
+	});
+
+	it('sizes a comment with technical details by its summary, which is all a person first sees', async () => {
+		const summary = 'Review passed.';
+		const posted = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: json(),
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `${summary}\n\n${SUMMARY_DETAILS_HEADING}\n\n${'evidence '.repeat(200)}` },
+			}),
+		});
+		const id = (await posted.json()).data.id as string;
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments?view=skeleton`,
+			{ headers: authHeader(token) },
+		);
+		const rows = (await res.json()).data as Array<Record<string, unknown>>;
+		// The hint counts up to the blank line before the marker: close enough to size
+		// the placeholder, and far below the whole body's length.
+		expect(rows.find((r) => r.id === id)!.text_length).toBe(summary.length + 1);
 	});
 
 	// A folded run row never mounts, so it never fetches its own run. Without the

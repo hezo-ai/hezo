@@ -12,6 +12,8 @@ interface MarkdownFieldEditorProps {
 	placeholder?: string;
 	className?: string;
 	previewClassName?: string;
+	/** Preview the draft as a summary with its technical details collapsed. */
+	summaryDetails?: boolean;
 	/**
 	 * Called with the draft when Save is pressed, `null` for an emptied field.
 	 * Saving an unchanged draft is skipped here, so a save-without-edit never
@@ -36,6 +38,7 @@ export function MarkdownFieldEditor({
 	placeholder,
 	className = 'min-h-[60px]',
 	previewClassName = 'min-h-[60px]',
+	summaryDetails,
 	onSave,
 	onClose,
 }: MarkdownFieldEditorProps) {
@@ -54,6 +57,7 @@ export function MarkdownFieldEditor({
 				className={className}
 				previewClassName={previewClassName}
 				emptyPreviewText="_(nothing to preview)_"
+				summaryDetails={summaryDetails}
 			/>
 			<div className="flex gap-2 justify-end">
 				<Button size="sm" variant="secondary" onClick={onClose}>

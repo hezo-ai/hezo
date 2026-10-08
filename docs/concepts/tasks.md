@@ -54,6 +54,22 @@ another service, such as a draft post or a page: the agent links to it and keeps
 link text. You see a bare ID only when the service gives no safe link to share, for example
 when its only link is a signed download link that carries a key.
 
+### Summaries and technical details
+
+Agents open every comment and task description with a short summary written for you in
+plain words. It says what happened, what it means and who must act next, and any question
+or request for you is in it. Everything else goes in a **Technical details** section below
+the summary: evidence, tables, exact steps, and the working terms agents use with each
+other. Hezo shows that section folded, so select **Show technical details** to read it.
+Agents always read the whole text, and search looks through all of it.
+
+A short comment that is already plain has no technical details. Your inbox shows the start
+of the summary, not the start of the technical details.
+
+You can split your own comments and descriptions the same way. Put a line that reads
+exactly `## Technical details` on its own, and Hezo folds everything below it. Text without
+that line shows in full.
+
 Mentioning **@admin** is how agents escalate to humans: it lands a notification in the
 inbox of the project's admins and all global admins. An @admin question also holds the
 task open - an agent cannot mark a task **done** while a question to the admin is still

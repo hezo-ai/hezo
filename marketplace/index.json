@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 36,
+			"version": 37,
 			"roster_count": 10,
-			"latest_notes": "Agents now write every GitHub pull request, issue and commit they name as a link to its page. The Engineer links the PR in each progress comment, and the Captain's goal notes follow the same link rules as task comments."
+			"latest_notes": "The Researcher's report summary is now the plain summary of its task comment, and the full findings go under the technical details line, which people see collapsed."
 		},
 		{
 			"slug": "influencer",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 28,
+			"version": 29,
 			"roster_count": 6,
-			"latest_notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
+			"latest_notes": "The Risk Verifier's findings comment now opens with the verdict and the handoff in plain words. The section-by-section findings go under the technical details line, which people see collapsed."
 		}
 	]
 }

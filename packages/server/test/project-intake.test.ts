@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ID, WakeupSource } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, splitSummaryDetails, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -93,6 +93,10 @@ describe('project intake (CEO-assisted)', () => {
 		expect(taskRow.rows[0].description).toContain(PROJECT_INTAKE_MARKER);
 		expect(taskRow.rows[0].description).toContain('Baseline team type');
 		expect(taskRow.rows[0].description).toContain('Blank');
+		// The admin sees a plain summary; the form data and steps sit in the technical details.
+		const { summary, details } = splitSummaryDetails(taskRow.rows[0].description);
+		expect(summary).toContain('Agree its scope and team, then create it.');
+		expect(details).toContain('### Your task');
 
 		const comments = await fetchComments(intake.project_slug, intake.intake_task_identifier);
 		expect(comments.some((c) => c.content.text.includes("I'm the CEO"))).toBe(true);

@@ -12,6 +12,7 @@ export * from './crypto/mnemonic.js';
 export * from './crypto/sso.js';
 export * from './documents/injected-text-caps.js';
 export * from './documents/learned-rules.js';
+export * from './documents/summary-details.js';
 export * from './documents/text.js';
 export * from './i18n/format.js';
 export * from './marketplace.js';

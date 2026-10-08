@@ -1,4 +1,9 @@
-import { CommentContentType, HeartbeatRunKind, TaskStatus } from '@hezo/shared';
+import {
+	CommentContentType,
+	HeartbeatRunKind,
+	SUMMARY_DETAILS_HEADING,
+	TaskStatus,
+} from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { buildProgressActivityCandidates } from '../src/services/project-activity';
@@ -243,6 +248,17 @@ describe('buildProgressActivityCandidates', () => {
 		const t = await seedTask('Abandoned outright', { status: TaskStatus.Cancelled });
 		const c = await buildProgressActivityCandidates(db, projectId, teamId);
 		expect(c.closed.map((r) => r.identifier)).not.toContain(t.identifier);
+	});
+
+	it('cuts a description excerpt from its summary, never the technical details', async () => {
+		const t = await seedTask('Filed with details', {
+			createdBy: captainId,
+			createdAt: '2032-01-01T00:00:00Z',
+			description: `Re-check six stock reports.\n\n${SUMMARY_DETAILS_HEADING}\n\n${'step '.repeat(100)}`,
+		});
+		const c = await buildProgressActivityCandidates(db, projectId, teamId);
+		const row = c.created.find((r) => r.identifier === t.identifier);
+		expect(row?.excerpt).toBe('Re-check six stock reports.');
 	});
 
 	it('truncates the excerpt so a long summary cannot widen the payload', async () => {

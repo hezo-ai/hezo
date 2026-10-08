@@ -1,4 +1,4 @@
-import type { HeartbeatRunStatus } from '@hezo/shared';
+import { type HeartbeatRunStatus, summaryOf } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -277,7 +277,7 @@ function toSkeletonRow(created: Comment, attachmentCount: number): CommentSkelet
 		// initials before the author's avatar lands.
 		author_icon_url: created.author_icon_url ?? null,
 		parent_comment_id: created.parent_comment_id,
-		text_length: isText && typeof textVal === 'string' ? textVal.length : null,
+		text_length: isText && typeof textVal === 'string' ? summaryOf(textVal).length : null,
 		attachment_count: attachmentCount,
 		reactions: [],
 	};

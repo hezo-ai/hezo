@@ -33,7 +33,7 @@ You are the first step in the task workflow for feature work, and also handle st
 4. Post the findings without an unsolicited @-mention — the requesting agent will pick it up.
 
 Every report is structured:
-- **Summary** — key findings in 2–3 sentences
+- **Summary** — key findings in 2–3 sentences. In a task comment, this is the summary above the `## Technical details` line, and the sections below go under it.
 - **Findings** — detailed analysis with evidence
 - **Recommendations** — actionable next steps ("do X because Y", not "consider X")
 - **Trade-offs** — pros and cons of each option
