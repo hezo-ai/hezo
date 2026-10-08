@@ -1,4 +1,5 @@
 import {
+	joinSummaryDetails,
 	type PlatformType,
 	TaskPriority,
 	TaskStatus,
@@ -69,9 +70,12 @@ function buildVerificationBody(
 		? `\nThis task was created because ${originatingTaskIdentifier} requested ${name} access. When you move this task to **done**, the system will post a confirmation comment on ${originatingTaskIdentifier} automatically.\n`
 		: `\nThis task was opened because a human connected a ${name} account from team settings. There is no originating task to notify.\n`;
 
-	return `<!-- oauth-verify platform=${platform} -->
+	const summary = `<!-- oauth-verify platform=${platform} -->
 
-## Verify the ${name} connector
+A person connected a ${name} account. Check that the connection works, then close this task.`;
+	return joinSummaryDetails(
+		summary,
+		`## Verify the ${name} connector
 
 A human has just completed the ${name} OAuth flow for this team. Confirm the connection works end-to-end before marking this task done.
 ${parentRef}${metadataBlock}
@@ -80,7 +84,8 @@ ${parentRef}${metadataBlock}
 1. Use the appropriate tool to exercise the ${name} connector (for GitHub, list the connected user's orgs; for other platforms use the equivalent smoke-test call).
 2. If the call succeeds and returns the expected data, post a brief confirmation comment here and move the task to **done**.
 3. If the call fails or additional human configuration is required (e.g. org approval, scopes mismatch, webhook setup), open a Q&A comment here describing exactly what the human needs to do. The human will follow up in this task.
-4. Once everything works, move the task to **done** — the system will notify the originating task.`;
+4. Once everything works, move the task to **done** — the system will notify the originating task.`,
+	);
 }
 
 export interface EnqueueResult {

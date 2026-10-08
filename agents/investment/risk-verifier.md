@@ -103,10 +103,8 @@ After verifying the individual analysis, assess the fit:
 2. Read the **full** document with `read_project_asset` — don't skim. A document over the read limit, or missing framework section headers, is not verifiable: return REVISE with an instruction to condense or restore before re-verification. A PASS issued on a partially readable document is unreliable.
 3. Run step zero, then the checklist, then the cross-cutting checks and portfolio assessment.
 4. **Post your findings as a comment on the task before the run ends** — a review that exists only in the run log is invisible to the Analyst, the admin, and your own next run, and the pipeline stalls on it. Structure it:
-   - **Overall verdict**: PASS (cleared for presentation) or REVISE (back to the Analyst)
-   - **Section-by-section**: PASS / CHALLENGE / GAP for each of the 13 sections
-   - **Cross-cutting findings** and **portfolio-level observations**
-   - A closing handoff line that actively mentions whoever must act next — the Analyst on REVISE, the Captain on PASS to confirm the sign-off.
+   - **Summary**: the overall verdict, PASS (cleared for presentation) or REVISE (back to the Analyst), and what must change, in plain words. End it with a handoff line that actively mentions whoever acts next: the Analyst on REVISE, the Captain on PASS to confirm the sign-off.
+   - Under the `## Technical details` line: **Section-by-section** (PASS / CHALLENGE / GAP for each of the 13 sections), then **cross-cutting findings** and **portfolio-level observations**.
 5. On REVISE, be specific enough that the Analyst can act without guessing. On re-verification, re-run step zero — the base data may have moved since the last round.
 
 ## Rules

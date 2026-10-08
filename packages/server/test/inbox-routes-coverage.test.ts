@@ -1,3 +1,4 @@
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { signAgentJwt } from '../src/middleware/auth';
 import { authHeader, createAgentRun, createTestTeam, projectSlugFor } from './helpers/app';
@@ -161,6 +162,20 @@ describe('GET /inbox/mentions', () => {
 		expect(row?.snippet).toBe(
 			'Captain review: PASS. The submission satisfies: • ZNTL uses the Aug 17 offering • verify_totals passes',
 		);
+	});
+
+	it('shows only the summary of a comment with technical details', async () => {
+		const comment = await insertComment(
+			`@admin please reconnect the brokerage account.\n\n${SUMMARY_DETAILS_HEADING}\n\nToken expired at 06:00; sweep skipped.`,
+		);
+		await insertMention(comment);
+
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(ctx.token),
+		});
+		const mentions = (await res.json()).data as Array<Record<string, unknown>>;
+		const row = mentions.find((m) => (m.snippet as string).includes('reconnect the brokerage'));
+		expect(row?.snippet).toBe('@admin please reconnect the brokerage account.');
 	});
 
 	it('archived=true returns only archived mentions', async () => {

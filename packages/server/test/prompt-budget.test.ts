@@ -9,7 +9,7 @@
 // failure stayed reachable, and a test that only pins one section's ceiling
 // misses that the sections sum. These assert the total.
 
-import { AgentRuntime, RUNTIME_PROMPT_MAX_CHARS } from '@hezo/shared';
+import { AgentRuntime, RUNTIME_PROMPT_MAX_CHARS, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	assertPromptAcceptable,
@@ -111,6 +111,24 @@ describe('PromptBudget', () => {
 		expect(prompt).toMatch(/of 500000 characters - read the rest with/);
 	});
 
+	it('cuts long text to its summary when asked, and says the details were left out', () => {
+		const text = `Plain summary.\n\n${SUMMARY_DETAILS_HEADING}\n\n${'D'.repeat(HUGE)}`;
+		const cut = new PromptBudget().take('recentComment', text, { summaryFirst: true });
+		expect(cut).toEqual({
+			text: 'Plain summary.',
+			truncated: true,
+			length: text.length,
+			detailsOmitted: true,
+		});
+		// Text that fits is never cut to its summary.
+		const short = `S\n${SUMMARY_DETAILS_HEADING}\nD`;
+		expect(new PromptBudget().take('recentComment', short, { summaryFirst: true })).toEqual({
+			text: short,
+			truncated: false,
+			length: short.length,
+		});
+	});
+
 	it('leaves a short section its slack for the next one', () => {
 		const budget = new PromptBudget(PROMPT_BUDGET_CHARS);
 		budget.take('taskDescription', 'short');
@@ -131,6 +149,29 @@ describe('renderCommentHistory', () => {
 		expect(out).toContain(`of ${HUGE} characters`);
 		expect(out).toContain('get_comment(comment_id: "c1")');
 		expect(out).toContain('get_comment(comment_id: "c2")');
+	});
+
+	it('shows a long row as its summary, naming the omitted details, but never the waking row', () => {
+		const withDetails = (id: string): RenderableComment => ({
+			...makeComment(id, 0),
+			content: {
+				text: `Plain summary ${id}.\n\n${SUMMARY_DETAILS_HEADING}\n\n${'D'.repeat(HUGE)}`,
+			},
+		});
+		const out = renderCommentHistory([withDetails('c1'), withDetails('c2')], {
+			budget: new PromptBudget(),
+			section: 'recentComment',
+			summaryFirst: true,
+			wakingCommentId: 'c2',
+		});
+		const [first, second] = out.split('\n[');
+		expect(first).toContain('Plain summary c1.');
+		expect(first).not.toContain('DDDD');
+		expect(first).toContain('the technical details are left out');
+		expect(first).toContain('get_comment(comment_id: "c1")');
+		// The comment that woke the run is never reduced to its summary.
+		expect(second).toContain('DDDD');
+		expect(second).not.toContain('the technical details are left out');
 	});
 
 	it('back-references a body a handoff already quoted instead of repeating it', () => {

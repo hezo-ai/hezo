@@ -2,6 +2,7 @@ import type { SystemPromptVar } from '@hezo/shared';
 import { type ReactNode, useRef, useState } from 'react';
 import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
+import { SummaryDetailsProse } from './summary-details-prose';
 
 export type MarkdownEditorMode = 'edit' | 'preview';
 
@@ -57,6 +58,11 @@ interface MarkdownEditorProps {
 	 * the description occupies most of the space.
 	 */
 	fill?: boolean;
+	/**
+	 * Preview the text as a summary with its technical details collapsed, the way
+	 * comments and task descriptions are shown once saved.
+	 */
+	summaryDetails?: boolean;
 }
 
 const TAB_BASE = 'px-2.5 py-1 rounded';
@@ -95,6 +101,7 @@ export function MarkdownEditor({
 	emptyPreviewText = '',
 	defaultMode = 'edit',
 	fill = false,
+	summaryDetails = false,
 }: MarkdownEditorProps) {
 	const [mode, setMode] = useState<MarkdownEditorMode>(defaultMode);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -106,6 +113,7 @@ export function MarkdownEditor({
 	}
 
 	const previewBody = previewContent ?? value;
+	const PreviewProse = summaryDetails ? SummaryDetailsProse : MarkdownProse;
 
 	return (
 		<div className={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}>
@@ -165,9 +173,9 @@ export function MarkdownEditor({
 					{isPreviewLoading ? (
 						<div className="text-text-2 text-xs">Resolving…</div>
 					) : (
-						<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
+						<PreviewProse projectId={projectId} projectSlug={projectSlug}>
 							{previewBody || emptyPreviewText}
-						</MarkdownProse>
+						</PreviewProse>
 					)}
 				</div>
 			)}

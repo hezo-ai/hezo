@@ -1,4 +1,4 @@
-import { HEZO_DOCS_URL } from '@hezo/shared';
+import { HEZO_DOCS_URL, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { authHeader, createTestProject, createTestTeam } from './helpers/app';
@@ -290,6 +290,12 @@ describe('mode gating', () => {
 		expect(result).toContain('### How You Write');
 		expect(result).toContain('Write in Simplified Technical English');
 		expect(result).toContain('Answer the question and stop');
+		// A chat turn can post comments and create tasks, so it carries the
+		// summary-first rule too.
+		expect(result).toContain(
+			'When you post a task comment or write a task description, open with a plain summary',
+		);
+		expect(result).toContain(`Put the rest under one \`${SUMMARY_DETAILS_HEADING}\` line`);
 		expect(result).toContain(
 			'Write a GitHub pull request, issue or commit as a markdown link to its full URL',
 		);

@@ -630,6 +630,8 @@
 	"locale.settings.pageDescription": "Język i formaty używane na każdym ekranie tej instancji.",
 	"locale.settings.save": "Zapisz",
 	"locale.settings.title": "Języki i formaty",
+	"markdown.technicalDetails.hide": "Ukryj szczegóły techniczne",
+	"markdown.technicalDetails.show": "Pokaż szczegóły techniczne",
 	"marketplace.addDescription": "CEO otworzy w projekcie zadanie, zatrudni wybrane role i dopasuje je do istniejącego zespołu. Jeśli projekt już je ma, zaktualizuje je do tej wersji.",
 	"marketplace.addFailed": "Nie udało się dodać zespołu",
 	"marketplace.addRoleAction": "Dodaj rolę",

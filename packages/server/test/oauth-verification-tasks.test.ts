@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ID, PlatformType, TaskStatus } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, PlatformType, splitSummaryDetails, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { enqueueOAuthVerificationTask } from '../src/services/oauth-verification-tasks';
@@ -71,6 +71,10 @@ describe('enqueueOAuthVerificationTask', () => {
 		expect(task.title).toContain('GitHub');
 		expect(task.description).toContain('oauth-verify platform=github');
 		expect(task.description).toContain('octocat');
+		// A person reads a plain summary; the verification steps sit in the technical details.
+		const { summary, details } = splitSummaryDetails(task.description);
+		expect(summary).toContain('Check that the connection works, then close this task.');
+		expect(details).toContain('**Steps**');
 	});
 
 	it('links the new task to the originating task via parent_task_id', async () => {

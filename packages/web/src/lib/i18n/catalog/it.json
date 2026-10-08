@@ -630,6 +630,8 @@
 	"locale.settings.pageDescription": "La lingua e i formati usati da ogni schermata di questa istanza.",
 	"locale.settings.save": "Salva",
 	"locale.settings.title": "Lingue e formati",
+	"markdown.technicalDetails.hide": "Nascondi dettagli tecnici",
+	"markdown.technicalDetails.show": "Mostra dettagli tecnici",
 	"marketplace.addDescription": "Il CEO apre un'attività nel progetto per assumere i ruoli scelti e adattarli al team già presente. Se il progetto ha già quei ruoli, li aggiorna a questa versione.",
 	"marketplace.addFailed": "Aggiunta del team non riuscita",
 	"marketplace.addRoleAction": "Aggiungi ruolo",

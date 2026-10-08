@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ID, HEZO_DOCS_URL } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, HEZO_DOCS_URL, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -496,7 +496,7 @@ describe('template resolver', () => {
 		// reads like machine translation.
 		expect(result).toContain("Zinsser's four principles: simplicity, brevity, clarity, humanity");
 		expect(result).toContain('Write to a person');
-		expect(result).toContain('Be succinct. Lead with the outcome, then the detail');
+		expect(result).toContain('**Be succinct.** Say it once and stop');
 		expect(result).toContain('length is not effort');
 		// The register reaches Hezo communication, not a deliverable. A blanket rule
 		// would flatten the brand copy and reports other roles are commissioned for.
@@ -504,13 +504,38 @@ describe('template resolver', () => {
 		expect(result).toContain('project docs, and skills');
 	});
 
-	// The register states the lead-with-the-outcome rule once, for every surface.
+	// The register states the summary-first rule once, for every surface.
 	// The Comments section carries only what is specific to a comment body.
 	it('does not restate the register inside the Comments section', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Comments');
 		expect(result).toContain('**Format as proper markdown.**');
 		expect(result).not.toContain('Lead with a one-line summary of the outcome');
+	});
+
+	// People read the summary; the technical details are collapsed for them and
+	// read by teammates. The marker is the shared constant the UI splits on, so a
+	// reworded or retyped marker would stop the collapse.
+	it('tells every agent to lead with a plain summary and put the rest under the technical-details marker', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain(
+			'**Open every comment and task description with a summary written for a person.**',
+		);
+		expect(result).toContain(
+			'**Write the summary in plain words, even when you write to a teammate.**',
+		);
+		expect(result).toContain(
+			'Keep blocker numbers, check names, hashes, file names and internal labels out of it',
+		);
+		expect(result).toContain(
+			`**Put everything else under one \`${SUMMARY_DETAILS_HEADING}\` line.**`,
+		);
+		expect(result).toContain(
+			'Leave the section out only when the whole message is already plain to a person',
+		);
+		expect(result).toContain('**Put every request and handoff in the summary.**');
+		expect(result).toContain("**A task description's summary states what the task is and why.**");
+		expect(result).toContain('update its summary in the same edit');
 	});
 
 	// A PR number or a SHA written as plain text links nowhere, so the admin cannot
@@ -928,6 +953,11 @@ describe('template resolver', () => {
 		// The all-passive block is named by the rule ("A heading is not a wake"), which
 		// is what the worked example used to restate.
 		expect(result).toContain('A heading is not a wake');
+		// The block closes the summary, so people see the asks without expanding anything.
+		expect(result).toContain(
+			'**A multi-recipient report routes in its summary: a closing handoff block of active mentions, passive everywhere else.**',
+		);
+		expect(result).toContain(`End the summary, above the \`${SUMMARY_DETAILS_HEADING}\` line`);
 	});
 
 	it('mention discipline names the MIXED closing block and rejects tone as the test', async () => {

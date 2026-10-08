@@ -1,3 +1,4 @@
+import { splitSummaryDetails } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -104,6 +105,21 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(row.description).not.toContain('## Team coherence review');
 		// The shared audit + rewrite steps still run.
 		expect(row.description).toContain('list_agents');
+	});
+
+	it('opens the description with a plain summary and keeps the audit steps under the technical details', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
+		const task = await db.query<{ description: string }>(
+			`SELECT description FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+		const { summary, details } = splitSummaryDetails(task.rows[0].description);
+		// People read the reason in plain words, not the internal reason code.
+		expect(summary).toContain('changed: an agent joined it.');
+		expect(summary).not.toContain('agent_hired');
+		expect(summary).not.toContain('list_agents');
+		expect(details).toContain('## Team coherence review');
+		expect(details).toContain('list_agents');
 	});
 
 	it('assigns an INITIAL setup review to the CEO (auto-started) and wakes them', async () => {

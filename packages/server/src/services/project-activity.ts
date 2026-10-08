@@ -1,3 +1,4 @@
+import { summaryOf } from '@hezo/shared';
 import type { Db } from '../db/database';
 
 /**
@@ -34,6 +35,12 @@ const ACTIONED_RUN_WINDOW = 200;
 const CLOSED_TASK_WINDOW = 50;
 /** Excerpt length for the raw material handed to the Captain. */
 const EXCERPT_CHARS = 200;
+/**
+ * Chars of a task's text read so its summary can be split from its technical
+ * details before the excerpt is cut. Bounded so a long description cannot widen
+ * the row past what the excerpt needs.
+ */
+const EXCERPT_SCAN_CHARS = 4000;
 
 export interface ProgressActivityCandidate {
 	identifier: string;
@@ -44,7 +51,8 @@ export interface ProgressActivityCandidate {
 	/** When the activity that qualified it happened. */
 	at: string | null;
 	/**
-	 * The task's own words — its progress summary, or its description for a freshly created task.
+	 * The task's own words — its progress summary, or its description for a freshly created task —
+	 * cut from the summary, never the collapsed technical details.
 	 * Raw material for the Captain to write *from*; the prompt forbids copying it.
 	 */
 	excerpt: string | null;
@@ -109,7 +117,7 @@ export async function buildProgressActivityCandidates(
 		          -- against their own role title.
 		          COALESCE(ma.title, m.display_name) AS actor,
 		          GREATEST(t.updated_at, COALESCE(rr.at, t.updated_at)) AS at,
-		          left(COALESCE(NULLIF(t.progress_summary, ''), t.description), ${EXCERPT_CHARS}) AS excerpt
+		          left(COALESCE(NULLIF(t.progress_summary, ''), t.description), ${EXCERPT_SCAN_CHARS}) AS excerpt
 		     FROM open_window t
 		     LEFT JOIN recent_runs rr ON rr.task_id = t.id
 		     LEFT JOIN members m ON m.id = t.assignee_id
@@ -122,7 +130,7 @@ export async function buildProgressActivityCandidates(
 		          t.identifier, t.title, t.status::text AS status,
 		          COALESCE(ma.title, m.display_name) AS actor,
 		          t.created_at AS at,
-		          left(COALESCE(NULLIF(t.description, ''), t.progress_summary), ${EXCERPT_CHARS}) AS excerpt
+		          left(COALESCE(NULLIF(t.description, ''), t.progress_summary), ${EXCERPT_SCAN_CHARS}) AS excerpt
 		     FROM tasks t
 		     LEFT JOIN members m ON m.id = t.created_by_member_id
 		     LEFT JOIN member_agents ma ON ma.id = t.created_by_member_id
@@ -142,7 +150,7 @@ export async function buildProgressActivityCandidates(
 		          t.identifier, t.title, t.status::text AS status,
 		          COALESCE(ma.title, m.display_name) AS actor,
 		          COALESCE(cc.created_at, t.updated_at) AS at,
-		          left(COALESCE(NULLIF(t.progress_summary, ''), t.description), ${EXCERPT_CHARS}) AS excerpt
+		          left(COALESCE(NULLIF(t.progress_summary, ''), t.description), ${EXCERPT_SCAN_CHARS}) AS excerpt
 		     FROM done_window t
 		     LEFT JOIN LATERAL (
 		       SELECT c.created_at,
@@ -174,7 +182,7 @@ export async function buildProgressActivityCandidates(
 			status: row.status,
 			actor: row.actor,
 			at: row.at,
-			excerpt: row.excerpt || null,
+			excerpt: row.excerpt ? summaryOf(row.excerpt).slice(0, EXCERPT_CHARS) || null : null,
 		});
 	}
 	return out;

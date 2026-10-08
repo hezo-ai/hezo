@@ -285,6 +285,28 @@ for **agent callers only** — no active `@admin` mention on the task lacking a 
 replies on the task or closes it themselves; reading the mention does not count).
 `cancelled` is deliberately ungated.
 
+**Summary and technical details.** A comment body and a task description are one text field
+read by two audiences. Text above one marker line (`SUMMARY_DETAILS_HEADING`, `## Technical
+details`, matched case-insensitively, outside code fences, first match only) is the summary a
+person reads; text below it is the technical details, mainly for agents. Text without the
+marker is all summary, so older content and human writing render whole; nothing is
+backfilled and no column carries the split. `splitSummaryDetails` in `@hezo/shared`
+(`documents/summary-details.ts`) is the one parser: the web renderer folds the details under a
+toggle, every preview line (inbox snippet, search lead, approvals, reply target, progress
+candidates) takes the summary, and the agent list reads (`list_comments`, `list_tasks`, the
+run prompt's Recent Comments rows) return a text that fits the excerpt budget whole and cut a
+longer one with a marker to its summary, flagged `details_omitted` (`description_details_omitted`
+on a task) with the full length, pointing at `get_comment`/`get_task` for the rest. The comment
+placeholder's `text_length` is the summary's length, found by a bounded SQL scan that is only a
+size hint. The reads that are themselves instructions
+stay whole: the waking comment, a reply's original, `get_comment`, `get_task`, and the run's
+own description. Agent writes get advisory warnings from `summaryDetailsWarnings` (long text
+with no details, an overlong or empty summary, a near-miss marker, an active mention only below
+the marker) and are never rejected - plain language cannot be checked structurally, so the
+writing rule in `SHARED_INSTRUCTIONS` carries that half. Server-written task bodies are built
+with `joinSummaryDetails`. Every agent-facing statement of the marker interpolates the constant
+except the humanizer skill, which is static and has a drift test.
+
 **Task hierarchy is mutable.** `tasks.parent_task_id` is a nullable self-FK
 (`ON DELETE SET NULL`, `idx_tasks_parent`) and can be changed after creation through the
 same two update paths (REST PATCH and MCP `update_task`) that own every other field: a
@@ -6366,7 +6388,8 @@ replacement as down.
 two payloads off the one `GET …/tasks/:taskId/comments` route. On mount it fetches a
 **skeleton** (`?view=skeleton` → `useCommentSkeletons`): metadata + reactions for every
 comment, with text bodies and attachments omitted (a `text_length` hint sizes each row's
-placeholder). Non-text comments (system/run/action/…) keep their small `content` and render
+placeholder; for a text row with technical details it is the summary's length, since the
+details render folded). Non-text comments (system/run/action/…) keep their small `content` and render
 straight from the skeleton; inline-event rows (system/run) never need a body. A text row's
 **body** (`content` + attachments) loads on demand: an `IntersectionObserver` tracks which
 rows are on screen and, once the thread *settles* (a ~170ms scroll pause — a fast fling never
@@ -6564,7 +6587,7 @@ is the single home for how each kind is labelled across the three surfaces that 
 them. Read state is per user (`read_at`), and acting on the request clears it for everyone -
 `fulfill-credential` and `resolve-asset-deletion` both mark the comment's rows read, the
 same way resolving an approval retires it. Migration `057` backfilled rows for the
-credential requests that predate the fan-out. Each row's `snippet` is the comment body run
+credential requests that predate the fan-out. Each row's `snippet` is the comment's summary (the text above its technical-details marker) run
 through `markdownToPreviewText` (`@hezo/shared`) and truncated - a preview line renders as
 plain text on all three surfaces, so a stripped body is the only form that reads as prose
 rather than source. `buildHighlightedSnippet` (search results) normalises through the same

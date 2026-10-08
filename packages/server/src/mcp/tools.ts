@@ -57,7 +57,9 @@ import {
 	RETIRED_BUDGET_FIELDS,
 	ReactionKind,
 	SEARCH_SCOPES,
+	SUMMARY_DETAILS_HEADING,
 	summarizeMethodAccess,
+	summaryDetailsWarnings,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	THREAD_ROW_CATEGORIES,
@@ -270,6 +272,8 @@ import {
 	listPagingArgs,
 	pagedList,
 	parseListLimit,
+	type SummaryExcerpt,
+	summaryExcerpt,
 	utf8FloorBoundary,
 	windowContent,
 } from './paging';
@@ -633,11 +637,30 @@ async function buildTerminalTaskAskWarning(
 	);
 }
 
+/** The fact a comment or description parameter states about the technical-details marker. */
+const COLLAPSED_DETAILS_NOTE = `Text below a \`${SUMMARY_DETAILS_HEADING}\` line is shown collapsed to people.`;
+
+/**
+ * Returns the summary-and-technical-details shape warnings for a comment or task
+ * description (see `summaryDetailsWarnings`), joined, or null when the shape is
+ * fine. Pure text, no DB read; advisory and non-blocking like the builders above.
+ */
+function buildSummaryDetailsWarning(content: string): string | null {
+	try {
+		const warnings = summaryDetailsWarnings(content, extractMentionSlugs);
+		return warnings.length > 0 ? warnings.join(' ') : null;
+	} catch (e) {
+		log.error('Failed to check the summary and technical details shape:', e);
+		return null;
+	}
+}
+
 /**
  * Attach the reference warnings (backticked Hezo entities, unlinked GitHub
  * references), computed over `content`, to a write result when the caller is
- * an agent. The checks are advisory: failures are swallowed and never block
- * the already-persisted write.
+ * an agent, plus the summary-and-technical-details shape warnings for a task
+ * `description` written in the same call. The checks are advisory: failures are
+ * swallowed and never block the already-persisted write.
  */
 async function withReferenceWarnings<T extends object>(
 	db: Db,
@@ -646,6 +669,7 @@ async function withReferenceWarnings<T extends object>(
 	projectId: string,
 	content: string | undefined,
 	result: T,
+	description?: string,
 ): Promise<T | (T & { warning: string })> {
 	if (auth.type !== AuthType.Agent || !content) return result;
 	const backtickWarning = await buildBacktickedEntityWarning(db, teamId, projectId, content).catch(
@@ -654,7 +678,11 @@ async function withReferenceWarnings<T extends object>(
 			return null;
 		},
 	);
-	const warning = [backtickWarning, buildUnlinkedGitHubReferenceWarning(content)]
+	const warning = [
+		backtickWarning,
+		buildUnlinkedGitHubReferenceWarning(content),
+		description ? buildSummaryDetailsWarning(description) : null,
+	]
 		.filter((w): w is string => Boolean(w))
 		.join(' ');
 	return warning ? { ...result, warning } : result;
@@ -1051,19 +1079,25 @@ function isRasterImageMime(mime: string): boolean {
 
 /**
  * Spread an Excerpt into a row under `<field>_excerpt`/`_truncated`/`_length`.
+ * With `summaryFirst`, a long field with a technical-details section is cut to
+ * its summary, and `<field>_details_omitted` says so.
  */
 function applyExcerpt<T extends Record<string, unknown>>(
 	row: T,
 	field: string,
 	maxChars: number,
+	opts: { summaryFirst?: boolean } = {},
 ): T {
-	const value = row[field];
-	const ex = excerpt(typeof value === 'string' ? value : null, maxChars);
+	const value = typeof row[field] === 'string' ? (row[field] as string) : null;
+	const ex: SummaryExcerpt = opts.summaryFirst
+		? summaryExcerpt(value, maxChars)
+		: { ...excerpt(value, maxChars), detailsOmitted: false };
 	const next = { ...row } as Record<string, unknown>;
 	delete next[field];
 	next[`${field}_excerpt`] = ex.excerpt;
 	next[`${field}_truncated`] = ex.truncated;
 	next[`${field}_length`] = ex.length;
+	if (opts.summaryFirst) next[`${field}_details_omitted`] = ex.detailsOmitted;
 	return next as T;
 }
 
@@ -1543,7 +1577,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_tasks',
-		`List a project's tasks, newest first. Omit \`project\` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tasks in the current project - only call this if you need older or terminal tasks, another project, or a specific status filter. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. description and rules come back as excerpts capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) so one page cannot be dominated by a few long tasks - read a task's full text with get_task.`,
+		`List a project's tasks, newest first. Omit \`project\` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tasks in the current project - only call this if you need older or terminal tasks, another project, or a specific status filter. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. description and rules come back as excerpts capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) so one page cannot be dominated by a few long tasks. A long description with a \`${SUMMARY_DETAILS_HEADING}\` section comes back as its summary, with \`description_details_omitted: true\`. Read a task's full text with get_task.`,
 		{
 			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
@@ -1618,7 +1652,9 @@ export function registerTools(
 			);
 			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
 			const rows = r.rows.map((row) => {
-				let next = applyExcerpt(row as unknown as Record<string, unknown>, 'description', max);
+				let next = applyExcerpt(row as unknown as Record<string, unknown>, 'description', max, {
+					summaryFirst: true,
+				});
 				next = applyExcerpt(next, 'rules', max);
 				return next as unknown as ListRow;
 			});
@@ -1713,7 +1749,7 @@ export function registerTools(
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
-			description: z.string().optional().describe('Task description'),
+			description: z.string().optional().describe(`Task description. ${COLLAPSED_DETAILS_NOTE}`),
 			priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
 			assignee_id: z.string().optional().describe('Assignee member ID'),
 			assignee_slug: z
@@ -1774,6 +1810,7 @@ export function registerTools(
 				scope.projectId,
 				args.description as string | undefined,
 				created,
+				args.description as string | undefined,
 			);
 		},
 		db,
@@ -2019,7 +2056,10 @@ export function registerTools(
 				.array(
 					z.object({
 						title: z.string().describe('Task title'),
-						description: z.string().optional().describe('Task description'),
+						description: z
+							.string()
+							.optional()
+							.describe(`Task description. ${COLLAPSED_DETAILS_NOTE}`),
 						priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
 						assignee_id: z.string().optional().describe('Assignee member ID'),
 						assignee_slug: z
@@ -2083,6 +2123,7 @@ export function registerTools(
 						scope.projectId,
 						typeof description === 'string' ? description : undefined,
 						r.task,
+						typeof description === 'string' ? description : undefined,
 					);
 					return { ...r, task };
 				}),
@@ -2100,7 +2141,7 @@ export function registerTools(
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
 			title: z.string().optional().describe('New title'),
-			description: z.string().optional().describe('New description'),
+			description: z.string().optional().describe(`New description. ${COLLAPSED_DETAILS_NOTE}`),
 			status: z
 				.string()
 				.optional()
@@ -2478,6 +2519,7 @@ export function registerTools(
 				scope.projectId,
 				updatedText || undefined,
 				updatedRow,
+				typeof args.description === 'string' ? args.description : undefined,
 			);
 		},
 		db,
@@ -3399,7 +3441,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		`List comments for a task, newest first. Returns the conversation and the task's own changes by default and leaves out the one-row-per-execution agent run markers - pass \`categories\` to change that, and prefer \`list_task_runs\`, which reports each run's status, exit code and log length rather than a bare marker. To catch up rather than re-read, pass \`since\` with the timestamp your last read ended at; a run prompt gives you the time of your previous run on the task. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}, narrowed to whatever a page of \`limit\` rows can carry and reported as \`excerpt_chars_applied\`); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
+		`List comments for a task, newest first. Returns the conversation and the task's own changes by default and leaves out the one-row-per-execution agent run markers - pass \`categories\` to change that, and prefer \`list_task_runs\`, which reports each run's status, exit code and log length rather than a bare marker. To catch up rather than re-read, pass \`since\` with the timestamp your last read ended at; a run prompt gives you the time of your previous run on the task. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}, narrowed to whatever a page of \`limit\` rows can carry and reported as \`excerpt_chars_applied\`); structured comments (system/option/task_link) are always returned whole. A long comment with a \`${SUMMARY_DETAILS_HEADING}\` section comes back as its summary instead of its opening, with \`details_omitted: true\`. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -3496,18 +3538,23 @@ export function registerTools(
 					const content = row.content as { text?: string } | null;
 					const text = content?.text;
 					if (typeof text !== 'string' || text.length <= max) return row;
-					const ex = excerpt(text, max);
+					const ex = summaryExcerpt(text, max);
 					// The excerpt is written back into `content.text`, the same key that
 					// carries a full body, so nothing about the string itself says it is
 					// partial. Name the recovery call on the row - a sibling boolean is
 					// easy to miss, and a reader who misses it treats the excerpt as the
 					// whole comment.
+					const shown = ex.excerpt?.length ?? 0;
+					const recovery = `Call get_comment(comment_id: "${row.id}") for the full body.`;
 					return {
 						...row,
 						content: { ...content, text: ex.excerpt },
 						text_truncated: ex.truncated,
 						text_length: ex.length,
-						text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
+						details_omitted: ex.detailsOmitted,
+						text_paging_hint: ex.detailsOmitted
+							? `Showing the summary, ${shown} of ${ex.length} characters; the technical details are left out. ${recovery}`
+							: `Showing the first ${shown} of ${ex.length} characters. ${recovery}`,
 					};
 				});
 				return {
@@ -3810,7 +3857,7 @@ export function registerTools(
 			content: z
 				.string()
 				.describe(
-					`Comment text, at most ${COMMENT_TEXT_CAP} characters. May be empty when attachment_ids is set.`,
+					`Comment text, at most ${COMMENT_TEXT_CAP} characters. May be empty when attachment_ids is set. ${COLLAPSED_DETAILS_NOTE}`,
 				),
 			attachment_ids: z
 				.array(z.string())
@@ -3922,6 +3969,7 @@ export function registerTools(
 					backtickWarning,
 					buildUnlinkedGitHubReferenceWarning(commentText),
 					terminalAskWarning,
+					buildSummaryDetailsWarning(commentText),
 				]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
@@ -3951,7 +3999,11 @@ export function registerTools(
 				.string()
 				.uuid()
 				.describe('UUID of the comment to edit, as returned by create_comment or list_comments.'),
-			content: z.string().describe('The replacement comment text (overwrites the existing body).'),
+			content: z
+				.string()
+				.describe(
+					`The replacement comment text (overwrites the existing body). ${COLLAPSED_DETAILS_NOTE}`,
+				),
 		},
 		async (args, db, auth) => {
 			const text = args.content as string;
@@ -4067,6 +4119,7 @@ export function registerTools(
 				narratedWarning,
 				backtickWarning,
 				buildUnlinkedGitHubReferenceWarning(args.content as string),
+				buildSummaryDetailsWarning(args.content as string),
 			]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');

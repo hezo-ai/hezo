@@ -6,7 +6,7 @@ import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use
 import { formatDuration } from '../../lib/format-duration';
 import { useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
-import { MarkdownProse } from '../markdown-prose';
+import { SummaryDetailsProse } from '../summary-details-prose';
 import { TaskPriorityBadge } from '../task-priority-badge';
 import { TaskStatusBadge } from '../task-status-badge';
 import { TokenFigure } from '../token-figure';
@@ -293,6 +293,7 @@ export function TaskHeader({
 							value={task.description}
 							className="min-h-[96px]"
 							previewClassName="min-h-[96px]"
+							summaryDetails
 							// Cleared to '' rather than null: `description` is a plain text
 							// column and both write surfaces type it as a string, so '' is the
 							// one "no description" value they share.
@@ -300,13 +301,13 @@ export function TaskHeader({
 							onClose={() => setEditingDescription(false)}
 						/>
 					) : task.description ? (
-						<MarkdownProse
+						<SummaryDetailsProse
 							testId="task-description"
 							projectId={projectId}
 							projectSlug={taskProjectSlug}
 						>
 							{task.description}
-						</MarkdownProse>
+						</SummaryDetailsProse>
 					) : (
 						<span className="text-[13px] text-text-3" data-testid="task-description-empty">
 							{t('tasks.description.empty')}

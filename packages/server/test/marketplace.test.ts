@@ -1,4 +1,4 @@
-import { DocumentType } from '@hezo/shared';
+import { DocumentType, splitSummaryDetails } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -222,6 +222,10 @@ describe('POST /api/projects/:projectId/marketplace-team', () => {
 		);
 		expect(task.rows[0].description).toContain('apply_marketplace_team');
 		expect(task.rows[0].labels).toContain('add-marketplace-team');
+		// The tool calls are for the agent, so they sit under the technical details.
+		const { summary, details } = splitSummaryDetails(task.rows[0].description);
+		expect(summary).not.toContain('apply_marketplace_team');
+		expect(details).toContain('apply_marketplace_team');
 	});
 
 	it('404s on an unknown slug', async () => {

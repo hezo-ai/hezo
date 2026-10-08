@@ -1,3 +1,4 @@
+import { SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -13,6 +14,7 @@ import {
 	MAX_LIST_LIMIT,
 	pagedList,
 	parseListLimit,
+	summaryExcerpt,
 	windowContent,
 } from '../src/mcp/paging';
 import { oversizeRemedies } from '../src/mcp/tools';
@@ -188,6 +190,43 @@ describe('paging helpers', () => {
 		const params: unknown[] = ['only'];
 		expect(keysetPredicate('t', null, params)).toBeNull();
 		expect(params).toEqual(['only']);
+	});
+});
+
+describe('summaryExcerpt', () => {
+	const long = `A plain summary.\n\n${SUMMARY_DETAILS_HEADING}\n\n${'detail '.repeat(500)}`;
+
+	it('returns text that fits whole, details and all', () => {
+		const short = `S\n${SUMMARY_DETAILS_HEADING}\nD`;
+		expect(summaryExcerpt(short, 100)).toEqual({
+			excerpt: short,
+			truncated: false,
+			length: short.length,
+			detailsOmitted: false,
+		});
+	});
+
+	it('cuts long text with technical details to its summary', () => {
+		expect(summaryExcerpt(long, 200)).toEqual({
+			excerpt: 'A plain summary.',
+			truncated: true,
+			length: long.length,
+			detailsOmitted: true,
+		});
+	});
+
+	it('cuts an overlong summary to the budget and still reports the omitted details', () => {
+		const text = `${'word '.repeat(100)}\n${SUMMARY_DETAILS_HEADING}\n${'d'.repeat(1000)}`;
+		const ex = summaryExcerpt(text, 100);
+		expect(ex.excerpt?.length).toBeLessThanOrEqual(100);
+		expect(ex.detailsOmitted).toBe(true);
+	});
+
+	it('excerpts long text with no technical details from its opening', () => {
+		const ex = summaryExcerpt('word '.repeat(500), 100);
+		expect(ex.detailsOmitted).toBe(false);
+		expect(ex.truncated).toBe(true);
+		expect(ex.excerpt?.startsWith('word word')).toBe(true);
 	});
 });
 

@@ -3,7 +3,7 @@ import {
 	ApprovalType,
 	AuthType,
 	CommentContentType,
-	markdownToPreviewText,
+	summaryPreviewLine,
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
@@ -26,7 +26,8 @@ const SNIPPET_SCAN_LIMIT = 4000;
 /**
  * The one line of prose an inbox row shows. Comment bodies are Markdown, so the
  * syntax is stripped: a row is a preview, not a source view, and `**bold**` read
- * literally is what the reader would otherwise see. A comment kind that carries
+ * literally is what the reader would otherwise see. Only the summary is shown,
+ * never the collapsed technical details. A comment kind that carries
  * no `text` still has to read as something: a credential request's human-facing
  * `instructions` is that comment's whole point, so it stands in.
  */
@@ -35,9 +36,7 @@ function buildSnippet(content: unknown): string {
 	const fields = content as Record<string, unknown>;
 	const body = typeof fields.text === 'string' ? fields.text : fields.instructions;
 	if (typeof body !== 'string') return '';
-	const stripped = markdownToPreviewText(body.slice(0, SNIPPET_SCAN_LIMIT));
-	if (stripped.length <= SNIPPET_MAX_LEN) return stripped;
-	return `${stripped.slice(0, SNIPPET_MAX_LEN - 1).trimEnd()}…`;
+	return summaryPreviewLine(body.slice(0, SNIPPET_SCAN_LIMIT), SNIPPET_MAX_LEN);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { CommentAttachmentThumb } from '../comment-attachment-thumb';
-import { MarkdownProse } from '../markdown-prose';
+import { SummaryDetailsProse } from '../summary-details-prose';
 import type { CommentDataOf } from './comment-data';
 import { commentText } from './helpers';
 
@@ -13,9 +13,13 @@ export function TextComment({ comment, projectId, projectSlug }: Props) {
 	const content = commentText(comment.content);
 	return (
 		<>
-			<MarkdownProse testId="text-comment-body" projectId={projectId} projectSlug={projectSlug}>
+			<SummaryDetailsProse
+				testId="text-comment-body"
+				projectId={projectId}
+				projectSlug={projectSlug}
+			>
 				{content}
-			</MarkdownProse>
+			</SummaryDetailsProse>
 			{comment.attachments && comment.attachments.length > 0 ? (
 				<div className="mt-2 flex flex-wrap gap-1.5" data-testid="comment-attachments">
 					{comment.attachments.map((a) => (

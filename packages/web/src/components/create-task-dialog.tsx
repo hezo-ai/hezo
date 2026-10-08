@@ -197,6 +197,7 @@ export function CreateTaskDialog({
 						previewClassName="min-h-[72px]"
 						emptyPreviewText="_(nothing to preview)_"
 						fill={fullscreen}
+						summaryDetails
 					/>
 
 					<label className="flex flex-col gap-1.5">

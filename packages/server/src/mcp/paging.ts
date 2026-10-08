@@ -1,3 +1,4 @@
+import { splitSummaryDetails } from '@hezo/shared';
 import { z } from 'zod';
 import { buildCursorPage, decodeCursor, encodeCursor } from '../lib/pagination';
 
@@ -364,4 +365,27 @@ export function excerpt(text: string | null | undefined, maxChars: number): Exce
 	const lastSpace = slice.lastIndexOf(' ');
 	const cut = lastSpace > floor ? slice.slice(0, lastSpace) : slice;
 	return { excerpt: cut, truncated: true, length };
+}
+
+/** An {@link Excerpt} that says whether it stands for the summary alone. */
+export interface SummaryExcerpt extends Excerpt {
+	/** True when the excerpt is the summary and the technical details were left out. */
+	detailsOmitted: boolean;
+}
+
+/**
+ * Excerpt a comment or description the way a listing should read it. Text that
+ * fits the budget comes back whole. Longer text that has a technical-details
+ * section comes back as its summary, cut to the budget if need be, so a reader
+ * triages from what the author wrote for that purpose rather than from the first
+ * `maxChars` of the details. Longer text with no such section is excerpted as
+ * {@link excerpt} does.
+ */
+export function summaryExcerpt(text: string | null | undefined, maxChars: number): SummaryExcerpt {
+	const whole = excerpt(text, maxChars);
+	if (!whole.truncated || text == null) return { ...whole, detailsOmitted: false };
+	const { summary, details } = splitSummaryDetails(text);
+	if (details === null) return { ...whole, detailsOmitted: false };
+	const cut = excerpt(summary, maxChars);
+	return { excerpt: cut.excerpt, truncated: true, length: whole.length, detailsOmitted: true };
 }

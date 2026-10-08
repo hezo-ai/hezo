@@ -107,6 +107,8 @@ The rewrite replaces the text in place. Change prose only: leave code blocks, co
 
 **A task comment gets this pass before you post it, not after.** There is no editing a comment once it is out, so run the pass on the draft. Leave every `@` and `@@` mention, task identifier and asset path exactly as written. A rewrite that drops an `@` wakes nobody, and one that backticks a reference renders it inert.
 
+**Keep the `## Technical details` line exactly as written, and keep each piece of text on its side of it.** The line is not a decorative heading: people see the text below it collapsed. Never move technical terms, identifiers or evidence from below the line up into the summary.
+
 **Editing a project doc, use `edit_project_doc`** with the span you are changing rather than rewriting the whole document. Say in the `changelog` that this was a humanizer pass.
 
 ## Source

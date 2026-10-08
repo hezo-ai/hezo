@@ -68,6 +68,10 @@
 	],
 	"changelog": [
 		{
+			"version": 29,
+			"notes": "The Risk Verifier's findings comment now opens with the verdict and the handoff in plain words. The section-by-section findings go under the technical details line, which people see collapsed."
+		},
+		{
 			"version": 28,
 			"notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
 		},

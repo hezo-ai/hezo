@@ -1,7 +1,8 @@
-import { CommentContentType } from '@hezo/shared';
+import { CommentContentType, splitSummaryDetails } from '@hezo/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { type Comment, useComments } from '../hooks/use-comments';
+import { TechnicalDetailsDisclosure } from './summary-details-prose';
 import { Avatar, getInitials } from './ui/avatar';
 import { RelativeTime } from './ui/relative-time';
 
@@ -86,6 +87,7 @@ export function CaptainIntakeChat({
 				if (!text.trim()) return null;
 
 				if (isCaptain) {
+					const { summary, details } = splitSummaryDetails(text);
 					return (
 						<div
 							key={comment.id}
@@ -101,7 +103,10 @@ export function CaptainIntakeChat({
 								<div
 									className={`flex-1 min-w-0 rounded-md rounded-bl-sm bg-surface-2 border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} text-[13px] md:text-sm text-text-1 leading-relaxed whitespace-pre-wrap wrap-anywhere`}
 								>
-									{text}
+									{summary}
+									{details !== null && (
+										<TechnicalDetailsDisclosure>{details}</TechnicalDetailsDisclosure>
+									)}
 								</div>
 							</div>
 							<RelativeTime

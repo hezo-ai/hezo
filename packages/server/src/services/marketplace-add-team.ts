@@ -1,5 +1,5 @@
 import type { MarketplaceRosterAgent, MarketplaceTeamDef } from '@hezo/shared';
-import { TaskPriority, TaskStatus, WakeupSource } from '@hezo/shared';
+import { joinSummaryDetails, TaskPriority, TaskStatus, WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
@@ -17,11 +17,13 @@ export interface AddMarketplaceTeamTaskResult {
 }
 
 function buildAddTeamBody(projectSlug: string, teamDef: MarketplaceTeamDef): string {
-	return `## Add the "${teamDef.name}" team (v${teamDef.version})
+	return joinSummaryDetails(
+		`Add the **${teamDef.name}** team to this project, or bring its existing roles up to the latest version. Then make sure the whole team works together.`,
+		`## Add the "${teamDef.name}" team (v${teamDef.version})
 
 The admin chose to add the **${teamDef.name}** marketplace team (${teamDef.roster.length} role${
-		teamDef.roster.length === 1 ? '' : 's'
-	}) to this project. The admin has already approved this — do NOT file hire proposals. Complete it in this one task. **First work out whether this is a fresh ADD or a version UPDATE**, then act accordingly:
+			teamDef.roster.length === 1 ? '' : 's'
+		}) to this project. The admin has already approved this — do NOT file hire proposals. Complete it in this one task. **First work out whether this is a fresh ADD or a version UPDATE**, then act accordingly:
 
 1. **Assess the current roster.** Call \`list_agents(project="${projectSlug}")\`. Compare its roles to the marketplace team's roles — fetch those with \`get_marketplace_team(slug="${teamDef.slug}")\` (returns each role's title, reporting line, and current system prompt, plus the version + changelog).
    - **Version update** — this project already has some/all of these roles (it was created from this same team, or an earlier version of it). This is NOT a duplicate add: you are refreshing the existing roles to the newer system prompts. Do NOT create parallel copies.
@@ -34,7 +36,8 @@ The admin chose to add the **${teamDef.name}** marketplace team (${teamDef.roste
    - Fix reporting lines with \`set_agent_reports_to\`.
    - Ensure every producing role's output is verified by someone other than its author.
    - Call \`set_team_summary\` to describe the combined team.
-4. Move this task to **done** once the roster is added/updated and reconciled.`;
+4. Move this task to **done** once the roster is added/updated and reconciled.`,
+	);
 }
 
 /**
@@ -60,7 +63,9 @@ function buildAddRolesBody(
 		.join(', ');
 	const noun = roles.length === 1 ? 'role' : 'roles';
 
-	return `## Add ${roles.length} ${noun} from the ${teamDef.name} team (v${teamDef.version})
+	return joinSummaryDetails(
+		`Add ${roles.map((r) => `**${r.title}**`).join(', ')} from the **${teamDef.name}** team to this project. Fit each one to the people already here, and ask the admin about any that do not fit.`,
+		`## Add ${roles.length} ${noun} from the ${teamDef.name} team (v${teamDef.version})
 
 The admin chose **specific ${noun}** from the **${teamDef.name}** marketplace team rather than the whole roster:
 
@@ -87,7 +92,8 @@ They have already approved the hire, so do NOT file hire proposals. But these ${
    - Make sure every new role's output is verified by someone other than its author, and that anything they now take over is not still claimed by another agent's prompt.
    - Call \`set_team_summary\` to describe the team with the new ${noun} in it.
 
-5. Move this task to **done** once the ${noun} are added and the roster reads coherently.`;
+5. Move this task to **done** once the ${noun} are added and the roster reads coherently.`,
+	);
 }
 
 async function enqueueCeoTask(
