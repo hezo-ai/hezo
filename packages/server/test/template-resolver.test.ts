@@ -526,6 +526,18 @@ describe('template resolver', () => {
 		expect(result).not.toContain('opaque values like commit SHAs');
 	});
 
+	// An agent asked the admin to approve a post named only as "Typefully draft
+	// #10076742", so the admin could not open it. The rule covers every service
+	// outside the workspace, not only GitHub.
+	it('tells every agent to link items in other services instead of naming bare IDs', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('**An item outside this workspace is a markdown link to its URL.**');
+		expect(result).toContain('[draft 10076742](<url>)');
+		expect(result).toContain('never build one from a guessed pattern');
+		expect(result).toContain('Never post a signed URL or a URL that carries a token or key.');
+		expect(result).toContain('When no link exists, write the ID and say that it has no link.');
+	});
+
 	// A marketing-lead delegated the content rewrites to content-writer as a sub-task,
 	// then the admin posted further feedback on the parent ticket — and the lead did
 	// that work itself instead of forwarding it to the still-open sub-task, so two

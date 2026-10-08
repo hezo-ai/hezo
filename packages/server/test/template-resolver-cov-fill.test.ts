@@ -293,6 +293,8 @@ describe('mode gating', () => {
 		expect(result).toContain(
 			'Write a GitHub pull request, issue or commit as a markdown link to its full URL',
 		);
+		expect(result).toContain('Write an item in another service as a markdown link to its URL.');
+		expect(result).toContain('Never post a signed URL or a URL that carries a token or key.');
 	});
 
 	it('preview mode omits Run Context and Repository but keeps Teammates + guidelines', async () => {
