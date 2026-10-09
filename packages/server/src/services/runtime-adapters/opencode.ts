@@ -26,7 +26,7 @@ import type {
  * down — upstream sst/opencode#16626 tracks adding a `session.stopping` hook).
  * We therefore deliberately omit the judge for OpenCode, accepting the same
  * fail-open posture used for subscription-auth runtimes. Provider auth
- * (OPENROUTER_API_KEY) is supplied via container env by the runner, so no
+ * (OPENROUTER_API_KEY, REQUESTY_API_KEY) is supplied via container env by the runner, so no
  * secret is written to the config file.
  */
 

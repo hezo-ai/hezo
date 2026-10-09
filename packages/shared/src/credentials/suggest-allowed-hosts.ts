@@ -42,6 +42,7 @@ const KNOWN_SERVICE_HOSTS: Record<string, string[]> = {
 	openai: ['api.openai.com'],
 	anthropic: ['api.anthropic.com'],
 	openrouter: ['openrouter.ai'],
+	requesty: ['router.requesty.ai'],
 	deepseek: ['api.deepseek.com'],
 	groq: ['api.groq.com'],
 	cohere: ['api.cohere.com'],
