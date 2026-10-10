@@ -1227,15 +1227,30 @@ describe('handoffHold', () => {
 });
 
 describe('runSizeStopHold', () => {
-	/** A finished run on the shared task, stopped for `stop` when given. */
-	async function insertRun(minutesAgo: number, stop: string | null): Promise<void> {
+	/**
+	 * A finished run on the shared task, stopped for `stop` when given, and started
+	 * by the operator control `pressed` carries when given.
+	 */
+	async function insertRun(
+		minutesAgo: number,
+		stop: string | null,
+		pressed?: { triggered_by: Record<string, unknown> },
+	): Promise<void> {
+		const wakeup = pressed
+			? await db.query<{ id: string }>(
+					`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status)
+					 VALUES ($1, $2, 'on_demand'::wakeup_source, $3::jsonb, 'completed'::wakeup_status)
+					 RETURNING id`,
+					[agentId, teamId, JSON.stringify({ task_id: taskId, ...pressed })],
+				)
+			: null;
 		await db.query(
 			`INSERT INTO heartbeat_runs
-			   (team_id, member_id, task_id, status, started_at, finished_at, stop_reason)
+			   (team_id, member_id, task_id, status, started_at, finished_at, stop_reason, wakeup_id)
 			 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status,
 			         now() - ($4 || ' minutes')::interval,
-			         now() - ($4 || ' minutes')::interval + interval '30 seconds', $5)`,
-			[teamId, agentId, taskId, String(minutesAgo), stop],
+			         now() - ($4 || ' minutes')::interval + interval '30 seconds', $5, $6)`,
+			[teamId, agentId, taskId, String(minutesAgo), stop, wakeup?.rows[0].id ?? null],
 		);
 	}
 
@@ -1263,6 +1278,46 @@ describe('runSizeStopHold', () => {
 		expect(runSizeStopHold(await loadTaskSpend(db, taskId))).toBeNull();
 		await insertRun(10, 'token_ceiling');
 		expect(runSizeStopHold(await loadTaskSpend(db, taskId))?.stops).toBe(1);
+	});
+
+	it('lifts when the admin starts a run, and holds again if that run is stopped too', async () => {
+		await clearRuns();
+		await insertRun(30, 'token_ceiling');
+		await insertRun(20, null, await pressedBy());
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))).toBeNull();
+
+		await insertRun(10, 'tool_call_ceiling', await pressedBy());
+		const held = runSizeStopHold(await loadTaskSpend(db, taskId));
+		expect(held?.stops).toBe(1);
+		// The notice from before the admin's run was about the stop it answered.
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content, created_at)
+			 VALUES ($1, 'system'::comment_content_type, $2::jsonb, now() - interval '25 minutes')`,
+			[taskId, JSON.stringify(runSizeStopNotice({ stops: 1, noticeSince: null }))],
+		);
+		if (!held) throw new Error('expected the task to be held');
+		expect(
+			await postAdminNotice({
+				db,
+				teamId,
+				taskId,
+				content: runSizeStopNotice(held),
+				unlessPostedSince: held.noticeSince,
+			}),
+		).not.toBeNull();
+	});
+
+	it('stays held after a Run now from a teammate who is not an admin', async () => {
+		await clearRuns();
+		const teammate = await insertTeammateReply(40);
+		const teammateUser = await db.query<{ user_id: string }>(
+			'SELECT user_id FROM member_users WHERE id = $1',
+			[teammate.memberId],
+		);
+		await insertRun(30, 'token_ceiling');
+		await insertRun(20, null, await pressedBy(teammateUser.rows[0].user_id));
+		expect(runSizeStopHold(await loadTaskSpend(db, taskId))?.stops).toBe(1);
+		await removeTeammate(teammate.memberId);
 	});
 
 	it('asks the admin once per hold', async () => {

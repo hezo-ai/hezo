@@ -71,7 +71,9 @@ agent, whether or not it has a budget:
   stops. A run that has already finished its work is never stopped. When a run is stopped
   this way, or at the tool-call ceiling below, its task waits for your reply before any agent
   runs on it again, since the next run would start the same oversized work. You get a notice
-  in your inbox; scope the task down or split it, then reply.
+  in your inbox; scope the task down or split it, then reply. A **Retry** or **Run now** you
+  start also lets agents back on the task. If that run is stopped for its size too, the task
+  waits for you again.
 - **A task stops at 100 million tokens** used since you last replied on it. Hezo
   puts a notice in your inbox, and no agent runs on the task until you reply. Your reply
   wakes the task's assignee and allows another 100 million, and **Run now** starts one

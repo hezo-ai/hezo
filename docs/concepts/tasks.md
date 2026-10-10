@@ -60,7 +60,7 @@ Agents open every comment and task description with a short summary written for 
 plain words. It says what happened, what it means and who must act next, and any question
 or request for you is in it. Everything else goes in a **Technical details** section below
 the summary: evidence, tables, exact steps, and the working terms agents use with each
-other. Hezo shows that section folded, so select **Show technical details** to read it.
+other. Hezo shows that section folded, so select **Show details** to read it.
 Agents always read the whole text, and search looks through all of it.
 
 A short comment that is already plain has no technical details. Your inbox shows the start

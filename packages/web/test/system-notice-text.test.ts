@@ -54,7 +54,7 @@ test('a conversion notice reads as its opening sentence, by where its rate came 
 
 test('a run-size stop reads as the sentence that says the task waits for the admin', () => {
 	expect(systemNoticeText({ kind: 'run_size_stop', stops: 1 }, localeFor(Language.En))).toContain(
-		'No agent will run on it until the admin replies.',
+		'No agent will run on it until the admin replies or starts a run.',
 	);
 });
 
