@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.70.1 - 2026-10-10
+
+### Bug Fixes
+
+- **dispatch:** an admin's Retry or Run now lifts the run-size hold ([#1156](https://github.com/hezo-ai/hezo/pull/1156))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.70.0...0.70.1
+
 ## 0.70.0 - 2026-10-08
 
 ### Features
