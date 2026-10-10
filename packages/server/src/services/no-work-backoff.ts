@@ -702,21 +702,25 @@ export interface TaskUsageSoFar {
 }
 
 /**
- * Everything a task has spent that the prompt states and the two hard stops
- * weigh, from one query: its runs and their tokens, the part since the admin
- * last spoke, and the current agent-to-agent handoff chain. A dispatch reads it
- * once for both hard stops. Reads runs through `idx_runs_task_started`.
+ * Everything a task has spent that the prompt states and the hard stops weigh,
+ * from one query: its runs and their tokens, the part since the admin last
+ * spoke, its runs stopped for size, and the current agent-to-agent handoff
+ * chain. A dispatch reads it once for every hard stop. Reads runs through
+ * `idx_runs_task_started`.
  */
 export interface TaskSpend {
 	runs: number;
 	tokens: number;
 	/** When the admin last spoke on the task, or null when they have not. */
 	adminAt: Date | null;
+	/** Runs and tokens since then; the whole task's when the admin has not spoken. */
+	sinceAdmin: { runs: number; tokens: number };
 	/**
-	 * Runs, tokens and runs stopped for their size since then; the whole task's
-	 * when the admin has not spoken.
+	 * Runs stopped for their size since the admin last acted on the task: spoke on
+	 * it, or started a run on it. `since` is that instant, null when the admin has
+	 * done neither.
 	 */
-	sinceAdmin: { runs: number; tokens: number; sizeStops: number };
+	sizeStops: { count: number; since: Date | null };
 	handoff: {
 		rounds: number;
 		tokens: number;
@@ -734,12 +738,20 @@ export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> 
 		since_runs: number;
 		since_tokens: number;
 		since_size_stops: number;
+		size_stops_since: Date | null;
 		rounds: number;
 		chain_tokens: number;
 		chain_slugs: string[] | null;
 		chain_newest: Date | null;
 	}>(
-		`WITH ${HANDOFF_CHAIN_CTES}
+		`WITH ${HANDOFF_CHAIN_CTES},
+		 admin_run AS (
+		   SELECT max(ar.started_at) AS at
+		     FROM heartbeat_runs ar
+		     JOIN agent_wakeup_requests aw ON aw.id = ar.wakeup_id
+		    WHERE ar.task_id = $1 AND ar.started_at IS NOT NULL
+		      AND ${adminTriggeredSql('aw.payload', '(SELECT team_id FROM tasks WHERE id = $1)')}
+		 )
 		 SELECT count(r.id)::int AS runs,
 		        COALESCE(sum(r.input_tokens + r.output_tokens), 0)::float8 AS tokens,
 		        a.at AS admin_at,
@@ -747,16 +759,19 @@ export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> 
 		        COALESCE(sum(r.input_tokens + r.output_tokens)
 		                 FILTER (WHERE a.at IS NULL OR r.started_at > a.at), 0)::float8 AS since_tokens,
 		        count(r.id) FILTER (WHERE (a.at IS NULL OR r.started_at > a.at)
+		                              AND (ar.at IS NULL OR r.started_at >= ar.at)
 		                              AND r.stop_reason = ANY($${SIZE_STOP_PARAM}::text[]))::int
 		          AS since_size_stops,
+		        GREATEST(a.at, ar.at) AS size_stops_since,
 		        (SELECT count(DISTINCT wakeup_id)::int FROM chain) AS rounds,
 		        (SELECT COALESCE(sum(tokens), 0)::float8 FROM chain) AS chain_tokens,
 		        (SELECT array_agg(DISTINCT ma.slug) FILTER (WHERE ma.slug IS NOT NULL)
 		           FROM chain ch LEFT JOIN member_agents ma ON ma.id = ch.member_id) AS chain_slugs,
 		        (SELECT max(started_at) FROM chain) AS chain_newest
 		   FROM admin a
+		   CROSS JOIN admin_run ar
 		   LEFT JOIN heartbeat_runs r ON r.task_id = $1 AND r.started_at IS NOT NULL
-		  GROUP BY a.at`,
+		  GROUP BY a.at, ar.at`,
 		[...handoffChainParams(taskId), [...RUN_SIZE_STOP_REASONS]],
 	);
 	const row = r.rows[0];
@@ -767,7 +782,10 @@ export async function loadTaskSpend(db: Db, taskId: string): Promise<TaskSpend> 
 		sinceAdmin: {
 			runs: row?.since_runs ?? 0,
 			tokens: Number(row?.since_tokens ?? 0),
-			sizeStops: row?.since_size_stops ?? 0,
+		},
+		sizeStops: {
+			count: row?.since_size_stops ?? 0,
+			since: row?.size_stops_since ? new Date(row.size_stops_since) : null,
 		},
 		handoff: {
 			rounds: row?.rounds ?? 0,
@@ -866,25 +884,30 @@ export const RUN_SIZE_STOP_COMMENT_KIND = 'run_size_stop';
 
 /** A task held by {@link runSizeStopHold}, as the notice to the admin states it. */
 export interface RunSizeStops {
-	/** Runs on it stopped for size since the admin last spoke. */
+	/** Runs on it stopped for size since the admin last spoke or started a run. */
 	stops: number;
 	/** A notice for this hold posted after this instant already stands. */
 	noticeSince: Date | null;
 }
 
 /**
- * Was a run on this task stopped for its size since the admin last spoke?
+ * Was a run on this task stopped for its size since the admin last acted on it?
  *
  * A run stopped at the token or tool-call ceiling ended before its work did, and
  * whatever woke the task next - a heartbeat, a teammate's mention - started the
  * same work again at the same size: on production a stopped 31M-token run was
  * resumed by its agent's heartbeat twelve hours later and three more runs spent
  * 72M. So the task waits for the admin, who can scope it down, split it, or say
- * to carry on. The admin's reply lifts it; a Run now runs as ever.
+ * to carry on.
+ *
+ * The admin says to carry on by replying, or by starting a run themselves - a
+ * Retry of the stopped run or a Run now. Either lifts the hold, so the follow-ups
+ * that run raises are not held behind a stop the admin already answered. A stop
+ * of the admin's own run counts, and holds the task again.
  */
 export function runSizeStopHold(spend: TaskSpend): RunSizeStops | null {
-	if (spend.sinceAdmin.sizeStops === 0) return null;
-	return { stops: spend.sinceAdmin.sizeStops, noticeSince: spend.adminAt };
+	if (spend.sizeStops.count === 0) return null;
+	return { stops: spend.sizeStops.count, noticeSince: spend.sizeStops.since };
 }
 
 /** The notice a task held by {@link runSizeStopHold} carries, for `postAdminNotice`. */
@@ -894,7 +917,7 @@ export function runSizeStopNotice(
 	return {
 		kind: RUN_SIZE_STOP_COMMENT_KIND,
 		stops: u.stops,
-		text: `A run on this task was stopped for its size before its work was done. No agent will run on it until the admin replies. Scoping it down or splitting it first keeps the next run from stopping the same way.`,
+		text: `A run on this task was stopped for its size before its work was done. No agent will run on it until the admin replies or starts a run. Scoping it down or splitting it first keeps the next run from stopping the same way.`,
 	};
 }
 

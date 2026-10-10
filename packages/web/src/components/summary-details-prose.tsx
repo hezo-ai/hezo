@@ -22,7 +22,7 @@ export function TechnicalDetailsDisclosure({ children }: { children: ReactNode }
 				data-testid="technical-details-toggle"
 				className="mt-2 inline-flex max-w-full items-center gap-1 text-left text-xs text-text-2 hover:text-text-1"
 			>
-				{expanded ? t('markdown.technicalDetails.hide') : t('markdown.technicalDetails.show')}
+				{expanded ? t('markdown.details.hide') : t('markdown.details.show')}
 				<ChevronDown
 					className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
 				/>

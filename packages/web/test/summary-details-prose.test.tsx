@@ -48,7 +48,7 @@ test('shows the summary and keeps the technical details collapsed', async () => 
 	expect(body.textContent).not.toContain('Technical details');
 	const toggle = getByTestId('technical-details-toggle');
 	expect(toggle.getAttribute('aria-expanded')).toBe('false');
-	expect(toggle.textContent).toBe('Show technical details');
+	expect(toggle.textContent).toBe('Show details');
 	expect(getByTestId('technical-details').hidden).toBe(true);
 });
 
@@ -59,7 +59,7 @@ test('expands and collapses the technical details on click', async () => {
 	const toggle = await findByTestId('technical-details-toggle');
 	fireEvent.click(toggle);
 	expect(toggle.getAttribute('aria-expanded')).toBe('true');
-	expect(toggle.textContent).toBe('Hide technical details');
+	expect(toggle.textContent).toBe('Hide details');
 	const region = getByTestId('technical-details');
 	expect(region.hidden).toBe(false);
 	expect(toggle.getAttribute('aria-controls')).toBe(region.id);

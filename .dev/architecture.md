@@ -851,8 +851,9 @@ notice per hold. **A run stopped for its size holds its task too.** `stopRunForS
 run with the ceiling as the abort reason, and the run's awaited final write records it as
 `heartbeat_runs.stop_reason` (`token_ceiling` or `tool_call_ceiling`), so any dispatch after the
 run returns sees it. `runSizeStopHold` - the third hard stop in `dispatchSuppression`, read from the same
-`loadTaskSpend` round trip - holds the task for every agent until the admin speaks, with one
-`run_size_stop` notice. Without it the ceiling bounded a run and nothing else: the next heartbeat
+`loadTaskSpend` round trip - holds the task for every agent until the admin speaks or starts a run
+(a Retry or Run now, read through `adminTriggeredSql`), with one `run_size_stop` notice. A stop of
+that admin-started run counts, and holds the task again. Without it the ceiling bounded a run and nothing else: the next heartbeat
 or mention restarted the same oversized work, and on production three runs spent 72M after a
 stopped 31M one.
 
