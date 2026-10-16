@@ -23,6 +23,7 @@ import {
 } from '../comment-renderers';
 import { ActorBadge } from '../ui/actor-badge';
 import { Avatar } from '../ui/avatar';
+import { Button } from '../ui/button';
 
 /**
  * Copies a comment's markdown body to the clipboard, swapping its icon to a
@@ -241,22 +242,20 @@ export function CommentRow({
 								taskId={taskId}
 								retryableRunId={retryableRunId}
 							/>
-							<div className="flex items-end justify-between gap-2">
-								<div className="min-w-0 flex-1">
-									<CommentReactions comment={commentData} projectId={projectId} taskId={taskId} />
-								</div>
-								<button
-									type="button"
+							<div className="mt-2 flex flex-wrap items-center gap-1.5">
+								<Button
+									variant="secondary"
+									size="sm"
 									onClick={() =>
 										onStartReply({ ...c, content: mergedContent } as unknown as Comment)
 									}
-									className="mt-2 flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1 shrink-0 p-1 -m-1"
 									aria-label="Reply to comment"
 									data-testid="comment-reply"
 								>
 									<Reply className="w-3.5 h-3.5" />
 									Reply
-								</button>
+								</Button>
+								<CommentReactions comment={commentData} projectId={projectId} taskId={taskId} />
 							</div>
 						</>
 					) : (

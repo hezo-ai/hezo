@@ -1,8 +1,8 @@
 // Criteria #1 and #2 (real CSS layout + viewport-conditional behavior): the point
-// of this spec is the tap-target size of the reaction chip, measured with
-// boundingBox() at the `mobile` project's 390px viewport. happy-dom returns no
-// box, so the reaction flow itself is covered by a component test and only the
-// touch-affordance assertion lives here.
+// of this spec is the tap-target size of the reaction chip and the reply
+// button's place beside it, measured with boundingBox() at the `mobile`
+// project's 390px viewport. happy-dom returns no box, so the reaction flow itself
+// is covered by a component test and only the layout assertions live here.
 import { expect, test } from '@playwright/test';
 import { authenticate, createProjectAndClearPlanning, getToken, waitForPageLoad } from './helpers';
 
@@ -51,6 +51,21 @@ test.describe('Comment reactions (mobile)', () => {
 		expect(box).not.toBeNull();
 		expect(box!.height).toBeGreaterThanOrEqual(28);
 		expect(box!.width).toBeGreaterThanOrEqual(28);
+
+		// The reply button leads the same row at the card's left edge, just ahead
+		// of the emoji button.
+		const item = page.getByTestId('comment-item').filter({ hasText: 'react to me on mobile' });
+		const replyBox = await item.getByTestId('comment-reply').boundingBox();
+		const itemAddBox = await item.getByTestId('add-reaction-button').boundingBox();
+		const bodyBox = await item.getByText('react to me on mobile').boundingBox();
+		expect(replyBox).not.toBeNull();
+		expect(itemAddBox).not.toBeNull();
+		expect(bodyBox).not.toBeNull();
+		expect(replyBox!.x + replyBox!.width).toBeLessThanOrEqual(itemAddBox!.x);
+		expect(
+			Math.abs(replyBox!.y + replyBox!.height / 2 - (itemAddBox!.y + itemAddBox!.height / 2)),
+		).toBeLessThanOrEqual(2);
+		expect(Math.abs(replyBox!.x - bodyBox!.x)).toBeLessThanOrEqual(1);
 
 		await addButton.click();
 		const picker = page.getByTestId('reaction-picker');

@@ -45,7 +45,7 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 	if (groups.length === 0 && availableToAdd.length === 0) return null;
 
 	return (
-		<div className="flex flex-wrap items-center gap-1.5 mt-2" data-testid="comment-reactions">
+		<div className="flex flex-wrap items-center gap-1.5" data-testid="comment-reactions">
 			{groups.map((g) => (
 				<Tooltip key={g.kind} content={reactorsTooltip(g)}>
 					<button

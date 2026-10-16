@@ -644,6 +644,43 @@ test('the reply preview quotes only the summary of a comment with technical deta
 	expect(indicator.textContent).not.toContain(SUMMARY_DETAILS_HEADING);
 });
 
+test('the reply button leads the action row, just ahead of the add-reaction button', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Reply Position' });
+			const task = await seedTask(ws, project, { title: 'Reply Position Task' });
+			await seedComment(ws, task, 'Reply to me from the left');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const body = await findByText('Reply to me from the left');
+	const item = body.closest('[data-testid="comment-item"]') as HTMLElement;
+	const reply = item.querySelector('[data-testid="comment-reply"]') as HTMLElement;
+	const addReaction = item.querySelector('[data-testid="add-reaction-button"]') as HTMLElement;
+	expect(reply).not.toBeNull();
+	expect(addReaction).not.toBeNull();
+
+	// One row, reply first: the row's first child is the reply button and the
+	// add-reaction button follows it with nothing but reaction chips between.
+	const row = reply.parentElement as HTMLElement;
+	expect(row.firstElementChild).toBe(reply);
+	expect(row.contains(addReaction)).toBe(true);
+	expect(
+		reply.compareDocumentPosition(addReaction) & Node.DOCUMENT_POSITION_FOLLOWING,
+	).toBeTruthy();
+	expect(reply.tagName).toBe('BUTTON');
+	expect(reply.textContent).toContain('Reply');
+});
+
 test('copy button copies the comment body and confirms with a check icon', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findAllByTestId, findByText, router, user } = await renderApp({
