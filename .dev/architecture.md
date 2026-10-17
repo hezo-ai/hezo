@@ -1687,7 +1687,8 @@ still pending (an edit racing a decision gets 409). The tool refuses HQ, a ninth
 (`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a title matching an open
 task or a pending suggestion; `fileTaskSuggestion` runs those checks and the insert under a keyed
 lock per suggestions task, so parallel calls cannot pass them together. An agent cannot mark the
-suggestions task done while any card on it is pending (`assertNoPendingTaskSuggestions`), since
+suggestions task done while any suggestion filed on it is pending (`assertNoPendingTaskSuggestions`,
+read from the approvals rather than the cards, so a card that failed to flip cannot hold it), since
 one answered card already satisfies the `@admin` done check. Approving runs `taskSuggestionHandler`
 (`approval-handlers/task-suggestion.ts`). It first checks that the payload's project and
 suggestions task belong to the approval's team; when that check or `createTask` refuses, it

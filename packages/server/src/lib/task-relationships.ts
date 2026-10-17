@@ -1,6 +1,7 @@
 import {
 	ACTIVE_WAKEUP_STATUSES,
-	ActionCommentKind,
+	ApprovalStatus,
+	ApprovalType,
 	CommentContentType,
 	HeartbeatRunStatus,
 	TaskStatus,
@@ -392,19 +393,23 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 	};
 }
 
-// A task-suggestions task holds while any card on it waits for the admin. On a
-// new project the Captain's planning waits on this task, so closing it early
-// would start planning with suggestions still undecided. One answered card is
-// enough for the @admin check above, so that check alone cannot hold it.
-// Enforced for agent callers only, like the @admin check.
+// A task-suggestions task holds while any suggestion filed on it waits for the
+// admin. On a new project the Captain's planning waits on this task, so closing
+// it early would start planning with suggestions still undecided. One answered
+// card is enough for the @admin check above, so that check alone cannot hold it.
+// Read from the approvals, not the cards: the approval is the decision, and a
+// card that failed to flip must not hold the task forever. Bounded by the team's
+// pending approvals (team + status index). Agent callers only, like the @admin
+// check.
 export async function assertNoPendingTaskSuggestions(db: Db, taskId: string): Promise<Check> {
 	const r = await db.query<{ n: number }>(
-		`SELECT count(*)::int AS n FROM task_comments
-		 WHERE task_id = $1
-		   AND content_type = $2::comment_content_type
-		   AND content->>'kind' = $3
-		   AND chosen_option IS NULL`,
-		[taskId, CommentContentType.Action, ActionCommentKind.TaskSuggestion],
+		`SELECT count(*)::int AS n
+		   FROM approvals a
+		   JOIN tasks t ON t.id = $1 AND a.team_id = t.team_id
+		  WHERE a.status = $2::approval_status
+		    AND a.type = $3::approval_type
+		    AND a.payload->>'task_id' = $1::text`,
+		[taskId, ApprovalStatus.Pending, ApprovalType.TaskSuggestion],
 	);
 	const pending = r.rows[0]?.n ?? 0;
 	if (pending === 0) return { ok: true };

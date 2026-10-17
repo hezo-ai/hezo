@@ -662,7 +662,14 @@ describe('suggest_task under parallel calls, and closing the suggestions task', 
 		})) as { error?: string };
 		expect(early.error).toMatch(/1 task suggestion card\(s\) on it still wait/);
 
+		// A card left undecided by a failed flip does not hold the task once its
+		// approval is decided: the approval is what the check reads.
 		await resolve(second.approval_id as string, 'denied');
+		await db.query(
+			`UPDATE task_comments SET chosen_option = NULL
+			 WHERE content->>'approval_id' = $1`,
+			[second.approval_id],
+		);
 		const closed = (await callMcpTool(app, host.token, 'update_task', {
 			project: projectSlug,
 			task_id: host.id,
