@@ -107,14 +107,16 @@ function host(): Window & ChatwootHost {
 	return window;
 }
 
-/** Call the widget if it exists, and absorb anything it throws. */
-function withChatwoot(action: (chatwoot: ChatwootApi) => void): void {
+/** Call the widget if it exists, and absorb anything it throws. True when the call went through. */
+function withChatwoot(action: (chatwoot: ChatwootApi) => void): boolean {
 	const chatwoot = host().$chatwoot;
-	if (!chatwoot) return;
+	if (!chatwoot) return false;
 	try {
 		action(chatwoot);
+		return true;
 	} catch {
 		// A fault in the widget is not a fault in the page that hosts it.
+		return false;
 	}
 }
 
@@ -153,8 +155,11 @@ function sendContext(): void {
 	if (Object.keys(context).length === 0) return;
 	const serialised = serialise(context);
 	if (serialised === state.sent) return;
-	state.sent = serialised;
-	withChatwoot((chatwoot) => chatwoot.setConversationCustomAttributes({ ...context }));
+	// Recorded only once the widget took it, so a send it refused is tried
+	// again on the next open or change rather than skipped as done.
+	if (withChatwoot((chatwoot) => chatwoot.setConversationCustomAttributes({ ...context }))) {
+		state.sent = serialised;
+	}
 }
 
 function onOpened(): void {

@@ -273,9 +273,10 @@ moves to another screen:
 
 Chatwoot shows an attribute only after an admin defines it, under **Settings >
 Custom Attributes > Conversation**, with the key, type and list values above.
-Nothing is sent while the chat is closed, and no value is ever text the owner
-typed. The owner's browser sets these values, so treat them as a hint about
-where to look, not as proof.
+Nothing is sent while the chat is closed. Apart from `hezo_project`, the slug
+Hezo makes from the name the owner gave the project, no value comes from text
+the owner typed. The owner's browser sets these values, so treat them as a hint
+about where to look, not as proof.
 
 #### Product analytics for the instance owner
 

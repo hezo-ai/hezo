@@ -6807,9 +6807,12 @@ wrote back. The first rides the public status; the second stays behind the owner
   `shellGate` (`lib/shell-gate.ts`, the one decision the root's render also switches on),
   `setup` while no AI provider is configured, or the deepest route's **template**
   (`/projects/$projectId/tasks/$taskId`) once inside, the project slug, the version,
-  the language, the resolved theme and a width class (`supportChatViewport`). Never a
-  path, a title or anything typed: an instance path carries task and document ids, and
-  the fragment can carry the issuer's token. Every value is set by the person's own
+  the language, the resolved theme and a width class (`supportChatViewport`), which it
+  watches, since a resize changes nothing else the shell would re-render for. Never a
+  path, a title or other typed text - the project slug, made from the name the owner
+  gave it, is the one value that is: an instance path carries task and document ids, and
+  the fragment can carry the issuer's token. A send the widget throws on is not
+  recorded as sent, so the next open or change tries it again. Every value is set by the person's own
   browser, so it is a hint for the support team, not a fact. The inbox shows a key only
   once an admin defines it there; the hosted plane's sync tool defines the hosted
   inbox's from this table.

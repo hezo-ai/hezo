@@ -1,4 +1,8 @@
-import { type SupportChatFieldKey, supportChatViewport } from '@hezo/shared';
+import {
+	type SupportChatFieldKey,
+	type SupportChatViewport,
+	supportChatViewport,
+} from '@hezo/shared';
 import {
 	installSupportChat,
 	setSupportChatBubble,
@@ -7,7 +11,7 @@ import {
 	setSupportChatTheme,
 } from '@hezo/ui';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { queryKeys } from '../lib/query-keys';
@@ -46,6 +50,20 @@ export function useSupport(identified: boolean) {
 	});
 }
 
+function subscribeToResize(onChange: () => void): () => void {
+	window.addEventListener('resize', onChange);
+	return () => window.removeEventListener('resize', onChange);
+}
+
+/**
+ * The window's width class, kept current. A resized window or a turned tablet
+ * changes it with nothing else on the page changing, so it is watched rather
+ * than read once; the page re-renders only when the class itself moves.
+ */
+function useViewportClass(): SupportChatViewport {
+	return useSyncExternalStore(subscribeToResize, () => supportChatViewport(window.innerWidth));
+}
+
 /** Where the owner is, as only the shell knows it. */
 export interface SupportChatPlace {
 	/** The gate the shell shows, the setup wizard, or the route template once inside. */
@@ -76,7 +94,8 @@ export interface SupportChatPlace {
  *
  * **The support team sees where the owner is.** `place` and the page's own
  * language, theme and width become the conversation's attributes while the chat
- * is open: names the shell chose, never a path, a title or anything typed.
+ * is open: names the shell chose and the project's slug, never a path, a title
+ * or other text the owner typed.
  */
 export function useSupportChat(
 	identified: boolean,
@@ -121,6 +140,7 @@ export function useSupportChat(
 	// After the install above, and again once there is a chat to install: the
 	// loader drops a context handed over before it is installed.
 	const offered = Boolean(chatwoot ?? channel);
+	const viewport = useViewportClass();
 	const { screen, project, version } = place;
 	useEffect(() => {
 		if (!offered) return;
@@ -132,10 +152,10 @@ export function useSupportChat(
 			hezo_screen: screen,
 			hezo_language: language,
 			hezo_theme: resolvedTheme,
-			hezo_viewport: supportChatViewport(window.innerWidth),
+			hezo_viewport: viewport,
 			hezo_project: project,
 			hezo_version: version,
 		};
 		setSupportChatContext(context);
-	}, [offered, screen, project, version, language, resolvedTheme]);
+	}, [offered, screen, project, version, language, resolvedTheme, viewport]);
 }

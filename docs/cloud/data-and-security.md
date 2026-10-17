@@ -106,8 +106,9 @@ are in, your Hezo version, and your language, theme and screen size. From the
 dashboard it is the page you are on and your instance's status, its current
 setup step and its last error.
 
-It never sends the text of your tasks, documents or anything you typed outside
-the chat. Nothing is sent while the chat is closed.
+It never sends the text of your tasks or documents. The project's short name is
+made from the name you gave the project; apart from that, nothing it sends is
+text you typed outside the chat. Nothing is sent while the chat is closed.
 
 ## Payment details
 

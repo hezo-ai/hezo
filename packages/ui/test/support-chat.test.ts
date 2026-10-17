@@ -346,6 +346,21 @@ test('holds changes made while the chat is closed until it opens again', async (
 	});
 });
 
+test('tries a send the widget refused again, rather than counting it as sent', async () => {
+	await readyChat();
+	fake.setConversationCustomAttributes.mockImplementationOnce(() => {
+		throw new Error('widget fault');
+	});
+	chat.setSupportChatContext(CONTEXT);
+	widgetEvent('opened');
+	widgetEvent('closed');
+
+	// Nothing on the page changed, but the first send never reached the widget.
+	widgetEvent('opened');
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith(SENT);
+});
+
 test('sends the context again when a conversation starts', async () => {
 	await readyChat();
 	widgetEvent('opened');

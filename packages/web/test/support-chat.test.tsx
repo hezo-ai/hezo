@@ -50,7 +50,10 @@ interface FakeChatwoot {
 interface TestWindow {
 	chatwootSDK?: { run: () => void };
 	$chatwoot?: FakeChatwoot;
-	happyDOM: { settings: { handleDisabledFileLoadingAsSuccess: boolean } };
+	happyDOM: {
+		settings: { handleDisabledFileLoadingAsSuccess: boolean };
+		setViewport(viewport: { width: number }): void;
+	};
 }
 
 const testWindow = window as unknown as TestWindow;
@@ -165,7 +168,8 @@ test('the owner gets the row, an identified widget, and a reset on sign-out', as
 	await expect.poll(() => vi.mocked(sso.goToIssuer).mock.calls[0]?.[0]).toBe(SSO.logoutUrl);
 });
 
-test('the open chat names the screen and the project, never the path', async () => {
+/** A stand-in widget the loader talks to, whether or not an earlier spec installed it. */
+function standInWidget(): FakeChatwoot {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
 	const chatwoot: FakeChatwoot = {
 		setUser: vi.fn(),
@@ -183,6 +187,11 @@ test('the open chat names the screen and the project, never the path', async () 
 	// The loader installs once per page, and an earlier spec in this file may
 	// already have installed it; the widget it talks to is this one either way.
 	testWindow.$chatwoot = chatwoot;
+	return chatwoot;
+}
+
+test('the open chat names the screen and the project, never the path', async () => {
+	const chatwoot = standInWidget();
 
 	let slug = '';
 	const { findByTestId, router } = await renderApp({
@@ -213,4 +222,31 @@ test('the open chat names the screen and the project, never the path', async () 
 	});
 	expect(sent?.hezo_version).toMatch(/^\d+\.\d+\.\d+/);
 	expect(JSON.stringify(sent)).not.toContain(`/projects/${slug}`);
+});
+
+// Turning a tablet or resizing a window changes nothing else on the page, so
+// nothing else would make the shell say it again.
+test('a resize that crosses a width class reaches the open chat', async () => {
+	const chatwoot = standInWidget();
+	const { findByTestId } = await renderApp({
+		initialPath: '/settings',
+		seed: async () => configure({ issuer: true, chatwoot: CHATWOOT }),
+	});
+	await findByTestId('settings-nav-desktop');
+
+	window.dispatchEvent(new Event('chatwoot:ready'));
+	window.dispatchEvent(new Event('chatwoot:opened'));
+	await expect
+		.poll(() => chatwoot.setConversationCustomAttributes.mock.lastCall?.[0]?.hezo_viewport)
+		.toBe('desktop');
+
+	const width = window.innerWidth;
+	try {
+		testWindow.happyDOM.setViewport({ width: 800 });
+		await expect
+			.poll(() => chatwoot.setConversationCustomAttributes.mock.lastCall?.[0]?.hezo_viewport)
+			.toBe('tablet');
+	} finally {
+		testWindow.happyDOM.setViewport({ width });
+	}
 });
