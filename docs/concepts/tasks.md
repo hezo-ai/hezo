@@ -275,9 +275,10 @@ stops rather than sending you a duplicate.
 
 ## Task suggestions
 
-The CEO can suggest tasks for a project. Each suggestion is a card on the CEO's
-suggestions task, and the same card is in your inbox. A suggestion is not a task yet:
-nothing runs until you approve it.
+The CEO can suggest tasks for a project. On a new project it does this once team setup
+is done, before the Captain plans. Each suggestion is a card on the CEO's suggestions
+task, and the same card is in your inbox. A suggestion is not a task yet: nothing runs
+until you approve it.
 
 Each card says what kind of task it is:
 

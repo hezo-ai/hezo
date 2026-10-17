@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 28,
+			"notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and asks the admin only what no open task already asks."
+		},
+		{
 			"version": 27,
 			"notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
 		},

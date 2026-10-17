@@ -177,7 +177,8 @@ export default defineConfig({
 				// Skip the team coherence-review enqueue path that Captain processes
 				// on every team / agent-roster mutation. The review touches multiple
 				// agents synthetically (~30-60s per team setup) and no e2e test asserts
-				// on it. Turning it off keeps team-creation under 5s.
+				// on it. Turning it off keeps team-creation under 5s. A new project then
+				// gets no CEO starter suggestions task either: it is filed only beside setup.
 				HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
 				// Skip the GitHub release check so e2e makes no outbound fetch, and
 				// for a sharper reason: the release check decides

@@ -259,8 +259,9 @@ projectsRoutes.put('/project-display-order', async (c) => {
 
 // Projects-primary creation: a project owns its own team (1:1). "Create a
 // project" provisions a fresh team (roster from the chosen team-type template),
-// then directly creates the project, its planning task, and an initial CEO
-// coherence/setup task that the planning task is blocked on. That setup task is
+// then directly creates the project, an initial CEO coherence/setup task, the
+// CEO's starter suggestions task, and the planning task, which waits on both
+// CEO tasks. That setup task is
 // the project's FIRST task, and the response surfaces it so the caller can land
 // the operator on it. When the operator wants the CEO to help shape the project
 // first, they talk it through in the CEO chat and the CEO calls create_project.
@@ -305,7 +306,7 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 	if (!result.ok) return err(c, result.code, result.message, result.status);
 
-	const { project, planningTask, team, coherenceTask } = result;
+	const { project, planningTask, team, coherenceTask, suggestionsTask } = result;
 	return ok(
 		c,
 		{
@@ -318,6 +319,10 @@ projectsRoutes.post('/projects', async (c) => {
 			// the e2e skip flag). Same names as the `create_project` MCP twin.
 			setup_task_id: coherenceTask?.id ?? null,
 			setup_task_identifier: coherenceTask?.identifier ?? null,
+			// The CEO's starter suggestions task, second, between setup and planning.
+			// Null exactly when the setup task is.
+			suggestions_task_id: suggestionsTask?.id ?? null,
+			suggestions_task_identifier: suggestionsTask?.identifier ?? null,
 		},
 		201,
 	);

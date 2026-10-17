@@ -27,6 +27,9 @@ across the whole instance:
   agent. When the CEO creates a project with you, it sets the team up according to the plan
   you agreed (the roles to hire and how they fit together), then starts it; a project
   created directly from the form gets an automatic coherence check instead.
+- **Task suggestions** - after setup, and before the Captain plans, the CEO reads what is
+  already on a new project's board and suggests tasks as cards you approve or deny. See
+  [Task suggestions](/docs/concepts/tasks#task-suggestions).
 - **Actioning changes** - hire new agents, retire ones a team no longer needs, adjust
   system prompts, and change settings, all through the conversation. See
   [Hiring & customizing agents](/docs/concepts/hiring-and-agents).

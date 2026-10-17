@@ -109,7 +109,8 @@ describe('projects CRUD', () => {
 		expect(taskResult.rows.length).toBe(1);
 		const task = taskResult.rows[0];
 		expect(task.assignee_id).toBe(captainId);
-		expect(task.status).toBe('backlog');
+		// Waits on the CEO's setup and starter suggestions tasks.
+		expect(task.status).toBe('blocked');
 		expect(task.priority).toBe('high');
 		expect(task.title).toContain('Draft execution plan');
 		expect(task.description).toContain(VALID_DESCRIPTION);
@@ -252,7 +253,7 @@ describe('initial project plan upload', () => {
 		expect(taskResult.rows[0].description).toContain('starting point for planning');
 	});
 
-	it('creates the coherence review as the first task, blocking the planning task', async () => {
+	it('creates the coherence review first and the suggestions task second, both blocking planning', async () => {
 		const res = await createProject({ name: 'Coherence Order Project' });
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;
@@ -267,15 +268,19 @@ describe('initial project plan upload', () => {
 		]);
 
 		const coherence = tasks.rows.find((t) => t.labels.includes('team-coherence-review'));
+		const suggestions = tasks.rows.find((t) => t.labels.includes('task-suggestions'));
 		const planning = tasks.rows.find((t) => t.labels.includes('planning'));
 		expect(coherence?.number).toBe(1);
-		expect(planning?.number).toBe(2);
+		expect(suggestions?.number).toBe(2);
+		expect(planning?.number).toBe(3);
 
-		const dep = await db.query(
-			'SELECT 1 FROM task_dependencies WHERE task_id = $1 AND blocked_by_task_id = $2',
-			[planning?.id, coherence?.id],
+		const dep = await db.query<{ blocked_by_task_id: string }>(
+			'SELECT blocked_by_task_id FROM task_dependencies WHERE task_id = $1',
+			[planning?.id],
 		);
-		expect(dep.rows.length).toBe(1);
+		expect(dep.rows.map((r) => r.blocked_by_task_id).sort()).toEqual(
+			[coherence?.id, suggestions?.id].sort(),
+		);
 	});
 
 	it('does not create project-plan.md when initial_project_plan is not provided', async () => {

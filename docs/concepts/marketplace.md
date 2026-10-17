@@ -27,9 +27,10 @@ includes, and its version. Click a team to see its full details:
 ## Launching a new project
 
 **Launch new project** creates a fresh project together with its own team, staffed with the
-whole roster. Give the project a name and description and Hezo provisions the team, opens the
-Captain's planning task, and starts the initial CEO team-setup pass - exactly like creating a
-project from a team type, but with the marketplace team's roles and prompts.
+whole roster. Give the project a name and description and Hezo provisions the team, starts
+the initial CEO team-setup pass, then the CEO's starter task suggestions, then the Captain's
+planning task - exactly like creating a project from a team type, but with the marketplace
+team's roles and prompts.
 
 You can also reach these teams from the other direction: every marketplace team appears in
 the New project dialog's team catalog, where opening one shows the same roster without

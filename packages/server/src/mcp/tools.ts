@@ -190,6 +190,7 @@ import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { writeCustomPrompt } from '../services/custom-prompt';
 import {
+	AGREED_TASKS_HEADING,
 	COHERENCE_LABEL,
 	enqueueTeamCoherenceReviewTask,
 	findOpenLabeledTask,
@@ -3040,7 +3041,9 @@ export function registerTools(
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in your conversation with them - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed with the admin - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. Returns the new project plus its planning and setup task identifiers.',
+		"Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in your conversation with them - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project with three tasks in order - your coherence/setup task, your starter task-suggestions task, and the Captain's planning task, which waits on both - then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed with the admin - the exact roles to hire, any system-prompt rewrites, and the reporting structure. Record any starter tasks the admin already agreed under a `## " +
+			AGREED_TASKS_HEADING +
+			'` section of the returned suggestions_task_identifier with update_task; the suggestions run files them without a card. Then call start_team_setup(project) to begin the run. Returns the new project plus its planning, setup and suggestions task identifiers.',
 		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -3084,7 +3087,7 @@ export function registerTools(
 			);
 			if (!result.ok) return { error: result.message };
 
-			const { project, planningTask, team, coherenceTask } = result;
+			const { project, planningTask, team, coherenceTask, suggestionsTask } = result;
 
 			return {
 				...project,
@@ -3093,6 +3096,8 @@ export function registerTools(
 				planning_task_identifier: planningTask.identifier,
 				setup_task_id: coherenceTask?.id ?? null,
 				setup_task_identifier: coherenceTask?.identifier ?? null,
+				suggestions_task_id: suggestionsTask?.id ?? null,
+				suggestions_task_identifier: suggestionsTask?.identifier ?? null,
 			};
 		},
 		db,

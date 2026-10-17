@@ -68,6 +68,10 @@
 	],
 	"changelog": [
 		{
+			"version": 30,
+			"notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and asks the admin only what no open task already asks, such as the stocks to watch."
+		},
+		{
 			"version": 29,
 			"notes": "The Risk Verifier's findings comment now opens with the verdict and the handoff in plain words. The section-by-section findings go under the technical details line, which people see collapsed."
 		},

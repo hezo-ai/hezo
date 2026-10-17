@@ -225,6 +225,9 @@ export interface ProjectWithTeamResponse {
 	 */
 	setup_task_id: string | null;
 	setup_task_identifier: string | null;
+	/** The CEO's starter suggestions task, between setup and planning. Null when setup is. */
+	suggestions_task_id: string | null;
+	suggestions_task_identifier: string | null;
 }
 
 /**

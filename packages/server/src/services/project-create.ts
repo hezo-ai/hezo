@@ -22,7 +22,7 @@ import {
 	type ProjectRow,
 	provisionContainer,
 } from './containers';
-import { enqueueSetupReviewForNewAgents } from './description-tasks';
+import { enqueueSetupReviewForNewAgents, enqueueTaskSuggestionsTask } from './description-tasks';
 import { getMarketplaceTeam } from './marketplace';
 import { snapshotTeamAsTemplate } from './team-template-snapshot';
 import { type CreatedTeamRow, createTeam } from './teams';
@@ -189,6 +189,8 @@ export async function createPlanningTask(
 		name: string;
 		description: string;
 		initialProjectPlan?: string | null;
+		/** Insert as `blocked`: the caller attaches the tasks it waits on. */
+		blocked?: boolean;
 	},
 ): Promise<{ planningTask: Record<string, unknown> }> {
 	const projectName = input.name.trim();
@@ -214,14 +216,15 @@ ${projectDescription}${initialProjectPlanNote}
 
 ### Your task
 
-1. Read the description above. If anything is ambiguous, post a clarifying comment on this task for the admin.
-2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
-3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
-4. Post the plan as a comment on this task. Then create the milestone tasks with \`create_task\`, choosing the parent based on what each milestone produces:
+1. **Read the board first.** Call \`list_tasks\`. The CEO's starter suggestions may have filed tasks, and tasks the admin approved wait on this planning task. Plan around them. Never file a duplicate, and never ask the admin what an open task already asks.
+2. Read the description above. If anything is ambiguous, post a clarifying comment on this task for the admin.
+3. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
+4. Break the work into 3-8 top-level milestones. Write a short scope note for each.
+5. Post the plan as a comment on this task. Then create the milestone tasks with \`create_task\`, choosing the parent based on what each milestone produces:
    - **Planning artefacts** (research, PRD, design, spec — anything the implementation team reads before building) → open as **sub-tasks of this planning task**: set \`parent_task_id\` to this task's id. Their outputs are required before the plan itself can be considered complete.
    - **Work tasks** (implementation, build, deploy, security review of built code, marketing launch — anything that *executes* the finished plan) → open as **top-level tasks**: leave \`parent_task_id\` unset. **Implementation must never be a child of this planning task** — not even when it feels like part of the same deliverable. Use \`blocked_by_task_ids\` for ordering instead. Deployment sits under the Architect (the DevOps Engineer's manager): hand the Architect the spec task and let them pre-file and gate the deploy task (\`blocked_by\` the QA and security reviews) inside their execution cluster, rather than creating it here. Sequence the **marketing launch after deployment** — the Marketing Lead drafts in parallel but holds publishing until the deploy task closes.
    For a typical 7-milestone plan: research / PRD / design / spec → sub-tasks (for UI-bearing software work the UI is figured out first, then the spec and implementation are planned against the approved design); alpha implementation / security review / marketing launch → top-level. Assign each task to the right agent — the assignment wakes them on their own task.
-5. This planning task is the epic for the plan itself. The server will not let it move to \`done\` while any sub-task is open, so it stays open while research / PRD / design / spec execute. Once those sub-tasks reach a terminal status (\`done\` or \`cancelled\`) and the top-level work tasks have been created, move this task to \`done\`; the Coach reviews it after the post-mortem but it stays \`done\`. Trying to flip it to \`done\` early will fail with a "sub-task(s) still open" error. If you get a task's parent wrong, fix it with \`update_task\` — set \`parent_task_id\` to move it, or to an empty string to promote it to top level. Never cancel a mis-filed task and re-file it as a new one.
+6. This planning task is the epic for the plan itself. The server will not let it move to \`done\` while any sub-task is open, so it stays open while research / PRD / design / spec execute. Once those sub-tasks reach a terminal status (\`done\` or \`cancelled\`) and the top-level work tasks have been created, move this task to \`done\`; the Coach reviews it after the post-mortem but it stays \`done\`. Trying to flip it to \`done\` early will fail with a "sub-task(s) still open" error. If you get a task's parent wrong, fix it with \`update_task\` — set \`parent_task_id\` to move it, or to an empty string to promote it to top level. Never cancel a mis-filed task and re-file it as a new one.
 
 Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tasks are ready.`;
 
@@ -238,7 +241,7 @@ Container provisioning for this project is in progress. Focus on planning while 
 			identifier,
 			`Draft execution plan for "${projectName}"`,
 			taskBody,
-			TaskStatus.Backlog,
+			input.blocked ? TaskStatus.Blocked : TaskStatus.Backlog,
 			TaskPriority.High,
 			JSON.stringify([PLANNING_TASK_LABEL]),
 		],
@@ -443,6 +446,8 @@ export type CreateProjectWithTeamResult =
 			team: CreatedTeamRow;
 			/** The initial coherence/setup ticket, or null when coherence review is skipped. */
 			coherenceTask: { id: string; identifier: string } | null;
+			/** The CEO's starter suggestions task, filed only alongside the setup ticket. */
+			suggestionsTask: { id: string; identifier: string } | null;
 	  }
 	| {
 			ok: false;
@@ -455,8 +460,9 @@ export type CreateProjectWithTeamResult =
  * Create a project together with its dedicated team in one step — the single
  * canonical "create a project" sequence: resolve the team-type template, stand
  * up the team + roster, create the project, seed the CEO coherence-review ticket
- * (it takes the first identifier) ahead of the Captain's planning ticket (blocked
- * on coherence), wake the Captain, and provision the container in the background.
+ * (it takes the first identifier), then the CEO's starter suggestions task (blocked
+ * on setup), then the Captain's planning ticket (blocked on both), wake the
+ * Captain, and provision the container in the background.
  *
  * Shared by the superuser "Create now" route (`POST /api/projects`) and the CEO's
  * `create_project` MCP tool, which the CEO calls once the admin approves the
@@ -577,13 +583,41 @@ export async function createProjectWithTeam(
 		autoStart: !input.suppressCoherenceAutoStart,
 	});
 
-	const { planningTask } = await createPlanningTask(db, {
-		teamId: team.id,
-		project,
-		captainMemberId,
-		name,
-		description,
-		initialProjectPlan: input.initialProjectPlan ?? null,
+	// The CEO's starter suggestions come second: assigned to the CEO and blocked
+	// on setup, so closing setup wakes it. Filed only beside a setup ticket, so
+	// whatever skips setup skips this too.
+	const suggestions = coherenceTaskId
+		? await enqueueTaskSuggestionsTask(db, team.id, 'new_project', {
+				blockedByTaskId: coherenceTaskId,
+			})
+		: null;
+	const suggestionsTask = suggestions
+		? { id: suggestions.id, identifier: suggestions.identifier }
+		: null;
+
+	// Planning comes third and waits on both, so the Captain plans with every
+	// approved suggestion already on the board.
+	const planningBlockers = [coherenceTaskId, suggestionsTask?.id].filter(
+		(id): id is string => typeof id === 'string',
+	);
+	const { planningTask } = await withTransaction(db, async () => {
+		const created = await createPlanningTask(db, {
+			teamId: team.id,
+			project,
+			captainMemberId,
+			name,
+			description,
+			initialProjectPlan: input.initialProjectPlan ?? null,
+			blocked: planningBlockers.length > 0,
+		});
+		for (const blockerId of planningBlockers) {
+			await db.query(
+				`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
+				 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				[created.planningTask.id, blockerId],
+			);
+		}
+		return created;
 	});
 
 	// Resolve the coherence ticket row once: its identifier is surfaced to the
@@ -592,13 +626,19 @@ export async function createProjectWithTeam(
 	// than silently waiting (the auto-run path used to open it immediately).
 	let coherenceTask: { id: string; identifier: string } | null = null;
 	let coherenceRow: Record<string, unknown> | null = null;
+	let suggestionsRow: Record<string, unknown> | null = null;
 	if (coherenceTaskId) {
-		const r = await db.query<Record<string, unknown>>('SELECT * FROM tasks WHERE id = $1', [
-			coherenceTaskId,
-		]);
-		if (r.rows[0]) {
-			coherenceRow = r.rows[0];
-			coherenceTask = { id: coherenceTaskId, identifier: r.rows[0].identifier as string };
+		const r = await db.query<Record<string, unknown>>(
+			'SELECT * FROM tasks WHERE id = ANY($1::uuid[])',
+			[[coherenceTaskId, suggestionsTask?.id].filter(Boolean)],
+		);
+		for (const row of r.rows) {
+			if (row.id === coherenceTaskId) {
+				coherenceRow = row;
+				coherenceTask = { id: coherenceTaskId, identifier: row.identifier as string };
+			} else {
+				suggestionsRow = row;
+			}
 		}
 	}
 
@@ -608,19 +648,14 @@ export async function createProjectWithTeam(
 		if (coherenceRow) {
 			broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', coherenceRow);
 		}
+		if (suggestionsRow) {
+			broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', suggestionsRow);
+		}
 		// The new team's room above is one no shell has joined yet, so the rail
 		// can't learn of the project from it. Signal the global project index so
 		// every connected shell refetches and the project appears in the rail at
 		// once — covers the dialog, the CEO's create_project, and other sessions.
 		broadcastProjectsChanged(deps.wsManager);
-	}
-
-	if (coherenceTaskId) {
-		await db.query(
-			`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
-			 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			[planningTask.id, coherenceTaskId],
-		);
 	}
 
 	// The Captain is woken unconditionally for its planning ticket (the
@@ -658,5 +693,5 @@ export async function createProjectWithTeam(
 		);
 	}
 
-	return { ok: true, project, planningTask, team, coherenceTask };
+	return { ok: true, project, planningTask, team, coherenceTask, suggestionsTask };
 }

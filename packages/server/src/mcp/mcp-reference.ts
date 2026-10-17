@@ -86,7 +86,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			"The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task, which the planning task is blocked on. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.",
+			"The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task - and the CEO's starter task-suggestions task (`suggestions_task_id`, `suggestions_task_identifier`), which waits on setup. The planning task waits on both. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.",
 		auth: 'CEO only - call after the admin has explicitly approved the scope and team type.',
 	},
 	start_team_setup: {

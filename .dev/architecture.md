@@ -1493,8 +1493,17 @@ membership check: the agent JWT is validated against the `heartbeat_runs` row
 **Creation flows (two, both superuser).** Both share one service —
 `createProjectWithTeam` in `services/project-create.ts` — which resolves the team-type
 template, stands up the team + roster, creates the project, seeds the initial CEO
-coherence/setup task (it takes the first identifier) ahead of the Captain's planning task
-(blocked on coherence), wakes the Captain, and provisions the container. Whether that
+coherence/setup task (it takes the first identifier), then the CEO's starter suggestions task
+(`enqueueTaskSuggestionsTask` in `services/description-tasks.ts`: label `task-suggestions`,
+assigned to the CEO, inserted `blocked` on setup with no wake, so closing setup wakes it), then
+the Captain's planning task (inserted `blocked`, with dependency rows on both, in one
+transaction), wakes the Captain (dispatch parks the wake until both close), and provisions the
+container. The suggestions task is filed only beside a setup task, so the e2e skip flag drops
+both. Its server-written body (`buildTaskSuggestionsBody`) has the CEO read the board, file
+the tasks recorded under `## Agreed with the admin` with `create_task` blocked on planning,
+then file `suggest_task` cards (§ 4 › Task suggestions); approved cards are blocked on the
+open planning task, so the Captain plans with them on the board and they start after it.
+`POST /api/projects` and `create_project` return `suggestions_task_id`/`_identifier`. Whether that
 coherence task **auto-runs** is the one behavioural difference between the two paths
 (`suppressCoherenceAutoStart`): the direct path assigns it to the CEO and wakes them
 immediately; the CEO-assisted path leaves it **unassigned and un-woken**.

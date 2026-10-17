@@ -23,6 +23,8 @@ interface CreatedProjectTeam {
 	planning_task_identifier: string;
 	setup_task_id: string | null;
 	setup_task_identifier: string | null;
+	suggestions_task_id: string | null;
+	suggestions_task_identifier: string | null;
 }
 
 async function createProjectWithTeam(name: string, description = 'A test project.') {
@@ -88,24 +90,50 @@ describe('POST /projects — create a project with its own team', () => {
 		expect(planning.rows[0]?.project_id).toBe(data.id);
 		expect(planning.rows[0]?.assignee_id).toBe(captain.rows[0].id);
 
-		// The planning task is blocked by an initial CEO coherence/setup task.
+		// The planning task waits on two CEO tasks: setup, then starter suggestions.
 		const dep = await db.query<{ blocked_by_task_id: string }>(
 			'SELECT blocked_by_task_id FROM task_dependencies WHERE task_id = $1',
 			[data.planning_task_id],
 		);
-		expect(dep.rows).toHaveLength(1);
-
-		// That setup task is surfaced on the response: it is the project's FIRST task
-		// (number 1) and the one the planning task is blocked by, so the creator can
-		// land the operator on it.
-		expect(data.setup_task_id).toBe(dep.rows[0].blocked_by_task_id);
-		const setup = await db.query<{ number: number; identifier: string; title: string }>(
-			'SELECT number, identifier, title FROM tasks WHERE id = $1',
-			[data.setup_task_id],
+		expect(dep.rows.map((r) => r.blocked_by_task_id).sort()).toEqual(
+			[data.setup_task_id, data.suggestions_task_id].sort(),
 		);
-		expect(setup.rows[0].number).toBe(1);
-		expect(setup.rows[0].title).toBe('Set up the team');
-		expect(data.setup_task_identifier).toBe(setup.rows[0].identifier);
+
+		// Both are surfaced on the response, numbered 1 and 2 ahead of planning (3),
+		// so the creator can land the operator on setup.
+		const rows = await db.query<{
+			id: string;
+			number: number;
+			identifier: string;
+			title: string;
+			status: string;
+			assignee_id: string | null;
+		}>(
+			`SELECT id, number, identifier, title, status::text AS status, assignee_id
+			 FROM tasks WHERE project_id = $1 ORDER BY number`,
+			[data.id],
+		);
+		const [setup, suggestions, planningRow] = rows.rows;
+		expect(setup.id).toBe(data.setup_task_id);
+		expect(setup.number).toBe(1);
+		expect(setup.title).toBe('Set up the team');
+		expect(data.setup_task_identifier).toBe(setup.identifier);
+		expect(suggestions.id).toBe(data.suggestions_task_id);
+		expect(suggestions.number).toBe(2);
+		expect(suggestions.title).toBe('Suggest starter tasks');
+		expect(suggestions.status).toBe('blocked');
+		expect(suggestions.assignee_id).toBe(setup.assignee_id);
+		expect(data.suggestions_task_identifier).toBe(suggestions.identifier);
+		expect(planningRow.id).toBe(data.planning_task_id);
+		expect(planningRow.number).toBe(3);
+		expect(planningRow.status).toBe('blocked');
+
+		// The suggestions task waits on setup alone.
+		const suggestionsDep = await db.query<{ blocked_by_task_id: string }>(
+			'SELECT blocked_by_task_id FROM task_dependencies WHERE task_id = $1',
+			[data.suggestions_task_id],
+		);
+		expect(suggestionsDep.rows.map((r) => r.blocked_by_task_id)).toEqual([data.setup_task_id]);
 
 		// …and it sorts first in the project's task list under the default work-order
 		// sort (unblocked before blocked), which is what the post-create landing relies
