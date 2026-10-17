@@ -17,10 +17,10 @@
  * rather than sharing it with sibling subdomains.
  *
  * **Where the person is reaches the inbox only while the chat is open.** The
- * page hands over its context whenever it changes; the module sends it when the
- * panel opens, again on every change while it stays open, and again when a
- * conversation starts. Somebody who chatted once is not reported on every page
- * they visit afterwards.
+ * page hands over its context whenever it changes; the module sends it every
+ * time the panel opens, again on every change while it stays open, and again
+ * when a conversation starts. Somebody who chatted once is not reported on every
+ * page they visit afterwards.
  */
 
 import { pinnedScript } from './pinned-script.js';
@@ -97,7 +97,7 @@ interface SupportChatState {
 	open: boolean;
 	/** Where the page says the person is, as it will be sent. */
 	context: Record<string, string> | null;
-	/** The context last sent, serialised, so an unchanged one is not sent again. */
+	/** The context last sent while the panel is open, serialised, so an unchanged one is not sent again. */
 	sent: string | null;
 }
 
@@ -162,9 +162,15 @@ function sendContext(): void {
 	}
 }
 
+/**
+ * Every open sends, changed or not. The widget hands the attributes to its own
+ * request and swallows a failed one, so a call that went through is no proof
+ * they arrived; one request per open is what keeps a lost one from staying lost.
+ */
 function onOpened(): void {
 	if (!state) return;
 	state.open = true;
+	state.sent = null;
 	sendContext();
 }
 

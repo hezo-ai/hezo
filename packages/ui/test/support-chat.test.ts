@@ -313,7 +313,7 @@ test('sends the whole context on every change, never a part of it', async () => 
 	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
 });
 
-test('does not send a context it already sent', async () => {
+test('does not send a context it already sent while the panel stays open', async () => {
 	await readyChat();
 	widgetEvent('opened');
 	chat.setSupportChatContext(CONTEXT);
@@ -323,9 +323,21 @@ test('does not send a context it already sent', async () => {
 		hezo_screen: '/projects/$projectId/tasks/$taskId',
 		hezo_surface: 'instance',
 	});
-	widgetEvent('opened');
 
 	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(1);
+});
+
+// The widget sends the attributes in a request of its own and swallows a
+// failure, so a call that went through may still not have arrived.
+test('sends the context on every open, changed or not', async () => {
+	await readyChat();
+	chat.setSupportChatContext(CONTEXT);
+	widgetEvent('opened');
+	widgetEvent('closed');
+	widgetEvent('opened');
+
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith(SENT);
 });
 
 test('holds changes made while the chat is closed until it opens again', async () => {

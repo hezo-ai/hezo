@@ -6796,14 +6796,17 @@ wrote back. The first rides the public status; the second stays behind the owner
   is, as Chatwoot conversation attributes: the keys in `SUPPORT_CHAT_FIELDS`
   (`@hezo/shared`), each prefixed `hezo_` because one Chatwoot account can serve more
   than one product and a key is unique across the account. The loader sends only while
-  the panel is open (`chatwoot:opened` until `chatwoot:closed`), again on every change
-  while open, and again on `chatwoot:on-start-conversation` if the panel is still open
+  the panel is open (`chatwoot:opened` until `chatwoot:closed`), on every open whether
+  or not anything changed (the widget sends the attributes in a request of its own and
+  swallows a failed one, so a call that went through proves nothing), again on every
+  change while open, and again on `chatwoot:on-start-conversation` if the panel is still open
   (otherwise when it next opens), because a conversation started after a resolved one
   begins empty. **It always sends the whole object.** Before
   a conversation exists the widget merges what it is sent into what it will send with
   the first message; after that the inbox **replaces** the conversation's attributes, so
   a partial update would erase every key it left out. A missing fact travels as `""`,
-  an unchanged context is not sent again, and an empty one is never sent (the widget
+  an unchanged context is not sent again while the panel stays open, and an empty one
+  is never sent (the widget
   throws on it). The tenant web sends `hezo_surface: instance`, the screen from
   `shellGate` (`lib/shell-gate.ts`, the one decision the root's render also switches on),
   `setup` while no AI provider is configured, or the deepest route's **template**
