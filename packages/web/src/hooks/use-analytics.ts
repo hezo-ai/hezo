@@ -3,6 +3,7 @@ import {
 	installAnalyticsClicks,
 	shouldRecordThisVisit,
 	startSessionRecording,
+	stopSessionRecording,
 	trackAnalyticsPageView,
 } from '@hezo/ui';
 import { useQuery } from '@tanstack/react-query';
@@ -24,6 +25,13 @@ export interface Analytics {
 }
 
 /**
+ * How often a recorded page asks whether its recording should tighten. Two
+ * minutes: the policy reaches the instance about once a minute, and the
+ * recorder's next full snapshot follows within thirty seconds.
+ */
+const RECORDING_RECHECK_MS = 2 * 60_000;
+
+/**
  * The product analytics this deployment runs on the instance owner's use.
  *
  * Asked only where an issuer signs people in **and somebody has**, for the
@@ -31,6 +39,13 @@ export interface Analytics {
  * and 401 before a session exists, and a self-hosted instance would otherwise
  * spend a request on every load to hear it. A 404 is the ordinary answer, so it
  * is not retried.
+ *
+ * **Asked again every `RECORDING_RECHECK_MS` while this account is recorded**,
+ * and only then. The deployer can end a recording that shows page text, or stop
+ * recording the account, while the owner keeps the app open for hours; the app
+ * never refetches on focus, so without this the change would wait for a reload.
+ * Nothing is asked for an account that is not recorded at all: turning its
+ * recording on reaches the next page load.
  */
 export function useAnalytics(identified: boolean) {
 	return useQuery({
@@ -39,6 +54,7 @@ export function useAnalytics(identified: boolean) {
 		enabled: identified,
 		retry: false,
 		retryOnMount: false,
+		refetchInterval: (query) => (query.state.data?.umami.replay ? RECORDING_RECHECK_MS : false),
 	});
 }
 
@@ -85,7 +101,11 @@ export function useProductAnalytics(identified: boolean): void {
 			pagePattern: () => routePattern(router),
 		});
 		installAnalyticsClicks();
-		if (umami.replay && shouldRecordThisVisit(umami.replay.sample_rate)) {
+		// Run again whenever the settings change mid-page: a recording already
+		// running only tightens (text hidden, or the rest of the page left out).
+		if (!umami.replay) {
+			stopSessionRecording();
+		} else if (shouldRecordThisVisit(umami.replay.sample_rate)) {
 			startSessionRecording({
 				showText: umami.replay.show_text,
 				recorderIntegrity: umami.recorder_integrity,

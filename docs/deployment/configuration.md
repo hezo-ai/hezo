@@ -278,6 +278,16 @@ required. Leave out `replay` and the owner is never recorded, though page views 
 clicks are still counted. A block that fails any of these is refused like any other
 invalid `policy`.
 
+**It needs Umami 3.4 or later.** Hezo names the owner with the tracker's
+`data-distinct-id`, which older versions ignore, so their visits would be counted
+anonymously.
+
+**A change reaches an open page within about two minutes, if it tightens.** While
+the owner is recorded, the app asks for these settings again every two minutes.
+Setting `showText` to `false` hides the page text from then on, and leaving out
+`replay` leaves the rest of the page out of the recording. Showing text, or
+recording an owner who was not recorded, waits for the next page load.
+
 **Both scripts run in the owner's session, so each is pinned to its hash.** A
 browser refuses a script whose file no longer matches, so upgrading Umami changes
 both files: list the old and the new hash of each, upgrade, then drop the old

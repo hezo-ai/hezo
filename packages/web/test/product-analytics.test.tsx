@@ -64,6 +64,13 @@ function recorder(): HTMLScriptElement | null {
 	return document.head.querySelector(`script[src="${UMAMI.host}/recorder.js"]`);
 }
 
+/** How often the analytics settings are asked for again, as the query now stands. */
+function recheckInterval(): unknown {
+	const query = queryClient.getQueryCache().find({ queryKey: queryKeys.analytics() });
+	const interval: unknown = query?.observers[0]?.options.refetchInterval;
+	return typeof interval === 'function' ? interval(query) : interval;
+}
+
 /** What the tracker would send for a payload, after the page's before-send hook. */
 function sent(payload: Payload): Payload | false {
 	const name = tracker()?.getAttribute('data-before-send') ?? '';
@@ -76,7 +83,7 @@ afterEach(() => {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = false;
 	tracker()?.remove();
 	recorder()?.remove();
-	document.documentElement.classList.remove('rr-mask');
+	document.documentElement.classList.remove('rr-mask', 'rr-block');
 	sessionStorage.clear();
 	delete testWindow.umami;
 });
@@ -174,4 +181,14 @@ test('the owner is counted by route pattern, page by page, and recorded with pag
 	await expect.poll(() => router.state.location.search).toMatchObject({ focus: 'B_TOKEN' });
 	expect(pageViews()).toBe(5);
 	expect(sent({ url: 'anything' })).toMatchObject({ url: '/settings/credentials' });
+
+	// A recorded page asks again while it records, so a stop the deployer makes
+	// while the owner keeps the app open reaches the recording already running:
+	// the rest of the page is left out of it, and the asking stops.
+	expect(recheckInterval()).toBe(2 * 60_000);
+	const { replay: _replay, ...unrecorded } = UMAMI;
+	configure({ issuer: true, umami: unrecorded });
+	await queryClient.refetchQueries({ queryKey: queryKeys.analytics() });
+	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(recheckInterval()).toBe(false);
 });

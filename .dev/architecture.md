@@ -6822,7 +6822,13 @@ self-hosted Hezo loads none of it.
   queue bounded at 50 and flush on its `load`. `startSessionRecording` puts `rr-mask` on
   `<html>` unless `showText`, then adds `${host}/recorder.js` pinned to its
   `recorderIntegrity`; both tags are `async = false` so the tracker runs first, since the
-  recorder waits for the tracker's session. `shouldRecordThisVisit(rate)` decides once per
+  recorder waits for the tracker's session. The recorder has no stop or reconfigure hook,
+  so a settings change reaches a running recording only through the classes rrweb reads,
+  and only ever tightens: a later `startSessionRecording` with `showText: false` adds
+  `rr-mask`, and `stopSessionRecording` puts `rr-block` on `<html>`; rrweb's full snapshot
+  every 30 s then drops what was shown. Loosening waits for the next page load.
+  `useAnalytics` refetches every two minutes while the account has a `replay`, because the
+  app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
   browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
   `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends
   `umami.track(name)` for the nearest `[data-analytics]` ancestor - a kebab-case name of at

@@ -64,7 +64,7 @@ afterEach(() => {
 		document.removeEventListener(type, listener, capture);
 	}
 	for (const script of document.head.querySelectorAll('script')) script.remove();
-	document.documentElement.classList.remove('rr-mask');
+	document.documentElement.classList.remove('rr-mask', 'rr-block');
 	document.body.innerHTML = '';
 	delete testWindow.umami;
 	if (hookName) delete testWindow[hookName];
@@ -284,6 +284,37 @@ test('shows page text only when asked to', async () => {
 
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 	expect(document.documentElement.classList.contains('rr-mask')).toBe(false);
+});
+
+// The deployer ends a recording that showed text, or stops recording the
+// account, while the page is open: the recorder cannot be reconfigured, so the
+// change reaches it through the classes it reads, and only ever tightens.
+test('a running recording hides its text when asked to, and never shows it again', async () => {
+	await installed();
+	analytics.startSessionRecording(recording(true));
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(false);
+
+	analytics.startSessionRecording(recording(false));
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(true);
+
+	analytics.startSessionRecording(recording(true));
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(true);
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
+});
+
+test('stopping leaves the rest of the page out of the recording, until the next load', async () => {
+	await installed();
+	analytics.stopSessionRecording();
+	// Nothing was recording, so there is nothing to leave out.
+	expect(document.documentElement.classList.contains('rr-block')).toBe(false);
+
+	analytics.startSessionRecording(recording(true));
+	analytics.stopSessionRecording();
+	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+
+	analytics.startSessionRecording(recording(true));
+	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 });
 
 test('records nothing before the tracker is installed', () => {

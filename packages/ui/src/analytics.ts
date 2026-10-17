@@ -322,9 +322,20 @@ export function shouldRecordThisVisit(sampleRate: number): boolean {
  * and pinned to `recorderIntegrity`. Hides all page text first unless
  * `showText` is set. Starts once per page, and does nothing before
  * `installAnalytics`, whose host and website it uses.
+ *
+ * **Called again while recording, it only ever tightens.** The recorder has no
+ * stop or reconfigure hook, so a settings change reaches a running recording
+ * through the classes it reads: `showText` turning false hides the page text
+ * from then on, and the recorder's next full snapshot (every 30 seconds) drops
+ * what it showed before. Showing text that was hidden, or recording again after
+ * `stopSessionRecording`, waits for the next page load.
  */
 export function startSessionRecording(options: SessionRecordingOptions): void {
-	if (!state || state.recording) return;
+	if (!state) return;
+	if (state.recording) {
+		if (!options.showText) document.documentElement.classList.add(MASK_TEXT_CLASS);
+		return;
+	}
 	try {
 		if (!options.recorderIntegrity.trim()) return;
 		state.recording = true;
@@ -339,4 +350,16 @@ export function startSessionRecording(options: SessionRecordingOptions): void {
 	} catch {
 		// As in `dispatch`.
 	}
+}
+
+/**
+ * Leave the rest of this page out of the recording already running, for an
+ * account no longer recorded. The recorder cannot be unloaded, so the whole
+ * page takes `NEVER_RECORD_CLASS`: nothing that changes from now on is
+ * recorded, and the next full snapshot holds a blank box. Does nothing when
+ * nothing is recording; a later start waits for the next page load.
+ */
+export function stopSessionRecording(): void {
+	if (!state?.recording) return;
+	document.documentElement.classList.add(NEVER_RECORD_CLASS);
 }

@@ -67,6 +67,7 @@ export {
 	type SessionRecordingOptions,
 	shouldRecordThisVisit,
 	startSessionRecording,
+	stopSessionRecording,
 	trackAnalyticsEvent,
 	trackAnalyticsPageView,
 } from './analytics.js';
