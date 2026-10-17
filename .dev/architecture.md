@@ -1696,7 +1696,8 @@ suggestions task done while any suggestion filed on it is pending (`assertNoPend
 read from the approvals rather than the cards, so a card that failed to flip cannot hold it), since
 one answered card already satisfies the `@admin` done check. Approving runs `taskSuggestionHandler`
 (`approval-handlers/task-suggestion.ts`). It first checks that a person or an API key decided
-(`resolved_by_user_id`/`_api_key_id`; an agent, the CEO included, cannot approve its own card) and
+(`resolved_by_user_id`/`_api_key_id`; an agent, the CEO included, can neither approve nor deny a
+card, on either branch, and the approval stays pending) and
 that the payload's project and suggestions task belong to the approval's team, and credits the
 task to the approving admin member or API key; when that check or `createTask` refuses, it
 throws `ApprovalSideEffectError`, and `resolveApproval` puts the approval back to pending and

@@ -72,39 +72,33 @@ export async function resolveApproval(
 	}
 
 	let sideEffects: SideEffectBroadcast[] = [];
-	if (input.status === ApprovalStatus.Approved) {
-		try {
-			sideEffects = await applyApprovalSideEffect(
-				db,
-				row,
-				input.dataDir,
-				input.actorMemberId,
-				input.wsManager,
-				input.containerDeps,
-				input.events,
-			);
-		} catch (e) {
-			if (!(e instanceof ApprovalSideEffectError)) throw e;
-			// The handler wrote nothing, so the decision is undone rather than left
-			// reading as approved with nothing behind it.
-			await db.query(
-				`UPDATE approvals
-				    SET status = $2::approval_status, resolution_note = NULL, resolved_at = NULL,
-				        resolved_by_user_id = NULL, resolved_by_api_key_id = NULL
-				  WHERE id = $1`,
-				[approvalId, ApprovalStatus.Pending],
-			);
-			return { ok: false, error: 'SIDE_EFFECT_FAILED', message: e.message };
-		}
-	} else {
-		// Denied: dispatch to any handler that defines a denied side effect (today
-		// the hire handler flips its proposal comment and re-wakes the requester).
-		sideEffects = await applyApprovalDeniedSideEffect(
-			db,
-			row,
-			input.actorMemberId,
-			input.wsManager,
+	try {
+		sideEffects =
+			input.status === ApprovalStatus.Approved
+				? await applyApprovalSideEffect(
+						db,
+						row,
+						input.dataDir,
+						input.actorMemberId,
+						input.wsManager,
+						input.containerDeps,
+						input.events,
+					)
+				: // Denied: dispatch to any handler that defines a denied side effect
+					// (the proposal-style ones flip their card and re-wake the requester).
+					await applyApprovalDeniedSideEffect(db, row, input.actorMemberId, input.wsManager);
+	} catch (e) {
+		if (!(e instanceof ApprovalSideEffectError)) throw e;
+		// The handler wrote nothing, so the decision is undone rather than left
+		// reading as decided with nothing behind it.
+		await db.query(
+			`UPDATE approvals
+			    SET status = $2::approval_status, resolution_note = NULL, resolved_at = NULL,
+			        resolved_by_user_id = NULL, resolved_by_api_key_id = NULL
+			  WHERE id = $1`,
+			[approvalId, ApprovalStatus.Pending],
 		);
+		return { ok: false, error: 'SIDE_EFFECT_FAILED', message: e.message };
 	}
 
 	return { ok: true, row, sideEffects };

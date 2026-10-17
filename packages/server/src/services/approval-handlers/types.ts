@@ -44,9 +44,10 @@ export interface ApprovalHandler {
 }
 
 /**
- * Thrown by `applyApproved` when the side effect could not be applied and wrote
- * nothing. `resolveApproval` puts the approval back to pending and reports the
- * message, so the decision can be made again instead of reading as approved.
+ * Thrown by `applyApproved` or `applyDenied` when the side effect could not be
+ * applied and wrote nothing. `resolveApproval` puts the approval back to pending
+ * and reports the message, so the decision can be made again instead of reading
+ * as made.
  */
 export class ApprovalSideEffectError extends Error {
 	constructor(message: string) {

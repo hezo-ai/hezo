@@ -704,7 +704,7 @@ describe('suggest_task under parallel calls, and closing the suggestions task', 
 });
 
 describe('who may approve a suggestion, and who the task is credited to', () => {
-	it('the CEO cannot approve its own suggestion: nothing is created and it stays pending', async () => {
+	it('the CEO cannot approve or deny its own suggestion: nothing changes and it stays pending', async () => {
 		const host = await suggestionsTask();
 		const result = await suggest(host.token, {
 			kind: 'deliverable',
@@ -715,7 +715,12 @@ describe('who may approve a suggestion, and who the task is credited to', () => 
 			approval_id: result.approval_id,
 			status: 'approved',
 		})) as { error?: string };
-		expect(self.error).toMatch(/Only the admin can approve a task suggestion/);
+		expect(self.error).toMatch(/Only the admin can approve or deny a task suggestion/);
+		const selfDeny = (await callMcpTool(app, host.token, 'resolve_approval', {
+			approval_id: result.approval_id,
+			status: 'denied',
+		})) as { error?: string };
+		expect(selfDeny.error).toMatch(/Only the admin can approve or deny a task suggestion/);
 		const row = await db.query<{ status: string }>(
 			'SELECT status::text AS status FROM approvals WHERE id = $1',
 			[result.approval_id],
