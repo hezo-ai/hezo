@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.71.0 - 2026-10-17
+
+### Features
+
+- **analytics:** page views, named clicks and session recording for hosted instances ([#1159](https://github.com/hezo-ai/hezo/pull/1159))
+
+### Bug Fixes
+
+- **web:** make Reply a round button ahead of the emoji button, translate comment card labels ([#1158](https://github.com/hezo-ai/hezo/pull/1158))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.70.1...0.71.0
+
 ## 0.70.1 - 2026-10-10
 
 ### Bug Fixes
