@@ -5,7 +5,9 @@ import {
 	configure,
 	recheckInterval,
 	recorder,
+	recorderCanSend,
 	resetAnalyticsPage,
+	standInTracker,
 	testWindow,
 	tracker,
 	UMAMI,
@@ -62,7 +64,7 @@ test('an issuer with no analytics configured loads nothing', async () => {
 test('the owner is counted by route pattern, page by page, and recorded with page text hidden', async () => {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
 	const track = vi.fn();
-	testWindow.umami = { track };
+	testWindow.umami = standInTracker(track);
 	const pageViews = () => track.mock.calls.filter(([event]) => typeof event !== 'string').length;
 	let hq = '';
 
@@ -129,13 +131,16 @@ test('the owner is counted by route pattern, page by page, and recorded with pag
 
 	// A recorded page asks again while it records, so a stop the deployer makes
 	// while the owner keeps the app open reaches the recording already running:
-	// the rest of the page is left out of it, and the asking stops.
+	// the recorder, heatmap included, sends nothing more, and counting carries on.
 	expect(recheckInterval()).toBe(2 * 60_000);
+	expect(recorderCanSend()).toBe(true);
 	// A rate dropped to 0 stops the recording as a removed `replay` does.
 	configure({ issuer: true, umami: { ...UMAMI, replay: { sampleRate: 0, showText: false } } });
 	await queryClient.refetchQueries({ queryKey: queryKeys.analytics() });
-	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
+	await expect.poll(recorderCanSend).toBe(false);
 	expect(recheckInterval()).toBe(2 * 60_000);
+	await router.navigate({ to: '/home' });
+	await expect.poll(pageViews).toBe(6);
 	// The analytics block withdrawn altogether: the route answers 404, nothing
 	// more is sent from this page, and the asking stops.
 	configure({ issuer: true });

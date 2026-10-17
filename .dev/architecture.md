@@ -6828,14 +6828,22 @@ self-hosted Hezo loads none of it.
   recorder waits for the tracker's session. The app hands every answer to
   `applyAnalyticsSettings`: the first starts the tracker, the click listener and a
   recording if the visit is picked, and every later one only tightens, because the
-  recorder has no stop or reconfigure hook. Nothing (the route's 404 after a good answer)
-  turns the page off: nothing more is sent and `rr-block` goes on `<html>`. So does losing
-  the signed-in owner (the vault locked, or a 401 from `/api/me` or from the recheck
-  itself, as when the token expires on a tab left open), because the owner's details and
-  the last good answer stay cached after either. A visit no
-  longer picked, or no `replay`, gets `rr-block`; `showText` turning false gets `rr-mask`.
-  rrweb's full snapshot every 30 s then drops what was shown. Starting or loosening waits
-  for the next page load. `useAnalytics` refetches every two minutes while it holds an
+  recorder cannot be unloaded or reconfigured. Nothing (the route's 404 after a good
+  answer) turns the page off: the before-send hook refuses every tracker send and the
+  recording stops. So does losing the signed-in owner (the vault locked, or a 401 from
+  `/api/me` or from the recheck itself, as when the token expires on a tab left open),
+  because the owner's details and the last good answer stay cached after either. A visit
+  no longer picked, or no `replay`, stops the recording while counting carries on;
+  `showText` turning false gets `rr-mask`, and rrweb's full snapshot every 30 s then drops
+  what was shown. **A recording stops through the tracker's session.** Umami 3.4's recorder
+  keeps its heatmap listeners (clicks, scrolling, address changes) for the page's life and
+  has no hook to remove them, but every send it makes, replay or heatmap, first reads
+  `window.umami.getSession().cache` and sends nothing without one. `stopSessionRecording`
+  swaps `window.umami` for a copy whose `getSession` reports none (and `onTrackerLoad`
+  does it if the tracker had not yet run), so the recorder drops everything from then on,
+  buffered events included, while the tracker's own sends keep the session they hold
+  inside. A newer Umami needs this re-checked. Starting or loosening waits for the next
+  page load. `useAnalytics` refetches every two minutes while it holds an
   answer and the last one was not a 404 or a 401, because the app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
   browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
   `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends

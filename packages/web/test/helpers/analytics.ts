@@ -31,12 +31,29 @@ export const UMAMI: UmamiAnalyticsConfig = {
 };
 
 export interface TestWindow {
-	umami?: { track: ReturnType<typeof vi.fn> };
+	umami?: {
+		track: ReturnType<typeof vi.fn>;
+		getSession?: () => { cache?: string } | undefined;
+	};
 	happyDOM: { settings: { handleDisabledFileLoadingAsSuccess: boolean } };
 	[hook: string]: unknown;
 }
 
 export const testWindow = window as unknown as TestWindow;
+
+/** A stand-in for the tracker's runtime API, holding a session as the real one does. */
+export function standInTracker(track: ReturnType<typeof vi.fn>): TestWindow['umami'] {
+	return { track, getSession: () => ({ cache: 'session-1' }) };
+}
+
+/**
+ * Whether Umami's recorder would send now. Every send it makes, replay or
+ * heatmap, first reads `window.umami.getSession().cache` and sends nothing
+ * without one (3.4, `sendPayload`), so this is the recorder's own check.
+ */
+export function recorderCanSend(): boolean {
+	return Boolean(testWindow.umami?.getSession?.()?.cache);
+}
 
 export function configure(options: { issuer: boolean; umami?: UmamiAnalyticsConfig }): void {
 	setRuntimeConfig({ ...runtimeConfig(), sso: options.issuer ? SSO : null });
@@ -68,7 +85,7 @@ export function resetAnalyticsPage(): void {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = false;
 	tracker()?.remove();
 	recorder()?.remove();
-	document.documentElement.classList.remove('rr-mask', 'rr-block');
+	document.documentElement.classList.remove('rr-mask');
 	sessionStorage.clear();
 	delete testWindow.umami;
 }

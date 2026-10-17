@@ -5,7 +5,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 import {
 	configure,
 	recheckInterval,
+	recorderCanSend,
 	resetAnalyticsPage,
+	standInTracker,
 	testWindow,
 	tracker,
 	UMAMI,
@@ -23,7 +25,7 @@ afterEach(resetAnalyticsPage);
 test('a session that ends while the page is open stops counting and recording', async () => {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
 	const track = vi.fn();
-	testWindow.umami = { track };
+	testWindow.umami = standInTracker(track);
 
 	await renderApp({
 		initialPath: '/home',
@@ -41,7 +43,7 @@ test('a session that ends while the page is open stops counting and recording', 
 	api.clearToken();
 	await queryClient.refetchQueries({ queryKey: queryKeys.me() });
 
-	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
+	await expect.poll(recorderCanSend).toBe(false);
 	const name = tracker()?.getAttribute('data-before-send') ?? '';
 	const hook = testWindow[name] as (type: string, payload: object) => unknown;
 	expect(hook('event', { url: 'x' })).toBe(false);

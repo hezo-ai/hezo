@@ -285,9 +285,9 @@ anonymously.
 **A change reaches an open page within about two minutes, if it tightens.** While
 analytics runs, the app asks for these settings again every two minutes. Leaving
 out the whole `analytics` block stops counting and recording on the open page.
-Leaving out `replay`, or setting its `sampleRate` to `0`, leaves the rest of the
-page out of the recording, and setting `showText` to `false` hides the page text
-from then on. Anything that starts or loosens (analytics turned back on, an owner
+Leaving out `replay`, or setting its `sampleRate` to `0`, stops the recording and
+its heatmap on the open page while counting carries on, and setting `showText` to
+`false` hides the page text from then on. Anything that starts or loosens (analytics turned back on, an owner
 recorded who was not, text shown) waits for the next page load.
 
 **Both scripts run in the owner's session, so each is pinned to its hash.** A

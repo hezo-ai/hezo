@@ -5,7 +5,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 import {
 	configure,
 	recheckInterval,
+	recorderCanSend,
 	resetAnalyticsPage,
+	standInTracker,
 	testWindow,
 	tracker,
 	UMAMI,
@@ -23,7 +25,7 @@ afterEach(resetAnalyticsPage);
 test('a recheck answered 401 stops counting and recording, and stops asking', async () => {
 	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
 	const track = vi.fn();
-	testWindow.umami = { track };
+	testWindow.umami = standInTracker(track);
 
 	await renderApp({
 		initialPath: '/home',
@@ -42,7 +44,7 @@ test('a recheck answered 401 stops counting and recording, and stops asking', as
 
 	// The session check still holds the owner, so the stop came from the recheck.
 	expect(queryClient.getQueryState(queryKeys.me())?.error).toBeNull();
-	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
+	await expect.poll(recorderCanSend).toBe(false);
 	const name = tracker()?.getAttribute('data-before-send') ?? '';
 	const hook = testWindow[name] as (type: string, payload: object) => unknown;
 	expect(hook('event', { url: 'x' })).toBe(false);

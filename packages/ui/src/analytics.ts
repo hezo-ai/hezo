@@ -22,7 +22,9 @@
  * (`/projects/$projectId/tasks/$taskId`, never the project or the task) and cuts
  * the referrer to an origin. A page that cannot be named is not sent at all. The
  * recorder is not the tracker and has no such hook: it reads `location.href`
- * itself for its page markers and heatmap events.
+ * itself for its page markers and heatmap events. What it does share with the
+ * tracker is the session, which is how a recording is stopped
+ * (`stopSessionRecording`).
  *
  * **Page views are the consumer's to report.** The tracker's own history hook is
  * off (`data-auto-track="false"`): it watches `pushState` and `replaceState` but
@@ -116,9 +118,11 @@ interface TrackerPayload {
 	[field: string]: unknown;
 }
 
-/** The part of the tracker's runtime API this module calls. */
+/** The part of the tracker's runtime API this module calls or replaces. */
 interface UmamiTracker {
 	track(event?: string | ((payload: TrackerPayload) => TrackerPayload)): unknown;
+	/** The tracker's session, which the recorder asks for before every send. */
+	getSession?(): { cache?: string } | undefined;
 }
 
 type BeforeSend = (type: string, payload: TrackerPayload) => TrackerPayload | false;
@@ -139,6 +143,8 @@ interface AnalyticsState {
 	queue: TrackerCall[];
 	pageViews: number;
 	recording: boolean;
+	/** True once a running recording was stopped; it stays so until the next load. */
+	recordingStopped: boolean;
 	/**
 	 * True once the deployment stopped asking for analytics while the page was
 	 * open. Nothing is sent from then on, and it stays so until the next load.
@@ -207,7 +213,33 @@ function enqueue(call: TrackerCall): void {
 function onTrackerLoad(): void {
 	if (!state) return;
 	state.loaded = true;
+	if (state.recordingStopped) silenceRecorder();
 	for (const call of state.queue.splice(0)) dispatch(call);
+}
+
+/** What the tracker reports in place of its session once the recorder is silenced. */
+function noSession(): undefined {
+	return undefined;
+}
+
+/**
+ * Keep the recorder from sending anything more on this page, replay or heatmap.
+ *
+ * It has no stop hook, and its heatmap listeners (every click, scroll and
+ * address change) stay for the life of the page. But every send it makes first
+ * asks the tracker for its session and sends nothing without one (Umami 3.4:
+ * `sendPayload` reads `window.umami.getSession().cache`), so `window.umami`
+ * becomes a copy that reports none. A copy rather than a change in place, so a
+ * tracker object that refuses changes is still replaced. The tracker's own sends
+ * use the session it holds inside, so counting carries on.
+ *
+ * Before the tracker has run there is nothing to replace, and `onTrackerLoad`
+ * does it when the tracker arrives.
+ */
+function silenceRecorder(): void {
+	const umami = host().umami;
+	if (!umami || umami.getSession === noSession) return;
+	host().umami = { ...umami, getSession: noSession };
 }
 
 /** A route pattern as a path: nothing after `?` or `#`, and a leading slash. */
@@ -261,6 +293,7 @@ export function installAnalytics(options: AnalyticsOptions): void {
 			queue: [],
 			pageViews: 0,
 			recording: false,
+			recordingStopped: false,
 			off: false,
 		};
 		host()[BEFORE_SEND_HOOK] = beforeSend;
@@ -369,10 +402,10 @@ export function shouldRecordThisVisit(sampleRate: number): boolean {
  * `installAnalytics`, whose host and website it uses.
  *
  * **Called again while recording, it only ever tightens.** The recorder has no
- * stop or reconfigure hook, so a settings change reaches a running recording
- * through the classes it reads: `showText` turning false hides the page text
- * from then on, and the recorder's next full snapshot (every 30 seconds) drops
- * what it showed before. Showing text that was hidden, or recording again after
+ * reconfigure hook, so a settings change reaches a running recording through
+ * the classes it reads: `showText` turning false hides the page text from then
+ * on, and the recorder's next full snapshot (every 30 seconds) drops what it
+ * showed before. Showing text that was hidden, or recording again after
  * `stopSessionRecording`, waits for the next page load.
  */
 export function startSessionRecording(options: SessionRecordingOptions): void {
@@ -398,15 +431,19 @@ export function startSessionRecording(options: SessionRecordingOptions): void {
 }
 
 /**
- * Leave the rest of this page out of the recording already running, for an
- * account no longer recorded. The recorder cannot be unloaded, so the whole
- * page takes `NEVER_RECORD_CLASS`: nothing that changes from now on is
- * recorded, and the next full snapshot holds a blank box. Does nothing when
- * nothing is recording; a later start waits for the next page load.
+ * Stop the recording running on this page, and its heatmap, for an account no
+ * longer recorded: the recorder sends nothing more, and drops what it had not
+ * yet sent. Counting carries on. Does nothing when nothing is recording; a
+ * later start waits for the next page load.
  */
 export function stopSessionRecording(): void {
 	if (!state?.recording) return;
-	document.documentElement.classList.add(NEVER_RECORD_CLASS);
+	try {
+		state.recordingStopped = true;
+		silenceRecorder();
+	} catch {
+		// As in `dispatch`.
+	}
 }
 
 /** What a deployment asks this page to do, as the app last heard it. */
@@ -421,14 +458,14 @@ export interface AnalyticsSettings {
  *
  * **The first settings a page receives start it**: the tracker, the click
  * listener, and a recording if this visit is picked. **Every later call can
- * only tighten what is running**, because the recorder has no stop or
- * reconfigure hook and a page should never begin capturing more than it was
- * loaded to capture:
+ * only tighten what is running**, because the recorder cannot be unloaded or
+ * reconfigured and a page should never begin capturing more than it was loaded
+ * to capture:
  *
- * - nothing (analytics no longer configured): nothing more is sent, and the
- *   rest of the page is left out of a running recording;
- * - a visit no longer picked, or no `replay` at all: the rest of the page is
- *   left out of the recording;
+ * - nothing (analytics no longer configured): nothing more is sent, by the
+ *   tracker or the recorder;
+ * - a visit no longer picked, or no `replay` at all: the recording and its
+ *   heatmap stop, and counting carries on;
  * - `showText` turning false: page text is hidden from then on.
  *
  * Anything that would start or loosen (analytics back on, a recording begun,

@@ -892,7 +892,10 @@ config route; the website's mask level left at "moderate" or stricter (typed
 input masked) and its block selector empty (the components carry `rr-block`
 themselves); recording length and the 30-day retention set there. **An Umami
 upgrade is a hash rotation:** write the old and the new hash of each script into
-the block, upgrade, then drop the old one, or every box refuses the new file.
+the block, upgrade, then drop the old one, or every box refuses the new file. It
+is also a re-check that the recorder still sends nothing, replay or heatmap,
+while `window.umami.getSession()` reports no session: that is how a recording
+stops on an open page, and nothing else stops its heatmap listeners.
 Two limits stay, and `docs/cloud/data-and-security.md` and the hezo.ai privacy
 page tell hosted customers of them: the recorder sends `location.href` itself, in its rrweb meta events,
 its `url-change` events and its heatmap events, so a recording carries real page

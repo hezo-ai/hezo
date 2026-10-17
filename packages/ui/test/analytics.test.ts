@@ -11,7 +11,10 @@ type Payload = Record<string, unknown>;
 type TrackArgument = string | ((payload: Payload) => Payload) | undefined;
 
 interface TestWindow {
-	umami?: { track: ReturnType<typeof vi.fn> };
+	umami?: {
+		track: ReturnType<typeof vi.fn>;
+		getSession?: () => { cache?: string } | undefined;
+	};
 	happyDOM: { settings: { handleDisabledFileLoadingAsSuccess: boolean } };
 	[hook: string]: unknown;
 }
@@ -21,6 +24,9 @@ const testWindow = window as unknown as TestWindow;
 const PATTERN = '/projects/$projectId/tasks/$taskId';
 const SCRIPT_SRI = `sha384-${'A'.repeat(64)} sha384-${'B'.repeat(64)}`;
 const RECORDER_SRI = `sha512-${'C'.repeat(86)}==`;
+
+/** The tracker's session, as the stand-in reports it until something replaces it. */
+const SESSION = { cache: 'session-1' };
 
 const listeners: Array<[string, EventListenerOrEventListenerObject, boolean | undefined]> = [];
 let analytics: typeof Analytics;
@@ -52,7 +58,7 @@ beforeEach(async () => {
 	sessionStorage.clear();
 	page = PATTERN;
 	track = vi.fn();
-	testWindow.umami = { track };
+	testWindow.umami = { track, getSession: () => SESSION };
 
 	vi.resetModules();
 	analytics = await import('../src/analytics.js');
@@ -64,7 +70,7 @@ afterEach(() => {
 		document.removeEventListener(type, listener, capture);
 	}
 	for (const script of document.head.querySelectorAll('script')) script.remove();
-	document.documentElement.classList.remove('rr-mask', 'rr-block');
+	document.documentElement.classList.remove('rr-mask');
 	document.body.innerHTML = '';
 	delete testWindow.umami;
 	if (hookName) delete testWindow[hookName];
@@ -93,6 +99,15 @@ function beforeSend(type: string, payload: Payload): Payload | false {
 	const name = tracker().getAttribute('data-before-send') ?? '';
 	const hook = testWindow[name] as (type: string, payload: Payload) => Payload | false;
 	return hook(type, payload);
+}
+
+/**
+ * Whether Umami's recorder would send now. Every send it makes, replay or
+ * heatmap, first reads `window.umami.getSession().cache` and sends nothing
+ * without one (3.4, `sendPayload`), so this is the recorder's own check.
+ */
+function recorderCanSend(): boolean {
+	return Boolean(testWindow.umami?.getSession?.()?.cache);
 }
 
 function clickOn(element: Element): void {
@@ -344,19 +359,47 @@ test('a running recording hides its text when asked to, and never shows it again
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 });
 
-test('stopping leaves the rest of the page out of the recording, until the next load', async () => {
+test('stopping silences the recorder until the next load, and counting carries on', async () => {
 	await installed();
 	analytics.stopSessionRecording();
-	// Nothing was recording, so there is nothing to leave out.
-	expect(document.documentElement.classList.contains('rr-block')).toBe(false);
+	// Nothing was recording, so there is nothing to stop.
+	expect(recorderCanSend()).toBe(true);
 
 	analytics.startSessionRecording(recording(true));
 	analytics.stopSessionRecording();
-	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(recorderCanSend()).toBe(false);
 
 	analytics.startSessionRecording(recording(true));
-	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(recorderCanSend()).toBe(false);
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
+
+	const sent = track.mock.calls.length;
+	analytics.trackAnalyticsEvent('create-task');
+	expect(track.mock.calls.length).toBe(sent + 1);
+});
+
+test('a recording stopped before the tracker runs is silenced when it arrives', async () => {
+	delete testWindow.umami;
+	const held: Node[] = [];
+	const append = document.head.appendChild.bind(document.head);
+	const spy = vi
+		.spyOn(document.head, 'appendChild')
+		.mockImplementation(<T extends Node>(node: T) => {
+			held.push(node);
+			return node;
+		});
+
+	analytics.installAnalytics(options());
+	analytics.startSessionRecording(recording(true));
+	analytics.stopSessionRecording();
+
+	// The tracker runs and defines its API, then its load event fires.
+	spy.mockRestore();
+	testWindow.umami = { track, getSession: () => SESSION };
+	for (const node of held) append(node);
+	hookName = tracker().getAttribute('data-before-send');
+	await vi.waitFor(() => expect(track).toHaveBeenCalled());
+	expect(recorderCanSend()).toBe(false);
 });
 
 const RECORDED = { sampleRate: 1, showText: false, recorderIntegrity: RECORDER_SRI };
@@ -393,7 +436,7 @@ test('later settings only ever tighten a running recording', async () => {
 	expect(document.documentElement.classList.contains('rr-mask')).toBe(true);
 
 	analytics.applyAnalyticsSettings(settings({ ...RECORDED, sampleRate: 0 }));
-	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(recorderCanSend()).toBe(false);
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 });
 
@@ -403,7 +446,7 @@ test('settings withdrawn stop everything for the rest of the page', async () => 
 
 	analytics.applyAnalyticsSettings(null);
 	expect(analytics.analyticsActive()).toBe(false);
-	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(recorderCanSend()).toBe(false);
 	analytics.trackAnalyticsEvent('create-task');
 	analytics.trackAnalyticsPageView();
 	expect(track.mock.calls.length).toBe(sent);
