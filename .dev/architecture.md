@@ -1682,9 +1682,13 @@ files a pending `task_suggestion` approval (`083_task_suggestion_approval.sql`) 
 `TASK_SUGGESTION_KIND_RULES` (`@hezo/shared`) says per kind whether a cadence is forbidden,
 required or optional; `validateSuggestedCadence` enforces it in the tool and
 `validateCadenceChoice` in `PATCH /approvals/:approvalId`, which edits only the cadence and only
-on a card with a `suggested_cadence` (daily, weekly, monthly or `once`). The tool refuses HQ, a
-ninth card on one task (`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a
-title matching an open task or a pending suggestion. Approving runs `taskSuggestionHandler`
+on a card with a `suggested_cadence` (daily, weekly, monthly or `once`), and only while the row is
+still pending (an edit racing a decision gets 409). The tool refuses HQ, a ninth card on one task
+(`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a title matching an open
+task or a pending suggestion; `fileTaskSuggestion` runs those checks and the insert under a keyed
+lock per suggestions task, so parallel calls cannot pass them together. An agent cannot mark the
+suggestions task done while any card on it is pending (`assertNoPendingTaskSuggestions`), since
+one answered card already satisfies the `@admin` done check. Approving runs `taskSuggestionHandler`
 (`approval-handlers/task-suggestion.ts`). It first checks that the payload's project and
 suggestions task belong to the approval's team; when that check or `createTask` refuses, it
 throws `ApprovalSideEffectError`, and `resolveApproval` puts the approval back to pending and

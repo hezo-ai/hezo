@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SearchScope } from '@hezo/shared';
 import {
-	ActionCommentKind,
 	ADMIN_MENTION_SLUG,
 	AGENT_HUMAN_NAME_MAX,
 	AgentAdminStatus,
@@ -153,6 +152,7 @@ import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
+	assertNoPendingTaskSuggestions,
 	assertNoUnansweredAdminMentions,
 	resolveParentAssignment,
 } from '../lib/task-relationships';
@@ -249,8 +249,7 @@ import {
 	taskUpdateValueChanged,
 } from '../services/task-events';
 import {
-	insertTaskSuggestionApproval,
-	insertTaskSuggestionComment,
+	fileTaskSuggestion,
 	TASK_SUGGESTIONS_LABEL,
 	type TaskSuggestionPayload,
 } from '../services/task-suggestion';
@@ -2015,69 +2014,23 @@ export function registerTools(
 			}
 			const taskId = resolved;
 
-			const filed = await db.query<{ n: number }>(
-				`SELECT COUNT(*)::int AS n FROM task_comments
-				 WHERE task_id = $1 AND content->>'kind' = $2`,
-				[taskId, ActionCommentKind.TaskSuggestion],
-			);
-			if ((filed.rows[0]?.n ?? 0) >= MAX_TASK_SUGGESTIONS_PER_TASK) {
-				return {
-					error: `This task already has ${MAX_TASK_SUGGESTIONS_PER_TASK} suggestions, the most one task takes.`,
-				};
-			}
-
-			const title = args.title as string;
-			// Bounded by the project's tasks (project index) and the team's pending
-			// approvals (team + status index); runs once per suggestion.
-			const dup = await db.query<{ source: string }>(
-				`SELECT 'task' AS source FROM tasks
-				 WHERE project_id = $1 AND LOWER(BTRIM(title)) = LOWER($2)
-				   AND status NOT IN (${terminalStatusParams(6).placeholders})
-				 UNION ALL
-				 SELECT 'suggestion' FROM approvals
-				 WHERE team_id = $3 AND status = $4::approval_status AND type = $5::approval_type
-				   AND LOWER(BTRIM(payload->>'title')) = LOWER($2)
-				 LIMIT 1`,
-				[
-					scope.projectId,
-					title,
-					teamId,
-					ApprovalStatus.Pending,
-					ApprovalType.TaskSuggestion,
-					...TERMINAL_TASK_STATUSES,
-				],
-			);
-			if (dup.rows[0]) {
-				return {
-					error:
-						dup.rows[0].source === 'task'
-							? `An open task in this project already has the title "${title}".`
-							: `A pending suggestion in this project already has the title "${title}".`,
-				};
-			}
-
 			const suggested = cadence as RepeatingCadence | undefined;
 			const payload: TaskSuggestionPayload = {
 				project_id: scope.projectId,
 				kind,
-				title,
+				title: args.title as string,
 				description: (args.description as string | undefined)?.trim() || undefined,
 				suggested_cadence: suggested ?? null,
 				cadence: suggested ?? null,
 				task_id: taskId,
 			};
-			// The approval and its card land together, and are announced once both have.
-			const { row, card } = await db.transaction(async () => {
-				const approval = await insertTaskSuggestionApproval(db, teamId, payload, auth.memberId);
-				const comment = await insertTaskSuggestionComment(db, {
-					taskId,
-					approvalId: approval.id as string,
-					payload: payload as unknown as Record<string, unknown>,
-					teamId,
-					projectId: scope.projectId,
-				});
-				return { row: approval, card: comment };
+			const filed = await fileTaskSuggestion(db, {
+				teamId,
+				payload,
+				requestedByMemberId: auth.memberId,
 			});
+			if (!filed.ok) return { error: filed.error };
+			const { approval: row, card } = filed;
 			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
 			if (card) {
 				broadcastCommentFamilyChange(
@@ -2450,6 +2403,8 @@ export function registerTools(
 					if (callerMemberId !== null) {
 						const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
 						if (!adminAskCheck.ok) return { error: adminAskCheck.message };
+						const suggestionsCheck = await assertNoPendingTaskSuggestions(db, taskId);
+						if (!suggestionsCheck.ok) return { error: suggestionsCheck.message };
 					}
 				}
 

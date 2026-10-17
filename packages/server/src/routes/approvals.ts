@@ -323,18 +323,24 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	if ('error' in prepared) return err(c, 'INVALID_REQUEST', prepared.error, 400);
 	const { patch } = prepared;
 
-	// An edit that changes nothing writes nothing.
+	// Only a still-pending row takes the edit: one decided since the read above
+	// keeps the payload it was decided on. An edit that changes nothing writes
+	// nothing.
 	const updated = await db.query<Record<string, unknown>>(
 		`UPDATE approvals SET payload = payload || $1::jsonb
-		 WHERE id = $2 AND NOT (payload @> $1::jsonb) RETURNING *`,
-		[JSON.stringify(patch), approvalId],
+		 WHERE id = $2 AND status = $3::approval_status AND NOT (payload @> $1::jsonb)
+		 RETURNING *`,
+		[JSON.stringify(patch), approvalId, ApprovalStatus.Pending],
 	);
 	if (updated.rows.length === 0) {
-		const unchanged = await db.query<Record<string, unknown>>(
+		const current = await db.query<Record<string, unknown>>(
 			'SELECT * FROM approvals WHERE id = $1',
 			[approvalId],
 		);
-		return ok(c, unchanged.rows[0]);
+		if (current.rows[0]?.status !== ApprovalStatus.Pending) {
+			return err(c, 'INVALID_STATE', 'Approval is already resolved', 409);
+		}
+		return ok(c, current.rows[0]);
 	}
 	const row = updated.rows[0];
 	await editor.afterUpdate?.(db, row, c.get('wsManager'));

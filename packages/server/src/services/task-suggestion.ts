@@ -1,6 +1,7 @@
 import {
 	ActionCommentKind,
 	ApprovalType,
+	MAX_TASK_SUGGESTIONS_PER_TASK,
 	type RepeatingCadence,
 	ApprovalStatus as Status,
 	type TaskSuggestionCadence,
@@ -8,6 +9,8 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastCommentFamilyChange } from '../lib/broadcast';
+import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
+import { terminalStatusParams } from '../lib/sql';
 import {
 	insertProposalComment,
 	type ProposalCommentSpec,
@@ -18,6 +21,13 @@ import type { WebSocketManager } from './ws';
 
 /** The label on the CEO's suggestions task, the only task a suggestion attaches to. */
 export const TASK_SUGGESTIONS_LABEL = 'task-suggestions';
+
+/**
+ * One key per suggestions task: {@link fileTaskSuggestion} reads the card count
+ * and the pending titles, then inserts, so parallel calls on one task take
+ * turns. Other tasks are not held; each holder runs a few queries.
+ */
+const taskSuggestionsLocks: KeyedLockRegistry = new Map();
 
 /** Longest description excerpt a card's stored snapshot keeps; the approval holds the rest. */
 const SNAPSHOT_DESCRIPTION_MAX_CHARS = 280;
@@ -60,6 +70,78 @@ export async function insertTaskSuggestionApproval(
 		],
 	);
 	return result.rows[0];
+}
+
+export type FileTaskSuggestionResult =
+	| { ok: true; approval: Record<string, unknown>; card: Record<string, unknown> | null }
+	| { ok: false; error: string };
+
+/**
+ * File one suggestion on its suggestions task: refuse it past the per-task cap
+ * or when its title matches an open task or a pending suggestion, else insert
+ * the approval and its card in one transaction. The caller broadcasts both.
+ */
+export async function fileTaskSuggestion(
+	db: Db,
+	params: { teamId: string; payload: TaskSuggestionPayload; requestedByMemberId: string | null },
+): Promise<FileTaskSuggestionResult> {
+	const { teamId, payload, requestedByMemberId } = params;
+	return withKeyedLock(taskSuggestionsLocks, payload.task_id, async () => {
+		const filed = await db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM task_comments
+			 WHERE task_id = $1 AND content->>'kind' = $2`,
+			[payload.task_id, ActionCommentKind.TaskSuggestion],
+		);
+		if ((filed.rows[0]?.n ?? 0) >= MAX_TASK_SUGGESTIONS_PER_TASK) {
+			return {
+				ok: false,
+				error: `This task already has ${MAX_TASK_SUGGESTIONS_PER_TASK} suggestions, the most one task takes.`,
+			};
+		}
+
+		// Bounded by the project's tasks (project index) and the team's pending
+		// approvals (team + status index); runs once per suggestion.
+		const terminal = terminalStatusParams(6);
+		const dup = await db.query<{ source: string }>(
+			`SELECT 'task' AS source FROM tasks
+			 WHERE project_id = $1 AND LOWER(BTRIM(title)) = LOWER($2)
+			   AND status NOT IN (${terminal.placeholders})
+			 UNION ALL
+			 SELECT 'suggestion' FROM approvals
+			 WHERE team_id = $3 AND status = $4::approval_status AND type = $5::approval_type
+			   AND LOWER(BTRIM(payload->>'title')) = LOWER($2)
+			 LIMIT 1`,
+			[
+				payload.project_id,
+				payload.title,
+				teamId,
+				Status.Pending,
+				ApprovalType.TaskSuggestion,
+				...terminal.values,
+			],
+		);
+		if (dup.rows[0]) {
+			return {
+				ok: false,
+				error:
+					dup.rows[0].source === 'task'
+						? `An open task in this project already has the title "${payload.title}".`
+						: `A pending suggestion in this project already has the title "${payload.title}".`,
+			};
+		}
+
+		return db.transaction(async () => {
+			const approval = await insertTaskSuggestionApproval(db, teamId, payload, requestedByMemberId);
+			const card = await insertTaskSuggestionComment(db, {
+				taskId: payload.task_id,
+				approvalId: approval.id as string,
+				payload: payload as unknown as Record<string, unknown>,
+				teamId,
+				projectId: payload.project_id,
+			});
+			return { ok: true as const, approval, card };
+		});
+	});
 }
 
 /** The display snapshot stored in a task-suggestion action comment's `content`. */

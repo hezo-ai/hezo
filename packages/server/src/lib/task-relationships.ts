@@ -1,5 +1,6 @@
 import {
 	ACTIVE_WAKEUP_STATUSES,
+	ActionCommentKind,
 	CommentContentType,
 	HeartbeatRunStatus,
 	TaskStatus,
@@ -388,5 +389,27 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 	return {
 		ok: false,
 		message: `Cannot mark this task done — an @admin question on it (comment ${r.rows[0].public_id}) has not been answered by a human yet. Keep the task in_progress and end your turn; the admin's reply on this task wakes you automatically. Ask before closing — never mark a task done while an @admin ask is still open.`,
+	};
+}
+
+// A task-suggestions task holds while any card on it waits for the admin. On a
+// new project the Captain's planning waits on this task, so closing it early
+// would start planning with suggestions still undecided. One answered card is
+// enough for the @admin check above, so that check alone cannot hold it.
+// Enforced for agent callers only, like the @admin check.
+export async function assertNoPendingTaskSuggestions(db: Db, taskId: string): Promise<Check> {
+	const r = await db.query<{ n: number }>(
+		`SELECT count(*)::int AS n FROM task_comments
+		 WHERE task_id = $1
+		   AND content_type = $2::comment_content_type
+		   AND content->>'kind' = $3
+		   AND chosen_option IS NULL`,
+		[taskId, CommentContentType.Action, ActionCommentKind.TaskSuggestion],
+	);
+	const pending = r.rows[0]?.n ?? 0;
+	if (pending === 0) return { ok: true };
+	return {
+		ok: false,
+		message: `Cannot mark this task done - ${pending} task suggestion card(s) on it still wait for the admin. Keep the task open: call report_no_work and end your turn. A decision on a card wakes you.`,
 	};
 }

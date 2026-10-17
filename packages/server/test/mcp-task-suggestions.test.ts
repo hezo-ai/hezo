@@ -11,6 +11,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { getToolDefs } from '../src/mcp/server';
 import { resolveApproval } from '../src/services/approval-resolve';
+import { fileTaskSuggestion } from '../src/services/task-suggestion';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -607,5 +608,71 @@ describe('deciding a suggestion: one decision, never a task in the wrong place',
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toMatch(/suggest_task/);
+	});
+});
+
+describe('suggest_task under parallel calls, and closing the suggestions task', () => {
+	it('parallel filings still stop at the cap and file a title once', async () => {
+		const host = await suggestionsTask();
+		const titles = Array.from({ length: MAX_TASK_SUGGESTIONS_PER_TASK + 2 }, (_, i) => `Par ${i}`);
+		titles.push('Par 0');
+		// Called directly so every count and title check runs before any insert.
+		const results = await Promise.all(
+			titles.map((title) =>
+				fileTaskSuggestion(db, {
+					teamId,
+					payload: { project_id: projectId, kind: 'deliverable', title, task_id: host.id },
+					requestedByMemberId: ceoId,
+				}),
+			),
+		);
+		expect(results.filter((r) => r.ok)).toHaveLength(MAX_TASK_SUGGESTIONS_PER_TASK);
+		const cards = await db.query<{ title: string }>(
+			`SELECT content->>'title' AS title FROM task_comments
+			 WHERE task_id = $1 AND content->>'kind' = 'task_suggestion'`,
+			[host.id],
+		);
+		expect(cards.rows).toHaveLength(MAX_TASK_SUGGESTIONS_PER_TASK);
+		expect(new Set(cards.rows.map((r) => r.title)).size).toBe(MAX_TASK_SUGGESTIONS_PER_TASK);
+	});
+
+	it('the CEO cannot close its suggestions task while a card still waits', async () => {
+		const host = await suggestionsTask();
+		const first = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Close gate one',
+			task_id: host.id,
+		});
+		const second = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Close gate two',
+			task_id: host.id,
+		});
+		await callMcpTool(app, host.token, 'create_comment', {
+			project: projectSlug,
+			task_id: host.id,
+			content: '@admin I filed 2 suggestions. Please decide each card.',
+		});
+		await resolve(first.approval_id as string, 'approved');
+
+		const early = (await callMcpTool(app, host.token, 'update_task', {
+			project: projectSlug,
+			task_id: host.id,
+			status: 'done',
+		})) as { error?: string };
+		expect(early.error).toMatch(/1 task suggestion card\(s\) on it still wait/);
+
+		await resolve(second.approval_id as string, 'denied');
+		const closed = (await callMcpTool(app, host.token, 'update_task', {
+			project: projectSlug,
+			task_id: host.id,
+			status: 'done',
+		})) as { error?: string; status?: string };
+		expect(closed.error).toBeUndefined();
+		const row = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM tasks WHERE id = $1',
+			[host.id],
+		);
+		expect(row.rows[0].status).toBe('done');
 	});
 });
