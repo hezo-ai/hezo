@@ -303,7 +303,9 @@ task is still open, the new task shows as **Blocked** and starts when planning i
 the plan can take every approved task into account. **Deny** dismisses the suggestion.
 
 The CEO files at most 8 cards on one suggestions task, and never suggests a task that is
-already on the board or already waiting as a card.
+already on the board or already waiting as a card. Before the cards, it posts one comment
+saying how many follow. If it has nothing to suggest, it says why and closes the task
+without asking you anything.
 
 ## Cancelling or redirecting work
 

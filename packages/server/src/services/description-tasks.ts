@@ -528,7 +528,7 @@ ${ACTIVE_ADMIN_MENTION_RULE}
 
 1. **Read the board first.** Call \`list_tasks\` for open and closed tasks, and \`list_approvals\` for pending cards. Never suggest work that is already a task or a card.
 2. **Read the team and the brief.** Call \`list_agents\` and \`get_agent_system_prompt\` for each role. Read the project description, and project-plan.md when it exists.${agreedStep}
-${n}. **Suggest the rest with \`suggest_task\`.** Set \`task_id\` to this task. File at most ${MAX_TASK_SUGGESTIONS_PER_TASK} cards, only for work this team can do and the brief needs. Pick one kind per card:
+${n}. **Decide the rest of your list.** Plan at most ${MAX_TASK_SUGGESTIONS_PER_TASK} cards, only for work this team can do and the brief needs. Pick one kind per card:
 
    | Kind | Use it for | Cadence |
    |---|---|---|
@@ -539,9 +539,11 @@ ${n}. **Suggest the rest with \`suggest_task\`.** Set \`task_id\` to this task. 
    | \`deliverable\` | The first concrete output the brief asks for | None |
 
 ${n + 1}. **Give a cadence only to work that repeats by nature.** Never give a cadence to setup, a connection or an input from the admin.
-${n + 2}. **Post one summary comment.** Tag \`@admin\`, say how many cards you filed of each kind, and ask the admin to decide each card. If you have nothing to suggest, say why in the comment and skip to the last step.
-${n + 3}. **Keep this task open while a card is pending.** Call \`report_no_work\` and end your turn. A decision on a card wakes you.
-${n + 4}. ${text.close}`,
+${n + 2}. **Post one summary comment before you file a card.** Start it with \`@admin - \`, say how many cards of each kind follow, and ask the admin to decide each one. A decision on a card answers this comment only when the card comes after it.
+${n + 3}. **Nothing to suggest? Do not ask.** Say why in a comment that names the admin as \`@@admin\`, never \`@admin\`, and skip to the last step. An active \`@admin\` here waits for a reply nobody needs to give.
+${n + 4}. **File each card with \`suggest_task\`.** Set \`task_id\` to this task. If every card is refused, say so in a comment and wait for the admin's reply.
+${n + 5}. **Keep this task open while a card is pending.** Call \`report_no_work\` and end your turn. A decision on a card wakes you. Post no new \`@admin\` comment unless you need a new answer.
+${n + 6}. ${text.close}`,
 	);
 }
 

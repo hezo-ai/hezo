@@ -587,6 +587,15 @@ describe('buildTaskSuggestionsBody', () => {
 			);
 			expect(details).toContain('`report_no_work`');
 			expect(details).toContain(ACTIVE_ADMIN_MENTION_RULE);
+			// The summary ask comes before the cards, so every card decision answers it,
+			// and a run with nothing to suggest asks nothing.
+			const summaryAt = (details ?? '').indexOf(
+				'**Post one summary comment before you file a card.**',
+			);
+			const cardsAt = (details ?? '').indexOf('**File each card with `suggest_task`.**');
+			expect(summaryAt).toBeGreaterThan(-1);
+			expect(summaryAt).toBeLessThan(cardsAt);
+			expect(details).toContain('names the admin as `@@admin`, never `@admin`');
 		});
 	}
 

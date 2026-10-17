@@ -1694,7 +1694,10 @@ lock per suggestions task, so parallel calls cannot pass them together, and re-c
 open under the same row lock `update_task` takes to close it, so a filing and a close take turns. An agent cannot mark the
 suggestions task done while any suggestion filed on it is pending (`assertNoPendingTaskSuggestions`,
 read from the approvals rather than the cards, so a card that failed to flip cannot hold it), since
-one answered card already satisfies the `@admin` done check. Approving runs `taskSuggestionHandler`
+one answered card already satisfies the `@admin` done check. That check counts only a card
+answered after the ask, so the task body has the CEO post its `@admin` summary before filing any
+card, and name the admin passively (`@@admin`) when it has nothing to suggest; either other order
+leaves an ask no card can answer. Approving runs `taskSuggestionHandler`
 (`approval-handlers/task-suggestion.ts`). It first checks that a person or an API key decided
 (`resolved_by_user_id`/`_api_key_id`; an agent, the CEO included, can neither approve nor deny a
 card, on either branch, and the approval stays pending) and

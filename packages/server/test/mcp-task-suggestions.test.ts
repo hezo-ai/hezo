@@ -162,6 +162,15 @@ async function createdTask(identifier: string) {
 	return r.rows[0];
 }
 
+/** The CEO marks its suggestions task done from its own run. */
+async function closeAsCeo(host: { id: string; token: string }): Promise<{ error?: string }> {
+	return (await callMcpTool(app, host.token, 'update_task', {
+		project: projectSlug,
+		task_id: host.id,
+		status: 'done',
+	})) as { error?: string };
+}
+
 describe('suggest_task: who may call it, and where', () => {
 	it('is registered with the cadence rule in its description', () => {
 		const def = getToolDefs().find((t) => t.name === 'suggest_task');
@@ -700,6 +709,57 @@ describe('suggest_task under parallel calls, and closing the suggestions task', 
 			[host.id],
 		);
 		expect(row.rows[0].status).toBe('done');
+	});
+
+	it('a run with nothing to suggest closes when it names the admin passively', async () => {
+		const host = await suggestionsTask();
+		await callMcpTool(app, host.token, 'create_comment', {
+			project: projectSlug,
+			task_id: host.id,
+			content: 'Nothing to suggest: the board already covers the brief, so @@admin has no cards.',
+		});
+		expect((await closeAsCeo(host)).error).toBeUndefined();
+
+		// The same note with an active @admin would wait for a reply nobody needs.
+		const asked = await suggestionsTask();
+		await callMcpTool(app, asked.token, 'create_comment', {
+			project: projectSlug,
+			task_id: asked.id,
+			content: '@admin - nothing to suggest: the board already covers the brief.',
+		});
+		expect((await closeAsCeo(asked)).error).toMatch(/has not been answered by a human yet/);
+	});
+
+	it('a summary posted before the cards is answered by deciding them', async () => {
+		// The order the task body asks for: summary, then the card, then the decision.
+		const host = await suggestionsTask();
+		await callMcpTool(app, host.token, 'create_comment', {
+			project: projectSlug,
+			task_id: host.id,
+			content: '@admin - 1 deliverable card follows. Please decide it.',
+		});
+		const filed = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Summary first deliverable',
+			task_id: host.id,
+		});
+		await resolve(filed.approval_id as string, 'approved');
+		expect((await closeAsCeo(host)).error).toBeUndefined();
+
+		// A summary posted after the admin already decided every card is never answered.
+		const late = await suggestionsTask();
+		const early = await suggest(late.token, {
+			kind: 'deliverable',
+			title: 'Decided before summary',
+			task_id: late.id,
+		});
+		await resolve(early.approval_id as string, 'denied');
+		await callMcpTool(app, late.token, 'create_comment', {
+			project: projectSlug,
+			task_id: late.id,
+			content: '@admin - I filed 1 card. Please decide it.',
+		});
+		expect((await closeAsCeo(late)).error).toMatch(/has not been answered by a human yet/);
 	});
 });
 
