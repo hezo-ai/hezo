@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -152,7 +153,8 @@ test('a plain-text asset renders seeded quote anchors as highlights in its <pre>
 test('an image takes whole-asset comments from the panel composer, with edit and delete', async () => {
 	const { findByTestId, queryByTestId, user } = await setupViewer({ filename: 'shot.png' });
 
-	await findByTestId('asset-viewer-image');
+	// Its signed address is a key to the file, so a recording never holds it.
+	expect((await findByTestId('asset-viewer-image')).classList).toContain(NEVER_RECORD_CLASS);
 
 	// Non-text assets compose whole-asset comments in the right panel.
 	await user.click(await findByTestId('asset-review-composer-open'));
@@ -197,6 +199,7 @@ test('an html asset renders in a sandboxed iframe that permits user-initiated do
 	});
 
 	const frame = (await findByTestId('asset-viewer-html')) as HTMLIFrameElement;
+	expect(frame.classList).toContain(NEVER_RECORD_CLASS);
 	const sandbox = frame.getAttribute('sandbox') ?? '';
 	expect(sandbox).toContain('allow-scripts');
 	// Without allow-downloads the browser silently blocks an in-page "Download"
@@ -270,6 +273,7 @@ test('the viewer breadcrumb walks back to the grid folder and Open raw links the
 	// Each list fetch mints a fresh signature, so match the stable prefix only.
 	expect(raw.getAttribute('href')).toContain(`/api/assets/${asset.id}?exp=`);
 	expect(raw.getAttribute('target')).toBe('_blank');
+	expect(raw.classList).toContain(NEVER_RECORD_CLASS);
 
 	// The Download button points at the same signed URL with `&download=1` (which
 	// makes the serve route force an attachment) and carries the basename so the
@@ -278,6 +282,7 @@ test('the viewer breadcrumb walks back to the grid folder and Open raw links the
 	expect(download.getAttribute('href')).toContain(`/api/assets/${asset.id}?exp=`);
 	expect(download.getAttribute('href')).toContain('&download=1');
 	expect(download.getAttribute('download')).toBe('hero.png');
+	expect(download.classList).toContain(NEVER_RECORD_CLASS);
 
 	// Breadcrumb: Assets › launch › hero.png; the folder crumb returns to the grid.
 	const crumb = await findByTestId('asset-viewer-breadcrumb');

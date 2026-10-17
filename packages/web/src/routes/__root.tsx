@@ -31,6 +31,7 @@ import { type ChatLaunch, ChatLaunchContext } from '../contexts/chat-launch-cont
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useProductAnalytics } from '../hooks/use-analytics';
 import { CEO_ROOM } from '../hooks/use-chat';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
@@ -42,7 +43,7 @@ import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
 import { useSupportChat } from '../hooks/use-support';
 import { useShellWebSockets } from '../hooks/use-websocket';
-import { type ApiError, api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { useI18n, useSyncInstanceLocale } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
@@ -144,6 +145,16 @@ function AppShell() {
 	// A 401 here means "unlocked but no valid session → show the password login".
 	const me = useMe({ enabled: status?.masterKeyState === 'unlocked', retry: false });
 
+	// Product analytics are the owner's alone, so unlike the chat they wait for a
+	// session: nothing is counted or recorded on a screen before sign-in. They
+	// stop the moment the vault locks or the session ends with the page still
+	// open, because the owner's details stay cached after either.
+	const signedIn =
+		status?.masterKeyState === 'unlocked' &&
+		!!me.data &&
+		!(me.error instanceof ApiError && me.error.status === 401);
+	useProductAnalytics(!!status?.sso && signedIn);
+
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
 			navigate({ to: '/', replace: true });
@@ -238,15 +249,15 @@ function AppShell() {
 	// The owner's identity is fetched only once a session exists and is handed to
 	// the install already running, so a conversation started at a gate carries.
 	// The gate is also what the chat tells the support team about where they are.
-	const signedIn = gate.kind === 'signed-in';
+	const inShell = gate.kind === 'signed-in';
 	// Reads what the setup gate fetches, and never fetches itself: the shell
 	// adds no request for the chat's sake.
 	const wizardStep = useWizardStep({ enabled: false });
 	const routeId = useMatches({ select: (matches) => matches.at(-1)?.routeId ?? null });
 	const routeProject = useRouteProjectId();
 	useSupportChat(!!status?.sso && !!me.data, status?.support, {
-		screen: signedIn ? signedInScreen(wizardStep, routeId) : gate.kind,
-		project: signedIn ? routeProject : null,
+		screen: inShell ? signedInScreen(wizardStep, routeId) : gate.kind,
+		project: inShell ? routeProject : null,
 		version: status?.version ?? null,
 	});
 

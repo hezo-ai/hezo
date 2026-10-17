@@ -1,4 +1,5 @@
 import { suggestAllowedHosts } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Check, KeyRound } from 'lucide-react';
 import { useState } from 'react';
 import { useFulfillCredential } from '../../hooks/use-comments';
@@ -151,13 +152,15 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 				</div>
 			) : (
 				<div className="flex flex-col gap-2">
+					{/* Never recorded, whichever field the value arrives in: a pasted
+					    textarea shows it as plain text. */}
 					{inputType === 'textarea' ? (
 						<textarea
 							value={value}
 							onChange={(e) => setValue(e.target.value)}
 							placeholder="Paste value here"
 							rows={6}
-							className="w-full font-mono text-xs p-2 rounded border border-border bg-surface focus:outline-none focus:border-info"
+							className={`w-full font-mono text-xs p-2 rounded border border-border bg-surface focus:outline-none focus:border-info ${NEVER_RECORD_CLASS}`}
 							data-testid="credential-input"
 						/>
 					) : inputType === 'file' ? (
@@ -168,7 +171,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 								if (!file) return;
 								file.text().then(setValue);
 							}}
-							className="text-sm"
+							className={`text-sm ${NEVER_RECORD_CLASS}`}
 							data-testid="credential-input"
 						/>
 					) : (
@@ -178,7 +181,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							onChange={(e) => setValue(e.target.value)}
 							placeholder="Paste value here"
 							autoComplete="off"
-							className="w-full text-sm p-2 rounded border border-border bg-surface focus:outline-none focus:border-info"
+							className={`w-full text-sm p-2 rounded border border-border bg-surface focus:outline-none focus:border-info ${NEVER_RECORD_CLASS}`}
 							data-testid="credential-input"
 						/>
 					)}
@@ -226,6 +229,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							onClick={submit}
 							disabled={fulfill.isPending || value.length === 0}
 							data-testid="credential-submit"
+							data-analytics="provide-requested-credential"
 						>
 							{fulfill.isPending ? 'Storing…' : 'Provide credential'}
 						</Button>

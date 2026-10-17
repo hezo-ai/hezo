@@ -15,7 +15,7 @@ import {
 } from '@hezo/shared';
 import { resetSupportChat } from '@hezo/ui';
 import { ApiError, api } from './api';
-import { clearPendingSsoHandle, goToIssuer, markLeavingForSignOut } from './sso';
+import { clearPendingSsoHandle, goToIssuer, markLeavingForIssuerLogout } from './sso';
 
 export interface StatusResponse {
 	/** Absent while the server is still booting (`starting` is true). */
@@ -289,7 +289,7 @@ export function logout(issuerLogoutUrl?: string) {
 	// The support chat holds a conversation tied to the person leaving.
 	resetSupportChat();
 	if (issuerLogoutUrl) {
-		markLeavingForSignOut();
+		markLeavingForIssuerLogout();
 		goToIssuer(issuerLogoutUrl);
 	}
 }

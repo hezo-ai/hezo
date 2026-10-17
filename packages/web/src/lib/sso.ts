@@ -89,18 +89,22 @@ export function goToIssuer(url: string): void {
 }
 
 /**
- * Set once this page has sent the browser to the issuer's sign-out, and never
- * cleared: the page is leaving. Signing out resets every query, which lands the
- * shell on the issuer gate, and that gate's own redirect to the sign-in would
- * race the sign-out. Whichever navigation the browser commits to last wins, and
- * the sign-in winning signs the person straight back in.
+ * Set when sign-out hands this page to the issuer's logout, and held until the
+ * page goes. Signing out drops the session, so the gate behind the departing
+ * page comes up as a visitor to send to the issuer's sign-in. That second
+ * navigation cancels the logout if it has not yet committed, and the person
+ * stays signed in at the issuer, which sends them straight back.
  */
-let leavingForSignOut = false;
+let leavingForIssuerLogout = false;
 
-export function markLeavingForSignOut(): void {
-	leavingForSignOut = true;
+export function markLeavingForIssuerLogout(): void {
+	leavingForIssuerLogout = true;
 }
 
-export function isLeavingForSignOut(): boolean {
-	return leavingForSignOut;
+export function isLeavingForIssuerLogout(): boolean {
+	return leavingForIssuerLogout;
+}
+
+export function clearLeavingForIssuerLogout(): void {
+	leavingForIssuerLogout = false;
 }

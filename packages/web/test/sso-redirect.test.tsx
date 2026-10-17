@@ -178,14 +178,13 @@ test('signing out ends the session at the issuer too', async () => {
 	});
 
 	await user.click(await findByTestId('settings-logout'));
-	await expect.poll(() => leftFor()).toBe(SSO.logoutUrl);
-	expect(api.getToken()).toBeNull();
-
-	// Signing out drops the session, so the shell lands on the issuer gate while
-	// the browser leaves. That gate must not send it to the sign-in as well:
-	// whichever navigation lands last wins, and the sign-in signs them back in.
+	// The gate behind the departing page comes up signed out, which on its own
+	// sends a visitor to the issuer's sign-in. A second navigation cancels one
+	// not yet committed, so it must not happen: the person would still be signed
+	// in at the issuer, and be sent straight back.
 	await findByTestId('sso-redirect');
 	expect(vi.mocked(sso.goToIssuer).mock.calls).toEqual([[SSO.logoutUrl]]);
+	expect(api.getToken()).toBeNull();
 });
 
 test('signing out of an ordinary instance goes nowhere', async () => {

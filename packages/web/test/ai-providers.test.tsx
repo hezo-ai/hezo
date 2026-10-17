@@ -4,6 +4,7 @@ import {
 	DEFAULT_TEAM_SLUG,
 	setCredentialSerializationRulesForTest,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
@@ -621,6 +622,8 @@ test('adds a subscription credential via the Add modal', async () => {
 	// "codex login" appears in both a step and the footer, so match all.
 	await within(dialog).findAllByText(/codex login/i);
 	const textarea = within(dialog).getByLabelText('Subscription credential') as HTMLTextAreaElement;
+	// A pasted credential is plain text on screen, so a recording never holds it.
+	expect(textarea.classList).toContain(NEVER_RECORD_CLASS);
 	fireEvent.change(textarea, {
 		target: { value: JSON.stringify({ tokens: { refresh_token: 'rt-modal' } }) },
 	});

@@ -479,6 +479,7 @@ function GitHubRow({ projectId, connection, optional = false }: GitHubRowProps) 
 							onClick={startConnect}
 							disabled={connecting}
 							data-testid="connector-connect"
+							data-analytics="connect-connector"
 						>
 							{connecting ? 'Starting…' : 'Connect'}
 						</Button>
@@ -770,6 +771,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 									onClick={openConnect}
 									disabled={authStart.isPending}
 									data-testid="connector-connect"
+									data-analytics="connect-connector"
 								>
 									{authStart.isPending
 										? 'Starting…'

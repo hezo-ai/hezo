@@ -1,4 +1,5 @@
 import { isTextReviewableAssetMime, type ProjectAsset } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { ExternalLink } from 'lucide-react';
 import { AssetIcon, formatBytes } from '../asset-icon';
 import { type AssetReviewControls, ReviewableAssetText } from './reviewable-asset-text';
@@ -37,7 +38,7 @@ export function AssetViewerBody({ projectId, asset, readOnly, review }: AssetVie
 				src={asset.url}
 				alt={asset.original_filename}
 				data-testid="asset-viewer-image"
-				className="h-auto max-w-full rounded-md border border-border bg-surface-3"
+				className={`h-auto max-w-full rounded-md border border-border bg-surface-3 ${NEVER_RECORD_CLASS}`}
 			/>
 		);
 	}
@@ -54,7 +55,7 @@ export function AssetViewerBody({ projectId, asset, readOnly, review }: AssetVie
 				title={asset.original_filename}
 				sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 				data-testid="asset-viewer-html"
-				className="h-[75vh] w-full rounded-md border border-border bg-surface"
+				className={`h-[75vh] w-full rounded-md border border-border bg-surface ${NEVER_RECORD_CLASS}`}
 			/>
 		);
 	}
@@ -74,7 +75,7 @@ export function AssetViewerBody({ projectId, asset, readOnly, review }: AssetVie
 				href={asset.url}
 				target="_blank"
 				rel="noopener noreferrer"
-				className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-accent-soft-fg hover:underline"
+				className={`inline-flex items-center gap-1.5 text-[12.5px] font-medium text-accent-soft-fg hover:underline ${NEVER_RECORD_CLASS}`}
 			>
 				<ExternalLink className="h-3.5 w-3.5" />
 				Open raw file

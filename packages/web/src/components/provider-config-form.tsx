@@ -6,6 +6,7 @@ import {
 	credentialSerializesRuns,
 	providerHasGuidedSignIn,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
@@ -356,7 +357,11 @@ export function ProviderConfigForm({
 								</p>
 								<p className="text-[13px] text-text-2">{t('settings.provider.signIn.blurb')}</p>
 							</div>
-							<Button type="button" onClick={() => setSigningIn(true)}>
+							<Button
+								type="button"
+								onClick={() => setSigningIn(true)}
+								data-analytics="start-provider-sign-in"
+							>
 								{t('settings.provider.signIn.action', { cli: info.runtimeLabel })}
 							</Button>
 							<button
@@ -385,7 +390,9 @@ export function ProviderConfigForm({
 								placeholder={SUBSCRIPTION_INSTRUCTIONS[provider]?.placeholder}
 								rows={6}
 								spellCheck={false}
-								className="w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs font-mono text-text-1 outline-none focus:border-border-strong"
+								// Never recorded: it holds a sign-in token, and a pasted value is
+								// on screen as plain text.
+								className={`w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs font-mono text-text-1 outline-none focus:border-border-strong ${NEVER_RECORD_CLASS}`}
 							/>
 						</div>
 					)}
@@ -468,7 +475,11 @@ export function ProviderConfigForm({
 				<Button type="button" variant="ghost" onClick={onCancel}>
 					Cancel
 				</Button>
-				<Button type="submit" disabled={!canSubmit || pending}>
+				<Button
+					type="submit"
+					disabled={!canSubmit || pending}
+					data-analytics={editing ? 'save-ai-provider' : 'add-ai-provider'}
+				>
 					{pending && <Loader2 className="w-4 h-4 animate-spin" />}
 					{submitLabel}
 				</Button>
