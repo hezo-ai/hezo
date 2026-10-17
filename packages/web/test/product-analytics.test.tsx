@@ -186,9 +186,14 @@ test('the owner is counted by route pattern, page by page, and recorded with pag
 	// while the owner keeps the app open reaches the recording already running:
 	// the rest of the page is left out of it, and the asking stops.
 	expect(recheckInterval()).toBe(2 * 60_000);
+	// A rate dropped to 0 stops the recording as a removed `replay` does.
+	configure({ issuer: true, umami: { ...UMAMI, replay: { sampleRate: 0, showText: false } } });
+	await queryClient.refetchQueries({ queryKey: queryKeys.analytics() });
+	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(recheckInterval()).toBe(2 * 60_000);
 	const { replay: _replay, ...unrecorded } = UMAMI;
 	configure({ issuer: true, umami: unrecorded });
 	await queryClient.refetchQueries({ queryKey: queryKeys.analytics() });
-	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
-	expect(recheckInterval()).toBe(false);
+	await expect.poll(() => recheckInterval()).toBe(false);
+	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
 });

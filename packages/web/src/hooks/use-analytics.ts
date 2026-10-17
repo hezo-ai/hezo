@@ -103,13 +103,15 @@ export function useProductAnalytics(identified: boolean): void {
 		installAnalyticsClicks();
 		// Run again whenever the settings change mid-page: a recording already
 		// running only tightens (text hidden, or the rest of the page left out).
-		if (!umami.replay) {
-			stopSessionRecording();
-		} else if (shouldRecordThisVisit(umami.replay.sample_rate)) {
+		// A visit no longer picked, whether `replay` went or its rate fell to 0,
+		// stops; stopping a visit that was never recording does nothing.
+		if (umami.replay && shouldRecordThisVisit(umami.replay.sample_rate)) {
 			startSessionRecording({
 				showText: umami.replay.show_text,
 				recorderIntegrity: umami.recorder_integrity,
 			});
+		} else {
+			stopSessionRecording();
 		}
 
 		return router.subscribe('onResolved', (event) => {

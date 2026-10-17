@@ -146,6 +146,48 @@ test('reports the page the visit starts on once the tracker has loaded, and call
 	expect(track.mock.calls[1]).toEqual(['create-task']);
 });
 
+test('a call made before the tracker loads is sent under the page it was made on', async () => {
+	// A stand-in that, like Umami's own `track`, runs the before-send hook inside
+	// the call, and keeps what the hook let through.
+	const sentUrls: unknown[] = [];
+	testWindow.umami = {
+		track: vi.fn((argument?: TrackArgument) => {
+			const base: Payload = { url: '/real/address', title: 'Real title' };
+			const payload =
+				typeof argument === 'function'
+					? argument(base)
+					: argument === undefined
+						? base
+						: { ...base, name: argument };
+			const sent = beforeSend('event', payload);
+			sentUrls.push(sent === false ? false : sent.url);
+		}),
+	};
+	const held: Node[] = [];
+	const append = document.head.appendChild.bind(document.head);
+	const spy = vi
+		.spyOn(document.head, 'appendChild')
+		.mockImplementation(<T extends Node>(node: T) => {
+			held.push(node);
+			return node;
+		});
+
+	page = '/home';
+	analytics.installAnalytics(options());
+	page = '/settings';
+	analytics.trackAnalyticsEvent('open-settings');
+	page = '/projects/$projectId/tasks';
+
+	spy.mockRestore();
+	for (const node of held) append(node);
+	await vi.waitFor(() => expect(sentUrls).toHaveLength(2));
+	expect(sentUrls).toEqual(['/home', '/settings']);
+
+	// Once the tracker is there, a call is sent under the page it is made on.
+	analytics.trackAnalyticsEvent('create-task');
+	expect(sentUrls[2]).toBe('/projects/$projectId/tasks');
+});
+
 test('later page views go straight to the tracker, without the referrer the page loaded with', async () => {
 	await installed();
 	track.mockClear();
@@ -346,6 +388,13 @@ test('a rate of 0 never records and a rate of 1 always does, whatever was kept',
 
 	sessionStorage.setItem('hezo:analytics:record-visit', '0');
 	expect(analytics.shouldRecordThisVisit(1)).toBe(true);
+});
+
+test('a visit picked at a rate of 1 stays picked when the rate is lowered', () => {
+	expect(analytics.shouldRecordThisVisit(1)).toBe(true);
+	vi.spyOn(Math, 'random').mockReturnValue(0.99);
+	expect(analytics.shouldRecordThisVisit(0.5)).toBe(true);
+	expect(analytics.shouldRecordThisVisit(0)).toBe(false);
 });
 
 test('decides once per browser session and keeps the decision', () => {

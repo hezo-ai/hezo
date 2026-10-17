@@ -6819,13 +6819,15 @@ self-hosted Hezo loads none of it.
   `${host}/script.js` pinned to `scriptIntegrity`, with `data-website-id`,
   `data-distinct-id`, `data-before-send` naming a global hook and `data-auto-track="false"`,
   then reports the page the visit starts on. Calls made before the script runs wait in a
-  queue bounded at 50 and flush on its `load`. `startSessionRecording` puts `rr-mask` on
+  queue bounded at 50 and flush on its `load`; each queued call carries the page it was made
+  on, since Umami's `track` runs the before-send hook inside the call. `startSessionRecording` puts `rr-mask` on
   `<html>` unless `showText`, then adds `${host}/recorder.js` pinned to its
   `recorderIntegrity`; both tags are `async = false` so the tracker runs first, since the
   recorder waits for the tracker's session. The recorder has no stop or reconfigure hook,
   so a settings change reaches a running recording only through the classes rrweb reads,
   and only ever tightens: a later `startSessionRecording` with `showText: false` adds
-  `rr-mask`, and `stopSessionRecording` puts `rr-block` on `<html>`; rrweb's full snapshot
+  `rr-mask`, and `stopSessionRecording` (a removed `replay`, or a visit no longer picked
+  at the new rate) puts `rr-block` on `<html>`; rrweb's full snapshot
   every 30 s then drops what was shown. Loosening waits for the next page load.
   `useAnalytics` refetches every two minutes while the account has a `replay`, because the
   app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per

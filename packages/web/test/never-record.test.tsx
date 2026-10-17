@@ -113,6 +113,21 @@ test('a run or container log is never recorded', async () => {
 	expect(isNeverRecorded(screen.getByText('export TOKEN=abc'))).toBe(true);
 });
 
+test('a signed link in rendered markdown is never recorded, and an ordinary one is', () => {
+	render(
+		withI18n(
+			<QueryClientProvider client={new QueryClient()}>
+				<MarkdownProse>
+					{'[the report](/api/assets/a1?exp=1&sig=s) and [the docs](https://example.com/guide)'}
+				</MarkdownProse>
+			</QueryClientProvider>,
+		),
+	);
+
+	expect(isNeverRecorded(screen.getByRole('link', { name: 'the report' }))).toBe(true);
+	expect(isNeverRecorded(screen.getByRole('link', { name: 'the docs' }))).toBe(false);
+});
+
 test('an image embedded in rendered markdown is never recorded', () => {
 	render(
 		withI18n(

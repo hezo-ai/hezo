@@ -159,10 +159,44 @@ function dispatch(call: TrackerCall): void {
 	}
 }
 
+/**
+ * The page a queued call was made on, for the length of its send.
+ *
+ * A call made before the tracker loads waits in the queue, and by the time the
+ * queue drains the person may be on another page, which the hook would name
+ * instead. So a queued call carries its page and sets this while it is sent.
+ * Umami's `track` runs the before-send hook before its first `await` (3.4:
+ * `track` calls `send`, which calls the hook straight away), so the hook reads
+ * it inside the same call. A tracker that ran the hook later would find it
+ * unset and name the page of the send, as every unqueued call does.
+ */
+let queuedPage: string | null = null;
+
+/** The current page's pattern, or nothing where it cannot be named. */
+function pageNow(): string | null {
+	try {
+		return state ? asPattern(state.pagePattern()) : null;
+	} catch {
+		return null;
+	}
+}
+
 function enqueue(call: TrackerCall): void {
 	if (!state) return;
-	if (state.loaded) dispatch(call);
-	else if (state.queue.length < MAX_QUEUED_CALLS) state.queue.push(call);
+	if (state.loaded) {
+		dispatch(call);
+		return;
+	}
+	if (state.queue.length >= MAX_QUEUED_CALLS) return;
+	const page = pageNow();
+	state.queue.push((umami) => {
+		queuedPage = page;
+		try {
+			return call(umami);
+		} finally {
+			queuedPage = null;
+		}
+	});
 }
 
 function onTrackerLoad(): void {
@@ -196,7 +230,7 @@ function referrerOrigin(referrer: unknown): string {
 function beforeSend(_type: string, payload: TrackerPayload): TrackerPayload | false {
 	if (!state) return false;
 	try {
-		const page = asPattern(state.pagePattern());
+		const page = queuedPage ?? asPattern(state.pagePattern());
 		return { ...payload, url: page, title: page, referrer: referrerOrigin(payload.referrer) };
 	} catch {
 		// A page that cannot be named is not sent under its real address instead.
@@ -303,12 +337,17 @@ export function installAnalyticsClicks(): void {
  *
  * Decided once per browser session and kept in `sessionStorage`, so a visit is
  * recorded whole or not at all rather than page by page. 0 is never and 1 is
- * always, whatever an earlier page decided. Where storage is unavailable the
- * decision is made afresh on each load.
+ * always, whatever an earlier page decided. A visit picked at 1 is kept as
+ * picked, so a rate lowered mid-visit (but not to 0) carries on recording it
+ * rather than rolling again. Where storage is unavailable the decision is made
+ * afresh on each load.
  */
 export function shouldRecordThisVisit(sampleRate: number): boolean {
 	if (!(sampleRate > 0)) return false;
-	if (sampleRate >= 1) return true;
+	if (sampleRate >= 1) {
+		writeSessionStored(RECORD_VISIT_KEY, '1');
+		return true;
+	}
 	const kept = readSessionStored(RECORD_VISIT_KEY);
 	if (kept === '1') return true;
 	if (kept === '0') return false;
