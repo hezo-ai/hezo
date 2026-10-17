@@ -14,7 +14,7 @@ on, and an email address. There is no password and no credit card.
 Start from **Launch team** on [hezo.ai](https://hezo.ai), or go straight to
 [app.hezo.ai/start](https://app.hezo.ai/start). The form asks what your team
 should work on. Write a few lines: what the project is, who it is for, and what
-done looks like. That brief becomes your first project, so it is worth more
+done looks like. That brief starts your first project, so it is worth more
 than a title.
 
 The language you fill the form in becomes your account's language, and your
@@ -55,8 +55,10 @@ You will be asked for it again if your instance restarts.
 
 ## 5. Meet your team
 
-Your brief opens as your first project, and the CEO picks it up from there -
-scoping the work with you and staffing a team for it. From here the rest of
+Your home screen opens on the CEO chat, with a button that sends your brief as
+your first message. The CEO picks it up from there - scoping the work with you
+and staffing a team for it. Nothing is created until you tell it to go ahead.
+From here the rest of
 these docs apply: see [Your first project](/docs/getting-started/first-project)
 for what to expect, and [What's different from
 self-hosting](/docs/cloud/whats-different) for the handful of pages that do not.

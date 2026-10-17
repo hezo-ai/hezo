@@ -54,15 +54,6 @@ export interface Comment {
 	attachments?: CommentAttachment[];
 }
 
-export function useComments(projectId: string, taskId: string, options?: { enabled?: boolean }) {
-	return useQuery({
-		queryKey: queryKeys.projects.taskComments(projectId, taskId),
-		queryFn: () => api.get<Comment[]>(`/api/projects/${projectId}/tasks/${taskId}/comments`),
-		enabled: options?.enabled ?? true,
-		staleTime: 0,
-	});
-}
-
 /**
  * A comment row without its heavy body. The lazy comments feed fetches the whole
  * thread as skeletons up front (so every row can render a placeholder and reserve
@@ -225,8 +216,8 @@ export function useCommentBody(projectId: string, taskId: string, commentId: str
 /**
  * Seed the caches after a comment is created so it appears instantly: its body
  * (from the create response) is cached so no fetch fires, and the row is appended
- * to both the full list (intake) and the skeleton list (task feed). Both lists are
- * then invalidated so the server's computed fields (author, public_id) reconcile.
+ * to the skeleton list (task feed). The thread is then invalidated so the
+ * server's computed fields (author, public_id) reconcile.
  */
 function seedCreatedComment(projectId: string, taskId: string, created: Comment): void {
 	const attachments = created.attachments ?? [];
@@ -235,11 +226,6 @@ function seedCreatedComment(projectId: string, taskId: string, created: Comment)
 		{ id: created.id, content: created.content, attachments },
 	);
 
-	queryClient.setQueryData<Comment[]>(queryKeys.projects.taskComments(projectId, taskId), (old) => {
-		if (!old) return old;
-		if (old.some((c) => c.id === created.id)) return old;
-		return [...old, created];
-	});
 	queryClient.setQueryData<CommentSkeleton[]>(
 		queryKeys.projects.taskCommentSkeletons(projectId, taskId),
 		(old) => {

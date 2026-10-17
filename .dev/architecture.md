@@ -1302,8 +1302,8 @@ project.
 **HQ — the one cross-project team.** A single instance-level team, **HQ** (slug
 `default`), owns the only `is_internal` project. It hosts two instance-level singletons:
 
-- **CEO** — runs all coordination. **Project intake** and first-run **onboarding**
-  (pre-project) live in HQ. Per-team **setup/coherence review**, **hiring**, and
+- **CEO** — runs all coordination. **New-project planning** happens in the CEO chat
+  (HQ-scoped, pre-project). Per-team **setup/coherence review**, **hiring**, and
   **retiring** concern a specific project-team and live in *that team's own project*,
   CEO-actioned. **Hiring** has two entry points, both ending as a pending `hire` approval
   the admin approves (and may modify first via `PATCH /approvals/:id`, which reuses the
@@ -1360,8 +1360,8 @@ project.
   role, `reports_to`, hire, or enable/disable change on the established team — are enqueued to that
   team's own **Captain** (`enqueueTeamCoherenceReviewTask` picks the assignee by reason, falling
   back to the CEO for HQ, which has no Captain). Coalescing and the change-summary section are unchanged.
-  The generated body carries `ACTIVE_ADMIN_MENTION_RULE` (`services/description-tasks.ts`, shared with
-  the project-intake body): the pass asks the admin things - a removal to confirm, a heartbeat cadence
+  The generated body carries `ACTIVE_ADMIN_MENTION_RULE` (`services/description-tasks.ts`, shared by
+  every server-written task body): the pass asks the admin things - a removal to confirm, a heartbeat cadence
   before a hire - and a comment that merely *says* it wants confirmation raises no `admin_mentions`
   row, so it reaches no inbox and the setup waits on an answer nobody was asked for.
   **A newly created agent's work is gated on the review that onboarded it.** Every path that
@@ -1506,40 +1506,29 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    priority, then number), which puts the setup task on top with the blocked planning task
    below it. No deep link is needed and the landing stays correct when no setup task was
    created.
-2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
-   ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
-   team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
-   team, no project, no approval, and no run.** The route posts the CEO's greeting itself
-   and fans it out to the admin inbox with `fireAdminMention`; it queues **no** wakeup,
-   because the greeting already is the CEO's opening ask and a run started there would only
-   re-introduce and re-ask it. The CEO's first run is the `reply` wakeup raised when the
-   admin answers - `ProjectIntakeHomePanel` threads their message onto the last CEO comment
-   for exactly that reason. The inbox row also parks the ticket for `parkedOnAdminAsk`
-   (§ The parked-on-admin suppression), so an unanswered intake costs no heartbeat runs
-   either. The CEO scopes the work with the admin; when the
-   admin approves in the thread (a plain reply — there is no inbox button), the CEO calls
-   the `create_project` MCP tool, which runs the same `createProjectWithTeam` and closes
-   the intake ticket. On this path the coherence/setup task does **not** auto-run: it is
-   created unassigned, `create_project` returns its `setup_task_identifier`, and the
-   CEO authors the concrete setup (the specific hires, prompt rewrites, reporting
-   structure agreed in intake) into it with `update_task`, then calls the
-   **`start_team_setup`** MCP tool to assign it to itself and begin the run. There is no
-   longer a `project_creation` approval row (the enum value is retained for historical
-   rows only).
-3. **Seeded** - the same intake, opened by `consumeSeedProject` (`services/seed.ts`) from
-   the `seed.project` block of the config file at the first unlock, once (§ *Hosted first
-   run*). No form was submitted and no team type chosen, so the intake's `name` is a
-   placeholder derived from the brief's first sentence and the CEO is asked to propose the
-   real one. `CreateProjectIntakeInput.origin` (`'form' | 'seed'`, required) selects a row of
-   `ORIGIN_PROSE` in `services/project-intake.ts`: the greeting's opener and closing ask, the
-   task body's context paragraph, the baseline line (a seed has none chosen, never "Blank"),
-   and steps 2-3. The seed row says the brief was written at signup on hezo.ai, quotes it as a
-   blockquote between two stated rules so a heading or a step inside it cannot read as the
-   CEO's instructions, names the admin's language from the instance locale and asks for the
-   reply in it, and tells the CEO the working title never reaches `create_project` unchanged
-   (`toSlug` would mangle a non-Latin one). The form row is the dialog's prose, byte for
-   byte. From the greeting on it is the CEO-assisted path above: no wakeup, the admin's first
-   reply is the CEO's first run.
+2. **CEO-assisted** — in the CEO chat. There is no route and no task: the admin plans the
+   project with the CEO in its HQ chat stream, and **nothing is created up front - no team,
+   no project, no approval**. The New Project form's **Plan with the CEO** composes the form
+   (name, description, the chosen team if any, a note that a plan is attached) into the
+   admin's first chat message from catalog sentences (`composePlanWithCeoMessage`), uploads
+   the plan as a `.md` chat attachment, posts the turn through the shared `postChatTurn`
+   (`hooks/use-chat.ts`) and opens the dock on the CEO room. No team is required: proposing
+   one is the CEO's job. When the admin gives the go-ahead in the chat, the CEO calls the
+   `create_project` MCP tool, which runs the same `createProjectWithTeam`. On this path the
+   coherence/setup task does **not** auto-run: it is created unassigned, `create_project`
+   returns its `setup_task_identifier`, and the CEO authors the concrete setup (the specific
+   hires, prompt rewrites, reporting structure agreed in the chat) into it with
+   `update_task`, then calls the **`start_team_setup`** MCP tool to assign it to itself and
+   begin the run. There is no longer a `project_creation` approval row (the enum value is
+   retained for historical rows only).
+   - **Upgrade.** An earlier release ran this path as an HQ task labelled `project-intake`
+     (`POST /api/project-intakes`). An open one on an upgraded instance stays an ordinary HQ
+     task; nothing reads the label. `create_project` no longer takes `intake_task_id`, and
+     the zod object behind every tool drops an unknown key, so a CEO still following an old
+     intake body creates the project and closes that task itself.
+3. **Seeded** - a hosted instance's signup brief (`seed.project`) is offered as the admin's
+   first chat message, never turned into a task (§ *Hosted first run*). From the moment it
+   is sent it is the CEO-assisted path above.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
@@ -1603,8 +1592,9 @@ override. `marketplace/index.json` is the catalog listing.
   selectable source in the standard create-project dialog (alongside Blank, custom saved types,
   and copy-an-existing-team); the marketplace "Launch new project" action opens that same dialog
   preselected. Both create paths carry the choice: **direct** (`POST /api/projects
-  {marketplace_slug}`) and **CEO-assisted intake** (`POST /api/project-intakes {marketplace_slug}`
-  → recorded as the CEO's baseline → the CEO's `create_project` tool takes a `marketplace_slug`).
+  {marketplace_slug}`) and **CEO-assisted** (Plan with the CEO names the team and its slug in
+  the admin's first chat message → the CEO's baseline → the CEO's `create_project` tool takes a
+  `marketplace_slug`).
   The "copy an existing team" snapshot path (`snapshotTeamAsTemplate`) materializes custom
   `agent_types` for those inline roles so cloning still works.
 - **Add to an existing project (CEO-driven).** `POST /api/projects/:projectId/marketplace-team`
@@ -6397,8 +6387,7 @@ rows are on screen and, once the thread *settles* (a ~170ms scroll pause — a f
 pauses, so it fetches nothing), the visible rows' ids are handed to a batched loader that
 coalesces them into one `?ids=a,b,c` request (`ensureCommentBodies` → React-Query-per-id
 cache, `useCommentBody`). A `?view=skeleton` list is index-ordered by
-`idx_comments_task_created`; the intake chat and API clients still get the eager full payload
-(default mode). Deep-link (`#comment-<id>`) targets load their body eagerly so the anchor
+`idx_comments_task_created`; API clients still get the eager full payload (default mode). Deep-link (`#comment-<id>`) targets load their body eagerly so the anchor
 lands on stable height. Reactions stay on the skeleton row (one source of truth), so their
 optimistic mutation and WS invalidation are unchanged.
 
@@ -6708,26 +6697,19 @@ points where the instance can first act on them:
   `localeConfigured: true` from the first request, and `useSyncInstanceLocale` adopts the
   language on every browser. A locale anyone chose - from the gate's corner switcher or
   from Settings - is never overwritten, on this or any later boot.
-- **The brief, at the first unlock.** `consumeSeedProject` is registered on
-  `masterKeyManager.onUnlock`, which `setup()` fires before the setup route returns and
-  every later `unlock()` fires again. It writes the `seed_project:consumed` marker into
-  `system_meta` first, as `INSERT ... ON CONFLICT DO NOTHING RETURNING`, and only the
-  caller that got a row back proceeds to `createProjectIntake` - so a restart, a rebuilt
-  host or two processes on one database open one intake, and only a wiped database (the
-  plane's `reset`) seeds again. A null intake or a thrown error deletes the marker and logs,
-  so a transient (HQ or the CEO missing) is tried once more at the next unlock rather than
-  papered over. It runs under `trackBackground` because the unlock hook is synchronous and
-  nothing awaits it.
+- **The brief, as an offer.** Nothing happens at unlock. `pendingSeedBrief` answers the
+  brief while it is still worth offering and null once any of these holds: the legacy
+  `seed_project:consumed` marker exists (an earlier release turned the brief into an HQ
+  intake task on that instance), a non-internal project exists, or the admin has written a
+  message in an HQ conversation. No marker is written; those conditions are the record.
+  `GET /api/chat/conversation` carries it as `seed_brief` on the default thread only (not
+  on `/api/status`, which is unauthenticated and would expose the person's words), and
+  `CeoLandingChat` renders it as a seed greeting plus a first chip that sends a translated
+  lead line and the brief as the admin's own message. The turn runs then, after the
+  AI-provider step, so the brief never needs a credential at unlock.
 
-The intake needs only HQ and an enabled CEO, both seeded before any key exists, and it
-queues no run: by the time the AI-provider step finishes and `/home` mounts, the greeting
-is waiting in `ProjectIntakeHomePanel` and the admin's first reply is the CEO's first run.
-The one ordering that matters is the superuser: `POST /api/auth/setup` calls
-`ensureSuperuserId` **before** `masterKeyManager.setup()`, because the greeting's
-`fireAdminMention` fans out to the superuser and returns silently when there is none -
-and that inbox row is what parks the CEO's heartbeat against an unanswered thread
-(§ *The parked-on-admin suppression*). Created after `setup()` returned, as it used to be,
-the mention would have raced the intake and lost.
+The superuser is still created before `masterKeyManager.setup()` on `POST /api/auth/setup`,
+so anything that runs on the unlock hook and addresses the admin finds them.
 
 ### Support chat
 

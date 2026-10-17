@@ -11,18 +11,22 @@ import {
 	Sparkles,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useLaunchChat } from '../contexts/chat-launch-context';
 import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useAgents } from '../hooks/use-agents';
+import { CEO_ROOM } from '../hooks/use-chat';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useMarketplaceTeam, useMarketplaceTeams } from '../hooks/use-marketplace';
-import { useStartProjectIntake } from '../hooks/use-project-intake';
+import { usePlanWithCeo } from '../hooks/use-plan-with-ceo';
 import {
 	useAllVisibleProjects,
 	useCreateProjectWithTeam,
 	useHqProject,
 } from '../hooks/use-projects';
 import { useTeamTemplates } from '../hooks/use-team-templates';
+import { useI18n } from '../lib/i18n';
+import { composePlanWithCeoMessage } from '../lib/plan-with-ceo-message';
 import {
 	blankTeamOption,
 	buildTeamOptions,
@@ -253,7 +257,9 @@ function TeamDetail({
  * up-to-2 suggested teams ranked from that text, or open the full tabbed catalog
  * via "View all teams". From the catalog a card opens that team's detail (its
  * roster) and "Select team" confirms it back on the entry step, where the
- * Create now / Plan with the CEO actions live.
+ * Create now / Plan with the CEO actions live. Create now needs a team; Plan
+ * with the CEO does not, since proposing one is the CEO's job: it sends the
+ * form to the CEO chat as the admin's first message and opens the dock.
  */
 export function CreateProjectWithTeamDialog({
 	open,
@@ -301,14 +307,16 @@ export function CreateProjectWithTeamDialog({
 	// next host to mount it can't forget.
 	useCloseOnRouteChange(open, () => onOpenChange(false));
 
+	const { t } = useI18n();
 	const createProject = useCreateProjectWithTeam();
-	const startIntake = useStartProjectIntake();
+	const planWithCeo = usePlanWithCeo();
+	const launchChat = useLaunchChat();
 	const navigate = useNavigate();
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
-	// Project intake/creation is CEO-driven, but a stopped HQ container is no
-	// blocker — the intake run lazy-starts it. Block the form only on errors and
-	// in-flight transitions.
+	// Planning with the CEO runs in HQ, but a stopped HQ container is no blocker:
+	// the chat turn lazy-starts it. Block the form only on errors and in-flight
+	// transitions.
 	const blockedHealth =
 		hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped' ? hqHealth : null;
 
@@ -333,10 +341,10 @@ export function CreateProjectWithTeamDialog({
 	const copyOptions = useMemo(() => options.filter((o) => o.group === 'copy'), [options]);
 	const showTabs = copyOptions.length > 0;
 
-	const pending = createProject.isPending || startIntake.isPending;
-	const canSubmit =
-		name.trim().length > 0 && description.trim().length > 0 && !!selection && !pending;
-	const error = createProject.error || startIntake.error;
+	const pending = createProject.isPending || planWithCeo.isPending;
+	const canPlan = name.trim().length > 0 && description.trim().length > 0 && !pending;
+	const canSubmit = canPlan && !!selection;
+	const error = createProject.error || planWithCeo.error;
 
 	// The chosen source as request fields; every create path spreads these.
 	const sourceFields =
@@ -425,24 +433,27 @@ export function CreateProjectWithTeamDialog({
 	}
 
 	async function handlePlanWithCeo() {
-		if (!sourceFields) return;
-		const res = await startIntake.mutateAsync({
-			name: name.trim(),
-			description: description.trim(),
-			initial_project_plan: projectPlan.trim() || undefined,
-			...sourceFields,
+		const plan = projectPlan.trim();
+		const copiedFromProject =
+			selectedOption?.kind === 'team'
+				? projects.find((p) => p.slug === selectedOption.projectSlug)?.name
+				: undefined;
+		await planWithCeo.mutateAsync({
+			text: composePlanWithCeoMessage(t, {
+				name: name.trim(),
+				description: description.trim(),
+				team: selectedOption,
+				hasPlan: plan.length > 0,
+				copiedFromProject,
+			}),
+			plan: plan || null,
+			planFilename: projectPlanFilename,
 		});
 		onOpenChange(false);
 		reset();
-		// No team or project is created yet — the conversation lives in HQ; land on
-		// the CEO's intake thread, where the project + team are created on approval.
-		navigate({
-			to: '/projects/$projectId/tasks/$taskId',
-			params: {
-				projectId: res.project_slug,
-				taskId: res.intake_task_identifier.toLowerCase(),
-			},
-		});
+		// Nothing is created yet: the CEO answers in its chat, and creates the
+		// project and its team once the admin gives the go-ahead there.
+		launchChat({ room: CEO_ROOM, draft: '' });
 	}
 
 	return (
@@ -559,6 +570,12 @@ export function CreateProjectWithTeamDialog({
 												))}
 											</div>
 										)}
+										<p
+											className="mt-2 text-[12.5px] text-text-3"
+											data-testid="plan-without-team-hint"
+										>
+											{t('createProject.planWithoutTeamHint')}
+										</p>
 									</div>
 								)}
 								{error && (
@@ -567,39 +584,38 @@ export function CreateProjectWithTeamDialog({
 									</p>
 								)}
 								{/* The submit actions belong to the entry step alone - the browse and
-								    detail screens are for picking, and confirm via "Select team". Gating
-								    the row here also unmounts the mod+Enter binding on those screens. */}
-								{selection && (
-									<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-2">
-										<Button
-											type="button"
-											variant="secondary"
-											onClick={handlePlanWithCeo}
-											disabled={!canSubmit}
-											data-testid="plan-with-ceo-submit"
-										>
-											{startIntake.isPending ? (
-												<Loader2 className="w-4 h-4 animate-spin" />
-											) : (
-												<MessagesSquare className="w-4 h-4" />
-											)}
-											Plan with the CEO
-										</Button>
-										<Button
-											type="submit"
-											shortcut="mod+Enter"
-											disabled={!canSubmit}
-											data-testid="create-project-submit"
-										>
-											{createProject.isPending ? (
-												<Loader2 className="w-4 h-4 animate-spin" />
-											) : (
-												<Sparkles className="w-4 h-4" />
-											)}
-											Create now
-										</Button>
-									</div>
-								)}
+								    detail screens are for picking, and confirm via "Select team". This
+								    branch is the entry step, so the mod+Enter binding unmounts with it.
+								    Plan with the CEO needs no team; Create now does. */}
+								<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-2">
+									<Button
+										type="button"
+										variant="secondary"
+										onClick={handlePlanWithCeo}
+										disabled={!canPlan}
+										data-testid="plan-with-ceo-submit"
+									>
+										{planWithCeo.isPending ? (
+											<Loader2 className="w-4 h-4 animate-spin" />
+										) : (
+											<MessagesSquare className="w-4 h-4" />
+										)}
+										Plan with the CEO
+									</Button>
+									<Button
+										type="submit"
+										shortcut="mod+Enter"
+										disabled={!canSubmit}
+										data-testid="create-project-submit"
+									>
+										{createProject.isPending ? (
+											<Loader2 className="w-4 h-4 animate-spin" />
+										) : (
+											<Sparkles className="w-4 h-4" />
+										)}
+										Create now
+									</Button>
+								</div>
 							</form>
 						) : view === 'detail' && detailOption ? (
 							<TeamDetail

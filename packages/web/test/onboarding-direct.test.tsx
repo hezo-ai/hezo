@@ -6,28 +6,48 @@ function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
 }
 
+async function projectNames(): Promise<string[]> {
+	const ctx = getTestContext();
+	const res = await ctx.apiBase('/api/projects', {
+		headers: { Authorization: `Bearer ${ctx.token}` },
+	});
+	return ((await res.json()) as { data: Array<{ name: string }> }).data.map((p) => p.name);
+}
+
 // First-run entry point: the landing's quiet "set a project up yourself" link opens the
-// CreateProjectWithTeamDialog, which is the single doorway to BOTH project
-// creation flows — "Create now" (direct) and "Plan with the CEO" (intake).
-test('the welcome card opens the dialog exposing both creation flows', async () => {
-	const { findByTestId, user } = await renderApp({ initialPath: '/home', seed: async () => {} });
+// CreateProjectWithTeamDialog, the doorway to both creation flows. "Plan with the
+// CEO" needs only a name and a description, since proposing a team is the CEO's
+// job; "Create now" also waits for a team.
+test('the welcome card opens the dialog; only Create now waits for a team', async () => {
+	const { findByTestId, findByPlaceholderText, user } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {},
+	});
 
-	const create = await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 });
-	await user.click(create);
+	await user.click(
+		await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 }),
+	);
+	const plan = (await findByTestId('plan-with-ceo-submit')) as HTMLButtonElement;
+	const create = screen.getByTestId('create-project-submit') as HTMLButtonElement;
+	expect(plan.disabled).toBe(true);
+	expect(create.disabled).toBe(true);
 
-	// The dialog opens on its entry step: the two submit buttons are gated behind a
-	// team selection, reached via "View all teams".
-	await findByTestId('view-all-teams', undefined, { timeout: 15_000 });
-	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	await user.type(await findByPlaceholderText('e.g. Marketing Site'), uniqueName('Gate'));
+	await user.type(
+		await findByPlaceholderText(/What is this project/),
+		'A project to check which action waits for a team.',
+	);
+	expect(plan.disabled).toBe(false);
+	expect(create.disabled).toBe(true);
+	expect(screen.getByTestId('plan-without-team-hint').textContent).toBe(
+		'No team picked? Plan with the CEO and it will suggest one.',
+	);
 
 	await user.click(await findByTestId('view-all-teams'));
 	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('team-detail-select'));
-
-	// Both creation flows are now available (direct vs CEO-assisted).
-	await findByTestId('create-project-submit');
-	await findByTestId('plan-with-ceo-submit');
+	expect((screen.getByTestId('create-project-submit') as HTMLButtonElement).disabled).toBe(false);
 });
 
 // Direct flow: filling the dialog and clicking "Create now" stands up a brand-new
@@ -75,43 +95,90 @@ test('the direct flow creates a project in its own new team and opens its task l
 	expect(created!.team_slug).not.toBe('default');
 }, 60_000);
 
-// CEO-assisted flow: "Plan with the CEO" hands the brief off to the HQ intake
-// conversation rather than creating the project immediately.
-test('the CEO-assisted flow opens the HQ intake thread instead of creating immediately', async () => {
+// CEO-assisted flow: "Plan with the CEO" sends the form to the CEO chat as the
+// admin's own first message and opens the dock. Nothing is created: the CEO
+// creates the project only after the admin's go-ahead in that chat.
+test('Plan with the CEO sends the form as a chat message and creates nothing', async () => {
 	const projectName = uniqueName('Planned Build');
 
-	const { findByTestId, findByPlaceholderText, user, router } = await renderApp({
+	const { findByTestId, findByPlaceholderText, user } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {},
 	});
 
-	const create = await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 });
-	await user.click(create);
-
+	await user.click(
+		await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 }),
+	);
 	await user.type(await findByPlaceholderText('e.g. Marketing Site'), projectName);
 	await user.type(
 		await findByPlaceholderText(/What is this project/),
 		'A project we want the CEO to scope with us first.',
 	);
-	await user.click(await findByTestId('view-all-teams'));
-	// A card in the catalog opens that team's detail; "Select team" confirms it.
-	await user.click(await findByTestId('team-type-card-Blank'));
-	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('plan-with-ceo-submit'));
 
-	// Lands on the CEO's intake thread inside HQ (no project created yet).
+	const expected = [
+		'I want to plan a new project with you.',
+		`Project name: ${projectName}`,
+		'Team: I did not pick one. Please suggest one.',
+		'',
+		'A project we want the CEO to scope with us first.',
+	].join('\n');
 	await waitFor(
-		() => expect(router.state.location.pathname).toMatch(/^\/projects\/hq\/tasks\/hq-\d+$/),
-		{
-			timeout: 30_000,
+		async () => {
+			const rows = await getTestContext().db.query(
+				`SELECT id FROM chat_messages WHERE role = 'user' AND content = $1`,
+				[expected],
+			);
+			expect((rows as { rows: unknown[] }).rows.length).toBe(1);
 		},
+		{ timeout: 15_000 },
 	);
+	// The dialog closed and the CEO room opened in the dock.
+	await waitFor(() => expect(screen.queryByTestId('create-project-dialog')).toBeNull());
+	await findByTestId('chat-panel');
+	expect(await projectNames()).not.toContain(projectName);
+}, 60_000);
 
-	const ctx = getTestContext();
-	const projects = (
-		(await (
-			await ctx.apiBase('/api/projects', { headers: { Authorization: `Bearer ${ctx.token}` } })
-		).json()) as { data: Array<{ name: string }> }
-	).data;
-	expect(projects.some((p) => p.name === projectName)).toBe(false);
+// A plan file rides along as an attachment on that same message, and the
+// message says so, so the CEO can pass it to create_project.
+test('Plan with the CEO attaches the project plan to the message', async () => {
+	const projectName = uniqueName('Planned With Doc');
+
+	const { findByTestId, findByPlaceholderText, user } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {},
+	});
+
+	await user.click(
+		await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 }),
+	);
+	await user.type(await findByPlaceholderText('e.g. Marketing Site'), projectName);
+	await user.type(
+		await findByPlaceholderText(/What is this project/),
+		'A project with a written plan.',
+	);
+	const fileInput = document.querySelector('input[type="file"][accept=".md,.txt,.markdown"]');
+	expect(fileInput).toBeTruthy();
+	await user.upload(
+		fileInput as HTMLInputElement,
+		new File(['# Plan\n\nShip the watchlist first.'], 'plan.markdown', { type: 'text/markdown' }),
+	);
+	await user.click(await findByTestId('plan-with-ceo-submit'));
+
+	await waitFor(
+		async () => {
+			const rows = await getTestContext().db.query(
+				`SELECT m.content, a.original_filename AS name FROM chat_messages m
+				 JOIN chat_message_attachments ca ON ca.chat_message_id = m.id
+				 JOIN assets a ON a.id = ca.asset_id
+				 WHERE m.role = 'user' AND m.content LIKE $1`,
+				[`%Project name: ${projectName}%`],
+			);
+			const found = (rows as { rows: Array<{ content: string; name: string }> }).rows;
+			expect(found).toHaveLength(1);
+			expect(found[0].content).toContain('I attached my project plan.');
+			expect(found[0].name).toMatch(/\.md$/);
+		},
+		{ timeout: 15_000 },
+	);
 }, 60_000);

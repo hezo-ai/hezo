@@ -45,7 +45,9 @@ stay readable under **History** in the room switcher.
 
 The CEO works across every project: it can answer for the whole org, file tasks into
 any project, and set up new projects with you. On a fresh instance, the home page *is*
-the CEO conversation - tell it what you want to build and it takes it from there.
+the CEO conversation - tell it what you want to build and it takes it from there. The
+**Plan with the CEO** button on the **New project** form sends what you typed there to
+this conversation as your first message.
 Once projects exist the home page becomes the dashboard; if you'd rather keep landing
 in the chat (or pin the dashboard outright), set **Landing view** under
 **Settings → Appearance**.

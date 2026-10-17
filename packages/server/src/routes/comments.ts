@@ -93,12 +93,11 @@ async function attachAuthorIcons(
 /**
  * Comments feed. Three response shapes on the one endpoint so a long thread can
  * render placeholders for every row up front and load the heavy bodies on demand
- * as the user scrolls, while small callers (e.g. the intake chat) keep the
- * one-shot full payload:
+ * as the user scrolls, while small callers keep the one-shot full payload:
  *
  *  - **full mode** (default): the original payload — every comment with `content`,
  *    `reactions` and `attachments`. Used by callers that render the whole thread
- *    inline (intake chat) and by API clients.
+ *    inline and by API clients.
  *  - **skeleton mode** (`?view=skeleton`): one row per comment with metadata +
  *    reactions (one cheap query, the single source of truth for reaction state).
  *    Text comments omit their `content` body and `attachments` (the heavy parts —

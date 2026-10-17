@@ -33,7 +33,6 @@ let ceoId: string;
 let projectSlug: string;
 let projectId: string;
 let taskId: string;
-let hqProjectSlug: string;
 let apiKey: string;
 
 beforeAll(async () => {
@@ -74,10 +73,6 @@ beforeAll(async () => {
 		body: JSON.stringify({ project_id: projectId, title: 'Mgmt Task', assignee_id: captainId }),
 	});
 	taskId = (await taskRes.json()).data.id;
-
-	hqProjectSlug = (
-		await db.query<{ slug: string }>('SELECT slug FROM projects WHERE is_internal = true LIMIT 1')
-	).rows[0].slug;
 
 	const keyRes = await app.request('/api/api-keys', {
 		method: 'POST',
@@ -290,63 +285,17 @@ describe('resolve_approval', () => {
 describe('create_project / start_team_setup (CEO)', () => {
 	let newProjectSlug: string;
 
-	it('CEO creates a project, closing an open intake task', async () => {
-		// Seed an intake ticket in HQ.
-		const intake = await admin('create_task', {
-			project: hqProjectSlug,
-			title: 'Project intake: Skunkworks',
-			assignee_id: ceoId,
-		});
-		expect(intake.error).toBeUndefined();
-		// Intake completion only fires for tickets carrying the intake label.
-		await db.query(`UPDATE tasks SET labels = '["project-intake"]'::jsonb WHERE id = $1`, [
-			intake.id,
-		]);
-
+	it('CEO creates a project from chat', async () => {
 		const t = await ceoToken();
 		const r = await call(t, 'create_project', {
 			name: 'Skunkworks',
 			description: 'A brand new initiative.',
-			intake_task_id: intake.id,
 		});
 		expect(r.error).toBeUndefined();
 		expect(r.slug).toBeDefined();
 		expect(r.planning_task_id).toBeDefined();
 		expect(r.setup_task_id).toBeDefined();
 		newProjectSlug = r.slug as string;
-
-		// The intake ticket was completed by provisioning.
-		const intakeRow = await db.query<{ status: string }>(
-			'SELECT status::text AS status FROM tasks WHERE id = $1',
-			[intake.id],
-		);
-		expect(intakeRow.rows[0].status).toBe('done');
-	});
-
-	it('rejects an unknown intake task', async () => {
-		const t = await ceoToken();
-		const r = await call(t, 'create_project', {
-			name: 'No Intake',
-			description: 'x',
-			intake_task_id: crypto.randomUUID(),
-		});
-		expect(r.error).toBe('Intake task not found');
-	});
-
-	it('rejects an intake task that is already completed', async () => {
-		const done = await admin('create_task', {
-			project: hqProjectSlug,
-			title: 'Closed intake',
-			assignee_id: ceoId,
-		});
-		await admin('update_task', { project: hqProjectSlug, task_id: done.id, status: 'cancelled' });
-		const t = await ceoToken();
-		const r = await call(t, 'create_project', {
-			name: 'Too Late',
-			description: 'x',
-			intake_task_id: done.id,
-		});
-		expect(r.error).toBe('This intake has already been completed');
 	});
 
 	it('start_team_setup assigns and wakes the CEO on the coherence task', async () => {

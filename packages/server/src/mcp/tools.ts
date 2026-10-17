@@ -209,7 +209,6 @@ import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
 import { setConnectorAuthError } from '../services/oauth/token-resolver';
 import { createProjectWithTeam } from '../services/project-create';
-import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import { authoredPromptError, authoredPromptWarning } from '../services/prompt-style-guard';
 import {
@@ -2871,19 +2870,13 @@ export function registerTools(
 			.string()
 			.optional()
 			.describe(
-				'A marketplace team slug (from get_marketplace_team / the intake baseline) to provision the roster from directly. Mutually exclusive with template_id and source_team_id.',
-			),
-		intake_task_id: z
-			.string()
-			.optional()
-			.describe(
-				'The HQ project-intake task this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success.',
+				'A marketplace team slug (from list_marketplace_teams / get_marketplace_team, or the team the admin named) to provision the roster from directly. Mutually exclusive with template_id and source_team_id.',
 			),
 	} satisfies z.ZodRawShape;
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and setup task identifiers.',
+		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in your conversation with them - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed with the admin - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. Returns the new project plus its planning and setup task identifiers.',
 		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -2906,29 +2899,6 @@ export function registerTools(
 				return { error: 'Project creation is not available in this context' };
 			}
 
-			// Idempotency: if this fulfils an intake ticket, that ticket must still be
-			// open — otherwise a re-run (e.g. after a timeout) would create a second
-			// project + team. Check before creating anything.
-			const rawIntakeTaskId = input.intake_task_id?.trim() || undefined;
-			let intakeTaskId: string | undefined;
-			let intakeTeamId: string | undefined;
-			if (rawIntakeTaskId) {
-				// Accept either the intake ticket's identifier (e.g. "HQ-1") or its
-				// UUID, like every other task reference on the MCP surface. Intake
-				// tickets always live in HQ, so resolve within the default team.
-				intakeTaskId = (await resolveTaskId(db, DEFAULT_TEAM_ID, rawIntakeTaskId)) ?? undefined;
-				if (!intakeTaskId) return { error: 'Intake task not found' };
-				const intake = await db.query<{ status: string; team_id: string }>(
-					'SELECT status::text AS status, team_id FROM tasks WHERE id = $1',
-					[intakeTaskId],
-				);
-				if (intake.rows.length === 0) return { error: 'Intake task not found' };
-				if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(intake.rows[0].status)) {
-					return { error: 'This intake has already been completed' };
-				}
-				intakeTeamId = intake.rows[0].team_id;
-			}
-
 			const result = await createProjectWithTeam(
 				containerDeps,
 				{
@@ -2942,8 +2912,8 @@ export function registerTools(
 					actorType: 'agent',
 					actorMemberId: auth.memberId,
 					// CEO-created: the coherence/setup ticket is created unassigned and
-					// does NOT auto-run. The CEO drafts its description with the intake
-					// plan, then calls start_team_setup to begin the run.
+					// does NOT auto-run. The CEO drafts its description with the setup it
+					// agreed with the admin, then calls start_team_setup to begin the run.
 					suppressCoherenceAutoStart: true,
 				},
 				{ events },
@@ -2951,31 +2921,6 @@ export function registerTools(
 			if (!result.ok) return { error: result.message };
 
 			const { project, planningTask, team, coherenceTask } = result;
-
-			if (intakeTaskId) {
-				const completed = await completeProjectIntakeAfterProvisioning(
-					db,
-					intakeTaskId,
-					name,
-					project.slug as string,
-					wsManager,
-				);
-				if (wsManager && intakeTeamId) {
-					const room = wsRoom.team(intakeTeamId);
-					if (completed.summaryComment) {
-						broadcastRowChange(
-							wsManager,
-							room,
-							'task_comments',
-							'INSERT',
-							completed.summaryComment,
-						);
-					}
-					if (completed.task) {
-						broadcastRowChange(wsManager, room, 'tasks', 'UPDATE', completed.task);
-					}
-				}
-			}
 
 			return {
 				...project,
@@ -2996,7 +2941,7 @@ export function registerTools(
 		'Kick off the initial team-coherence/setup run for a project you created via create_project. ' +
 			'CEO-only. Projects created directly from the admin form start their coherence pass automatically; ' +
 			'projects you create do NOT. First author the coherence task with update_task - replace its ' +
-			'description with the concrete plan you agreed in intake (the exact roles to hire and why, any ' +
+			'description with the concrete plan you agreed with the admin (the exact roles to hire and why, any ' +
 			'system-prompt rewrites, and the reporting structure) - then call this to assign the task to ' +
 			'yourself and start the run. Returns the started task; errors if there is no open setup task ' +
 			'for the project or a run is already active on it.',

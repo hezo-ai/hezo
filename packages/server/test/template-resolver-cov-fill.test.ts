@@ -493,7 +493,7 @@ describe('repository block', () => {
 });
 
 describe('empty-roster projects context', () => {
-	it('shows the intake pointer when only HQ exists', async () => {
+	it('shows the new-project pointer when only HQ exists', async () => {
 		// A fresh context has only the internal HQ project.
 		const fresh = await createTestContext();
 		try {

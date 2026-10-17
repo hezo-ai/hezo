@@ -315,7 +315,7 @@ describe('REST reactions endpoints', () => {
 	it('lets a superuser react in a team they can access but are not a member of (HQ fallback)', async () => {
 		// The reported bug: a superuser has access to every team (superuser bypass)
 		// but only a `member_users` row in HQ and teams they created — so reacting
-		// in a team provisioned some other way (CEO intake, template, seed) 403'd
+		// in a team provisioned some other way (CEO chat, template, seed) 403'd
 		// with "No member identity for caller". The fix resolves the reactor to the
 		// caller's HQ membership, mirroring how HQ agents act cross-team.
 

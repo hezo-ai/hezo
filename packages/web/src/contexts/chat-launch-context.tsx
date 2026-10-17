@@ -25,7 +25,9 @@ export interface ChatLaunch {
  * is forced to be a question; leaving the cursor in the box lets the operator
  * answer that question before it is asked. Sending it for them cannot be taken
  * back, while a prefill they have nothing to add to is one keypress from being
- * sent.
+ * sent. A surface that sends on the admin's behalf, where the message is
+ * theirs and complete (Plan with the CEO), posts it itself and launches with an
+ * empty draft; this context stays prefill-only.
  *
  * The value is the launch callback, matching `ScrollContentContext`'s shape.
  */

@@ -129,9 +129,13 @@ interface ChatSurfaceProps {
 	beforeMessages?: ReactNode;
 	/**
 	 * Replaces the default empty-state line (a fresh conversation). Receives
-	 * `send` so starter chips can post their text as the first message.
+	 * `send` so starter chips can post their text as the first message, and the
+	 * room's offered signup brief, when it has one.
 	 */
-	emptyState?: (send: (text: string) => Promise<unknown>) => ReactNode;
+	emptyState?: (
+		send: (text: string) => Promise<unknown>,
+		ctx: { seedBrief: string | null },
+	) => ReactNode;
 }
 
 /**
@@ -166,6 +170,7 @@ export function ChatSurface({
 		groupNudge,
 		conversationId,
 		hoursExhausted,
+		seedBrief,
 	} = useChat(active, room);
 	const { t } = useI18n();
 	// Only HQ can raise the allowance, so only a superuser is offered the link.
@@ -412,7 +417,7 @@ export function ChatSurface({
 							messages.length === 0 &&
 							compactedCount === 0 &&
 							(emptyState ? (
-								emptyState(sendText)
+								emptyState(sendText, { seedBrief })
 							) : (
 								<p className="px-1 py-6 text-center text-[13px] text-text-2">
 									{room.kind === 'agent'

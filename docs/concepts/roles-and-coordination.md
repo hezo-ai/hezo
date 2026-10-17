@@ -15,8 +15,9 @@ exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq---the
 so it can see and act across every project. You chat with the CEO to get things done
 across the whole instance:
 
-- **Intake** - describe a new project and the CEO scopes it with you, then provisions the
-  team once you've confirmed the plan (see
+- **New projects** - describe a new project in the chat, or send the **New project** form
+  to the chat with **Plan with the CEO**. The CEO scopes it with you, then creates the
+  project and its team once you've confirmed the plan (see
   [Your first project](/docs/getting-started/first-project)). It won't create anything
   until you give the go-ahead.
 - **Coordination** - ask about any project's status, tasks, or roster; the CEO

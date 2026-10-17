@@ -378,16 +378,16 @@ export interface SsoConfig {
 /**
  * What a first run starts from, written by whoever provisioned the instance.
  *
- * Applied once and never pinned: the locale lands in `system_meta` at the first
- * boot that finds none, and the project brief opens one CEO intake at the first
- * unlock. After that the instance owns both, and a later edit to this block
- * changes nothing. Null when nothing was seeded, which is every self-hosted
+ * Never pinned: the locale lands in `system_meta` at the first boot that finds
+ * none, after which the instance owns it. The project brief is offered on the
+ * home screen's CEO chat until the admin sends it, creates a project, or writes
+ * to the CEO first. Null when nothing was seeded, which is every self-hosted
  * instance and leaves the whole mechanism inert.
  */
 export interface SeedConfig {
 	/** The language and formats the instance starts in, when nothing chose them yet. */
 	locale?: LocaleSettings;
-	/** A project the CEO opens an intake for at the first unlock. */
+	/** A brief the home screen offers as the admin's first message to the CEO. */
 	project?: {
 		/** The brief as written at signup. Bounded by `PROJECT_BRIEF_MAX_CHARS`. */
 		description: string;

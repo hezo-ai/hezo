@@ -94,6 +94,12 @@ interface ConversationData {
 	 * types, and this is a response the surface already loads.
 	 */
 	hours_exhausted?: boolean;
+	/**
+	 * CEO default thread only: the brief a hosted instance's owner wrote at
+	 * signup, while it is still worth offering as their first message. Null
+	 * once sent, once a project exists, or once they wrote to the CEO first.
+	 */
+	seed_brief?: string | null;
 }
 
 /**
@@ -108,7 +114,7 @@ export interface QueuedChatMessage {
 }
 
 /** One message on its way to the server (a send in flight). */
-interface OutboundChatMessage {
+export interface OutboundChatMessage {
 	text: string;
 	attachments: CommentAttachment[];
 }
@@ -397,6 +403,40 @@ function conversationUrl(room: ChatRoom): string {
 	return '/api/chat/conversation';
 }
 
+/**
+ * Post one turn to a room. Always the batch shape: one turn carries N user
+ * messages, so a flushed queue posts each as its own bubble and a single reply
+ * answers all of them. The one send path, shared by the room hook and by a
+ * surface that sends on the admin's behalf (Plan with the CEO).
+ */
+export function postChatTurn(
+	room: ChatRoom,
+	batch: OutboundChatMessage[],
+): Promise<{ pending_member_ids?: string[] }> {
+	const body = {
+		messages: batch.map((m) => ({
+			text: m.text,
+			attachment_ids: m.attachments.map((a) => a.id),
+		})),
+	};
+	if (room.kind === 'agent') {
+		return api.post(
+			`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/agents/${encodeURIComponent(room.agentSlug)}/messages`,
+			body,
+		);
+	}
+	if (room.kind === 'group') {
+		return api.post<{ pending_member_ids: string[] }>(
+			`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}/messages`,
+			body,
+		);
+	}
+	return api.post('/api/chat/messages', {
+		...body,
+		...(room.kind === 'thread' ? { conversation_id: room.id } : {}),
+	});
+}
+
 function roomQueryKey(room: ChatRoom): readonly unknown[] {
 	if (room.kind === 'agent') return queryKeys.agentChatRoom(room.projectSlug, room.agentSlug);
 	if (room.kind === 'group') return queryKeys.groupChatRoom(room.projectSlug, room.conversationId);
@@ -668,32 +708,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	}, [subscribe, queryClient, queueKey]);
 
 	const sendMutation = useMutation({
-		// Always the batch shape: one turn carries N user messages, so a flushed
-		// queue posts each as its own bubble and a single reply answers all of them.
-		mutationFn: (batch: OutboundChatMessage[]) => {
-			const body = {
-				messages: batch.map((m) => ({
-					text: m.text,
-					attachment_ids: m.attachments.map((a) => a.id),
-				})),
-			};
-			if (room.kind === 'agent') {
-				return api.post(
-					`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/agents/${encodeURIComponent(room.agentSlug)}/messages`,
-					body,
-				);
-			}
-			if (room.kind === 'group') {
-				return api.post<{ pending_member_ids: string[] }>(
-					`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}/messages`,
-					body,
-				);
-			}
-			return api.post('/api/chat/messages', {
-				...body,
-				...(room.kind === 'thread' ? { conversation_id: room.id } : {}),
-			});
-		},
+		mutationFn: (batch: OutboundChatMessage[]) => postChatTurn(room, batch),
 		onSuccess: (data) => {
 			// A group send that summoned nobody (no mention, no locus) gets the
 			// local "tag a teammate" nudge; anything else clears it.
@@ -855,6 +870,8 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		// The allowance is spent: a reply needing a new container will not start.
 		// Warm reuse still serves, so this warns rather than locking the composer.
 		hoursExhausted: query.data?.hours_exhausted === true,
+		// The signup brief the home landing offers as a one-tap first message.
+		seedBrief: query.data?.seed_brief ?? null,
 		// Group rooms: the roster (author-label lookup), the pending strip, its
 		// cancel, and the local "tag a teammate" nudge. Inert everywhere else.
 		participants: query.data?.participants ?? EMPTY_PARTICIPANTS,

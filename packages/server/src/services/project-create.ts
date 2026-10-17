@@ -428,8 +428,8 @@ export interface CreateProjectWithTeamInput {
 	/**
 	 * When set (the CEO's create_project path), the initial coherence/setup ticket
 	 * is created UNASSIGNED and is NOT auto-woken — the CEO drafts its description
-	 * with the concrete intake plan and then calls `start_team_setup` to begin the
-	 * run. The direct `POST /api/projects` path leaves this false so coherence
+	 * with the setup it agreed with the admin and then calls `start_team_setup` to
+	 * begin the run. The direct `POST /api/projects` path leaves this false so coherence
 	 * auto-runs as before.
 	 */
 	suppressCoherenceAutoStart?: boolean;
@@ -459,8 +459,8 @@ export type CreateProjectWithTeamResult =
  * on coherence), wake the Captain, and provision the container in the background.
  *
  * Shared by the superuser "Create now" route (`POST /api/projects`) and the CEO's
- * `create_project` MCP tool, which the CEO calls once the admin approves a project
- * intake in-thread. `deps` is a `ContainerDeps` (a superset of `CreateTeamDeps`);
+ * `create_project` MCP tool, which the CEO calls once the admin approves the
+ * project in the CEO chat. `deps` is a `ContainerDeps` (a superset of `CreateTeamDeps`);
  * container provisioning is skipped when `opts.provisionContainer === false`.
  */
 export async function createProjectWithTeam(

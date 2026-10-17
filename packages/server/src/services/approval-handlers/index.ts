@@ -14,8 +14,8 @@ import type { ApprovalHandler } from './types';
  * Adding a side effect for one of those is a one-line addition here.
  *
  * Project creation is deliberately NOT here: a new project is created directly
- * by the CEO's `create_project` MCP tool once the admin approves in the intake
- * conversation, not through a formal approval gate.
+ * by the CEO's `create_project` MCP tool once the admin approves in the CEO
+ * chat, not through a formal approval gate.
  */
 export const APPROVAL_HANDLERS: Partial<Record<ApprovalType, ApprovalHandler>> = {
 	[ApprovalType.Hire]: hireHandler,

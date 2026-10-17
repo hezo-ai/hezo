@@ -4,7 +4,6 @@ import { Plus } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { CeoLandingChat } from '../../components/chat/ceo-landing';
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
-import { ProjectIntakeHomePanel } from '../../components/project-intake-home-panel';
 import { Avatar, getInitials } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -13,7 +12,6 @@ import { RelativeTime } from '../../components/ui/relative-time';
 import { useAllAdminMentions } from '../../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../../hooks/use-approvals';
 import { useLandingPreference } from '../../hooks/use-landing-preference';
-import { useProjectIntake } from '../../hooks/use-project-intake';
 import { type ProjectWithTeam, useAllVisibleProjects } from '../../hooks/use-projects';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
 import { useI18n } from '../../lib/i18n';
@@ -423,11 +421,6 @@ function HomePage() {
 			needsYouBySlug.set(m.project_slug, (needsYouBySlug.get(m.project_slug) ?? 0) + 1);
 	}
 
-	// The CEO-assisted intake lives in HQ and is instance-wide; only surface it
-	// while the welcome view is showing (no user-facing projects yet).
-	const noProjectsYet = !projectsLoading && projects.length === 0;
-	const { data: intake } = useProjectIntake(noProjectsYet);
-
 	if (projectsLoading) {
 		return (
 			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">
@@ -437,8 +430,7 @@ function HomePage() {
 	}
 
 	const hasProject = projects.length > 0;
-	const hasIntake = !!intake;
-	const showWelcome = !hasProject && !hasIntake;
+	const showWelcome = !hasProject;
 	// The per-user preference pins one side of the adaptive transition: 'chat'
 	// keeps the full-page CEO room after projects exist; 'dashboard'/'adaptive'
 	// keep the shipped behaviour (the fresh instance still lands in the chat -
@@ -454,12 +446,6 @@ function HomePage() {
 			</div>
 
 			{chatLanding && <CeoLandingChat onCreateProject={() => setCreateOpen(true)} />}
-
-			{hasIntake && intake && (
-				<div className="mb-6" data-testid="home-project-intake-section">
-					<ProjectIntakeHomePanel intake={intake} />
-				</div>
-			)}
 
 			{hasProject && !chatLanding && (
 				<>

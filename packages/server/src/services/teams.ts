@@ -120,8 +120,8 @@ export async function createTeam(
 			]);
 		}
 
-		// A project-team's single project is created on intake approval, not here —
-		// the team exists with just its Captain until the admin approves the project.
+		// A project-team's single project is created by the caller
+		// (`createProjectWithTeam`), not here.
 		if (input.templateId) {
 			await db.query(
 				`INSERT INTO team_template_assignments (team_id, team_template_id)

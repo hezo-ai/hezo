@@ -37,7 +37,6 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
 import { teardownContainer } from '../services/containers';
-import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
 import {
@@ -45,7 +44,6 @@ import {
 	enqueueAddMarketplaceTeamTask,
 } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
-import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
 import { createBundleVault } from '../services/sandbox/bundle-vault';
 import { strandedCommitsExistsSql } from '../services/sandbox/pool-db';
@@ -200,7 +198,7 @@ projectsRoutes.get('/projects', async (c) => {
 // A collection-level route, not `PATCH /projects/:projectId` — a reorder spans
 // many projects across many teams, so it carries its own gate rather than
 // `requireProjectAccessMiddleware`. It sits at `/project-display-order`, outside
-// the `/projects/…` tree, for the same reason `/project-intakes` does: Hono's
+// the `/projects/…` tree because Hono's
 // `/projects/:projectId/*` middleware pattern also matches `/projects/<word>`
 // (the wildcard matches the empty rest), so a collection-level route nested under
 // `/projects/` would be resolved as a project slug and 404 before reaching here.
@@ -264,9 +262,9 @@ projectsRoutes.put('/project-display-order', async (c) => {
 // then directly creates the project, its planning task, and an initial CEO
 // coherence/setup task that the planning task is blocked on. That setup task is
 // the project's FIRST task, and the response surfaces it so the caller can land
-// the operator on it. The separate CEO-assisted flow (project intake) is used
-// when the operator wants the CEO to help shape the project first. See
-// .dev/architecture.md.
+// the operator on it. When the operator wants the CEO to help shape the project
+// first, they talk it through in the CEO chat and the CEO calls create_project.
+// See .dev/architecture.md.
 // Superuser-gated, like team creation (the Admin owns the instance roster).
 projectsRoutes.post('/projects', async (c) => {
 	const denied = requireAdminEquivalent(c);
@@ -397,111 +395,6 @@ projectsRoutes.get('/projects/:projectId/team-bundle', async (c) => {
 		}
 		throw e;
 	}
-});
-
-// CEO-assisted project creation: open a conversation in HQ where the CEO scopes
-// the work with the admin. Nothing is created up front — no team, no project, no
-// approval; the admin's chosen team type is recorded only as the CEO's baseline.
-// On the admin's in-thread go-ahead the CEO creates the project + team itself via
-// the create_project tool. Both the first-run welcome and the ongoing "new
-// project with the CEO" flow post here.
-projectsRoutes.post('/project-intakes', async (c) => {
-	const denied = requireAdminEquivalent(c);
-	if (denied) return denied;
-
-	const db = c.get('db');
-	const body = await c.req.json<{
-		name: string;
-		description?: string;
-		template_id?: string;
-		source_team_id?: string;
-		marketplace_slug?: string;
-		initial_project_plan?: string;
-	}>();
-
-	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
-	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
-
-	// The intake conversation lives in HQ and is run by the CEO.
-	if (!(await loadCoordinationContext(db))) {
-		return err(c, 'INTERNAL', 'HQ coordination project is not available', 500);
-	}
-
-	// Record the chosen team type as the CEO's baseline suggestion — without
-	// creating anything (no team, no snapshot). The team + project are created
-	// later by the CEO's create_project tool, once the admin approves in-thread.
-	const templateId = body.template_id?.trim() || undefined;
-	const sourceTeamId = body.source_team_id?.trim() || undefined;
-	const marketplaceSlug = body.marketplace_slug?.trim() || undefined;
-	if ([templateId, sourceTeamId, marketplaceSlug].filter(Boolean).length > 1) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			'Provide only one of template_id, source_team_id, or marketplace_slug',
-			400,
-		);
-	}
-
-	let baselineTeamTypeName: string | undefined;
-	if (marketplaceSlug) {
-		const def = await getMarketplaceTeam(marketplaceSlug);
-		if (!def) return err(c, 'NOT_FOUND', `Marketplace team "${marketplaceSlug}" not found`, 404);
-		baselineTeamTypeName = def.name;
-	} else if (templateId) {
-		const tpl = await db.query<{ name: string }>('SELECT name FROM team_templates WHERE id = $1', [
-			templateId,
-		]);
-		if (tpl.rows.length === 0) return err(c, 'NOT_FOUND', 'Team template not found', 404);
-		baselineTeamTypeName = tpl.rows[0].name;
-	} else if (sourceTeamId) {
-		const t = await db.query<{ name: string; is_internal: boolean }>(
-			`SELECT t.name,
-			        EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id AND p.is_internal = true) AS is_internal
-			 FROM teams t WHERE t.id = $1`,
-			[sourceTeamId],
-		);
-		if (t.rows.length === 0) return err(c, 'NOT_FOUND', 'Source team not found', 404);
-		if (t.rows[0].is_internal) {
-			return err(c, 'INVALID_REQUEST', 'The HQ team cannot be used as a source team', 400);
-		}
-		baselineTeamTypeName = t.rows[0].name;
-	} else {
-		baselineTeamTypeName = 'Blank';
-	}
-
-	const intake = await createProjectIntake(
-		db,
-		{
-			origin: 'form',
-			name: body.name.trim(),
-			description: body.description.trim(),
-			initialProjectPlan: body.initial_project_plan?.trim() || null,
-			baselineTemplateId: templateId,
-			baselineSourceTeamId: sourceTeamId,
-			baselineMarketplaceSlug: marketplaceSlug,
-			baselineTeamTypeName,
-		},
-		c.get('wsManager'),
-	);
-	if (!intake) return err(c, 'INTERNAL', 'Failed to open project intake', 500);
-
-	return ok(
-		c,
-		{
-			intake_task_id: intake.intakeTaskId,
-			intake_task_identifier: intake.intakeTaskIdentifier,
-			project_slug: intake.projectSlug,
-		},
-		201,
-	);
-});
-
-// The single open project-intake conversation for the welcome/home view.
-projectsRoutes.get('/project-intakes', async (c) => {
-	const denied = requireAdminEquivalent(c);
-	if (denied) return denied;
-	const intake = await getOpenProjectIntakeForHome(c.get('db'));
-	return ok(c, intake);
 });
 
 projectsRoutes.get('/projects/:projectId', async (c) => {

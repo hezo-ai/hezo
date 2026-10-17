@@ -381,7 +381,7 @@ export async function waitForAgentIdle(
 	throw new Error(`Agent ${agentId} did not return to idle within ${timeoutMs}ms`);
 }
 
-/** Wait until Captain is idle (e.g. after onboarding intake wakeups finish). */
+/** Wait until Captain is idle (e.g. after its onboarding wakeups finish). */
 export async function waitForCaptainIdle(
 	page: Page,
 	teamSlug: string,

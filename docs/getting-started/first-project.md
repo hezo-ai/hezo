@@ -6,9 +6,9 @@ section: Getting started
 
 # Your first project
 
-The main way to start a project in Hezo is to **talk to the CEO**, the agent that handles
-intake for every new piece of work. (A superuser can also create one directly from the
-web app's "Create" dialog.)
+The main way to start a project in Hezo is to **talk to the CEO** in the chat. The CEO
+scopes every new piece of work with you before anything is created. (A superuser can also
+create a project directly from the web app's **New project** form.)
 
 ## 1. Tell the CEO what you want
 
@@ -16,9 +16,15 @@ Open the chat and describe the project in plain language - what you're building 
 doing, and any constraints that matter. The CEO asks clarifying questions, scopes the
 work with you, and proposes a team to do it.
 
+You can also start from the **New project** form. Fill in the name and description, then
+pick **Plan with the CEO**. The form sends what you typed to the CEO chat as your first
+message, with any project plan you attached. You don't need to pick a team first: the CEO
+proposes one.
+
 ## 2. Approve it
 
-When the scope looks right, approve it. Hezo provisions everything in one step:
+When the scope looks right, tell the CEO to go ahead in the chat. Nothing is created
+before that. Hezo then provisions everything in one step:
 
 - a **project** and its **team** (the agent roster),
 - a **Captain** to lead the team, plus the worker roles for the team template you

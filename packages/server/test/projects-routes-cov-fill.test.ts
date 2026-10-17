@@ -1,4 +1,3 @@
-import { ContainerStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LocalAssetStore } from '../src/assets/drivers/local';
 import { signProjectIconUrl } from '../src/lib/project-icon-urls';
@@ -8,9 +7,8 @@ import {
 	setSystemMeta,
 } from '../src/lib/system-meta';
 import { signAdminJwt } from '../src/middleware/auth';
-import { buildApp } from '../src/startup';
 import { blobBytes } from './helpers';
-import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import { authHeader, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const DESCRIPTION = 'A backend API that serves authenticated requests for the main app.';
@@ -36,7 +34,6 @@ let ctx: ServerTestContext;
 let token: string;
 let projectId: string;
 let projectSlug: string;
-let teamId: string;
 
 beforeAll(async () => {
 	ctx = await createTestContext();
@@ -52,7 +49,6 @@ beforeAll(async () => {
 	const data = (await res.json()).data;
 	projectId = data.id;
 	projectSlug = data.slug;
-	teamId = data.team_id;
 });
 
 afterAll(async () => {
@@ -129,170 +125,6 @@ describe('POST /api/projects validation', () => {
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toContain('task_prefix');
-	});
-});
-
-describe('project intakes', () => {
-	it('rejects missing name and missing description', async () => {
-		const noName = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ description: DESCRIPTION }),
-		});
-		expect(noName.status).toBe(400);
-
-		const noDesc = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Intake Without Description' }),
-		});
-		expect(noDesc.status).toBe(400);
-	});
-
-	it('rejects providing both template_id and source_team_id', async () => {
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Both Baselines',
-				description: DESCRIPTION,
-				template_id: '00000000-0000-0000-0000-000000000001',
-				source_team_id: '00000000-0000-0000-0000-000000000002',
-			}),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain(
-			'only one of template_id, source_team_id, or marketplace_slug',
-		);
-	});
-
-	it('404s on an unknown template_id', async () => {
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Unknown Template Intake',
-				description: DESCRIPTION,
-				template_id: '00000000-0000-0000-0000-000000000000',
-			}),
-		});
-		expect(res.status).toBe(404);
-	});
-
-	it('404s on an unknown source_team_id', async () => {
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Unknown Source Intake',
-				description: DESCRIPTION,
-				source_team_id: '00000000-0000-0000-0000-000000000000',
-			}),
-		});
-		expect(res.status).toBe(404);
-	});
-
-	it('rejects the HQ team as a source team', async () => {
-		const hq = await ctx.db.query<{ team_id: string }>(
-			'SELECT team_id FROM projects WHERE is_internal = true LIMIT 1',
-		);
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'HQ Source Intake',
-				description: DESCRIPTION,
-				source_team_id: hq.rows[0].team_id,
-			}),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('HQ');
-	});
-
-	it('opens an intake with the Blank baseline when nothing is chosen', async () => {
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Default Baseline Intake', description: DESCRIPTION }),
-		});
-		expect(res.status).toBe(201);
-		const data = (await res.json()).data;
-		expect(data.intake_task_id).toBeTruthy();
-		expect(data.intake_task_identifier).toBeTruthy();
-		expect(data.project_slug).toBeTruthy();
-
-		// The intake task lives in HQ and records the Blank baseline.
-		const task = await ctx.db.query<{ description: string; project_id: string }>(
-			'SELECT description, project_id FROM tasks WHERE id = $1',
-			[data.intake_task_id],
-		);
-		expect(task.rows.length).toBe(1);
-		expect(task.rows[0].description).toContain('Blank');
-	});
-
-	it('opens an intake with a template baseline', async () => {
-		const tpl = await ctx.db.query<{ id: string; name: string }>(
-			"SELECT id, name FROM team_templates WHERE name = 'App Team' LIMIT 1",
-		);
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Template Baseline Intake',
-				description: DESCRIPTION,
-				template_id: tpl.rows[0].id,
-			}),
-		});
-		expect(res.status).toBe(201);
-		const data = (await res.json()).data;
-		const task = await ctx.db.query<{ description: string }>(
-			'SELECT description FROM tasks WHERE id = $1',
-			[data.intake_task_id],
-		);
-		expect(task.rows[0].description).toContain('App Team');
-	});
-
-	it('opens an intake from a source team baseline', async () => {
-		const res = await ctx.app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Source Team Baseline Intake',
-				description: DESCRIPTION,
-				source_team_id: teamId,
-			}),
-		});
-		expect(res.status).toBe(201);
-	});
-
-	it('GET /project-intakes returns the open intake conversation', async () => {
-		const res = await ctx.app.request('/api/project-intakes', { headers: authHeader(token) });
-		expect(res.status).toBe(200);
-		const data = (await res.json()).data;
-		expect(data).not.toBeNull();
-		expect(data.task_id).toBeTruthy();
-		expect(data.task_identifier).toBeTruthy();
-		expect(data.project_slug).toBeTruthy();
-		expect(data.ceo_title).toBeTruthy();
-	});
-
-	it('500s when the HQ coordination context is unavailable (CEO disabled)', async () => {
-		await ctx.db.query(
-			"UPDATE member_agents SET admin_status = 'disabled'::agent_admin_status WHERE slug = 'ceo'",
-		);
-		try {
-			const res = await ctx.app.request('/api/project-intakes', {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: 'No CEO Intake', description: DESCRIPTION }),
-			});
-			expect(res.status).toBe(500);
-			expect((await res.json()).error.message).toContain('HQ coordination project');
-		} finally {
-			await ctx.db.query(
-				"UPDATE member_agents SET admin_status = 'enabled'::agent_admin_status WHERE slug = 'ceo'",
-			);
-		}
 	});
 });
 

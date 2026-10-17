@@ -1,23 +1,24 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deriveAuthKeyPair, deriveUnlockKey, PROJECT_INTAKE_LABEL } from '@hezo/shared';
+import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
 import type { SeedConfig } from '../src/config/types';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import { getInstanceLocale, getSystemMeta, setInstanceLocale } from '../src/lib/system-meta';
-import { SEED_PROJECT_CONSUMED_KEY } from '../src/services/seed';
+import { pendingSeedBrief, SEED_PROJECT_CONSUMED_KEY } from '../src/services/seed';
 import { getRunSocketDir } from '../src/services/workspace';
 import { type HezoConfig, type StartupResult, startup } from '../src/startup';
 import { testHezoConfig } from './helpers/config';
 
 // Drives the production startup() path with a `seed` block, the way a
 // provisioned instance boots. Route tests build the app without startup(), so
-// this is the only proof that the consumer is wired to the workspace phase and
-// the unlock hook at all: a CLI master key enrolls and unlocks in one boot,
-// which fires the hook exactly as the setup route does.
+// this is the only proof that the locale is wired to the workspace phase, and
+// that an unlock - a CLI master key enrolls and unlocks in one boot, firing the
+// hook exactly as the setup route does - turns the brief into nothing but an
+// offer on the home screen.
 
 const PHRASE =
 	'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -32,11 +33,8 @@ const SEED: SeedConfig = {
 	project: { description: BRIEF },
 };
 
-async function countIntakes(db: Db): Promise<number> {
-	const r = await db.query<{ count: number }>(
-		'SELECT count(*)::int AS count FROM tasks WHERE labels @> $1::jsonb',
-		[JSON.stringify([PROJECT_INTAKE_LABEL])],
-	);
+async function countTasks(db: Db): Promise<number> {
+	const r = await db.query<{ count: number }>('SELECT count(*)::int AS count FROM tasks');
 	return r.rows[0].count;
 }
 
@@ -97,7 +95,7 @@ describe('startup with a seed block', () => {
 		}
 	});
 
-	it('applies the locale at boot and opens one intake across two unlocks', async () => {
+	it('applies the locale at boot and only offers the brief, across two unlocks', async () => {
 		const dataDir = freshDataDir();
 		const first = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
 		expect(first.masterKeyState).toBe('unlocked');
@@ -112,30 +110,28 @@ describe('startup with a seed block', () => {
 		expect(body.localeConfigured).toBe(true);
 		expect(body.locale.language).toBe('de');
 
-		// The unlock hook ran the consumer in the background.
+		// The unlock creates nothing for the brief: no task, no marker. The home
+		// screen offers it instead.
 		await waitForBackground();
-		expect(await countIntakes(first.db)).toBe(1);
-		expect(await getSystemMeta(first.db, SEED_PROJECT_CONSUMED_KEY)).not.toBeNull();
-		const task = await first.db.query<{ description: string }>(
-			'SELECT description FROM tasks WHERE labels @> $1::jsonb',
-			[JSON.stringify([PROJECT_INTAKE_LABEL])],
-		);
-		expect(task.rows[0].description).toContain(BRIEF);
+		expect(await countTasks(first.db)).toBe(0);
+		expect(await getSystemMeta(first.db, SEED_PROJECT_CONSUMED_KEY)).toBeNull();
+		expect(await pendingSeedBrief(first.db)).toBe(BRIEF);
 		await shutdown();
 
 		// The same instance restarted and unlocked again, seed still in the file.
 		const second = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
 		expect(second.masterKeyState).toBe('unlocked');
 		await waitForBackground();
-		expect(await countIntakes(second.db)).toBe(1);
+		expect(await countTasks(second.db)).toBe(0);
+		expect(await pendingSeedBrief(second.db)).toBe(BRIEF);
 	}, 120_000);
 
 	it('opens nothing and configures nothing when the file carries no seed', async () => {
 		const booted = await boot(freshDataDir(), { masterKey: MASTER_KEY });
 		expect(booted.masterKeyState).toBe('unlocked');
 		await waitForBackground();
-		expect(await countIntakes(booted.db)).toBe(0);
-		expect(await getSystemMeta(booted.db, SEED_PROJECT_CONSUMED_KEY)).toBeNull();
+		expect(await countTasks(booted.db)).toBe(0);
+		expect(await pendingSeedBrief(booted.db)).toBeNull();
 		const status = await booted.app.request('/api/status');
 		expect(((await status.json()) as { localeConfigured: boolean }).localeConfigured).toBe(false);
 	}, 60_000);

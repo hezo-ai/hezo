@@ -207,9 +207,9 @@ async function createLabeledInternalTask(
  *
  * A comment that merely *says* it needs admin confirmation raises no
  * `admin_mentions` row, so it reaches no inbox and the task waits on an answer
- * nobody was asked for. Shared with the project-intake body rather than written
- * twice, so the two cannot drift apart on the one instruction that decides
- * whether a question is actually delivered.
+ * nobody was asked for. Shared by every server-written task body rather than
+ * written into each, so they cannot drift apart on the one instruction that
+ * decides whether a question is actually delivered.
  */
 export const ACTIVE_ADMIN_MENTION_RULE =
 	'Put an active `@admin` in any comment where you need them to answer - without it the question reaches no inbox and the task stalls.';
@@ -223,7 +223,7 @@ function buildTeamCoherenceReviewBody(
 	const draftBanner = autoStart
 		? ''
 		: `> **Setup plan — fill this in before you start.**
-> You created this project from an intake conversation, so this setup task has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this task to yourself and begin the run. Until you do, the Captain's planning task stays blocked on it.
+> You created this project after planning it with the admin in your chat, so this setup task has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this task to yourself and begin the run. Until you do, the Captain's planning task stays blocked on it.
 
 `;
 	const changesSection = changeSummary

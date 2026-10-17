@@ -112,7 +112,7 @@ import { DOCKER_CONTAINER_HOST_ALIAS } from './services/sandbox/endpoints';
 import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
-import { applySeedLocale, consumeSeedProject } from './services/seed';
+import { applySeedLocale } from './services/seed';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { setStartupPhase } from './startup-progress';
@@ -576,17 +576,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 				// unintended.
 				.catch((err) => log.error('Failed to connect the container backend after unlock:', err))
 				.then(startUnlockedServices),
-		);
-	});
-
-	// A seeded project brief becomes one CEO intake at the first unlock, which
-	// on a provisioned instance is the moment setup completes. The consumer
-	// guards its own once-ness with a marker, so a later unlock is a no-op.
-	masterKeyManager.onUnlock(() => {
-		trackBackground(
-			consumeSeedProject(db, wsManager).catch((err) =>
-				log.error('Failed to open the seeded project intake:', err),
-			),
 		);
 	});
 

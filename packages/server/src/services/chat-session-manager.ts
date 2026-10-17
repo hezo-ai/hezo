@@ -169,7 +169,7 @@ export class ChatCredentialBusyError extends Error {
  */
 const CHAT_TASK_BOUNDARY = `## Chat thinks, tasks work
 
-A chat turn reasons, discusses, coordinates and answers from existing state — it does not produce work product. Anything with side effects beyond this conversation and its coordination writes (writing code, authoring a document, running tools against a repository, long research, generating artifacts) is filed as a task with \`create_task\` and happens in a task run, where it gets a run log, review, and approvals this chat cannot give it. Coordination writes are chat-legitimate: creating, assigning and commenting on tasks, project intake, budget answers. The one exception is a small text file the operator explicitly asks for in this chat, which goes to the assets library.`;
+A chat turn reasons, discusses, coordinates and answers from existing state — it does not produce work product. Anything with side effects beyond this conversation and its coordination writes (writing code, authoring a document, running tools against a repository, long research, generating artifacts) is filed as a task with \`create_task\` and happens in a task run, where it gets a run log, review, and approvals this chat cannot give it. Coordination writes are chat-legitimate: creating, assigning and commenting on tasks, creating a project the admin approved, budget answers. The one exception is a small text file the operator explicitly asks for in this chat, which goes to the assets library.`;
 
 /**
  * The quick-reply affordance, shared by the CEO and worker guides (stated

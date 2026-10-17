@@ -1,14 +1,8 @@
+import { ChatMessageRole } from '@hezo/shared';
 import { runtimeConfig } from '../config/runtime';
 import type { Db } from '../db/database';
-import {
-	deleteSystemMeta,
-	getInstanceLocale,
-	instanceLocaleIsConfigured,
-	setInstanceLocale,
-} from '../lib/system-meta';
+import { getSystemMeta, instanceLocaleIsConfigured, setInstanceLocale } from '../lib/system-meta';
 import { logger } from '../logger';
-import { createProjectIntake, type ProjectIntakeResult } from './project-intake';
-import type { WebSocketManager } from './ws';
 
 const log = logger.child('seed');
 
@@ -18,68 +12,18 @@ const log = logger.child('seed');
  * A provisioner that stands an instance up on someone's behalf writes the
  * language they chose and the brief they typed into the config file (H24).
  * This module is the one consumer of that block: the locale lands in
- * `system_meta` at boot, the brief opens a CEO intake at the first unlock, and
- * each happens once. Both read the config inside the function, never at module
- * scope, and both are no-ops on an instance whose file carries no `seed`.
+ * `system_meta` at boot, once, and the brief is offered on the home screen's
+ * CEO chat until the admin sends it, creates a first project, or writes to the
+ * CEO first. Both read the config inside the function, never at module scope,
+ * and both are no-ops on an instance whose file carries no `seed`.
  */
 
 /**
- * The `system_meta` marker that says the seeded brief has been turned into an
- * intake. Present means done; its value is when. Lives in the tenant's own
- * database, so it survives a restart and a rebuilt host, and goes with the
- * database when that is wiped - which is the one case a seed applies again.
+ * The `system_meta` marker an earlier release wrote when it opened a CEO intake
+ * task for the seeded brief. Read only: an instance that already turned its
+ * brief into that task is not offered the brief a second time.
  */
 export const SEED_PROJECT_CONSUMED_KEY = 'seed_project:consumed';
-
-/** The title a seeded intake falls back to when the brief yields no usable sentence. */
-export const DEFAULT_SEED_PROJECT_NAME = 'New project';
-
-/** Longest derived project name, in code points. A title, not a slug. */
-export const SEED_PROJECT_NAME_MAX_CHARS = 60;
-
-/** Sentence enders, Latin and CJK; a newline ends a sentence too. */
-const SENTENCE_END = /[.!?。！？\n\r]/;
-
-/**
- * Characters a brief's first sentence must not carry into a task title: the
- * Markdown and mention syntax the CEO acts on (`#`, `@`, backticks) and every
- * control character. Stripped rather than refused, since the title is only a
- * placeholder the CEO replaces.
- */
-function isTitleSafe(char: string): boolean {
-	const code = char.codePointAt(0) ?? 0;
-	if (code < 0x20 || code === 0x7f) return false;
-	return char !== '#' && char !== '@' && char !== '`';
-}
-
-/**
- * A placeholder project name from a brief: its first sentence, stripped of
- * anything that would read as syntax in a title, capped at a word boundary.
- *
- * Only ever a ticket title and the bold text in the greeting. The seeded task
- * body tells the CEO to propose a real name the admin confirms, because a
- * derived one is not fit to become a slug: `toSlug` drops every non-ASCII
- * letter, so a German sentence loses its umlauts and a Japanese one slugs to
- * nothing at all.
- */
-export function deriveProjectName(description: string): string {
-	const firstSentence = description.trim().split(SENTENCE_END)[0] ?? '';
-	const cleaned = Array.from(firstSentence)
-		.filter(isTitleSafe)
-		.join('')
-		.replace(/\s+/g, ' ')
-		.trim();
-	if (cleaned.length === 0) return DEFAULT_SEED_PROJECT_NAME;
-
-	const chars = Array.from(cleaned);
-	if (chars.length <= SEED_PROJECT_NAME_MAX_CHARS) return cleaned;
-	const capped = chars.slice(0, SEED_PROJECT_NAME_MAX_CHARS).join('');
-	const lastSpace = capped.lastIndexOf(' ');
-	// Cut at the last word boundary inside the cap, unless that leaves too
-	// little to read as a title; then a mid-word cut is the lesser harm.
-	const atWord = lastSpace >= SEED_PROJECT_NAME_MAX_CHARS / 2 ? capped.slice(0, lastSpace) : capped;
-	return atWord.trim();
-}
 
 /**
  * Write the seeded locale into `system_meta`, once.
@@ -103,65 +47,30 @@ export async function applySeedLocale(db: Db): Promise<boolean> {
 }
 
 /**
- * Open the CEO intake for the seeded brief, once.
+ * The seeded brief, while it is still worth offering; otherwise null.
  *
- * Registered on the master-key unlock hook, which fires at the first setup and
- * again at every later unlock. The marker is written first, as a conditional
- * insert, and only the caller that inserted it proceeds: two unlocks, or two
- * processes against one database, cannot open two intakes. The intake needs
- * only HQ and an enabled CEO, both seeded at boot before any key exists, so
- * the brief is waiting on the home screen by the time setup completes.
+ * The home screen's CEO chat offers it as a one-tap first message. It stops
+ * being offered once any of these holds: an earlier release already opened an
+ * intake task for it, a project exists, or the admin has written in an HQ
+ * conversation. No marker is written: the conditions are the record.
  *
- * A failure gives the marker back: `createProjectIntake` answers null when
- * the CEO or HQ is missing, and either that or a thrown error deletes the
- * marker and logs, so the next unlock tries again - one attempt per unlock,
- * visible in the log, and no second mechanism.
- *
- * Returns the intake it opened, or null when there was nothing to do.
+ * Read on the CEO chat's default-thread fetch. The checks run cheapest first
+ * and only while a brief is configured; the project check settles it for good
+ * once the first project exists, so the message check needs no index of its own.
  */
-export async function consumeSeedProject(
-	db: Db,
-	wsManager?: WebSocketManager,
-): Promise<ProjectIntakeResult | null> {
-	const seed = runtimeConfig().seed;
-	if (!seed?.project) return null;
-
-	const claimed = await db.query<{ key: string }>(
-		`INSERT INTO system_meta (key, value) VALUES ($1, $2)
-		 ON CONFLICT (key) DO NOTHING
-		 RETURNING key`,
-		[SEED_PROJECT_CONSUMED_KEY, new Date().toISOString()],
+export async function pendingSeedBrief(db: Db): Promise<string | null> {
+	const brief = runtimeConfig().seed?.project?.description;
+	if (!brief) return null;
+	if ((await getSystemMeta(db, SEED_PROJECT_CONSUMED_KEY)) !== null) return null;
+	const r = await db.query<{ settled: boolean }>(
+		`SELECT EXISTS (SELECT 1 FROM projects WHERE is_internal = false)
+		     OR EXISTS (
+		          SELECT 1 FROM chat_messages m
+		          JOIN chat_conversations c ON c.id = m.conversation_id
+		          JOIN projects p ON p.id = c.project_id
+		          WHERE p.is_internal = true AND m.role = $1
+		        ) AS settled`,
+		[ChatMessageRole.User],
 	);
-	if (claimed.rows.length === 0) return null;
-
-	const { description } = seed.project;
-	let intake: ProjectIntakeResult | null;
-	try {
-		// The instance locale is what the seed (or the setup request) wrote, and
-		// it is the language the admin reads: the CEO is asked to answer in it.
-		const { language } = await getInstanceLocale(db);
-		intake = await createProjectIntake(
-			db,
-			{
-				origin: 'seed',
-				name: deriveProjectName(description),
-				description,
-				initialProjectPlan: null,
-				adminLanguage: language,
-			},
-			wsManager,
-		);
-	} catch (err) {
-		await deleteSystemMeta(db, SEED_PROJECT_CONSUMED_KEY);
-		throw err;
-	}
-	if (!intake) {
-		await deleteSystemMeta(db, SEED_PROJECT_CONSUMED_KEY);
-		log.error(
-			'The seeded project brief could not open its intake (no enabled CEO or HQ project); it will be tried again at the next unlock',
-		);
-		return null;
-	}
-	log.info(`Opened the seeded project intake ${intake.intakeTaskIdentifier}`);
-	return intake;
+	return r.rows[0]?.settled ? null : brief;
 }
