@@ -119,6 +119,7 @@ describe('the policy schema', () => {
 			'integrity hashes under two algorithms',
 			{ sdkIntegrity: `sha384-${'A'.repeat(64)} sha512-${'b'.repeat(86)}==` },
 		],
+		['an integrity digest too short for its algorithm', { sdkIntegrity: 'sha384-a' }],
 		['an uppercase identity hash', { identifierHash: 'F'.repeat(64) }],
 		['a short identity hash', { identifierHash: 'f'.repeat(63) }],
 		['an empty website token', { websiteToken: '  ' }],

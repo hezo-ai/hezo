@@ -124,7 +124,15 @@ const logCompactionSchema = z
 	})
 	.strict();
 
-const SRI_HASH = 'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}';
+/**
+ * One hash: an algorithm a browser accepts, and its 32-, 48- or 64-byte digest
+ * in padded base64. A browser compares the value as a string with the encoding
+ * of the script's own digest, so one of any other length matches no script and
+ * the browser refuses the one it guards. One literal, because the hosted control
+ * plane restates it and a test there compares the two.
+ */
+const SRI_HASH =
+	'(?:sha256-[A-Za-z0-9+/]{43}=|sha384-[A-Za-z0-9+/]{64}|sha512-[A-Za-z0-9+/]{86}==)';
 
 /**
  * A Subresource Integrity value a third-party script must match: one or more
@@ -138,7 +146,7 @@ function sriList(field: string) {
 			.string()
 			.trim()
 			.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
-				message: `${field} must be one or more space-separated sha256-, sha384- or sha512- hashes`,
+				message: `${field} must be one or more space-separated sha256-, sha384- or sha512- hashes, each with the whole base64 digest`,
 			})
 			// A browser checks a script only against the strongest algorithm the
 			// list names and ignores every other entry, so a rollout listing the old
