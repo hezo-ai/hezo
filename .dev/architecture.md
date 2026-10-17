@@ -6830,12 +6830,13 @@ self-hosted Hezo loads none of it.
   recording if the visit is picked, and every later one only tightens, because the
   recorder has no stop or reconfigure hook. Nothing (the route's 404 after a good answer)
   turns the page off: nothing more is sent and `rr-block` goes on `<html>`. So does losing
-  the signed-in owner (the vault locked, or a 401 from `/api/me`), because the owner's
-  details stay cached after either. A visit no
+  the signed-in owner (the vault locked, or a 401 from `/api/me` or from the recheck
+  itself, as when the token expires on a tab left open), because the owner's details and
+  the last good answer stay cached after either. A visit no
   longer picked, or no `replay`, gets `rr-block`; `showText` turning false gets `rr-mask`.
   rrweb's full snapshot every 30 s then drops what was shown. Starting or loosening waits
   for the next page load. `useAnalytics` refetches every two minutes while it holds an
-  answer and the last one was not a 404, because the app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
+  answer and the last one was not a 404 or a 401, because the app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
   browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
   `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends
   `umami.track(name)` for the nearest `[data-analytics]` ancestor - a kebab-case name of at

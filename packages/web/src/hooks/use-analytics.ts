@@ -24,9 +24,16 @@ export interface Analytics {
  */
 const ANALYTICS_RECHECK_MS = 2 * 60_000;
 
-/** The route's answer when analytics is not configured, or no longer is. */
-function isNotConfigured(error: unknown): boolean {
-	return error instanceof ApiError && error.status === 404;
+/**
+ * The route's answers that end analytics on this page: 404 when it is not
+ * configured or no longer is, and 401 when the session has ended, as it does
+ * when the token expires on a tab left open. Any other failure, a network error
+ * among them, leaves the page as it was.
+ */
+const ENDING_STATUSES: ReadonlySet<number> = new Set([401, 404]);
+
+function endsAnalytics(error: unknown): boolean {
+	return error instanceof ApiError && ENDING_STATUSES.has(error.status);
 }
 
 /**
@@ -39,7 +46,7 @@ function isNotConfigured(error: unknown): boolean {
  * is not retried.
  *
  * **Asked again every `ANALYTICS_RECHECK_MS` while the deployment runs
- * analytics here**, and never once it answers 404. The deployer can stop
+ * analytics here**, and never once it answers 404 or 401. The deployer can stop
  * analytics, stop recording the account, or end a recording that shows page
  * text while the owner keeps the app open for hours; the app never refetches on
  * focus, so without this the change would wait for a reload.
@@ -52,7 +59,7 @@ export function useAnalytics(identified: boolean) {
 		retry: false,
 		retryOnMount: false,
 		refetchInterval: (query) =>
-			query.state.data && !isNotConfigured(query.state.error) ? ANALYTICS_RECHECK_MS : false,
+			query.state.data && !endsAnalytics(query.state.error) ? ANALYTICS_RECHECK_MS : false,
 	});
 }
 
@@ -79,8 +86,9 @@ function routePattern(router: AppRouter): string {
  *
  * **Every answer goes to `applyAnalyticsSettings`**, which starts analytics on
  * the first and only ever tightens it after: a 404 after a good answer means
- * the deployment stopped analytics, and losing the signed-in owner means there
- * is nobody to count, and both are applied as nothing.
+ * the deployment stopped analytics, and losing the signed-in owner (here, or a
+ * 401 from the recheck) means there is nobody to count, and both are applied as
+ * nothing.
  *
  * **One subscription reports every page view after the first.** The tracker's
  * own history hook is off, because it sees `pushState` and `replaceState` but
@@ -92,7 +100,7 @@ function routePattern(router: AppRouter): string {
 export function useProductAnalytics(identified: boolean): void {
 	const { data, error } = useAnalytics(identified);
 	const umami = data?.umami;
-	const stopped = isNotConfigured(error);
+	const stopped = endsAnalytics(error);
 	const router = useRouter();
 
 	useEffect(() => {
