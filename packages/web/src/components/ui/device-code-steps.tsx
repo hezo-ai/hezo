@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Check, Copy, ExternalLink, Link2, Loader2, TriangleAlert } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { copyToClipboard } from '../../lib/clipboard';
@@ -290,7 +291,9 @@ export function DeviceCodeSteps({
 				</div>
 			</div>
 
-			<ol className="flex flex-col">
+			{/* Never recorded: the one-time code, the provider's sign-in address and
+			    the code pasted back from it are each a credential while they last. */}
+			<ol className={`flex flex-col ${NEVER_RECORD_CLASS}`} data-testid="device-code-rail">
 				{hasCopyStep && (
 					<Step
 						state={copyState}

@@ -303,6 +303,54 @@ export interface PolicyConfig {
 	 * instance offers no support channel, and nothing in the UI mentions one.
 	 */
 	support?: SupportConfig;
+	/**
+	 * Product analytics the deployer runs on the owner's own use of the web app.
+	 * Absent means nothing is loaded and nothing leaves the browser.
+	 */
+	analytics?: AnalyticsConfig;
+}
+
+/**
+ * Product analytics, keyed by the tool that collects it so a second tool is a
+ * sibling key rather than a reshaped block.
+ *
+ * **It names one account, not the instance.** Like the support identity it is
+ * served only to the owner's session (`GET /api/analytics`), never to anyone
+ * else and never on a screen before sign-in.
+ */
+export interface AnalyticsConfig {
+	umami: UmamiAnalyticsConfig;
+}
+
+/** An Umami website, and who the owner is to it. */
+export interface UmamiAnalyticsConfig {
+	/**
+	 * Where the tracker and recorder scripts are served, as an `https:` URL with
+	 * no trailing slash, query or fragment. The scripts are `${host}/script.js`
+	 * and `${host}/recorder.js`, and both send back to the same place.
+	 */
+	host: string;
+	/** The Umami website id the owner's visits are counted under. */
+	websiteId: string;
+	/**
+	 * The owner's issuer-side account id, 1-50 characters, written by the
+	 * deployer. Never derived here, and never an email.
+	 */
+	distinctId: string;
+	/** Session recording. Absent means this account is never recorded. */
+	replay?: UmamiReplayConfig;
+}
+
+/** How the owner's visits are recorded, when they are. */
+export interface UmamiReplayConfig {
+	/** The share of browser sessions recorded, from 0 to 1. Decided once per browser session. */
+	sampleRate: number;
+	/**
+	 * Record page text as shown. False hides all page text. True is the
+	 * deployer's short-lived debug recording. Typed input is masked by the Umami
+	 * website's own setting, whichever this is.
+	 */
+	showText: boolean;
 }
 
 /**

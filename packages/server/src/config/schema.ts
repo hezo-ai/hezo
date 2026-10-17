@@ -158,6 +158,38 @@ const chatwootSupportSchema = z
 	});
 
 /**
+ * Product analytics. Every value lands on a script tag in the owner's browser,
+ * so each is checked for the shape that tag needs: the scripts are fetched from
+ * `${host}/script.js` and `${host}/recorder.js`, so a host carrying a trailing
+ * slash, a query or a fragment would load nothing.
+ */
+const umamiAnalyticsSchema = z
+	.object({
+		host: httpsUrl('host').refine(
+			(value) => {
+				try {
+					const url = new URL(value);
+					return !value.endsWith('/') && url.search === '' && url.hash === '';
+				} catch {
+					return false;
+				}
+			},
+			{ message: 'host must have no trailing slash, query or fragment' },
+		),
+		websiteId: z.guid({ message: 'websiteId must be a UUID' }),
+		// Umami's own limit on a distinct id.
+		distinctId: z.string().trim().min(1).max(50),
+		replay: z
+			.object({
+				sampleRate: z.number().min(0).max(1),
+				showText: z.boolean(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
+
+/**
  * The pinned-settings block. Also the shape of the standalone policy file, which
  * is why it is exported: one schema for both, so a file the deployer writes and
  * a block they inline are validated identically.
@@ -193,6 +225,7 @@ export const policySchema = z
 			})
 			.strict(),
 		support: z.object({ chatwoot: chatwootSupportSchema }).strict().optional(),
+		analytics: z.object({ umami: umamiAnalyticsSchema }).strict().optional(),
 	})
 	.strict();
 

@@ -1,4 +1,5 @@
 import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Link } from '@tanstack/react-router';
 import { ExternalLink } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
@@ -524,6 +525,15 @@ export function MarkdownProse({
 				<div className="overflow-x-auto">
 					<table>{props.children}</table>
 				</div>
+			),
+			// An embedded image usually points at a signed asset address, which is a
+			// key to that file while it lasts, so it is never recorded.
+			img: ({ node: _node, alt, className, ...props }) => (
+				<img
+					{...props}
+					alt={alt ?? ''}
+					className={className ? `${className} ${NEVER_RECORD_CLASS}` : NEVER_RECORD_CLASS}
+				/>
 			),
 			// A fenced code block renders inside a relative wrapper so its copy
 			// button can overlay the bottom-right corner without pushing the

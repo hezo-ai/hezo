@@ -4,6 +4,7 @@ import {
 	isArchiveFilter,
 	isTextReviewableAssetMime,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import {
 	ChevronLeft,
@@ -177,7 +178,7 @@ function AssetViewerPage() {
 						<a
 							href={downloadUrl}
 							download={basename}
-							className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1"
+							className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1 ${NEVER_RECORD_CLASS}`}
 							aria-label="Download this file"
 							data-testid="asset-viewer-download"
 						>
@@ -190,7 +191,7 @@ function AssetViewerPage() {
 							href={asset.url}
 							target="_blank"
 							rel="noopener noreferrer"
-							className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1"
+							className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1 ${NEVER_RECORD_CLASS}`}
 							aria-label="Open raw in new tab"
 							data-testid="asset-viewer-raw"
 						>

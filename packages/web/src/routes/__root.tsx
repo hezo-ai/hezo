@@ -31,6 +31,7 @@ import { type ChatLaunch, ChatLaunchContext } from '../contexts/chat-launch-cont
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useProductAnalytics } from '../hooks/use-analytics';
 import { CEO_ROOM } from '../hooks/use-chat';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
@@ -148,6 +149,9 @@ function AppShell() {
 	// The owner's identity is fetched only once a session exists and is handed to
 	// the install already running, so a conversation started at a gate carries.
 	useSupportChat(!!status?.sso && !!me.data, status?.support);
+	// Product analytics are the owner's alone, so unlike the chat they wait for a
+	// session: nothing is counted or recorded on a screen before sign-in.
+	useProductAnalytics(!!status?.sso && !!me.data);
 
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {

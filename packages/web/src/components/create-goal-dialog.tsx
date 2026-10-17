@@ -230,7 +230,12 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 						>
 							Cancel
 						</Button>
-						<Button type="submit" shortcut="mod+Enter" disabled={!title.trim() || pending}>
+						<Button
+							type="submit"
+							shortcut="mod+Enter"
+							disabled={!title.trim() || pending}
+							data-analytics={isEdit ? 'save-goal' : 'create-goal'}
+						>
 							{pending && <Loader2 className="w-4 h-4 animate-spin" />}
 							{isEdit ? t('common.save') : 'Create'}
 						</Button>

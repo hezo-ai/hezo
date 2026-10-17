@@ -63,6 +63,37 @@ the proxy. A compromised sandbox therefore exposes the prompts and files in that
 sandbox, and the provider key the run was using. Every other secret was never
 there. See [Secret protection & egress](/docs/security/secret-protection).
 
+## How we see you use the app
+
+When you are signed in to your instance, Hezo Cloud counts the pages you open and
+the main buttons you click, such as creating a task or sending a chat message. A
+page is counted by what kind of page it is, such as a task page, never by its
+address, so the names of your projects, tasks and files are not part of it. A
+click is counted by the name we gave the button, never by what is written on it.
+
+**We also record your sessions in the app**, so we can see where it gets in your
+way. A recording shows the layout of each page and where you moved and clicked.
+All the text on the page is hidden in it, and so is everything you type. It does
+keep the address of each page it covers, which can name a project, a task or a
+file. Page views, clicks and recordings go to an analytics service we run
+ourselves.
+
+**Some screens are never recorded at all.** A recording shows a blank box in their
+place: your recovery phrase, passwords, a newly created API key, the sign-in codes
+used to connect an AI provider or another service, credentials you paste in,
+images you attach or upload, your agents' run logs and container logs, and the
+chat.
+
+**To look into a problem with your account, we can turn on recordings that show
+the page text, for your account only.** Typed text stays hidden, and the screens
+above are still never recorded. It switches itself off on its own, after 14 days
+unless we set a different end date, and every time it is turned on or off is kept
+in our audit trail.
+
+Recordings and the click data behind them are kept for 30 days, then deleted.
+
+Self-hosted Hezo sends none of this.
+
 ## Payment details
 
 Your card never reaches us. Payment is handled entirely by Stripe, which is the

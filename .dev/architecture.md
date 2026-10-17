@@ -6788,6 +6788,70 @@ wrote back. The first rides the public status; the second stays behind the owner
   `logout()` (`lib/auth.ts`) calls `resetSupportChat` before handing the browser to the
   issuer.
 
+### Product analytics
+
+A deployment with `policy.analytics.umami` (§ *Configuration resolution*) counts the
+instance owner's page views and named clicks in a self-hosted Umami, and may record their
+sessions. Inert when the block is absent, and on any instance without an `sso` block:
+self-hosted Hezo loads none of it.
+
+- **Served to the owner only, and never before sign-in.** `GET /api/analytics`
+  (`routes/analytics.ts`) answers `{ umami: { host, website_id, distinct_id, replay } }`,
+  `replay` being `{ sample_rate, show_text }` or `null`, only where `isHostedOwner`
+  (`lib/hosted-owner.ts`) holds - an Admin superuser session on an instance with an `sso`
+  block, the gate `GET /api/support` shares. Everyone else, and everyone when the block is
+  unset, gets `404`. Nothing rides `/api/status`: unlike the chat, analytics have no reason
+  to load on a screen before a session. No MCP twin. Read per request, so the heartbeat's
+  rewritten policy file turns recording on or off with no restart.
+- **The distinct id is the deployer's account id, written by the deployer.** Hezo never
+  derives it from `ownerSubject` and never sends an email. It rides the tracker's tag as
+  `data-distinct-id`, so the whole visit is identified from the first request; calling
+  `umami.identify()` after load would start a second session and split the recording.
+- **One loader for every site.** `analytics.ts` in `@hezo/ui` is plain functions over module
+  state, each a no-op before install and none of them throwing. `installAnalytics` adds
+  `${host}/script.js` with `data-website-id`, `data-distinct-id`, `data-before-send` naming
+  a global hook and `data-auto-track="false"`, then reports the page the visit starts on.
+  Calls made before the script runs wait in a queue bounded at 50 and flush on its `load`.
+  `startSessionRecording` puts `rr-mask` on `<html>` unless `showText`, then adds
+  `${host}/recorder.js`; both tags are `async = false` so the tracker runs first, since the
+  recorder waits for the tracker's session. `shouldRecordThisVisit(rate)` decides once per
+  browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
+  `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends
+  `umami.track(name)` for the nearest `[data-analytics]` ancestor - a kebab-case name of at
+  most 50 characters, never the element's text. Umami's own `data-umami-event` is never
+  used: on a link it prevents the default and navigates itself, past the router.
+- **What leaves the browser is rewritten before it goes.** The before-send hook replaces
+  `url` and `title` with the route pattern the consumer's `pagePattern()` returns at the
+  moment of the send (`/projects/$projectId/tasks/$taskId` - addresses carry project and
+  file names), and cuts `referrer` to another site's origin, or nothing for this one. A
+  `pagePattern` that throws drops the payload rather than sending the address.
+- **Page views are the consumer's.** The tracker's history hook sees `pushState` and
+  `replaceState` but not back and forward, and keeps a last-seen address that goes stale on
+  a pop; left on beside a router subscription it double-counts some navigations and drops
+  others. So it is off, and `trackAnalyticsPageView` is called once per route change. Only
+  the first page view keeps the referrer the page loaded with.
+- **Tenant web.** `useProductAnalytics` (`hooks/use-analytics.ts`), called from `AppShell`
+  beside `useSupportChat`, asks `/api/analytics` only where the status carries `sso` **and a
+  session exists**, and does not retry the `404`. With an answer it installs the tracker
+  (the pattern is the deepest router match's `fullPath`, an index route's trailing slash
+  dropped), the click listener and, where `replay` is set and the visit is sampled, the
+  recorder; then it subscribes to the router's `onResolved` and reports a page view when
+  `pathChanged` - one per navigation of any kind, none for a change of query or fragment.
+- **Never recorded.** rrweb replaces an element carrying `rr-block` (`NEVER_RECORD_CLASS`)
+  with a blank box of the same size, its attributes included, and the mark sits on the
+  component so every screen reusing it is covered: `MasterKeyForm`'s form (the vault gate,
+  the setup wizard's re-entry and the forgot-password reset), `PasswordInput` (it turns
+  into plain text when revealed), the new API key, `DeviceCodeSteps`' rail (code, address,
+  pasted-back code), the subscription credential and requested-credential fields, images,
+  frames and links carrying a signed asset address (a key to that file while it lasts;
+  avatars and icons are left alone), `LogViewer`'s body (run and container logs) and
+  `ChatSurface`'s message list. Typed input is masked by the recorder's own setting.
+- **What the rewrite does not reach.** The recorder sends `location.href` itself: in rrweb's
+  meta events, in its `url-change` custom event and in heatmap click and scroll events. So a
+  recording carries the real address of each page it covers, query included, even though
+  the page views do not. The scripts load with no integrity hash, so whoever serves them
+  runs code in the owner's session.
+
 ## 12. Build, release, migrations & upgrades
 
 ### Configuration resolution
@@ -6842,6 +6906,16 @@ widget needs - an `https:` origin, an SRI hash list, 64 lowercase hex - and a ba
 fails the whole policy parse like any other bad key: at boot nothing is pinned, on reload
 the last good policy stays. An older release fails the same way on the unknown key, so a
 plane writes the block only for a release that reads it. What reads it: § *Support chat*.
+
+**`policy.analytics`.** The deployer's product analytics, today one key: `umami`, with
+`host` (an `https:` URL with no trailing slash, query or fragment, since the scripts are
+`${host}/script.js` and `${host}/recorder.js`), `websiteId` (a UUID), `distinctId` (1-50
+characters, the deployer's account id) and an optional `replay` of `sampleRate` (0-1) and
+`showText`. Absent `replay` means the account is never recorded. In `policy` for the reason
+`support` is, so a recording turned on or off for one account reaches the running instance
+on the next heartbeat. Every level is `.strict()`, so an older release fails the whole policy
+on the unknown key and the plane writes it only for a release that reads it. What reads it:
+§ *Product analytics*.
 
 **Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
 reading were removed with no shim and no warning, so an instance whose supervisor still

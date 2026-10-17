@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
@@ -73,9 +74,10 @@ test('an admin can mint a new key and see it once', async () => {
 	await user.click(getByRole('button', { name: 'Create' }));
 	await user.type(getByPlaceholderText('Key name'), 'minted-key{Enter}');
 
-	// The raw key is revealed once.
+	// The raw key is revealed once, and never to a session recording.
 	await findByText(/copy it now/i);
-	await findByText(/^hezo_/);
+	const key = await findByText(/^hezo_/);
+	expect(key.closest(`.${NEVER_RECORD_CLASS}`)).not.toBeNull();
 	// And the key is now listed under Active.
 	await findByText('minted-key');
 });

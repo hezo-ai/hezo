@@ -256,6 +256,39 @@ every session on an instance with no issuer, sees no entry.
 the token, and should never be given it: anyone holding it can write to your inbox
 as any contact.
 
+#### Product analytics for the instance owner
+
+A deployment that runs its own Umami can count how the owner uses the web app,
+and record their sessions. Set `policy.analytics.umami` and, once the owner
+has signed in, the app loads Umami's tracker and sends a page view per page and an
+event per named click. Leave it out and nothing is loaded.
+
+| Setting | Default | Description |
+|---|---|---|
+| `policy.analytics.umami.host` | - | Where Umami's `script.js` and `recorder.js` are served. Must be `https:`, with no trailing slash, query or fragment. |
+| `policy.analytics.umami.websiteId` | - | The Umami website the visits are counted under, as a UUID. |
+| `policy.analytics.umami.distinctId` | - | Who the owner is to that website: your own id for their account, 1 to 50 characters. Never an email. |
+| `policy.analytics.umami.replay.sampleRate` | - | The share of browser sessions recorded, from `0` to `1`. Each browser session is picked once, so a visit is recorded whole or not at all. |
+| `policy.analytics.umami.replay.showText` | - | `false` hides all page text in a recording. `true` shows it. |
+
+`host`, `websiteId` and `distinctId` are required. Leave out `replay` and the owner
+is never recorded, though page views and clicks are still counted. A block that
+fails any of these is refused like any other invalid `policy`.
+
+**Typed input is hidden by Umami, not by Hezo.** Leave the website's replay mask
+level at moderate or stricter, which masks every input, whatever `showText` says.
+
+**It needs an `sso` block**, like the support chat, and only the account your
+issuer signs in loads it. Other sessions, and every session on an instance with no
+issuer, load nothing.
+
+**Pages are reported by route.** A page view names the route, such as
+`/projects/$projectId/tasks/$taskId`, never the project or the task, and the page
+title is replaced the same way. Recordings skip the screens that show a secret
+(the recovery phrase, passwords, a new API key, sign-in codes, pasted credentials),
+uploaded images and the links that open a file, agent run and container logs, and
+the chat.
+
 ### Single sign-on from a control plane
 
 Where a control plane provisions and manages instances, it can sign its users in

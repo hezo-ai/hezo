@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlignLeft, Check, Code, Copy, Maximize2, Minimize2, MoveVertical } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -97,9 +98,11 @@ export function LogViewer({
 
 	const isFormatted = formattable && viewMode === 'formatted';
 	const sizing = isExpanded ? 'flex-1 min-h-0' : heightClassName;
+	// Never recorded: a run or container log is the whole of an agent's work,
+	// commands and output included, and it streams faster than anyone reads.
 	const bodyClassName = isFormatted
-		? `bg-[#0d1117] log-surface-dark text-text-1 ${sizing} overflow-y-auto p-3 text-sm leading-relaxed`
-		: `bg-[#0d1117] log-surface-dark ${sizing} overflow-y-auto p-3 font-mono text-xs leading-relaxed`;
+		? `bg-[#0d1117] log-surface-dark text-text-1 ${sizing} overflow-y-auto p-3 text-sm leading-relaxed ${NEVER_RECORD_CLASS}`
+		: `bg-[#0d1117] log-surface-dark ${sizing} overflow-y-auto p-3 font-mono text-xs leading-relaxed ${NEVER_RECORD_CLASS}`;
 
 	const content = (
 		<>

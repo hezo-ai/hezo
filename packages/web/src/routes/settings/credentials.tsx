@@ -301,6 +301,7 @@ function InstanceCredentialsPage() {
 								type="submit"
 								size="sm"
 								disabled={createSecret.isPending || updateSecret.isPending}
+								data-analytics={editing ? 'save-credential' : 'add-credential'}
 							>
 								{editing ? 'Save changes' : 'Add credential'}
 							</Button>

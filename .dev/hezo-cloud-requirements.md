@@ -50,6 +50,7 @@ together from H24 on.
 | **H29** | Translate the first screens | the seeded language reaching the gate | **done**, product change |
 | **H30** | Refuse to be framed | the launch modal's threat model | **done** |
 | **H34** | `policy.support` block, owner-only route, shared chat loader | one support contact from the site through the tenant | **done** |
+| **H35** | `policy.analytics` block, owner-only route, shared analytics loader | page views, named clicks and session recordings of the owner's own use | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -859,6 +860,40 @@ release fails the whole policy parse on the unknown key, which at boot pins
 nothing. `GET /api/support` answers it to the owner only, and `@hezo/ui` exports
 the loader the plane's dashboard uses too. Mechanism and rules: architecture
 § *Support chat*.
+
+## H35 — `policy.analytics` block *(done)*
+
+The plane counts how customers use their instance in its self-hosted Umami, and
+records sessions. `policy.analytics.umami` carries where the scripts are served
+(`host`, the plane's own `/hz` proxy of Umami, so `${host}/script.js` and
+`${host}/recorder.js`), the website the tenant apps share (`websiteId`), the
+plane's account id as the visitor (`distinctId`, 1-50 characters, never an
+email) and, optionally, `replay`: `sampleRate` from 0 to 1 and `showText`. No
+`replay` means the account is never recorded; `showText: true` is the operator's
+per-account debug recording, typed input still hidden. It rides the policy file,
+so turning a recording on or off reaches the box on the next heartbeat. **The
+plane writes it only for a release that reads it**, for the reason H34 gives.
+
+`GET /api/analytics` answers it to the owner only (the H34 gate, now
+`isHostedOwner`), and nothing of it reaches `/api/status`: nothing loads before
+the owner signs in. `@hezo/ui` exports the loader for the plane's dashboard too
+(`installAnalytics`, `trackAnalyticsPageView`, `trackAnalyticsEvent`,
+`installAnalyticsClicks`, `shouldRecordThisVisit`, `startSessionRecording`,
+`NEVER_RECORD_CLASS`, `MASK_TEXT_CLASS`, `ANALYTICS_ATTRIBUTE`). A consumer
+supplies `pagePattern()` and calls `trackAnalyticsPageView` on each route
+change, back and forward included: the tracker's own history hook is off.
+
+What the plane depends on from the Umami side, which this repo cannot check:
+CORS open to tenant subdomains on `/api/send`, `/api/record` and the recorder
+config route; the website's mask level left at "moderate" or stricter (typed
+input masked) and its block selector empty (the components carry `rr-block`
+themselves); recording length and the 30-day retention set there. **Two gaps
+are the plane's to decide.** The recorder sends `location.href` itself, in its
+rrweb meta events, its `url-change` events and its heatmap events, so a
+recording carries real page addresses that the page views never do. And the
+scripts load with no integrity hash, so whoever serves `/hz` runs code in every
+tenant's owner session; an `integrity` field would need a new key in this block.
+Mechanism and rules: architecture § *Product analytics*.
 
 ---
 

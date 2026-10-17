@@ -53,9 +53,23 @@
  * a Hezo concept — an actor, a budget, an archived asset — stays in the app,
  * and so does one whose copy is a paragraph rather than a word: a sentence with
  * a node in it goes through the catalog whole, which a label prop cannot do.
- * The same test admits the one non-visual export, the support chat loader:
- * every Hezo site that signs a person in loads it the same way.
+ * The same test admits the two non-visual exports, the support chat loader and
+ * the analytics loader: every Hezo site that signs a person in loads them the
+ * same way.
  */
+export {
+	ANALYTICS_ATTRIBUTE,
+	type AnalyticsOptions,
+	installAnalytics,
+	installAnalyticsClicks,
+	MASK_TEXT_CLASS,
+	NEVER_RECORD_CLASS,
+	type SessionRecordingOptions,
+	shouldRecordThisVisit,
+	startSessionRecording,
+	trackAnalyticsEvent,
+	trackAnalyticsPageView,
+} from './analytics.js';
 export { Avatar, type AvatarProps, type AvatarSize, getInitials } from './avatar.js';
 export { BackLink, type BackLinkProps } from './back-link.js';
 export { Badge, type BadgeColor, type BadgeProps } from './badge.js';
@@ -122,7 +136,13 @@ export { NameSwitcherButton, type NameSwitcherButtonProps } from './name-switche
 export { PageLogo, type PageLogoProps } from './page-logo.js';
 export { PasswordInput, type PasswordInputProps } from './password-input.js';
 export { Progress, type ProgressProps } from './progress.js';
-export { readStored, removeStored, writeStored } from './safe-storage.js';
+export {
+	readSessionStored,
+	readStored,
+	removeStored,
+	writeSessionStored,
+	writeStored,
+} from './safe-storage.js';
 export {
 	SearchableSelect,
 	type SearchableSelectOption,
