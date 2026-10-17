@@ -24,7 +24,10 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
-import { refreshTaskSuggestionComment } from '../services/task-suggestion';
+import {
+	broadcastTaskSuggestionCards,
+	refreshTaskSuggestionComment,
+} from '../services/task-suggestion';
 import type { WebSocketManager } from '../services/ws';
 
 export const approvalsRoutes = new Hono<Env>();
@@ -269,11 +272,14 @@ const PAYLOAD_EDITORS: Partial<
 				payload: Record<string, unknown>,
 				body: unknown,
 			) => Promise<PayloadPatch>;
+			/**
+			 * Writes in the same transaction as the payload update, and returns what
+			 * to announce once that transaction commits.
+			 */
 			afterUpdate?: (
 				db: Db,
 				row: Record<string, unknown>,
-				wsManager: WebSocketManager | undefined,
-			) => Promise<void>;
+			) => Promise<(wsManager: WebSocketManager | undefined) => void>;
 		}
 	>
 > = {
@@ -288,7 +294,10 @@ const PAYLOAD_EDITORS: Partial<
 			const error = validateCadenceChoice(payload.suggested_cadence as string | null, cadence);
 			return error ? { error } : { patch: { cadence } };
 		},
-		afterUpdate: refreshTaskSuggestionComment,
+		afterUpdate: async (db, row) => {
+			const cards = await refreshTaskSuggestionComment(db, row);
+			return (wsManager) => broadcastTaskSuggestionCards(wsManager, row, cards);
+		},
 	},
 };
 
@@ -325,14 +334,19 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 
 	// Only a still-pending row takes the edit: one decided since the read above
 	// keeps the payload it was decided on. An edit that changes nothing writes
-	// nothing.
-	const updated = await db.query<Record<string, unknown>>(
-		`UPDATE approvals SET payload = payload || $1::jsonb
-		 WHERE id = $2 AND status = $3::approval_status AND NOT (payload @> $1::jsonb)
-		 RETURNING *`,
-		[JSON.stringify(patch), approvalId, ApprovalStatus.Pending],
-	);
-	if (updated.rows.length === 0) {
+	// nothing. The payload and whatever mirrors it change together.
+	const updated = await db.transaction(async () => {
+		const result = await db.query<Record<string, unknown>>(
+			`UPDATE approvals SET payload = payload || $1::jsonb
+			 WHERE id = $2 AND status = $3::approval_status AND NOT (payload @> $1::jsonb)
+			 RETURNING *`,
+			[JSON.stringify(patch), approvalId, ApprovalStatus.Pending],
+		);
+		const changed = result.rows[0];
+		if (!changed) return null;
+		return { row: changed, announce: await editor.afterUpdate?.(db, changed) };
+	});
+	if (!updated) {
 		const current = await db.query<Record<string, unknown>>(
 			'SELECT * FROM approvals WHERE id = $1',
 			[approvalId],
@@ -342,8 +356,8 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 		}
 		return ok(c, current.rows[0]);
 	}
-	const row = updated.rows[0];
-	await editor.afterUpdate?.(db, row, c.get('wsManager'));
+	const { row, announce } = updated;
+	announce?.(c.get('wsManager'));
 	broadcastChange(c, wsRoom.team(approval.team_id), 'approvals', 'UPDATE', row);
 	return ok(c, row);
 });

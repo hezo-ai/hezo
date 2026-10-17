@@ -282,7 +282,7 @@ shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outs
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
 for **agent callers only** — no active `@admin` mention on the task lacking a later human
 `text` comment or a later card on the task a person answered (`personChoiceSql`, the same
-test the heartbeat park check uses; an unanswered ask holds the task in a non-terminal status
+test the heartbeat park check uses, or whose approval an API key decided; an unanswered ask holds the task in a non-terminal status
 until a human replies on the task, answers a card on it, or closes it themselves; reading the
 mention does not count).
 `cancelled` is deliberately ungated.
@@ -1686,7 +1686,8 @@ files a pending `task_suggestion` approval (`083_task_suggestion_approval.sql`) 
 required or optional; `validateSuggestedCadence` enforces it in the tool and
 `validateCadenceChoice` in `PATCH /approvals/:approvalId`, which edits only the cadence and only
 on a card with a `suggested_cadence` (daily, weekly, monthly or `once`), and only while the row is
-still pending (an edit racing a decision gets 409). The tool refuses HQ, a ninth card on one task
+still pending (an edit racing a decision gets 409); the payload and the card snapshot change in one
+transaction and are announced after it commits. The tool refuses HQ, a ninth card on one task
 (`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a title matching an open
 task or a pending suggestion; `fileTaskSuggestion` runs those checks and the insert under a keyed
 lock per suggestions task, so parallel calls cannot pass them together, and re-checks the task is

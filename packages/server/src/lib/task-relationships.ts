@@ -353,7 +353,9 @@ export async function assertNoOutstandingActivity(
 // timeline: a human text comment on the same task posted after the mention
 // comment (humans post with author_member_id NULL; the content-type filter
 // keeps NULL-author system/run comments from counting as replies), or a card on
-// the task a person answered after it, as the heartbeat park check counts. read_at is
+// the task a person answered after it, as the heartbeat park check counts, or
+// one whose approval an API key decided (admin-equivalent; the card itself
+// records only a user as its answerer). read_at is
 // deliberately ignored — reading is not answering. Enforced for agent callers
 // only: a human closing a ticket is itself the human's decision.
 //
@@ -380,7 +382,12 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 		     SELECT 1 FROM task_comments card
 		     WHERE card.task_id = am.task_id
 		       AND card.chosen_at > tc.created_at
-		       AND ${personChoiceSql('card')}
+		       AND (${personChoiceSql('card')}
+		            OR EXISTS (
+		              SELECT 1 FROM approvals ap
+		              WHERE card.content ? 'approval_id'
+		                AND ap.id = (card.content->>'approval_id')::uuid
+		                AND ap.resolved_by_api_key_id IS NOT NULL))
 		   )
 		 ORDER BY tc.created_at ASC
 		 LIMIT 1`,

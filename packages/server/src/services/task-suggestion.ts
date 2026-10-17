@@ -241,14 +241,14 @@ export async function resolveTaskSuggestionCommentAndWake(
  * Refresh the pending card's stored snapshot after the admin changes the
  * cadence, so every viewer's card shows the choice the approval now carries.
  * Scoped to the suggestions task, so the lookup reads only that task's comments.
+ * Returns the cards it changed; the caller announces them once its write commits.
  */
 export async function refreshTaskSuggestionComment(
 	db: Db,
 	approval: Record<string, unknown>,
-	wsManager?: WebSocketManager,
-): Promise<void> {
+): Promise<Record<string, unknown>[]> {
 	const payload = (approval.payload ?? {}) as Record<string, unknown>;
-	if (typeof payload.task_id !== 'string') return;
+	if (typeof payload.task_id !== 'string') return [];
 	const updated = await db.query<Record<string, unknown>>(
 		`UPDATE task_comments
 		 SET content = content || $1::jsonb
@@ -264,8 +264,18 @@ export async function refreshTaskSuggestionComment(
 			approval.id as string,
 		],
 	);
+	return updated.rows;
+}
+
+/** Announce cards {@link refreshTaskSuggestionComment} changed. */
+export function broadcastTaskSuggestionCards(
+	wsManager: WebSocketManager | undefined,
+	approval: Record<string, unknown>,
+	cards: Record<string, unknown>[],
+): void {
+	const payload = (approval.payload ?? {}) as Record<string, unknown>;
 	if (typeof payload.project_id !== 'string') return;
-	for (const row of updated.rows) {
+	for (const row of cards) {
 		broadcastCommentFamilyChange(
 			wsManager,
 			approval.team_id as string,

@@ -727,7 +727,7 @@ describe('who may approve a suggestion, and who the task is credited to', () => 
 		expect(tasks.rows).toHaveLength(0);
 	});
 
-	it('an API key that approves is credited with the task in the activity log', async () => {
+	it('an API key that approves is credited with the task and answers the CEO ask', async () => {
 		const reg = await app.request('/api/api-keys/register', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -745,11 +745,24 @@ describe('who may approve a suggestion, and who the task is credited to', () => 
 			title: 'Key-approved deliverable',
 			task_id: host.id,
 		});
+		await callMcpTool(app, host.token, 'create_comment', {
+			project: projectSlug,
+			task_id: host.id,
+			content: '@admin I filed 1 suggestion. Please decide the card.',
+		});
 		const approved = (await callMcpTool(app, keyToken, 'resolve_approval', {
 			approval_id: result.approval_id,
 			status: 'approved',
 		})) as { error?: string };
 		expect(approved.error).toBeUndefined();
+
+		// The key's decision answers the @admin ask, so the CEO can close its task.
+		const closed = (await callMcpTool(app, host.token, 'update_task', {
+			project: projectSlug,
+			task_id: host.id,
+			status: 'done',
+		})) as { error?: string };
+		expect(closed.error).toBeUndefined();
 
 		const task = await db.query<{ id: string; created_by_member_id: string | null }>(
 			'SELECT id, created_by_member_id FROM tasks WHERE title = $1',
