@@ -42,7 +42,7 @@ import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
 import { useSupportChat } from '../hooks/use-support';
 import { useShellWebSockets } from '../hooks/use-websocket';
-import { type ApiError, api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { useI18n, useSyncInstanceLocale } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
@@ -150,8 +150,14 @@ function AppShell() {
 	// the install already running, so a conversation started at a gate carries.
 	useSupportChat(!!status?.sso && !!me.data, status?.support);
 	// Product analytics are the owner's alone, so unlike the chat they wait for a
-	// session: nothing is counted or recorded on a screen before sign-in.
-	useProductAnalytics(!!status?.sso && !!me.data);
+	// session: nothing is counted or recorded on a screen before sign-in. They
+	// stop the moment the vault locks or the session ends with the page still
+	// open, because the owner's details stay cached after either.
+	const signedIn =
+		status?.masterKeyState === 'unlocked' &&
+		!!me.data &&
+		!(me.error instanceof ApiError && me.error.status === 401);
+	useProductAnalytics(!!status?.sso && signedIn);
 
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {

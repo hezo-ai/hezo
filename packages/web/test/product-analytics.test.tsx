@@ -1,13 +1,15 @@
-import {
-	resetRuntimeConfig,
-	runtimeConfig,
-	setPolicy,
-	setRuntimeConfig,
-} from '@hezo/server/src/config/runtime';
-import type { SsoConfig, UmamiAnalyticsConfig } from '@hezo/server/src/config/types';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { afterEach, expect, test, vi } from 'vitest';
+import {
+	configure,
+	recheckInterval,
+	recorder,
+	resetAnalyticsPage,
+	testWindow,
+	tracker,
+	UMAMI,
+} from './helpers/analytics';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
@@ -20,56 +22,7 @@ import { seedWorkspace } from './helpers/seed';
 // The loader installs once per page, and this file is one page, so the spec
 // that installs it runs last.
 
-const SSO: SsoConfig = {
-	issuerUrl: 'https://control.example',
-	logoutUrl: 'https://control.example/logout',
-	issuerPublicKey: `k1:${'a'.repeat(64)}`,
-	ownerSubject: '9f1cb2d4-0000-4000-8000-000000000001',
-	audience: 'alice.control.example',
-};
-
-const UMAMI: UmamiAnalyticsConfig = {
-	host: 'https://stats.example/hz',
-	websiteId: '2d1f3c4b-5a69-4f7e-8d9c-0b1a2c3d4e5f',
-	distinctId: 'account-1',
-	scriptIntegrity: `sha384-${'A'.repeat(64)}`,
-	recorderIntegrity: `sha384-${'B'.repeat(64)} sha384-${'C'.repeat(64)}`,
-	replay: { sampleRate: 1, showText: false },
-};
-
 type Payload = Record<string, unknown>;
-
-interface TestWindow {
-	umami?: { track: ReturnType<typeof vi.fn> };
-	happyDOM: { settings: { handleDisabledFileLoadingAsSuccess: boolean } };
-	[hook: string]: unknown;
-}
-
-const testWindow = window as unknown as TestWindow;
-
-function configure(options: { issuer: boolean; umami?: UmamiAnalyticsConfig }): void {
-	setRuntimeConfig({ ...runtimeConfig(), sso: options.issuer ? SSO : null });
-	setPolicy({
-		managedBy: 'Acme Cloud',
-		pinned: {},
-		...(options.umami ? { analytics: { umami: options.umami } } : {}),
-	});
-}
-
-function tracker(): HTMLScriptElement | null {
-	return document.head.querySelector(`script[src="${UMAMI.host}/script.js"]`);
-}
-
-function recorder(): HTMLScriptElement | null {
-	return document.head.querySelector(`script[src="${UMAMI.host}/recorder.js"]`);
-}
-
-/** How often the analytics settings are asked for again, as the query now stands. */
-function recheckInterval(): unknown {
-	const query = queryClient.getQueryCache().find({ queryKey: queryKeys.analytics() });
-	const interval: unknown = query?.observers[0]?.options.refetchInterval;
-	return typeof interval === 'function' ? interval(query) : interval;
-}
 
 /** What the tracker would send for a payload, after the page's before-send hook. */
 function sent(payload: Payload): Payload | false {
@@ -78,15 +31,7 @@ function sent(payload: Payload): Payload | false {
 	return hook('event', payload);
 }
 
-afterEach(() => {
-	resetRuntimeConfig();
-	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = false;
-	tracker()?.remove();
-	recorder()?.remove();
-	document.documentElement.classList.remove('rr-mask', 'rr-block');
-	sessionStorage.clear();
-	delete testWindow.umami;
-});
+afterEach(resetAnalyticsPage);
 
 test('an instance with no issuer never asks, and loads nothing', async () => {
 	const { findByTestId } = await renderApp({

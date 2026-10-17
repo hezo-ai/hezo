@@ -79,7 +79,8 @@ function routePattern(router: AppRouter): string {
  *
  * **Every answer goes to `applyAnalyticsSettings`**, which starts analytics on
  * the first and only ever tightens it after: a 404 after a good answer means
- * the deployment stopped analytics, and is applied as nothing.
+ * the deployment stopped analytics, and losing the signed-in owner means there
+ * is nobody to count, and both are applied as nothing.
  *
  * **One subscription reports every page view after the first.** The tracker's
  * own history hook is off, because it sees `pushState` and `replaceState` but
@@ -95,7 +96,9 @@ export function useProductAnalytics(identified: boolean): void {
 	const router = useRouter();
 
 	useEffect(() => {
-		if (stopped) {
+		// The owner gone (the vault locked, or the session ended) or analytics
+		// withdrawn: the page stops, and starting again waits for a reload.
+		if (!identified || stopped) {
 			applyAnalyticsSettings(null);
 			return;
 		}
@@ -116,7 +119,7 @@ export function useProductAnalytics(identified: boolean): void {
 					}
 				: null,
 		});
-	}, [umami, stopped, router]);
+	}, [identified, umami, stopped, router]);
 
 	useEffect(
 		() =>

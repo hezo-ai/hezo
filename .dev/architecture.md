@@ -6827,7 +6827,9 @@ self-hosted Hezo loads none of it.
   `applyAnalyticsSettings`: the first starts the tracker, the click listener and a
   recording if the visit is picked, and every later one only tightens, because the
   recorder has no stop or reconfigure hook. Nothing (the route's 404 after a good answer)
-  turns the page off: nothing more is sent and `rr-block` goes on `<html>`. A visit no
+  turns the page off: nothing more is sent and `rr-block` goes on `<html>`. So does losing
+  the signed-in owner (the vault locked, or a 401 from `/api/me`), because the owner's
+  details stay cached after either. A visit no
   longer picked, or no `replay`, gets `rr-block`; `showText` turning false gets `rr-mask`.
   rrweb's full snapshot every 30 s then drops what was shown. Starting or loosening waits
   for the next page load. `useAnalytics` refetches every two minutes while it holds an
@@ -6860,8 +6862,9 @@ self-hosted Hezo loads none of it.
   the setup wizard's re-entry and the forgot-password reset), `PasswordInput` (it turns
   into plain text when revealed), the new API key, `DeviceCodeSteps`' rail (code, address,
   pasted-back code), the subscription credential and requested-credential fields, images,
-  frames and links carrying a signed asset address (a key to that file while it lasts;
-  avatars and icons are left alone), `LogViewer`'s body (run and container logs) and
+  frames and links carrying a signed asset address (a key to that file while it lasts),
+  markdown links carrying a `sig` parameter, the shared `Avatar` image and the rail's HQ
+  icon (uploaded icons are signed too), `LogViewer`'s body (run and container logs) and
   `ChatSurface`'s message list. Typed input is masked by the recorder's own setting.
 - **Known limits of a text-hidden recording.** The recorder sends `location.href` itself: in
   rrweb's meta events, in its `url-change` custom event and in heatmap click and scroll
