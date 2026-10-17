@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useI18n } from '../lib/i18n';
-import { goToIssuer } from '../lib/sso';
+import { goToIssuer, isLeavingForIssuerLogout } from '../lib/sso';
 import { VaultShell } from './master-key-gate';
 import { Button } from './ui/button';
 
@@ -28,7 +28,8 @@ export function SsoRedirect({ issuerUrl, error }: { issuerUrl: string; error?: s
 
 	const failed = Boolean(error);
 	useEffect(() => {
-		if (!failed) goToIssuer(issuerUrl);
+		// After a sign-out this page is already on its way to the issuer's logout.
+		if (!failed && !isLeavingForIssuerLogout()) goToIssuer(issuerUrl);
 	}, [failed, issuerUrl]);
 
 	return (

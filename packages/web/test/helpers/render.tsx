@@ -4,6 +4,7 @@ import { Toaster } from '@hezo/web/components/ui/toast';
 import { api } from '@hezo/web/lib/api';
 import { I18nProvider } from '@hezo/web/lib/i18n';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
+import { clearLeavingForIssuerLogout } from '@hezo/web/lib/sso';
 import { ThemeProvider } from '@hezo/web/lib/theme';
 // __root.tsx re-wraps the React tree with the singleton query client, so any
 // hooks that read via useQuery actually pull from that singleton (not the one
@@ -220,6 +221,7 @@ afterEach(async () => {
 	singletonQueryClient.clear();
 	localStorage.clear();
 	api.clearToken();
+	clearLeavingForIssuerLogout();
 	// Stop the app's chat manager before the db goes: a session a test spun up
 	// writes its teardown rows, and racing the PGlite close below turns that
 	// into "PGlite is closing" noise.

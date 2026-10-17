@@ -6786,7 +6786,9 @@ wrote back. The first rides the public status; the second stays behind the owner
   in is **Contact support** in the Settings menu's deployer group (`PolicyGroup`, beside
   the plan link), rendered only when the query holds data.
   `logout()` (`lib/auth.ts`) calls `resetSupportChat` before handing the browser to the
-  issuer.
+  issuer, and marks the page as leaving for the issuer's logout. The gate behind it comes
+  up signed out, and `SsoRedirect` would otherwise send the browser to the issuer's
+  sign-in, a second navigation that cancels the logout if it has not yet committed.
 
 ### Product analytics
 
