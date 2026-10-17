@@ -158,6 +158,7 @@ import {
 } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
+import { isAdminEquivalent } from '../middleware/auth';
 import { setAgentAdminStatus } from '../services/agent-admin';
 import { loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
@@ -194,6 +195,7 @@ import {
 	COHERENCE_LABEL,
 	enqueueTeamCoherenceReviewTask,
 	findOpenLabeledTask,
+	startTaskSuggestions,
 } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
@@ -2081,6 +2083,40 @@ export function registerTools(
 		},
 		db,
 		{ write: true, audience: 'ceo' },
+	);
+
+	tool(
+		server,
+		'start_task_suggestions',
+		"Open the CEO's task-suggestions task on an existing project, or return the open one. The CEO then reads the board and suggests tasks as Approve/Deny cards (see suggest_task). An admin or API key may call it; among agents, only the CEO. Never on HQ. Returns the task and whether it was created.",
+		{ project: projectArg() },
+		async (args, db, auth) => {
+			if (auth.type === AuthType.Agent) {
+				const caller = await db.query<{ slug: string }>(
+					'SELECT slug FROM member_agents WHERE id = $1',
+					[auth.memberId],
+				);
+				if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+					return { error: 'Only the CEO can start task suggestions' };
+				}
+			} else if (!isAdminEquivalent(auth)) {
+				return { error: 'Admin access required' };
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const result = await startTaskSuggestions(db, scope.teamId, scope.projectId, {
+				byRunId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
+				wsManager,
+			});
+			if (!result.ok) return { error: result.message };
+			return {
+				task_id: result.task_id,
+				task_identifier: result.task_identifier,
+				created: result.created,
+			};
+		},
+		db,
+		{ write: true, audience: 'ceo_if_agent' },
 	);
 
 	tool(

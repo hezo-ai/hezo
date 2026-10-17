@@ -37,6 +37,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
 import { teardownContainer } from '../services/containers';
+import { startTaskSuggestions } from '../services/description-tasks';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
 import {
@@ -381,6 +382,23 @@ projectsRoutes.post('/projects/:projectId/marketplace-team', async (c) => {
 		return err(c, 'CONFLICT', 'This project cannot receive a team (no CEO or project found)', 409);
 	}
 	return ok(c, result, 201);
+});
+
+// Ask the CEO for task suggestions on an existing project: opens the CEO's
+// suggestions task, or returns the open one (200 instead of 201). Twin of the
+// `start_task_suggestions` tool. Admin-gated; never on HQ.
+projectsRoutes.post('/projects/:projectId/task-suggestions', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const result = await startTaskSuggestions(
+		c.get('db'),
+		c.get('teamId') as string,
+		c.get('projectId') as string,
+		{ wsManager: c.get('wsManager') },
+	);
+	if (!result.ok) return err(c, result.code, result.message, result.status);
+	const { ok: _ok, ...body } = result;
+	return ok(c, body, result.created ? 201 : 200);
 });
 
 // Export the project's team as a self-contained marketplace team bundle

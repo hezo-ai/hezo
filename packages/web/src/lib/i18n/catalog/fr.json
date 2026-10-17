@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo a épuisé ses heures de conteneur pour ce mois",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo a atteint sa limite de conteneurs actifs",
 	"tasks.runNow.blocked.taskBusy": "Une exécution est déjà en cours sur cette tâche",
+	"tasks.suggest.action": "Suggérer des tâches",
+	"tasks.suggest.failed": "Impossible de demander des suggestions de tâches",
 	"theme.dark": "Sombre",
 	"theme.label": "Thème",
 	"theme.light": "Clair",

@@ -276,7 +276,9 @@ stops rather than sending you a duplicate.
 ## Task suggestions
 
 The CEO can suggest tasks for a project. On a new project it does this once team setup
-is done, before the Captain plans. Each suggestion is a card on the CEO's suggestions
+is done, before the Captain plans. On any other project, a superuser can ask for
+suggestions with **Suggest tasks** on the task list, next to **New task**; it opens the
+CEO's suggestions task, or the one already open. Each suggestion is a card on the CEO's suggestions
 task, and the same card is in your inbox. A suggestion is not a task yet: nothing runs
 until you approve it.
 

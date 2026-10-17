@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo heeft zijn containeruren voor deze maand opgebruikt",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo zit aan zijn limiet voor actieve containers",
 	"tasks.runNow.blocked.taskBusy": "Op deze taak loopt al een run",
+	"tasks.suggest.action": "Taken voorstellen",
+	"tasks.suggest.failed": "Kon geen taakvoorstellen aanvragen",
 	"theme.dark": "Donker",
 	"theme.label": "Thema",
 	"theme.light": "Licht",

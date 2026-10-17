@@ -26,6 +26,7 @@ import { agentDisplayName } from './agent-identity-tooltip';
 import { AgentRef } from './agent-ref';
 import { CreateTaskDialog } from './create-task-dialog';
 import { InfiniteScrollSentinel } from './infinite-scroll-sentinel';
+import { SuggestTasksButton } from './suggest-tasks-button';
 import { TaskMentionTooltipContent } from './task-mention-tooltip';
 import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskRunDot } from './task-run-dot';
@@ -674,6 +675,7 @@ export function TaskList({ projectId }: TaskListProps) {
 
 			<div className="mb-4 flex flex-row items-stretch gap-2">
 				{filterBar}
+				<SuggestTasksButton projectId={projectId} />
 				{/* Create button pinned to the filter bar's row, matching its height.
 				    Icon-only on mobile/tablet to save space; the "New task" label
 				    appears at the desktop breakpoint (lg+). The accessible name keeps

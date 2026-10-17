@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo zużyło limit godzin kontenerów na ten miesiąc",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo osiągnęło limit aktywnych kontenerów",
 	"tasks.runNow.blocked.taskBusy": "W tym zadaniu już trwa uruchomienie",
+	"tasks.suggest.action": "Zaproponuj zadania",
+	"tasks.suggest.failed": "Nie udało się poprosić o propozycje zadań",
 	"theme.dark": "Ciemny",
 	"theme.label": "Motyw",
 	"theme.light": "Jasny",

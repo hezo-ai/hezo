@@ -5,14 +5,17 @@ import {
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { loadTeamCoordinationContext, type TeamCoordinationContext } from './internal-intake';
 import { TASK_SUGGESTIONS_LABEL } from './task-suggestion';
 import { createWakeup } from './wakeup';
+import type { WebSocketManager } from './ws';
 
 const log = logger.child('description-tasks');
 
@@ -571,4 +574,51 @@ export async function enqueueTaskSuggestionsTask(
 		},
 	);
 	return { ...created, created: true };
+}
+
+export type StartTaskSuggestionsResult =
+	| { ok: true; task_id: string; task_identifier: string; created: boolean }
+	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
+
+/**
+ * Open the CEO's suggestions task on an existing project, or return the open one.
+ * Behind both `POST /projects/:projectId/task-suggestions` and its tool twin
+ * `start_task_suggestions`; the caller has already checked who may ask.
+ */
+export async function startTaskSuggestions(
+	db: Db,
+	teamId: string,
+	projectId: string,
+	opts: { byRunId?: string | null; wsManager?: WebSocketManager } = {},
+): Promise<StartTaskSuggestionsResult> {
+	const project = await db.query<{ is_internal: boolean }>(
+		'SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
+	);
+	if (project.rows[0]?.is_internal !== false) {
+		return {
+			ok: false,
+			code: 'INVALID_REQUEST',
+			message: 'The HQ project does not take task suggestions',
+			status: 400,
+		};
+	}
+	const task = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand', { byRunId: opts.byRunId });
+	if (!task) {
+		return {
+			ok: false,
+			code: 'CONFLICT',
+			message: 'This project has no CEO to suggest tasks',
+			status: 409,
+		};
+	}
+	if (task.created && opts.wsManager) {
+		const row = await db.query<Record<string, unknown>>('SELECT * FROM tasks WHERE id = $1', [
+			task.id,
+		]);
+		if (row.rows[0]) {
+			broadcastRowChange(opts.wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', row.rows[0]);
+		}
+	}
+	return { ok: true, task_id: task.id, task_identifier: task.identifier, created: task.created };
 }

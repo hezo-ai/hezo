@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo has used this month's container-hours allowance",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo is at its active-container limit",
 	"tasks.runNow.blocked.taskBusy": "This task already has a run in progress",
+	"tasks.suggest.action": "Suggest tasks",
+	"tasks.suggest.failed": "Could not start task suggestions",
 	"theme.dark": "Dark",
 	"theme.label": "Theme",
 	"theme.light": "Light",

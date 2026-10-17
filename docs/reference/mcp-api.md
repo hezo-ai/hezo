@@ -369,6 +369,22 @@ Suggest a task for the admin to approve, as an Approve/Deny card on your open ta
 
 **Authorization:** The CEO only.
 
+### `start_task_suggestions`
+
+_Write tool._
+
+Open the CEO's task-suggestions task on an existing project, or return the open one. The CEO then reads the board and suggests tasks as Approve/Deny cards (see suggest_task). An admin or API key may call it; among agents, only the CEO. Never on HQ. Returns the task and whether it was created.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+
+**Returns:** `{ task_id, task_identifier, created }`. Opens the CEO's task-suggestions task on the project (assigned to the CEO, which starts at once), or returns the open one with `created: false`. Returns `{ error }` on HQ or when the caller may not ask. Twin of `POST /projects/:projectId/task-suggestions`.
+
+**Authorization:** A superuser admin or an API key; among agents, the CEO only.
+
 ### `create_tasks`
 
 _Write tool._

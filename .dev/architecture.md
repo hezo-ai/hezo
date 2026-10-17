@@ -1690,6 +1690,12 @@ standing-task `rules` from `TASK_SUGGESTION_CADENCE_RULES` for a repeating choic
 Captain's wake until planning closes. Either decision flips the card (`created_task_identifier`,
 `blocked_by_identifier`) and wakes the CEO on `task_suggestion_resolved`. The card snapshot
 stores the kind as `suggestion_kind`, because `kind` is the action-comment discriminator.
+On an existing project, `POST /projects/:projectId/task-suggestions` (admin-equivalent) and its
+twin tool `start_task_suggestions` (admin or API key; among agents, the CEO) share
+`startTaskSuggestions` (`services/description-tasks.ts`): it refuses HQ and files an `on_demand`
+suggestions task that starts at once, or returns the open one (201 vs 200, `created`). The web
+"Suggest tasks" button (`components/suggest-tasks-button.tsx`, superusers only, hidden on HQ)
+calls the route and opens the task.
 
 Key source: `services/teams.ts` (`seedDefaultTeam`), `team-template-apply.ts`
 (`ensureInstanceCeo`/`ensureInstanceCoach`), `services/internal-intake.ts` (coordination

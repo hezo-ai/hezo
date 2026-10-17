@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo har gjort slut på månadens containertimmar",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo har nått sin gräns för aktiva containrar",
 	"tasks.runNow.blocked.taskBusy": "Den här uppgiften har redan en körning igång",
+	"tasks.suggest.action": "Föreslå uppgifter",
+	"tasks.suggest.failed": "Kunde inte be om uppgiftsförslag",
 	"theme.dark": "Mörkt",
 	"theme.label": "Tema",
 	"theme.light": "Ljust",

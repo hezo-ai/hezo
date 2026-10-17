@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo 已用完本月的容器小时数",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo 已达到活动容器上限",
 	"tasks.runNow.blocked.taskBusy": "此任务已有运行在进行中",
+	"tasks.suggest.action": "获取任务建议",
+	"tasks.suggest.failed": "无法开始任务建议",
 	"theme.dark": "深色",
 	"theme.label": "主题",
 	"theme.light": "浅色",

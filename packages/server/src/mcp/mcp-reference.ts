@@ -199,6 +199,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			"`{ approval_id, status: \"pending\", payload }`. Files a task *suggestion* as an Approve/Deny card on the CEO's open task-suggestions task and in the inbox - no task exists until the admin approves. On approval the task is created for the project's Captain; while the project's planning task is open, the new task is blocked by it. A repeating suggestion lets the admin pick daily, weekly, monthly or just once on the card. Returns `{ error }` if the caller is not the CEO, the project is HQ, `task_id` is not the project's open task-suggestions task, the task already has 8 suggestions, the title matches an open task or pending suggestion, or the cadence breaks the rule for the kind.",
 		auth: 'The CEO only.',
 	},
+	start_task_suggestions: {
+		category: 'Tasks',
+		returns:
+			"`{ task_id, task_identifier, created }`. Opens the CEO's task-suggestions task on the project (assigned to the CEO, which starts at once), or returns the open one with `created: false`. Returns `{ error }` on HQ or when the caller may not ask. Twin of `POST /projects/:projectId/task-suggestions`.",
+		auth: 'A superuser admin or an API key; among agents, the CEO only.',
+	},
 	update_goal_progress: {
 		category: 'Goals',
 		returns:

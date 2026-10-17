@@ -1075,6 +1075,8 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo は今月のコンテナ時間を使い切りました",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo はアクティブなコンテナの上限に達しています",
 	"tasks.runNow.blocked.taskBusy": "このタスクではすでに実行が進行中です",
+	"tasks.suggest.action": "タスクの提案",
+	"tasks.suggest.failed": "タスクの提案を開始できませんでした",
 	"theme.dark": "ダーク",
 	"theme.label": "テーマ",
 	"theme.light": "ライト",
