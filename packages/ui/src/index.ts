@@ -60,6 +60,9 @@
 export {
 	ANALYTICS_ATTRIBUTE,
 	type AnalyticsOptions,
+	type AnalyticsSettings,
+	analyticsActive,
+	applyAnalyticsSettings,
 	installAnalytics,
 	installAnalyticsClicks,
 	MASK_TEXT_CLASS,

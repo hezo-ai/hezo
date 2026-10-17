@@ -283,11 +283,12 @@ invalid `policy`.
 anonymously.
 
 **A change reaches an open page within about two minutes, if it tightens.** While
-the owner is recorded, the app asks for these settings again every two minutes.
-Setting `showText` to `false` hides the page text from then on, and leaving out
-`replay`, or setting its `sampleRate` to `0`, leaves the rest of the page out of
-the recording. Showing text, or
-recording an owner who was not recorded, waits for the next page load.
+analytics runs, the app asks for these settings again every two minutes. Leaving
+out the whole `analytics` block stops counting and recording on the open page.
+Leaving out `replay`, or setting its `sampleRate` to `0`, leaves the rest of the
+page out of the recording, and setting `showText` to `false` hides the page text
+from then on. Anything that starts or loosens (analytics turned back on, an owner
+recorded who was not, text shown) waits for the next page load.
 
 **Both scripts run in the owner's session, so each is pinned to its hash.** A
 browser refuses a script whose file no longer matches, so upgrading Umami changes

@@ -359,6 +359,74 @@ test('stopping leaves the rest of the page out of the recording, until the next 
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 });
 
+const RECORDED = { sampleRate: 1, showText: false, recorderIntegrity: RECORDER_SRI };
+
+function settings(replay: Analytics.AnalyticsSettings['replay']): Analytics.AnalyticsSettings {
+	return { analytics: options(), replay };
+}
+
+/** Apply first settings, and resolve once the stand-in tracker has been called. */
+async function applied(replay: Analytics.AnalyticsSettings['replay']): Promise<void> {
+	analytics.applyAnalyticsSettings(settings(replay));
+	hookName = tracker().getAttribute('data-before-send');
+	await vi.waitFor(() => expect(track).toHaveBeenCalled());
+}
+
+test('the first settings start the page, and later ones never start a recording', async () => {
+	await applied(null);
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(0);
+	expect(analytics.analyticsActive()).toBe(true);
+
+	// Recording turned on while the page is open waits for the next load.
+	analytics.applyAnalyticsSettings(settings({ ...RECORDED }));
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(0);
+	expect(scriptAt('https://stats.example/hz/script.js')).toHaveLength(1);
+});
+
+test('later settings only ever tighten a running recording', async () => {
+	await applied({ ...RECORDED, showText: true });
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(false);
+
+	analytics.applyAnalyticsSettings(settings({ ...RECORDED, showText: false }));
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(true);
+	analytics.applyAnalyticsSettings(settings({ ...RECORDED, showText: true }));
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(true);
+
+	analytics.applyAnalyticsSettings(settings({ ...RECORDED, sampleRate: 0 }));
+	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
+});
+
+test('settings withdrawn stop everything for the rest of the page', async () => {
+	await applied({ ...RECORDED });
+	const sent = track.mock.calls.length;
+
+	analytics.applyAnalyticsSettings(null);
+	expect(analytics.analyticsActive()).toBe(false);
+	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	analytics.trackAnalyticsEvent('create-task');
+	analytics.trackAnalyticsPageView();
+	expect(track.mock.calls.length).toBe(sent);
+	expect(beforeSend('event', { url: 'x' })).toBe(false);
+
+	// Turned back on while the page is open: that waits for the next load too.
+	analytics.applyAnalyticsSettings(settings({ ...RECORDED }));
+	analytics.trackAnalyticsEvent('create-task');
+	expect(track.mock.calls.length).toBe(sent);
+	expect(analytics.analyticsActive()).toBe(false);
+});
+
+test('settings withdrawn before anything started leave the page free to start', () => {
+	analytics.applyAnalyticsSettings(null);
+	expect(scriptAt('https://stats.example/hz/script.js')).toHaveLength(0);
+	expect(analytics.analyticsActive()).toBe(false);
+
+	analytics.applyAnalyticsSettings(settings(null));
+	hookName = tracker().getAttribute('data-before-send');
+	expect(scriptAt('https://stats.example/hz/script.js')).toHaveLength(1);
+	expect(analytics.analyticsActive()).toBe(true);
+});
+
 test('records nothing before the tracker is installed', () => {
 	analytics.startSessionRecording(recording(false));
 

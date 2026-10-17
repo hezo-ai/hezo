@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Link } from '@tanstack/react-router';
 import { Globe, Home, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -179,10 +180,11 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 								} ${hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''}`}
 							>
 								{hq.icon_url ? (
+									// A signed address, a key to the icon while it lasts.
 									<img
 										src={hq.icon_url}
 										alt=""
-										className="w-full h-full rounded-full object-cover"
+										className={`w-full h-full rounded-full object-cover ${NEVER_RECORD_CLASS}`}
 									/>
 								) : (
 									<Globe className="w-4 h-4" />

@@ -5,6 +5,7 @@
 // surfaces (the Active card and the Other-projects row) and onto the rail's
 // pinned HQ entry, which used to hardcode a glyph. Component tier.
 
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
@@ -43,6 +44,8 @@ test('the Home active card renders the uploaded project icon instead of initials
 	const img = card.querySelector<HTMLImageElement>('img');
 	expect(img).not.toBeNull();
 	expect(img?.getAttribute('src') ?? '').toContain(`/api/projects/${ref.id}/icon`);
+	// A signed address is a key to the icon, so a session recording never sees it.
+	expect(img?.closest(`.${NEVER_RECORD_CLASS}`)).not.toBeNull();
 	// The initials fallback is replaced, not merely covered.
 	expect(card.textContent).not.toContain('IP');
 });
@@ -109,6 +112,7 @@ test('the project rail shows HQ’s uploaded icon in place of the globe glyph', 
 	const img = hqEntry.querySelector<HTMLImageElement>('img');
 	expect(img).not.toBeNull();
 	expect(img?.getAttribute('src') ?? '').toContain(`/api/projects/${ref.hqId}/icon`);
+	expect(img?.closest(`.${NEVER_RECORD_CLASS}`)).not.toBeNull();
 });
 
 test('the project rail falls back to the globe glyph when HQ has no icon', async () => {

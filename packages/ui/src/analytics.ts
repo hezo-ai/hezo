@@ -139,6 +139,11 @@ interface AnalyticsState {
 	queue: TrackerCall[];
 	pageViews: number;
 	recording: boolean;
+	/**
+	 * True once the deployment stopped asking for analytics while the page was
+	 * open. Nothing is sent from then on, and it stays so until the next load.
+	 */
+	off: boolean;
 }
 
 let state: AnalyticsState | null = null;
@@ -182,7 +187,7 @@ function pageNow(): string | null {
 }
 
 function enqueue(call: TrackerCall): void {
-	if (!state) return;
+	if (!state || state.off) return;
 	if (state.loaded) {
 		dispatch(call);
 		return;
@@ -228,7 +233,7 @@ function referrerOrigin(referrer: unknown): string {
 
 /** The hook the tracker runs on every payload before it leaves the browser. */
 function beforeSend(_type: string, payload: TrackerPayload): TrackerPayload | false {
-	if (!state) return false;
+	if (!state || state.off) return false;
 	try {
 		const page = queuedPage ?? asPattern(state.pagePattern());
 		return { ...payload, url: page, title: page, referrer: referrerOrigin(payload.referrer) };
@@ -256,6 +261,7 @@ export function installAnalytics(options: AnalyticsOptions): void {
 			queue: [],
 			pageViews: 0,
 			recording: false,
+			off: false,
 		};
 		host()[BEFORE_SEND_HOOK] = beforeSend;
 
@@ -401,4 +407,69 @@ export function startSessionRecording(options: SessionRecordingOptions): void {
 export function stopSessionRecording(): void {
 	if (!state?.recording) return;
 	document.documentElement.classList.add(NEVER_RECORD_CLASS);
+}
+
+/** What a deployment asks this page to do, as the app last heard it. */
+export interface AnalyticsSettings {
+	analytics: AnalyticsOptions;
+	/** How this visitor is recorded, or nothing when their account never is. */
+	replay: { sampleRate: number; showText: boolean; recorderIntegrity: string } | null;
+}
+
+/**
+ * Apply what the deployment asks for now, whenever the app hears it.
+ *
+ * **The first settings a page receives start it**: the tracker, the click
+ * listener, and a recording if this visit is picked. **Every later call can
+ * only tighten what is running**, because the recorder has no stop or
+ * reconfigure hook and a page should never begin capturing more than it was
+ * loaded to capture:
+ *
+ * - nothing (analytics no longer configured): nothing more is sent, and the
+ *   rest of the page is left out of a running recording;
+ * - a visit no longer picked, or no `replay` at all: the rest of the page is
+ *   left out of the recording;
+ * - `showText` turning false: page text is hidden from then on.
+ *
+ * Anything that would start or loosen (analytics back on, a recording begun,
+ * text shown) waits for the next page load.
+ */
+export function applyAnalyticsSettings(settings: AnalyticsSettings | null): void {
+	try {
+		if (!state) {
+			if (!settings) return;
+			installAnalytics(settings.analytics);
+			installAnalyticsClicks();
+			if (settings.replay && shouldRecordThisVisit(settings.replay.sampleRate)) {
+				startSessionRecording({
+					showText: settings.replay.showText,
+					recorderIntegrity: settings.replay.recorderIntegrity,
+				});
+			}
+			return;
+		}
+		if (state.off) return;
+		if (!settings) {
+			state.off = true;
+			state.queue.length = 0;
+			stopSessionRecording();
+			return;
+		}
+		if (!state.recording) return;
+		if (!settings.replay || !shouldRecordThisVisit(settings.replay.sampleRate)) {
+			stopSessionRecording();
+			return;
+		}
+		if (!settings.replay.showText) document.documentElement.classList.add(MASK_TEXT_CLASS);
+	} catch {
+		// As in `dispatch`.
+	}
+}
+
+/**
+ * Whether analytics is running on this page and has not been turned off, so
+ * the app knows whether to keep asking for the settings.
+ */
+export function analyticsActive(): boolean {
+	return state !== null && !state.off;
 }

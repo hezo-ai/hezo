@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { NEVER_RECORD_CLASS } from './analytics.js';
 
 // Avatars are monochrome: identity is the initials, and colour is reserved for
 // state - a running agent gets a live ring.
@@ -66,10 +67,12 @@ export function Avatar({
 				// Named where the caller says who this is; decorative otherwise, since an
 				// unlabelled avatar sits beside the name it stands for. An empty `alt` on
 				// both left every image-backed avatar with no accessible name at all.
+				// An uploaded avatar or icon is served from a signed address, which is a
+				// key to that image while it lasts, so it is never recorded.
 				<img
 					src={imageUrl}
 					alt={label ?? ''}
-					className="h-full w-full object-cover"
+					className={`h-full w-full object-cover ${NEVER_RECORD_CLASS}`}
 					onError={() => setFailedUrl(imageUrl)}
 				/>
 			) : (

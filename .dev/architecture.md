@@ -6823,14 +6823,15 @@ self-hosted Hezo loads none of it.
   on, since Umami's `track` runs the before-send hook inside the call. `startSessionRecording` puts `rr-mask` on
   `<html>` unless `showText`, then adds `${host}/recorder.js` pinned to its
   `recorderIntegrity`; both tags are `async = false` so the tracker runs first, since the
-  recorder waits for the tracker's session. The recorder has no stop or reconfigure hook,
-  so a settings change reaches a running recording only through the classes rrweb reads,
-  and only ever tightens: a later `startSessionRecording` with `showText: false` adds
-  `rr-mask`, and `stopSessionRecording` (a removed `replay`, or a visit no longer picked
-  at the new rate) puts `rr-block` on `<html>`; rrweb's full snapshot
-  every 30 s then drops what was shown. Loosening waits for the next page load.
-  `useAnalytics` refetches every two minutes while the account has a `replay`, because the
-  app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
+  recorder waits for the tracker's session. The app hands every answer to
+  `applyAnalyticsSettings`: the first starts the tracker, the click listener and a
+  recording if the visit is picked, and every later one only tightens, because the
+  recorder has no stop or reconfigure hook. Nothing (the route's 404 after a good answer)
+  turns the page off: nothing more is sent and `rr-block` goes on `<html>`. A visit no
+  longer picked, or no `replay`, gets `rr-block`; `showText` turning false gets `rr-mask`.
+  rrweb's full snapshot every 30 s then drops what was shown. Starting or loosening waits
+  for the next page load. `useAnalytics` refetches every two minutes while it holds an
+  answer and the last one was not a 404, because the app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
   browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
   `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends
   `umami.track(name)` for the nearest `[data-analytics]` ancestor - a kebab-case name of at

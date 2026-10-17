@@ -191,9 +191,13 @@ test('the owner is counted by route pattern, page by page, and recorded with pag
 	await queryClient.refetchQueries({ queryKey: queryKeys.analytics() });
 	await expect.poll(() => document.documentElement.classList.contains('rr-block')).toBe(true);
 	expect(recheckInterval()).toBe(2 * 60_000);
-	const { replay: _replay, ...unrecorded } = UMAMI;
-	configure({ issuer: true, umami: unrecorded });
+	// The analytics block withdrawn altogether: the route answers 404, nothing
+	// more is sent from this page, and the asking stops.
+	configure({ issuer: true });
 	await queryClient.refetchQueries({ queryKey: queryKeys.analytics() });
 	await expect.poll(() => recheckInterval()).toBe(false);
-	expect(document.documentElement.classList.contains('rr-block')).toBe(true);
+	const clicks = () => track.mock.calls.filter(([event]) => event === 'open-settings').length;
+	const before = clicks();
+	await user.click(await findByTestId('app-header-settings'));
+	expect(clicks()).toBe(before);
 });

@@ -1,15 +1,8 @@
-import {
-	installAnalytics,
-	installAnalyticsClicks,
-	shouldRecordThisVisit,
-	startSessionRecording,
-	stopSessionRecording,
-	trackAnalyticsPageView,
-} from '@hezo/ui';
+import { applyAnalyticsSettings, trackAnalyticsPageView } from '@hezo/ui';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
 
 export interface Analytics {
@@ -25,11 +18,16 @@ export interface Analytics {
 }
 
 /**
- * How often a recorded page asks whether its recording should tighten. Two
- * minutes: the policy reaches the instance about once a minute, and the
- * recorder's next full snapshot follows within thirty seconds.
+ * How often a page running analytics asks whether to tighten it. Two minutes:
+ * the policy reaches the instance about once a minute, and the recorder's next
+ * full snapshot follows within thirty seconds.
  */
-const RECORDING_RECHECK_MS = 2 * 60_000;
+const ANALYTICS_RECHECK_MS = 2 * 60_000;
+
+/** The route's answer when analytics is not configured, or no longer is. */
+function isNotConfigured(error: unknown): boolean {
+	return error instanceof ApiError && error.status === 404;
+}
 
 /**
  * The product analytics this deployment runs on the instance owner's use.
@@ -40,12 +38,11 @@ const RECORDING_RECHECK_MS = 2 * 60_000;
  * spend a request on every load to hear it. A 404 is the ordinary answer, so it
  * is not retried.
  *
- * **Asked again every `RECORDING_RECHECK_MS` while this account is recorded**,
- * and only then. The deployer can end a recording that shows page text, or stop
- * recording the account, while the owner keeps the app open for hours; the app
- * never refetches on focus, so without this the change would wait for a reload.
- * Nothing is asked for an account that is not recorded at all: turning its
- * recording on reaches the next page load.
+ * **Asked again every `ANALYTICS_RECHECK_MS` while the deployment runs
+ * analytics here**, and never once it answers 404. The deployer can stop
+ * analytics, stop recording the account, or end a recording that shows page
+ * text while the owner keeps the app open for hours; the app never refetches on
+ * focus, so without this the change would wait for a reload.
  */
 export function useAnalytics(identified: boolean) {
 	return useQuery({
@@ -54,7 +51,8 @@ export function useAnalytics(identified: boolean) {
 		enabled: identified,
 		retry: false,
 		retryOnMount: false,
-		refetchInterval: (query) => (query.state.data?.umami.replay ? RECORDING_RECHECK_MS : false),
+		refetchInterval: (query) =>
+			query.state.data && !isNotConfigured(query.state.error) ? ANALYTICS_RECHECK_MS : false,
 	});
 }
 
@@ -79,43 +77,52 @@ function routePattern(router: AppRouter): string {
  * **Only for a signed-in owner of a hosted instance.** Nothing loads before a
  * session exists, and a self-hosted instance never asks.
  *
+ * **Every answer goes to `applyAnalyticsSettings`**, which starts analytics on
+ * the first and only ever tightens it after: a 404 after a good answer means
+ * the deployment stopped analytics, and is applied as nothing.
+ *
  * **One subscription reports every page view after the first.** The tracker's
  * own history hook is off, because it sees `pushState` and `replaceState` but
  * not back and forward; the router's `onResolved` sees all of them, once each,
  * after the new page's matches are in place. A change of query or fragment
- * alone is the same page and is not counted.
+ * alone is the same page and is not counted. Before analytics starts, and after
+ * it stops, a page view is nothing.
  */
 export function useProductAnalytics(identified: boolean): void {
-	const umami = useAnalytics(identified).data?.umami;
+	const { data, error } = useAnalytics(identified);
+	const umami = data?.umami;
+	const stopped = isNotConfigured(error);
 	const router = useRouter();
 
 	useEffect(() => {
-		if (!umami) return;
-
-		// Each of these is once per page, so a remount adds nothing.
-		installAnalytics({
-			host: umami.host,
-			websiteId: umami.website_id,
-			distinctId: umami.distinct_id,
-			scriptIntegrity: umami.script_integrity,
-			pagePattern: () => routePattern(router),
-		});
-		installAnalyticsClicks();
-		// Run again whenever the settings change mid-page: a recording already
-		// running only tightens (text hidden, or the rest of the page left out).
-		// A visit no longer picked, whether `replay` went or its rate fell to 0,
-		// stops; stopping a visit that was never recording does nothing.
-		if (umami.replay && shouldRecordThisVisit(umami.replay.sample_rate)) {
-			startSessionRecording({
-				showText: umami.replay.show_text,
-				recorderIntegrity: umami.recorder_integrity,
-			});
-		} else {
-			stopSessionRecording();
+		if (stopped) {
+			applyAnalyticsSettings(null);
+			return;
 		}
-
-		return router.subscribe('onResolved', (event) => {
-			if (event.pathChanged) trackAnalyticsPageView();
+		if (!umami) return;
+		applyAnalyticsSettings({
+			analytics: {
+				host: umami.host,
+				websiteId: umami.website_id,
+				distinctId: umami.distinct_id,
+				scriptIntegrity: umami.script_integrity,
+				pagePattern: () => routePattern(router),
+			},
+			replay: umami.replay
+				? {
+						sampleRate: umami.replay.sample_rate,
+						showText: umami.replay.show_text,
+						recorderIntegrity: umami.recorder_integrity,
+					}
+				: null,
 		});
-	}, [umami, router]);
+	}, [umami, stopped, router]);
+
+	useEffect(
+		() =>
+			router.subscribe('onResolved', (event) => {
+				if (event.pathChanged) trackAnalyticsPageView();
+			}),
+		[router],
+	);
 }
