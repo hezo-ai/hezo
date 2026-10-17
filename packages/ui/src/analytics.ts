@@ -11,6 +11,11 @@
  * it, and a call made in between waits in a short queue. Nothing here throws:
  * analytics that fail stay out of the page that hosts them.
  *
+ * **Both scripts are pinned.** They run in the signed-in person's session, so
+ * each tag carries the integrity hashes its file must match, and a server that
+ * starts serving anything else serves a script the browser refuses to run.
+ * Without a hash, nothing is loaded.
+ *
  * **What the tracker sends is decided here.** Every payload passes through the
  * before-send hook installed with the tracker, which replaces the page's real
  * address and title with the route pattern the consumer names
@@ -32,6 +37,7 @@
  * is hidden by the Umami website's own mask level, which this module does not set.
  */
 
+import { pinnedScript } from './pinned-script.js';
 import { readSessionStored, writeSessionStored } from './safe-storage.js';
 
 /**
@@ -76,6 +82,12 @@ export interface AnalyticsOptions {
 	/** Who the visitor is to that website: an account id, never an email. */
 	distinctId: string;
 	/**
+	 * The Subresource Integrity value `script.js` must match, as one or more
+	 * space-separated `sha256-`/`sha384-`/`sha512-` hashes. A blank value loads
+	 * nothing: the tracker never runs unpinned.
+	 */
+	scriptIntegrity: string;
+	/**
 	 * The current page's route pattern, as `/projects/$projectId/tasks/$taskId`.
 	 * Asked at the moment of every send, so it must describe the page the person
 	 * is on then; anything after a `?` or `#` is cut.
@@ -89,6 +101,11 @@ export interface SessionRecordingOptions {
 	 * website's mask level to hide, whichever this is.
 	 */
 	showText: boolean;
+	/**
+	 * The Subresource Integrity value `recorder.js` must match, in the same form
+	 * as `scriptIntegrity`. A blank value records nothing.
+	 */
+	recorderIntegrity: string;
 }
 
 /** A tracker payload, as far as this module reads or rewrites it. */
@@ -188,12 +205,14 @@ function beforeSend(_type: string, payload: TrackerPayload): TrackerPayload | fa
 }
 
 /**
- * Load the tracker, identified as one visitor, and report the page the visit
- * starts on. Loads once per page; a later call does nothing.
+ * Load the tracker, pinned to `scriptIntegrity` and identified as one visitor,
+ * and report the page the visit starts on. Loads once per page; a later call
+ * does nothing.
  */
 export function installAnalytics(options: AnalyticsOptions): void {
 	if (typeof window === 'undefined' || typeof document === 'undefined' || state) return;
 	try {
+		if (!options.scriptIntegrity.trim()) return;
 		const base = options.host.replace(/\/+$/, '');
 		state = {
 			host: base,
@@ -206,8 +225,7 @@ export function installAnalytics(options: AnalyticsOptions): void {
 		};
 		host()[BEFORE_SEND_HOOK] = beforeSend;
 
-		const script = document.createElement('script');
-		script.src = `${base}/script.js`;
+		const script = pinnedScript(`${base}/script.js`, options.scriptIntegrity);
 		script.defer = true;
 		// An inserted script runs whenever it arrives unless told otherwise; this
 		// keeps the tracker ahead of the recorder, which reads the tracker's session.
@@ -300,19 +318,20 @@ export function shouldRecordThisVisit(sampleRate: number): boolean {
 }
 
 /**
- * Start recording this page, through the recorder served beside the tracker.
- * Hides all page text first unless `showText` is set. Starts once per page, and
- * does nothing before `installAnalytics`, whose host and website it uses.
+ * Start recording this page, through the recorder served beside the tracker
+ * and pinned to `recorderIntegrity`. Hides all page text first unless
+ * `showText` is set. Starts once per page, and does nothing before
+ * `installAnalytics`, whose host and website it uses.
  */
 export function startSessionRecording(options: SessionRecordingOptions): void {
 	if (!state || state.recording) return;
 	try {
+		if (!options.recorderIntegrity.trim()) return;
 		state.recording = true;
 		// Before the recorder loads, so its first snapshot is already masked.
 		if (!options.showText) document.documentElement.classList.add(MASK_TEXT_CLASS);
 
-		const script = document.createElement('script');
-		script.src = `${state.host}/recorder.js`;
+		const script = pinnedScript(`${state.host}/recorder.js`, options.recorderIntegrity);
 		script.defer = true;
 		script.async = false;
 		script.setAttribute('data-website-id', state.websiteId);

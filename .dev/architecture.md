@@ -6796,8 +6796,9 @@ sessions. Inert when the block is absent, and on any instance without an `sso` b
 self-hosted Hezo loads none of it.
 
 - **Served to the owner only, and never before sign-in.** `GET /api/analytics`
-  (`routes/analytics.ts`) answers `{ umami: { host, website_id, distinct_id, replay } }`,
-  `replay` being `{ sample_rate, show_text }` or `null`, only where `isHostedOwner`
+  (`routes/analytics.ts`) answers `{ umami: { host, website_id, distinct_id,
+  script_integrity, recorder_integrity, replay } }`, `replay` being
+  `{ sample_rate, show_text }` or `null`, only where `isHostedOwner`
   (`lib/hosted-owner.ts`) holds - an Admin superuser session on an instance with an `sso`
   block, the gate `GET /api/support` shares. Everyone else, and everyone when the block is
   unset, gets `404`. Nothing rides `/api/status`: unlike the chat, analytics have no reason
@@ -6807,13 +6808,20 @@ self-hosted Hezo loads none of it.
   derives it from `ownerSubject` and never sends an email. It rides the tracker's tag as
   `data-distinct-id`, so the whole visit is identified from the first request; calling
   `umami.identify()` after load would start a second session and split the recording.
+- **Both scripts are pinned.** They run in the owner's session, which keeps its token in
+  `localStorage`, so each tag carries the deployer's Subresource Integrity list and
+  `crossorigin="anonymous"` (`pinnedScript`, `@hezo/ui`, which the Chatwoot loader uses
+  too). A server that starts serving another file serves one the browser refuses to run. A
+  blank hash loads nothing. Rolling Umami lists the old and the new hash until every box
+  has the new file, then drops the old.
 - **One loader for every site.** `analytics.ts` in `@hezo/ui` is plain functions over module
   state, each a no-op before install and none of them throwing. `installAnalytics` adds
-  `${host}/script.js` with `data-website-id`, `data-distinct-id`, `data-before-send` naming
-  a global hook and `data-auto-track="false"`, then reports the page the visit starts on.
-  Calls made before the script runs wait in a queue bounded at 50 and flush on its `load`.
-  `startSessionRecording` puts `rr-mask` on `<html>` unless `showText`, then adds
-  `${host}/recorder.js`; both tags are `async = false` so the tracker runs first, since the
+  `${host}/script.js` pinned to `scriptIntegrity`, with `data-website-id`,
+  `data-distinct-id`, `data-before-send` naming a global hook and `data-auto-track="false"`,
+  then reports the page the visit starts on. Calls made before the script runs wait in a
+  queue bounded at 50 and flush on its `load`. `startSessionRecording` puts `rr-mask` on
+  `<html>` unless `showText`, then adds `${host}/recorder.js` pinned to its
+  `recorderIntegrity`; both tags are `async = false` so the tracker runs first, since the
   recorder waits for the tracker's session. `shouldRecordThisVisit(rate)` decides once per
   browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
   `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends
@@ -6846,11 +6854,14 @@ self-hosted Hezo loads none of it.
   frames and links carrying a signed asset address (a key to that file while it lasts;
   avatars and icons are left alone), `LogViewer`'s body (run and container logs) and
   `ChatSurface`'s message list. Typed input is masked by the recorder's own setting.
-- **What the rewrite does not reach.** The recorder sends `location.href` itself: in rrweb's
-  meta events, in its `url-change` custom event and in heatmap click and scroll events. So a
-  recording carries the real address of each page it covers, query included, even though
-  the page views do not. The scripts load with no integrity hash, so whoever serves them
-  runs code in the owner's session.
+- **Known limits of a text-hidden recording.** The recorder sends `location.href` itself: in
+  rrweb's meta events, in its `url-change` custom event and in heatmap click and scroll
+  events. So a recording carries the real address of each page it covers, query included,
+  even though the page views do not. And `rr-mask` hides text nodes only: rrweb 2.0.1 under
+  Umami's recorder has no attribute masking to turn on, so a name the app puts in a
+  `title` or an `aria-label` (a task title, a filename, a labelled button) is recorded as
+  written. Neither is stripped across the app; the hosted disclosure (the hezo.ai privacy
+  page, outside this repo) states both.
 
 ## 12. Build, release, migrations & upgrades
 
@@ -6910,8 +6921,9 @@ plane writes the block only for a release that reads it. What reads it: § *Supp
 **`policy.analytics`.** The deployer's product analytics, today one key: `umami`, with
 `host` (an `https:` URL with no trailing slash, query or fragment, since the scripts are
 `${host}/script.js` and `${host}/recorder.js`), `websiteId` (a UUID), `distinctId` (1-50
-characters, the deployer's account id) and an optional `replay` of `sampleRate` (0-1) and
-`showText`. Absent `replay` means the account is never recorded. In `policy` for the reason
+characters, the deployer's account id), `scriptIntegrity` and `recorderIntegrity` (each
+an SRI list checked by the same `sriList` as `chatwoot.sdkIntegrity`) and an optional
+`replay` of `sampleRate` (0-1) and `showText`. Absent `replay` means the account is never recorded. In `policy` for the reason
 `support` is, so a recording turned on or off for one account reaches the running instance
 on the next heartbeat. Every level is `.strict()`, so an older release fails the whole policy
 on the unknown key and the plane writes it only for a release that reads it. What reads it:

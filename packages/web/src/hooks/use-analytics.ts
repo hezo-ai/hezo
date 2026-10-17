@@ -16,6 +16,8 @@ export interface Analytics {
 		host: string;
 		website_id: string;
 		distinct_id: string;
+		script_integrity: string;
+		recorder_integrity: string;
 		/** Null when this account is never recorded. */
 		replay: { sample_rate: number; show_text: boolean } | null;
 	};
@@ -79,11 +81,15 @@ export function useProductAnalytics(identified: boolean): void {
 			host: umami.host,
 			websiteId: umami.website_id,
 			distinctId: umami.distinct_id,
+			scriptIntegrity: umami.script_integrity,
 			pagePattern: () => routePattern(router),
 		});
 		installAnalyticsClicks();
 		if (umami.replay && shouldRecordThisVisit(umami.replay.sample_rate)) {
-			startSessionRecording({ showText: umami.replay.show_text });
+			startSessionRecording({
+				showText: umami.replay.show_text,
+				recorderIntegrity: umami.recorder_integrity,
+			});
 		}
 
 		return router.subscribe('onResolved', (event) => {

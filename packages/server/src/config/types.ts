@@ -337,6 +337,14 @@ export interface UmamiAnalyticsConfig {
 	 * deployer. Never derived here, and never an email.
 	 */
 	distinctId: string;
+	/**
+	 * The Subresource Integrity value `script.js` must match, as one or more
+	 * space-separated `sha256-`, `sha384-` or `sha512-` hashes. Several are
+	 * allowed so an Umami upgrade can list the old and the new script at once.
+	 */
+	scriptIntegrity: string;
+	/** The Subresource Integrity value `recorder.js` must match, in the same form. */
+	recorderIntegrity: string;
 	/** Session recording. Absent means this account is never recorded. */
 	replay?: UmamiReplayConfig;
 }

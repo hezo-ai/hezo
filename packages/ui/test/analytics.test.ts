@@ -19,6 +19,8 @@ interface TestWindow {
 const testWindow = window as unknown as TestWindow;
 
 const PATTERN = '/projects/$projectId/tasks/$taskId';
+const SCRIPT_SRI = `sha384-${'A'.repeat(64)} sha384-${'B'.repeat(64)}`;
+const RECORDER_SRI = `sha512-${'C'.repeat(86)}==`;
 
 const listeners: Array<[string, EventListenerOrEventListenerObject, boolean | undefined]> = [];
 let analytics: typeof Analytics;
@@ -31,8 +33,13 @@ function options(): Analytics.AnalyticsOptions {
 		host: 'https://stats.example/hz/',
 		websiteId: '2d1f3c4b-5a69-4f7e-8d9c-0b1a2c3d4e5f',
 		distinctId: 'account-1',
+		scriptIntegrity: SCRIPT_SRI,
 		pagePattern: () => page,
 	};
+}
+
+function recording(showText: boolean): Analytics.SessionRecordingOptions {
+	return { showText, recorderIntegrity: RECORDER_SRI };
 }
 
 beforeEach(async () => {
@@ -106,6 +113,9 @@ test('loads the tracker once, carrying what the tracker reads off its tag', () =
 	const script = tracker();
 	expect(script.getAttribute('data-website-id')).toBe('2d1f3c4b-5a69-4f7e-8d9c-0b1a2c3d4e5f');
 	expect(script.getAttribute('data-distinct-id')).toBe('account-1');
+	// Pinned: integrity is checked only on a CORS response, sent without credentials.
+	expect(script.getAttribute('integrity')).toBe(SCRIPT_SRI);
+	expect(script.getAttribute('crossorigin')).toBe('anonymous');
 	expect(script.defer).toBe(true);
 	// The page reports its own route changes; the tracker's history hook would
 	// count some of them twice and back and forward not at all.
@@ -253,12 +263,14 @@ test('masks page text before the recorder loads, and loads it once', async () =>
 		return append(node);
 	});
 
-	analytics.startSessionRecording({ showText: false });
-	analytics.startSessionRecording({ showText: true });
+	analytics.startSessionRecording(recording(false));
+	analytics.startSessionRecording(recording(true));
 
 	const recorders = scriptAt('https://stats.example/hz/recorder.js');
 	expect(recorders).toHaveLength(1);
 	expect(recorders[0].getAttribute('data-website-id')).toBe('2d1f3c4b-5a69-4f7e-8d9c-0b1a2c3d4e5f');
+	expect(recorders[0].getAttribute('integrity')).toBe(RECORDER_SRI);
+	expect(recorders[0].getAttribute('crossorigin')).toBe('anonymous');
 	expect(recorders[0].defer).toBe(true);
 	// The mask was in place when the recorder was added, so its first snapshot
 	// never held the page's text.
@@ -268,17 +280,32 @@ test('masks page text before the recorder loads, and loads it once', async () =>
 
 test('shows page text only when asked to', async () => {
 	await installed();
-	analytics.startSessionRecording({ showText: true });
+	analytics.startSessionRecording(recording(true));
 
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 	expect(document.documentElement.classList.contains('rr-mask')).toBe(false);
 });
 
 test('records nothing before the tracker is installed', () => {
-	analytics.startSessionRecording({ showText: false });
+	analytics.startSessionRecording(recording(false));
 
 	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(0);
 	expect(document.documentElement.classList.contains('rr-mask')).toBe(false);
+});
+
+test('without an integrity hash, neither script is loaded', async () => {
+	analytics.installAnalytics({ ...options(), scriptIntegrity: '  ' });
+	expect(scriptAt('https://stats.example/hz/script.js')).toHaveLength(0);
+	analytics.trackAnalyticsPageView();
+	expect(track).not.toHaveBeenCalled();
+
+	await installed();
+	analytics.startSessionRecording({ showText: false, recorderIntegrity: '' });
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(0);
+	expect(document.documentElement.classList.contains('rr-mask')).toBe(false);
+	// A later call with a hash still records: the blank one claimed nothing.
+	analytics.startSessionRecording(recording(false));
+	expect(scriptAt('https://stats.example/hz/recorder.js')).toHaveLength(1);
 });
 
 test('a rate of 0 never records and a rate of 1 always does, whatever was kept', () => {
@@ -320,7 +347,7 @@ test('never throws, whether the tracker is absent or failing', async () => {
 	expect(() => {
 		analytics.trackAnalyticsPageView();
 		analytics.trackAnalyticsEvent('create-task');
-		analytics.startSessionRecording({ showText: false });
+		analytics.startSessionRecording(recording(false));
 	}).not.toThrow();
 
 	// A tracker that throws, and one that rejects.

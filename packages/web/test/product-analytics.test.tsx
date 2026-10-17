@@ -32,6 +32,8 @@ const UMAMI: UmamiAnalyticsConfig = {
 	host: 'https://stats.example/hz',
 	websiteId: '2d1f3c4b-5a69-4f7e-8d9c-0b1a2c3d4e5f',
 	distinctId: 'account-1',
+	scriptIntegrity: `sha384-${'A'.repeat(64)}`,
+	recorderIntegrity: `sha384-${'B'.repeat(64)} sha384-${'C'.repeat(64)}`,
 	replay: { sampleRate: 1, showText: false },
 };
 
@@ -125,6 +127,11 @@ test('the owner is counted by route pattern, page by page, and recorded with pag
 	expect(script.getAttribute('data-website-id')).toBe(UMAMI.websiteId);
 	expect(script.getAttribute('data-distinct-id')).toBe(UMAMI.distinctId);
 	expect(script.getAttribute('data-auto-track')).toBe('false');
+	// Both scripts are pinned to the hashes the deployer wrote into the policy.
+	expect(script.getAttribute('integrity')).toBe(UMAMI.scriptIntegrity);
+	expect(script.getAttribute('crossorigin')).toBe('anonymous');
+	expect(recorder()?.getAttribute('integrity')).toBe(UMAMI.recorderIntegrity);
+	expect(recorder()?.getAttribute('crossorigin')).toBe('anonymous');
 
 	// Every visit is recorded at a rate of 1, with the page's text hidden first.
 	expect(recorder()?.getAttribute('data-website-id')).toBe(UMAMI.websiteId);

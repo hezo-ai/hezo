@@ -127,6 +127,21 @@ const logCompactionSchema = z
 const SRI_HASH = 'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}';
 
 /**
+ * A Subresource Integrity value a third-party script must match: one or more
+ * space-separated hashes, so a deployer can roll a new script with no moment
+ * where either the old or the new one is refused. A value that matches no hash
+ * blocks the script, so it is checked here rather than found out in a browser.
+ */
+function sriList(field: string) {
+	return z
+		.string()
+		.trim()
+		.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
+			message: `${field} must be one or more space-separated sha256-, sha384- or sha512- hashes`,
+		});
+}
+
+/**
  * A support channel. Every value is what the browser hands the widget, so each
  * is checked for the shape the widget needs rather than accepted as any string:
  * an integrity value that matches no hash blocks the script, and a malformed
@@ -136,13 +151,7 @@ const chatwootSupportSchema = z
 	.object({
 		baseUrl: httpsUrl('baseUrl'),
 		websiteToken: z.string().trim().min(1),
-		sdkIntegrity: z
-			.string()
-			.trim()
-			.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
-				message:
-					'sdkIntegrity must be one or more space-separated sha256-, sha384- or sha512- hashes',
-			}),
+		sdkIntegrity: sriList('sdkIntegrity'),
 		identifier: z.string().trim().min(1),
 		identifierHash: z.string().regex(/^[0-9a-f]{64}$/, {
 			message: 'identifierHash must be 64 lowercase hex characters',
@@ -161,7 +170,8 @@ const chatwootSupportSchema = z
  * Product analytics. Every value lands on a script tag in the owner's browser,
  * so each is checked for the shape that tag needs: the scripts are fetched from
  * `${host}/script.js` and `${host}/recorder.js`, so a host carrying a trailing
- * slash, a query or a fragment would load nothing.
+ * slash, a query or a fragment would load nothing, and an integrity value that
+ * matches no hash would block the script.
  */
 const umamiAnalyticsSchema = z
 	.object({
@@ -179,6 +189,10 @@ const umamiAnalyticsSchema = z
 		websiteId: z.guid({ message: 'websiteId must be a UUID' }),
 		// Umami's own limit on a distinct id.
 		distinctId: z.string().trim().min(1).max(50),
+		// Both scripts run in the owner's session, so each is pinned to the exact
+		// file the deployer vetted; whoever serves `host` cannot swap in another.
+		scriptIntegrity: sriList('scriptIntegrity'),
+		recorderIntegrity: sriList('recorderIntegrity'),
 		replay: z
 			.object({
 				sampleRate: z.number().min(0).max(1),

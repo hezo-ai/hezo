@@ -268,12 +268,21 @@ event per named click. Leave it out and nothing is loaded.
 | `policy.analytics.umami.host` | - | Where Umami's `script.js` and `recorder.js` are served. Must be `https:`, with no trailing slash, query or fragment. |
 | `policy.analytics.umami.websiteId` | - | The Umami website the visits are counted under, as a UUID. |
 | `policy.analytics.umami.distinctId` | - | Who the owner is to that website: your own id for their account, 1 to 50 characters. Never an email. |
+| `policy.analytics.umami.scriptIntegrity` | - | The integrity hash `script.js` must match, as `sha256-`, `sha384-` or `sha512-` followed by the base64 digest. List several, separated by spaces, while you roll out a new script. |
+| `policy.analytics.umami.recorderIntegrity` | - | The integrity hash `recorder.js` must match, in the same form. |
 | `policy.analytics.umami.replay.sampleRate` | - | The share of browser sessions recorded, from `0` to `1`. Each browser session is picked once, so a visit is recorded whole or not at all. |
 | `policy.analytics.umami.replay.showText` | - | `false` hides all page text in a recording. `true` shows it. |
 
-`host`, `websiteId` and `distinctId` are required. Leave out `replay` and the owner
-is never recorded, though page views and clicks are still counted. A block that
-fails any of these is refused like any other invalid `policy`.
+`host`, `websiteId`, `distinctId`, `scriptIntegrity` and `recorderIntegrity` are
+required. Leave out `replay` and the owner is never recorded, though page views and
+clicks are still counted. A block that fails any of these is refused like any other
+invalid `policy`.
+
+**Both scripts run in the owner's session, so each is pinned to its hash.** A
+browser refuses a script whose file no longer matches, so upgrading Umami changes
+both files: list the old and the new hash of each, upgrade, then drop the old
+ones. Skip the first step and the owner's browser loads neither script until the
+policy catches up.
 
 **Typed input is hidden by Umami, not by Hezo.** Leave the website's replay mask
 level at moderate or stricter, which masks every input, whatever `showText` says.

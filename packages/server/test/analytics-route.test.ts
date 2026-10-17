@@ -41,6 +41,8 @@ const UMAMI: UmamiAnalyticsConfig = {
 	host: 'https://control.example/hz',
 	websiteId: '2d1f3c4b-5a69-4f7e-8d9c-0b1a2c3d4e5f',
 	distinctId: '7c4e1a2b-0000-4000-8000-00000000a11c',
+	scriptIntegrity: `sha384-${'A'.repeat(64)}`,
+	recorderIntegrity: `sha384-${'B'.repeat(64)}`,
 	replay: { sampleRate: 0.5, showText: false },
 };
 
@@ -108,6 +110,37 @@ describe('the policy schema', () => {
 		expect(parse({ ...UMAMI, distinctId: 'x'.repeat(50) }).success).toBe(true);
 	});
 
+	it.each([
+		'scriptIntegrity',
+		'recorderIntegrity',
+	])('accepts one integrity hash or several for %s', (field) => {
+		// Several hashes are how an Umami upgrade lists the old and the new
+		// script at once, so neither is refused while the files change over.
+		const rollout = `sha384-${'A'.repeat(64)} sha512-${'b'.repeat(86)}==`;
+		expect(parse({ ...UMAMI, [field]: rollout }).success).toBe(true);
+		expect(parse({ ...UMAMI, [field]: `sha256-${'c'.repeat(43)}=` }).success).toBe(true);
+	});
+
+	it.each<[string, string, string | undefined]>([
+		['scriptIntegrity', 'a missing value', undefined],
+		['scriptIntegrity', 'a value with no algorithm', 'A'.repeat(64)],
+		['scriptIntegrity', 'an algorithm browsers do not accept', `md5-${'A'.repeat(24)}`],
+		[
+			'scriptIntegrity',
+			'a list joined by commas',
+			`sha384-${'A'.repeat(64)},sha384-${'B'.repeat(64)}`,
+		],
+		['scriptIntegrity', 'an empty value', '  '],
+		['recorderIntegrity', 'a missing value', undefined],
+		['recorderIntegrity', 'a value with no algorithm', 'A'.repeat(64)],
+		['recorderIntegrity', 'an algorithm browsers do not accept', `sha1-${'A'.repeat(28)}`],
+		['recorderIntegrity', 'an empty value', ''],
+	])('rejects for %s %s', (field, _label, value) => {
+		const result = parse({ ...UMAMI, [field]: value });
+		expect(result.success).toBe(false);
+		expect(JSON.stringify(result.error?.issues)).toContain(field);
+	});
+
 	it('keeps the parsed block whole', () => {
 		const parsed = policySchema.parse({
 			managedBy: 'Acme',
@@ -156,6 +189,8 @@ describe('GET /api/analytics', () => {
 				host: UMAMI.host,
 				website_id: UMAMI.websiteId,
 				distinct_id: UMAMI.distinctId,
+				script_integrity: UMAMI.scriptIntegrity,
+				recorder_integrity: UMAMI.recorderIntegrity,
 				replay: { sample_rate: 0.5, show_text: false },
 			},
 		});

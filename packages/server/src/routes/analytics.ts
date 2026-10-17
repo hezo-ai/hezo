@@ -8,8 +8,9 @@ export const analyticsRoutes = new Hono<Env>();
 
 /**
  * The product analytics the deployer runs, for the account that owns this
- * instance: where the scripts are, which website counts the visits, who the
- * owner is to it, and whether this account is recorded.
+ * instance: where the scripts are and the hashes they must match, which website
+ * counts the visits, who the owner is to it, and whether this account is
+ * recorded.
  *
  * **The owner only** (`isHostedOwner`), and **404 for everyone else and for
  * everyone when nothing is configured**, as `GET /api/support` answers. The
@@ -30,6 +31,8 @@ analyticsRoutes.get('/analytics', (c) => {
 			host: umami.host,
 			website_id: umami.websiteId,
 			distinct_id: umami.distinctId,
+			script_integrity: umami.scriptIntegrity,
+			recorder_integrity: umami.recorderIntegrity,
 			replay: umami.replay
 				? { sample_rate: umami.replay.sampleRate, show_text: umami.replay.showText }
 				: null,

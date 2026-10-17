@@ -868,7 +868,10 @@ records sessions. `policy.analytics.umami` carries where the scripts are served
 (`host`, the plane's own `/hz` proxy of Umami, so `${host}/script.js` and
 `${host}/recorder.js`), the website the tenant apps share (`websiteId`), the
 plane's account id as the visitor (`distinctId`, 1-50 characters, never an
-email) and, optionally, `replay`: `sampleRate` from 0 to 1 and `showText`. No
+email), the Subresource Integrity lists the two scripts must match
+(`scriptIntegrity`, `recorderIntegrity`, both required, each validated like
+`chatwoot.sdkIntegrity`) and, optionally, `replay`: `sampleRate` from 0 to 1
+and `showText`. No
 `replay` means the account is never recorded; `showText: true` is the operator's
 per-account debug recording, typed input still hidden. It rides the policy file,
 so turning a recording on or off reaches the box on the next heartbeat. **The
@@ -887,13 +890,15 @@ What the plane depends on from the Umami side, which this repo cannot check:
 CORS open to tenant subdomains on `/api/send`, `/api/record` and the recorder
 config route; the website's mask level left at "moderate" or stricter (typed
 input masked) and its block selector empty (the components carry `rr-block`
-themselves); recording length and the 30-day retention set there. **Two gaps
-are the plane's to decide.** The recorder sends `location.href` itself, in its
-rrweb meta events, its `url-change` events and its heatmap events, so a
-recording carries real page addresses that the page views never do. And the
-scripts load with no integrity hash, so whoever serves `/hz` runs code in every
-tenant's owner session; an `integrity` field would need a new key in this block.
-Mechanism and rules: architecture § *Product analytics*.
+themselves); recording length and the 30-day retention set there. **An Umami
+upgrade is a hash rotation:** write the old and the new hash of each script into
+the block, upgrade, then drop the old one, or every box refuses the new file.
+Two limits stay, and the hezo.ai privacy page is where hosted customers are told
+of them: the recorder sends `location.href` itself, in its rrweb meta events,
+its `url-change` events and its heatmap events, so a recording carries real page
+addresses that the page views never do; and page text is masked but attributes
+are not, so a `title` or `aria-label` holding a name is recorded. Mechanism and
+rules: architecture § *Product analytics*.
 
 ---
 
