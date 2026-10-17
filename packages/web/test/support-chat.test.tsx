@@ -5,12 +5,13 @@ import {
 	setRuntimeConfig,
 } from '@hezo/server/src/config/runtime';
 import type { ChatwootSupportConfig, SsoConfig } from '@hezo/server/src/config/types';
+import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import * as sso from '@hezo/web/lib/sso';
 import { within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 
 // The support row and the widget behind it exist only for the instance owner
 // on a deployment that configured a channel. The server here is real, so who
@@ -42,6 +43,7 @@ interface FakeChatwoot {
 	toggle: ReturnType<typeof vi.fn>;
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
+	setConversationCustomAttributes: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -128,6 +130,7 @@ test('the owner gets the row, an identified widget, and a reset on sign-out', as
 		toggle: vi.fn(),
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
+		setConversationCustomAttributes: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {
@@ -160,4 +163,54 @@ test('the owner gets the row, an identified widget, and a reset on sign-out', as
 	await user.click(within(desktopNav).getByTestId('settings-logout'));
 	expect(chatwoot.reset).toHaveBeenCalledTimes(1);
 	await expect.poll(() => vi.mocked(sso.goToIssuer).mock.calls[0]?.[0]).toBe(SSO.logoutUrl);
+});
+
+test('the open chat names the screen and the project, never the path', async () => {
+	testWindow.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
+	const chatwoot: FakeChatwoot = {
+		setUser: vi.fn(),
+		toggle: vi.fn(),
+		setLocale: vi.fn(),
+		setColorScheme: vi.fn(),
+		setConversationCustomAttributes: vi.fn(),
+		reset: vi.fn(),
+	};
+	testWindow.chatwootSDK = {
+		run: () => {
+			testWindow.$chatwoot = chatwoot;
+		},
+	};
+	// The loader installs once per page, and an earlier spec in this file may
+	// already have installed it; the widget it talks to is this one either way.
+	testWindow.$chatwoot = chatwoot;
+
+	let slug = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/settings',
+		seed: async () => {
+			configure({ issuer: true, chatwoot: CHATWOOT });
+			const { db } = getTestContext();
+			const team = (await (await createTestTeam(db, { name: 'Demo Team' })).json()).data;
+			slug = (await (await createTestProject(db, team.id, { name: 'Storefront' })).json()).data
+				.slug;
+		},
+	});
+	await findByTestId('settings-nav-desktop');
+	await router.navigate({ to: '/projects/$projectId/documents', params: { projectId: slug } });
+
+	window.dispatchEvent(new Event('chatwoot:ready'));
+	window.dispatchEvent(new Event('chatwoot:opened'));
+	await expect
+		.poll(() => chatwoot.setConversationCustomAttributes.mock.lastCall?.[0]?.hezo_screen)
+		.toBe('/projects/$projectId/documents');
+
+	const sent = chatwoot.setConversationCustomAttributes.mock.lastCall?.[0];
+	expect(sent).toMatchObject({
+		hezo_surface: 'instance',
+		hezo_page: '',
+		hezo_project: slug,
+		hezo_language: 'en',
+	});
+	expect(sent?.hezo_version).toMatch(/^\d+\.\d+\.\d+/);
+	expect(JSON.stringify(sent)).not.toContain(`/projects/${slug}`);
 });

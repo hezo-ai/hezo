@@ -19,7 +19,7 @@ import { PwaInstallPrompt } from '../components/pwa-install-prompt';
 import { ReloadPromptBanner } from '../components/reload-prompt-banner';
 import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
-import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
+import { CreatePasswordFlow, SetupGate, useWizardStep } from '../components/setup/setup-wizard';
 import { SsoRedirect } from '../components/sso-redirect';
 import { StartingScreen } from '../components/starting-screen';
 import { Button } from '../components/ui/button';
@@ -36,6 +36,7 @@ import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
 import { useAllVisibleProjects, useHqProject, useProjectsIndex } from '../hooks/use-projects';
+import { useRouteProjectId } from '../hooks/use-route-project-id';
 import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
 import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
@@ -45,6 +46,7 @@ import { type ApiError, api } from '../lib/api';
 import { useI18n, useSyncInstanceLocale } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import { type SsoPhase, shellGate } from '../lib/shell-gate';
 import {
 	hasPendingSsoHandle,
 	hasSsoTokenInFragment,
@@ -142,13 +144,6 @@ function AppShell() {
 	// A 401 here means "unlocked but no valid session → show the password login".
 	const me = useMe({ enabled: status?.masterKeyState === 'unlocked', retry: false });
 
-	// **Above every gate, so the chat is there on the screens that precede a
-	// session.** Somebody who cannot get past the vault or the sign-in form is
-	// who most needs to ask, and the channel rides on the public status for it.
-	// The owner's identity is fetched only once a session exists and is handed to
-	// the install already running, so a conversation started at a gate carries.
-	useSupportChat(!!status?.sso && !!me.data, status?.support);
-
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
 			navigate({ to: '/', replace: true });
@@ -162,12 +157,7 @@ function AppShell() {
 	// handle. Both live here rather than inside a gate component so the flow is
 	// one thing to read, and so neither half depends on which gate happens to be
 	// mounted when it fires.
-	// `holding` is the whole reason this is a phase rather than a boolean. Between
-	// the unlock landing and the handle becoming a session there is at least one
-	// render with no session, and a plain "redirect when signed out" would fire in
-	// it - sending the visitor back to the issuer moments before the identity they
-	// already proved was about to be honoured.
-	type SsoPhase = 'idle' | 'exchanging' | 'holding' | 'redeeming' | 'failed';
+	// The phase, not a boolean - see `SsoPhase`.
 	const [ssoError, setSsoError] = useState('');
 	const [ssoPhase, setSsoPhase] = useState<SsoPhase>(() =>
 		hasSsoTokenInFragment() ? 'exchanging' : 'idle',
@@ -224,19 +214,6 @@ function AppShell() {
 			});
 	}, [unlocked, ssoPhase, t]);
 
-	// The server is still booting (compiled binary serves the SPA shell during
-	// startup). Show the boot phase and keep polling rather than the bare spinner.
-	if (status?.starting) {
-		return (
-			<StartingScreen
-				phase={status.phase}
-				message={status.message}
-				detail={status.detail}
-				lastFailure={status.lastFailure}
-			/>
-		);
-	}
-
 	// Only the FIRST load (nothing fetched yet, never errored) shows the full-screen
 	// spinner. Background refetches — notably React Query's refetch-on-reconnect,
 	// which fires on every mobile network blip (radio waking on app-switch, cell↔wifi
@@ -247,63 +224,112 @@ function AppShell() {
 	// to the spinner: a manual `refetch()` re-enters the pending-with-no-data window,
 	// so gating on `isPending` alone would tear that screen (and its Retry-now state)
 	// down for the duration of each retry.
-	if (isPending && errorUpdatedAt === 0) return <Spinner />;
+	const gate = shellGate({
+		status,
+		statusLoading: isPending && errorUpdatedAt === 0,
+		statusFailed: isError,
+		session: me,
+		ssoPhase,
+	});
 
-	if (isError || !status || !status.masterKeyState) {
-		const raw = (error as { message?: string } | null)?.message;
-		// A bare `fetch` network failure surfaces as the browser's technical
-		// "Failed to fetch" / "Load failed" / "NetworkError". Show friendly copy for
-		// that (the query keeps auto-retrying every 2s, so it self-heals when the
-		// server returns); pass through any real server-sent message unchanged.
-		const isNetwork = !raw || /failed to fetch|load failed|networkerror/i.test(raw);
-		// The query already auto-retries on an interval, so the copy doesn't claim
-		// "Retrying…" — that state is surfaced only on the explicit Retry-now button.
-		const message = isNetwork ? t('connection.unreachable') : (raw ?? '');
-		return <UnreachableScreen message={message} isNetwork={isNetwork} onRetry={refetch} />;
+	// **Above every return, so the chat is there on the screens that precede a
+	// session.** Somebody who cannot get past the vault or the sign-in form is
+	// who most needs to ask, and the channel rides on the public status for it.
+	// The owner's identity is fetched only once a session exists and is handed to
+	// the install already running, so a conversation started at a gate carries.
+	// The gate is also what the chat tells the support team about where they are.
+	const signedIn = gate.kind === 'signed-in';
+	// Reads what the setup gate fetches, and never fetches itself: the shell
+	// adds no request for the chat's sake.
+	const wizardStep = useWizardStep({ enabled: false });
+	const routeId = useMatches({ select: (matches) => matches.at(-1)?.routeId ?? null });
+	const routeProject = useRouteProjectId();
+	useSupportChat(!!status?.sso && !!me.data, status?.support, {
+		screen: signedIn ? signedInScreen(wizardStep, routeId) : gate.kind,
+		project: signedIn ? routeProject : null,
+		version: status?.version ?? null,
+	});
+
+	switch (gate.kind) {
+		case 'starting':
+			// The server is still booting (compiled binary serves the SPA shell during
+			// startup). Show the boot phase and keep polling rather than the bare spinner.
+			return (
+				<StartingScreen
+					phase={gate.status.phase}
+					message={gate.status.message}
+					detail={gate.status.detail}
+					lastFailure={gate.status.lastFailure}
+				/>
+			);
+		case 'loading':
+			return <Spinner />;
+		case 'unreachable': {
+			const raw = (error as { message?: string } | null)?.message;
+			// A bare `fetch` network failure surfaces as the browser's technical
+			// "Failed to fetch" / "Load failed" / "NetworkError". Show friendly copy for
+			// that (the query keeps auto-retrying every 2s, so it self-heals when the
+			// server returns); pass through any real server-sent message unchanged.
+			const isNetwork = !raw || /failed to fetch|load failed|networkerror/i.test(raw);
+			// The query already auto-retries on an interval, so the copy doesn't claim
+			// "Retrying…" — that state is surfaced only on the explicit Retry-now button.
+			const message = isNetwork ? t('connection.unreachable') : (raw ?? '');
+			return <UnreachableScreen message={message} isNetwork={isNetwork} onRetry={refetch} />;
+		}
+		case 'vault-unset':
+		case 'vault-locked':
+			api.clearToken();
+			// Pre-active vault gate. Both first-run setup (unset) and locked-instance unlock
+			// (locked) share the same full-screen "vault" treatment to signal the
+			// instance isn't live yet; the master key only unlocks — it never grants a
+			// session. After the unlock reveal, the gate re-evaluates.
+			return <MasterKeyGate state={gate.kind === 'vault-unset' ? 'unset' : 'locked'} />;
+		case 'signed-in':
+			// A valid session is only ever minted by the password or the issuer, so
+			// it's proof enough to enter the app.
+			return (
+				<SocketProvider token={api.getToken()}>
+					<SetupGate hosted={!!status?.sso}>
+						<ShellLayout />
+					</SetupGate>
+				</SocketProvider>
+			);
+		case 'signing-in':
+			// An identity is mid-flight. Wait for it rather than redirecting out from
+			// under it - see `SsoPhase`.
+			return <Spinner />;
+		case 'issuer-redirect':
+			// An instance with an issuer has no sign-in of its own: signing in happens at
+			// the issuer, which sends the visitor back carrying a token. There is no
+			// password fallback, by design - the wizard never enrolls one on a hosted
+			// instance, and offering a second door would defeat the point of the first.
+			return <SsoRedirect issuerUrl={gate.issuerUrl} error={ssoError} />;
+		case 'create-password':
+			// Brand-new instance (or recovery): create the first password, which mints
+			// the first session.
+			return <CreatePasswordFlow />;
+		case 'sign-in':
+			// A password exists but this browser has no session → sign in.
+			return <PasswordLogin />;
+		default: {
+			// A new gate that is not drawn here fails to compile.
+			const _exhaustive: never = gate;
+			void _exhaustive;
+			return null;
+		}
 	}
+}
 
-	if (status.masterKeyState !== 'unlocked') {
-		api.clearToken();
-		// Pre-active vault gate. Both first-run setup (unset) and locked-instance unlock
-		// (locked) share the same full-screen "vault" treatment to signal the
-		// instance isn't live yet; the master key only unlocks — it never grants a
-		// session. After the unlock reveal, the gate re-evaluates below.
-		return <MasterKeyGate state={status.masterKeyState} />;
-	}
-
-	// Unlocked. A session is now required (no anonymous access). A valid session is
-	// only ever minted by the password, so it's proof enough to enter the app.
-	if (me.isPending) return <Spinner />;
-	if (!me.isError) {
-		return (
-			<SocketProvider token={api.getToken()}>
-				<SetupGate hosted={!!status.sso}>
-					<ShellLayout />
-				</SetupGate>
-			</SocketProvider>
-		);
-	}
-
-	// An identity is mid-flight. Wait for it rather than redirecting out from
-	// under it - see the phase note above.
-	if (ssoPhase !== 'idle' && ssoPhase !== 'failed') return <Spinner />;
-
-	// An instance with an issuer has no sign-in of its own: signing in happens at
-	// the issuer, which sends the visitor back carrying a token. There is no
-	// password fallback, by design - the wizard never enrolls one on a hosted
-	// instance, and offering a second door would defeat the point of the first.
-	if (status.sso) {
-		return <SsoRedirect issuerUrl={status.sso.issuer_url} error={ssoError} />;
-	}
-
-	// No valid session. `passwordSet` decides how to get one:
-	if (!status.passwordSet) {
-		// Brand-new instance (or recovery): create the first password, which mints
-		// the first session.
-		return <CreatePasswordFlow />;
-	}
-	// A password exists but this browser has no session → sign in.
-	return <PasswordLogin />;
+/**
+ * The screen a signed-in owner is on, as the support chat names it: the setup
+ * wizard while no AI provider is configured, otherwise the route's template.
+ * The template rather than the path, so a task or document id never leaves the
+ * instance.
+ */
+function signedInScreen(step: ReturnType<typeof useWizardStep>, routeId: string | null): string {
+	if (step === 'loading') return 'loading';
+	if (step !== 'done') return 'setup';
+	return routeId ?? '';
 }
 
 function ShellLayout() {

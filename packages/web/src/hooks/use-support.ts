@@ -1,6 +1,8 @@
+import { type SupportChatFieldKey, supportChatViewport } from '@hezo/shared';
 import {
 	installSupportChat,
 	setSupportChatBubble,
+	setSupportChatContext,
 	setSupportChatLocale,
 	setSupportChatTheme,
 } from '@hezo/ui';
@@ -44,6 +46,15 @@ export function useSupport(identified: boolean) {
 	});
 }
 
+/** Where the owner is, as only the shell knows it. */
+export interface SupportChatPlace {
+	/** The gate the shell shows, the setup wizard, or the route template once inside. */
+	screen: string;
+	/** The project slug from the route, once signed in. */
+	project: string | null;
+	version: string | null;
+}
+
 /**
  * Load the support chat wherever the deployer offers one, named or not.
  *
@@ -62,10 +73,15 @@ export function useSupport(identified: boolean) {
  *
  * `identified` says a session exists to ask about, so the gate spends no
  * request on a route that would answer 401 to a caller who has not signed in.
+ *
+ * **The support team sees where the owner is.** `place` and the page's own
+ * language, theme and width become the conversation's attributes while the chat
+ * is open: names the shell chose, never a path, a title or anything typed.
  */
 export function useSupportChat(
 	identified: boolean,
-	channel?: { base_url: string; website_token: string; sdk_integrity: string },
+	channel: { base_url: string; website_token: string; sdk_integrity: string } | undefined,
+	place: SupportChatPlace,
 ): void {
 	const chatwoot = useSupport(identified).data?.chatwoot;
 	const { language } = useI18n();
@@ -101,4 +117,25 @@ export function useSupportChat(
 		setSupportChatLocale(language);
 		setSupportChatTheme(resolvedTheme);
 	}, [channel, chatwoot, language, resolvedTheme]);
+
+	// After the install above, and again once there is a chat to install: the
+	// loader drops a context handed over before it is installed.
+	const offered = Boolean(chatwoot ?? channel);
+	const { screen, project, version } = place;
+	useEffect(() => {
+		if (!offered) return;
+		const context: Record<SupportChatFieldKey, string | null> = {
+			hezo_surface: 'instance',
+			// The instance's paths carry task and document ids, so it names the
+			// screen rather than the page.
+			hezo_page: null,
+			hezo_screen: screen,
+			hezo_language: language,
+			hezo_theme: resolvedTheme,
+			hezo_viewport: supportChatViewport(window.innerWidth),
+			hezo_project: project,
+			hezo_version: version,
+		};
+		setSupportChatContext(context);
+	}, [offered, screen, project, version, language, resolvedTheme]);
 }

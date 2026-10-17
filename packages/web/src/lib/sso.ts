@@ -87,3 +87,20 @@ export async function redeemPendingSsoHandle(): Promise<boolean> {
 export function goToIssuer(url: string): void {
 	window.location.assign(url);
 }
+
+/**
+ * Set once this page has sent the browser to the issuer's sign-out, and never
+ * cleared: the page is leaving. Signing out resets every query, which lands the
+ * shell on the issuer gate, and that gate's own redirect to the sign-in would
+ * race the sign-out. Whichever navigation the browser commits to last wins, and
+ * the sign-in winning signs the person straight back in.
+ */
+let leavingForSignOut = false;
+
+export function markLeavingForSignOut(): void {
+	leavingForSignOut = true;
+}
+
+export function isLeavingForSignOut(): boolean {
+	return leavingForSignOut;
+}

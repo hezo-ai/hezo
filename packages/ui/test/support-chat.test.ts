@@ -12,6 +12,7 @@ interface FakeChatwoot {
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
 	toggleBubbleVisibility: ReturnType<typeof vi.fn>;
+	setConversationCustomAttributes: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -57,6 +58,7 @@ beforeEach(async () => {
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
 		toggleBubbleVisibility: vi.fn(),
+		setConversationCustomAttributes: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {
@@ -89,6 +91,30 @@ async function loaded(): Promise<void> {
 
 function ready(): void {
 	window.dispatchEvent(new Event('chatwoot:ready'));
+}
+
+function widgetEvent(name: 'opened' | 'closed' | 'on-start-conversation'): void {
+	window.dispatchEvent(new Event(`chatwoot:${name}`));
+}
+
+const CONTEXT = {
+	hezo_surface: 'instance',
+	hezo_screen: '/projects/$projectId/tasks/$taskId',
+	hezo_project: 'launch',
+	hezo_version: null,
+};
+
+const SENT = {
+	hezo_surface: 'instance',
+	hezo_screen: '/projects/$projectId/tasks/$taskId',
+	hezo_project: 'launch',
+	hezo_version: '',
+};
+
+async function readyChat(): Promise<void> {
+	chat.installSupportChat(OPTIONS);
+	await loaded();
+	ready();
 }
 
 test('loads the widget script under integrity, without credentials', () => {
@@ -263,6 +289,102 @@ test('shows and hides the launcher after the widget has loaded', async () => {
 	expect(fake.toggleBubbleVisibility).toHaveBeenLastCalledWith('show');
 });
 
+test('keeps where the person is to itself until the chat opens', async () => {
+	await readyChat();
+	chat.setSupportChatContext(CONTEXT);
+	expect(fake.setConversationCustomAttributes).not.toHaveBeenCalled();
+
+	widgetEvent('opened');
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledWith(SENT);
+});
+
+test('sends the whole context on every change, never a part of it', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	chat.setSupportChatContext({ ...CONTEXT, hezo_project: 'billing' });
+
+	// The inbox replaces a conversation's attributes with what it is sent, so a
+	// change to one key still carries every other.
+	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith({
+		...SENT,
+		hezo_project: 'billing',
+	});
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+});
+
+test('does not send a context it already sent', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	chat.setSupportChatContext({
+		hezo_version: null,
+		hezo_project: 'launch',
+		hezo_screen: '/projects/$projectId/tasks/$taskId',
+		hezo_surface: 'instance',
+	});
+	widgetEvent('opened');
+
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(1);
+});
+
+test('holds changes made while the chat is closed until it opens again', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	widgetEvent('closed');
+
+	chat.setSupportChatContext({ ...CONTEXT, hezo_project: 'billing' });
+	chat.setSupportChatContext({ ...CONTEXT, hezo_project: 'growth' });
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(1);
+
+	widgetEvent('opened');
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith({
+		...SENT,
+		hezo_project: 'growth',
+	});
+});
+
+test('sends the context again when a conversation starts', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+
+	// A conversation started after an earlier one was resolved begins with no
+	// attributes, even though nothing on the page changed.
+	widgetEvent('on-start-conversation');
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith(SENT);
+});
+
+test('after a reset, the next person is sent the context when they open the chat', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	chat.resetSupportChat();
+
+	chat.setSupportChatContext(CONTEXT);
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(1);
+	ready();
+	widgetEvent('opened');
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+});
+
+test('never sends an empty context, which the widget refuses', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext({});
+
+	expect(fake.setConversationCustomAttributes).not.toHaveBeenCalled();
+});
+
+test('does nothing with a context before install', () => {
+	expect(() => chat.setSupportChatContext(CONTEXT)).not.toThrow();
+	widgetEvent('opened');
+	expect(fake.setConversationCustomAttributes).not.toHaveBeenCalled();
+});
+
 test('never throws, whether the widget is absent or failing', async () => {
 	// Before install, and with no widget at all.
 	expect(() => {
@@ -270,6 +392,7 @@ test('never throws, whether the widget is absent or failing', async () => {
 		chat.resetSupportChat();
 		chat.setSupportChatTheme('light');
 		chat.setSupportChatLocale('de');
+		chat.setSupportChatContext(CONTEXT);
 	}).not.toThrow();
 
 	// A widget whose every method throws, as its identify call does on bad input.
@@ -281,6 +404,7 @@ test('never throws, whether the widget is absent or failing', async () => {
 	fake.setLocale.mockImplementation(boom);
 	fake.setColorScheme.mockImplementation(boom);
 	fake.reset.mockImplementation(boom);
+	fake.setConversationCustomAttributes.mockImplementation(boom);
 	chat.installSupportChat(OPTIONS);
 	await loaded();
 
@@ -289,6 +413,8 @@ test('never throws, whether the widget is absent or failing', async () => {
 		chat.openSupportChat();
 		chat.setSupportChatTheme('light');
 		chat.setSupportChatLocale('de');
+		widgetEvent('opened');
+		chat.setSupportChatContext(CONTEXT);
 		chat.resetSupportChat();
 	}).not.toThrow();
 });

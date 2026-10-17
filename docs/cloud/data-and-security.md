@@ -63,6 +63,18 @@ the proxy. A compromised sandbox therefore exposes the prompts and files in that
 sandbox, and the provider key the run was using. Every other secret was never
 there. See [Secret protection & egress](/docs/security/secret-protection).
 
+## The support chat
+
+When you open the support chat, from the dashboard or from your instance, it
+tells our support team where you are, so you do not have to explain it. From
+your instance that is the screen you are on, the short name of the project you
+are in, your Hezo version, and your language, theme and screen size. From the
+dashboard it is the page you are on and your instance's status, its current
+setup step and its last error.
+
+It never sends the text of your tasks, documents or anything you typed outside
+the chat. Nothing is sent while the chat is closed.
+
 ## Payment details
 
 Your card never reaches us. Payment is handled entirely by Stripe, which is the

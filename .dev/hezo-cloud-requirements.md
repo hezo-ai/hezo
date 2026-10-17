@@ -50,6 +50,7 @@ together from H24 on.
 | **H29** | Translate the first screens | the seeded language reaching the gate | **done**, product change |
 | **H30** | Refuse to be framed | the launch modal's threat model | **done** |
 | **H34** | `policy.support` block, owner-only route, shared chat loader | one support contact from the site through the tenant | **done** |
+| **H36** | the support chat says where the owner is | the support team sees the screen a person is stuck on | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -859,6 +860,17 @@ release fails the whole policy parse on the unknown key, which at boot pins
 nothing. `GET /api/support` answers it to the owner only, and `@hezo/ui` exports
 the loader the plane's dashboard uses too. Mechanism and rules: architecture
 § *Support chat*.
+
+## H36 — the support chat says where the owner is *(done)*
+
+Somebody who writes "it does not work" leaves the support team asking where. The
+loader now takes a context, `setSupportChatContext`, and sends it as Chatwoot
+conversation attributes while the chat is open; the field table is
+`SUPPORT_CHAT_FIELDS` in `@hezo/shared`, so the plane's dashboard reports through
+the same keys and the plane's sync tool defines them in the inbox. The instance
+reports its gate or route template, project slug and version, never a path. No
+policy change: a release that predates it simply reports nothing. Mechanism and
+rules: architecture § *Support chat*.
 
 ---
 

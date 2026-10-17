@@ -51,5 +51,6 @@ one to read: where it says *nothing*, no test will catch you.
 | **Removing** a feature | every stale reference repo-wide (`docs/**`, `.dev/`, READMEs, comments) - grep for it | **nothing - on you** |
 | A config mechanism, or a `policy` / `sso` / `seed` field | the hosted control plane's `.dev/track-h-spec.md` and its golden snapshot, in `hezo-ai/cloud` | **nothing - on you**, and nothing in this repo can see it |
 | Behaviour, a limit or a setup step that differs on the hosted tier | `docs/cloud/whats-different.md`, plus whichever `docs/cloud/` page owns it | **nothing - on you** |
+| A support chat field (`SUPPORT_CHAT_FIELDS`) added, renamed or retyped | its row in `docs/deployment/configuration.md`; the Chatwoot inbox's definition, which the hosted plane's `tools/chatwoot-sync.ts` writes and nothing ships; the marketing site's hand copy in `src/lib/chat.js` (`hezo-ai/website`) | `support-chat.test.ts` (`@hezo/shared`) for the docs row, **nothing for the inbox or the site - on you** |
 | A user-facing claim about what Hezo Cloud can see or keep | `docs/cloud/data-and-security.md` - and it must stay inside what the control plane's own §15 supports | **nothing - on you** |
 

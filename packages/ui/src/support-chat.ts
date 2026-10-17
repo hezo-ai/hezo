@@ -15,6 +15,12 @@
  * **Its cookies stay on this host.** The settings never name a cookie domain,
  * so the widget keeps its conversation cookie on the exact host that loaded it
  * rather than sharing it with sibling subdomains.
+ *
+ * **Where the person is reaches the inbox only while the chat is open.** The
+ * page hands over its context whenever it changes; the module sends it when the
+ * panel opens, again on every change while it stays open, and again when a
+ * conversation starts. Somebody who chatted once is not reported on every page
+ * they visit afterwards.
  */
 
 export type SupportChatColorScheme = 'light' | 'dark' | 'auto';
@@ -62,6 +68,7 @@ interface ChatwootApi {
 	setLocale(locale: string): void;
 	setColorScheme(scheme: SupportChatColorScheme): void;
 	toggleBubbleVisibility(state: 'hide' | 'show'): void;
+	setConversationCustomAttributes(attributes: Record<string, string>): void;
 	reset(): void;
 }
 
@@ -84,6 +91,12 @@ interface SupportChatState {
 	ready: boolean;
 	/** A request to open that arrived before the widget could act on it. */
 	openWhenReady: boolean;
+	/** Whether the chat panel is open, which is the only time the context is sent. */
+	open: boolean;
+	/** Where the page says the person is, as it will be sent. */
+	context: Record<string, string> | null;
+	/** The context last sent, serialised, so an unchanged one is not sent again. */
+	sent: string | null;
 }
 
 let state: SupportChatState | null = null;
@@ -112,6 +125,56 @@ function toChatwootLocale(tag: string): string {
 	if (!subtag) return language.toLowerCase();
 	const region = SCRIPT_REGIONS[subtag.toLowerCase()] ?? subtag.toUpperCase();
 	return `${language.toLowerCase()}_${region}`;
+}
+
+/** One spelling per context, whatever order the page built it in. */
+function serialise(context: Record<string, string>): string {
+	return JSON.stringify(
+		Object.keys(context)
+			.sort()
+			.map((key) => [key, context[key]]),
+	);
+}
+
+/**
+ * Send the context, if the panel is open and it changed since the last send.
+ *
+ * **Always the whole object.** Once a conversation exists, the inbox replaces
+ * the conversation's attributes with what it is sent rather than merging, so a
+ * partial update would erase every key it left out. A fact the page does not
+ * have travels as an empty string, which clears whatever an earlier page said.
+ * An empty object is never sent: the widget throws on one.
+ */
+function sendContext(): void {
+	if (!state?.ready || !state.open || !state.context) return;
+	const context = state.context;
+	if (Object.keys(context).length === 0) return;
+	const serialised = serialise(context);
+	if (serialised === state.sent) return;
+	state.sent = serialised;
+	withChatwoot((chatwoot) => chatwoot.setConversationCustomAttributes({ ...context }));
+}
+
+function onOpened(): void {
+	if (!state) return;
+	state.open = true;
+	sendContext();
+}
+
+function onClosed(): void {
+	if (state) state.open = false;
+}
+
+/**
+ * A new conversation starts with no attributes. The widget keeps what it was
+ * sent before the first message only until that message goes, so a second
+ * conversation after the first is resolved would otherwise start empty.
+ */
+function onConversationStarted(): void {
+	if (!state) return;
+	state.open = true;
+	state.sent = null;
+	sendContext();
 }
 
 function identify(identity: SupportChatIdentity): void {
@@ -174,6 +237,9 @@ export function installSupportChat(options: SupportChatOptions): void {
 		colorScheme: options.colorScheme,
 		ready: false,
 		openWhenReady: false,
+		open: false,
+		context: null,
+		sent: null,
 	};
 
 	host().chatwootSettings = {
@@ -182,6 +248,9 @@ export function installSupportChat(options: SupportChatOptions): void {
 		hideMessageBubble: options.hideBubble,
 	};
 	window.addEventListener('chatwoot:ready', onReady);
+	window.addEventListener('chatwoot:opened', onOpened);
+	window.addEventListener('chatwoot:closed', onClosed);
+	window.addEventListener('chatwoot:on-start-conversation', onConversationStarted);
 
 	const script = document.createElement('script');
 	script.src = `${baseUrl}/packs/js/sdk.js`;
@@ -228,6 +297,10 @@ export function resetSupportChat(): void {
 	if (!state) return;
 	state.identity = null;
 	state.openWhenReady = false;
+	// The widget reloads with no conversation, so the next one is sent the
+	// context afresh when the panel opens on it.
+	state.open = false;
+	state.sent = null;
 	withChatwoot((chatwoot) => chatwoot.reset());
 }
 
@@ -245,4 +318,18 @@ export function setSupportChatLocale(locale: string): void {
 	if (state.locale === code) return;
 	state.locale = code;
 	if (state.ready) withChatwoot((chatwoot) => chatwoot.setLocale(code));
+}
+
+/**
+ * Say where the person is: the conversation attributes the inbox shows beside
+ * the chat. Pass the page's whole context every time, with `null` for a fact it
+ * does not have; the module sends it when the panel opens and whenever it
+ * changes while open. Does nothing before install.
+ */
+export function setSupportChatContext(context: Readonly<Record<string, string | null>>): void {
+	if (!state) return;
+	state.context = Object.fromEntries(
+		Object.entries(context).map(([key, value]) => [key, value ?? '']),
+	);
+	sendContext();
 }

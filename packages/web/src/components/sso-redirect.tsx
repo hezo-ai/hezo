@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useI18n } from '../lib/i18n';
-import { goToIssuer } from '../lib/sso';
+import { goToIssuer, isLeavingForSignOut } from '../lib/sso';
 import { VaultShell } from './master-key-gate';
 import { Button } from './ui/button';
 
@@ -28,7 +28,9 @@ export function SsoRedirect({ issuerUrl, error }: { issuerUrl: string; error?: s
 
 	const failed = Boolean(error);
 	useEffect(() => {
-		if (!failed) goToIssuer(issuerUrl);
+		// Signing out lands here too, while the browser is already on its way to
+		// the issuer's sign-out; a redirect to the sign-in now could overtake it.
+		if (!failed && !isLeavingForSignOut()) goToIssuer(issuerUrl);
 	}, [failed, issuerUrl]);
 
 	return (

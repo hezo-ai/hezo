@@ -43,6 +43,7 @@ interface FakeChatwoot {
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
 	toggleBubbleVisibility: ReturnType<typeof vi.fn>;
+	setConversationCustomAttributes: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -79,6 +80,7 @@ test('a screen reached before signing in loads the widget, naming nobody', async
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
 		toggleBubbleVisibility: vi.fn(),
+		setConversationCustomAttributes: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {
@@ -113,4 +115,15 @@ test('a screen reached before signing in loads the widget, naming nobody', async
 	// And the launcher is there to be clicked: nothing on these screens claims
 	// the corner the shell's chat dock later takes.
 	expect(chatwoot.toggleBubbleVisibility).toHaveBeenLastCalledWith('show');
+
+	// Opening it tells the support team which gate the person is stuck at, and
+	// names no project: there is no session to have one.
+	window.dispatchEvent(new Event('chatwoot:opened'));
+	expect(chatwoot.setConversationCustomAttributes).toHaveBeenLastCalledWith(
+		expect.objectContaining({
+			hezo_surface: 'instance',
+			hezo_screen: 'issuer-redirect',
+			hezo_project: '',
+		}),
+	);
 });

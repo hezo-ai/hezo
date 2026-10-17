@@ -256,6 +256,27 @@ every session on an instance with no issuer, sees no entry.
 the token, and should never be given it: anyone holding it can write to your inbox
 as any contact.
 
+**The chat tells your team where the owner is.** While the chat is open, the
+instance sets these conversation attributes, and updates them when the owner
+moves to another screen:
+
+| Attribute | Type | What it holds |
+|---|---|---|
+| `hezo_surface` | Text | Always `instance`. |
+| `hezo_page` | Link | Always empty. An instance's addresses carry task and document IDs, so it names the screen instead. |
+| `hezo_screen` | Text | The screen the owner is on: a sign-in step such as `vault-locked` or `sign-in`, `setup` while no AI provider is set, or the route template, such as `/projects/$projectId/tasks/$taskId`. |
+| `hezo_language` | Text | The language the instance is shown in. |
+| `hezo_theme` | List | `light` or `dark`. |
+| `hezo_viewport` | List | `phone` (narrower than 768px), `tablet` (narrower than 1024px) or `desktop`. |
+| `hezo_project` | Text | The slug of the project the owner is in, or empty. |
+| `hezo_version` | Text | The Hezo release the instance runs. |
+
+Chatwoot shows an attribute only after an admin defines it, under **Settings >
+Custom Attributes > Conversation**, with the key, type and list values above.
+Nothing is sent while the chat is closed, and no value is ever text the owner
+typed. The owner's browser sets these values, so treat them as a hint about
+where to look, not as proof.
+
 ### Single sign-on from a control plane
 
 Where a control plane provisions and manages instances, it can sign its users in

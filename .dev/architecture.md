@@ -6699,6 +6699,14 @@ sign-in); then `/home`. There is no language step: the master-key gate renders i
 browser's language, the corner switcher can change it, and the setup request records
 whichever is showing - unless the seed already did.
 
+`shellGate` (`lib/shell-gate.ts`) is that order as one pure decision; the root switches on
+it, and the support chat reports the same name. **Signing out on a hosted instance lands
+on `SsoRedirect` too**, because it clears the session and resets every query while the
+browser is still leaving for the issuer's sign-out. `logout()` marks the page as leaving
+(`markLeavingForSignOut`), and `SsoRedirect` does not redirect to the sign-in while it is:
+a second navigation can overtake the first, and the sign-in signs the person straight back
+in.
+
 `services/seed.ts` is the one consumer of the block, and the two halves land at the two
 points where the instance can first act on them:
 
@@ -6787,6 +6795,27 @@ wrote back. The first rides the public status; the second stays behind the owner
   the plan link), rendered only when the query holds data.
   `logout()` (`lib/auth.ts`) calls `resetSupportChat` before handing the browser to the
   issuer.
+- **What the chat carries.** `setSupportChatContext` hands the loader where the person
+  is, as Chatwoot conversation attributes: the keys in `SUPPORT_CHAT_FIELDS`
+  (`@hezo/shared`), each prefixed `hezo_` because one Chatwoot account can serve more
+  than one product and a key is unique across the account. The loader sends only while
+  the panel is open (`chatwoot:opened` until `chatwoot:closed`), again on every change
+  while open, and again on `chatwoot:on-start-conversation`, because a conversation
+  started after a resolved one begins empty. **It always sends the whole object.** Before
+  a conversation exists the widget merges what it is sent into what it will send with
+  the first message; after that the inbox **replaces** the conversation's attributes, so
+  a partial update would erase every key it left out. A missing fact travels as `""`,
+  an unchanged context is not sent again, and an empty one is never sent (the widget
+  throws on it). The tenant web sends `hezo_surface: instance`, the screen from
+  `shellGate` (`lib/shell-gate.ts`, the one decision the root's render also switches on),
+  `setup` while no AI provider is configured, or the deepest route's **template**
+  (`/projects/$projectId/tasks/$taskId`) once inside, the project slug, the version,
+  the language, the resolved theme and a width class (`supportChatViewport`). Never a
+  path, a title or anything typed: an instance path carries task and document ids, and
+  the fragment can carry the issuer's token. Every value is set by the person's own
+  browser, so it is a hint for the support team, not a fact. The inbox shows a key only
+  once an admin defines it there; the hosted plane's sync tool defines the hosted
+  inbox's from this table.
 
 ## 12. Build, release, migrations & upgrades
 
