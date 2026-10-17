@@ -6,6 +6,7 @@ import {
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { personChoiceSql } from '../services/no-work-backoff';
 import { resolveTaskId } from './resolve';
 
 export const MAX_SUB_TASK_DEPTH = 3;
@@ -349,7 +350,8 @@ export async function assertNoOutstandingActivity(
 // done while it has no answer. "Answered" is computed from the comment
 // timeline: a human text comment on the same task posted after the mention
 // comment (humans post with author_member_id NULL; the content-type filter
-// keeps NULL-author system/run comments from counting as replies). read_at is
+// keeps NULL-author system/run comments from counting as replies), or a card on
+// the task a person answered after it, as the heartbeat park check counts. read_at is
 // deliberately ignored — reading is not answering. Enforced for agent callers
 // only: a human closing a ticket is itself the human's decision.
 //
@@ -371,6 +373,12 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 		       AND reply.content_type = $2::comment_content_type
 		       AND reply.author_member_id IS NULL
 		       AND reply.created_at > tc.created_at
+		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_comments card
+		     WHERE card.task_id = am.task_id
+		       AND card.chosen_at > tc.created_at
+		       AND ${personChoiceSql('card')}
 		   )
 		 ORDER BY tc.created_at ASC
 		 LIMIT 1`,

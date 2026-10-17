@@ -1,5 +1,13 @@
-import { ApprovalStatus, ApprovalType, AuthType, summaryPreviewLine, wsRoom } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	AuthType,
+	summaryPreviewLine,
+	validateCadenceChoice,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
+import type { Db } from '../db/database';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
@@ -16,6 +24,8 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
+import { refreshTaskSuggestionComment } from '../services/task-suggestion';
+import type { WebSocketManager } from '../services/ws';
 
 export const approvalsRoutes = new Hono<Env>();
 
@@ -233,6 +243,45 @@ approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
+type PayloadPatch = { error: string } | { patch: Record<string, unknown> };
+
+/**
+ * The pending approvals a person may edit before deciding, by type: how to turn
+ * the request body into a payload patch, and what else to refresh once it lands.
+ */
+const PAYLOAD_EDITORS: Partial<
+	Record<
+		ApprovalType,
+		{
+			prepare: (
+				db: Db,
+				teamId: string,
+				payload: Record<string, unknown>,
+				body: unknown,
+			) => Promise<PayloadPatch>;
+			afterUpdate?: (
+				db: Db,
+				row: Record<string, unknown>,
+				wsManager: WebSocketManager | undefined,
+			) => Promise<void>;
+		}
+	>
+> = {
+	[ApprovalType.Hire]: {
+		prepare: (db, teamId, payload, body) =>
+			prepareHirePayloadPatch(db, teamId, payload, body as HirePayloadPatchInput),
+	},
+	[ApprovalType.TaskSuggestion]: {
+		// Only the cadence changes, and only on a card the CEO gave a cadence.
+		prepare: async (_db, _teamId, payload, body) => {
+			const cadence = (body as { cadence?: unknown } | null)?.cadence;
+			const error = validateCadenceChoice(payload.suggested_cadence as string | null, cadence);
+			return error ? { error } : { patch: { cadence } };
+		},
+		afterUpdate: refreshTaskSuggestionComment,
+	},
+};
+
 approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
@@ -251,23 +300,34 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	const resourceAccess = await requireTeamAccessForResource(db, c, approval.team_id);
 	if (resourceAccess instanceof Response) return resourceAccess;
 
-	if (approval.type !== ApprovalType.Hire) {
-		return err(c, 'INVALID_REQUEST', 'Only hire proposals can be edited', 400);
+	const editor = PAYLOAD_EDITORS[approval.type as ApprovalType];
+	if (!editor) {
+		return err(c, 'INVALID_REQUEST', 'Only hire proposals and task suggestions can be edited', 400);
 	}
 	if (approval.status !== ApprovalStatus.Pending) {
 		return err(c, 'INVALID_STATE', 'Approval is already resolved', 409);
 	}
 
-	const body = await c.req.json<HirePayloadPatchInput>();
-	const prepared = await prepareHirePayloadPatch(db, approval.team_id, approval.payload, body);
+	const body = await c.req.json<unknown>();
+	const prepared = await editor.prepare(db, approval.team_id, approval.payload, body);
 	if ('error' in prepared) return err(c, 'INVALID_REQUEST', prepared.error, 400);
 	const { patch } = prepared;
 
+	// An edit that changes nothing writes nothing.
 	const updated = await db.query<Record<string, unknown>>(
-		`UPDATE approvals SET payload = payload || $1::jsonb WHERE id = $2 RETURNING *`,
+		`UPDATE approvals SET payload = payload || $1::jsonb
+		 WHERE id = $2 AND NOT (payload @> $1::jsonb) RETURNING *`,
 		[JSON.stringify(patch), approvalId],
 	);
+	if (updated.rows.length === 0) {
+		const unchanged = await db.query<Record<string, unknown>>(
+			'SELECT * FROM approvals WHERE id = $1',
+			[approvalId],
+		);
+		return ok(c, unchanged.rows[0]);
+	}
 	const row = updated.rows[0];
+	await editor.afterUpdate?.(db, row, c.get('wsManager'));
 	broadcastChange(c, wsRoom.team(approval.team_id), 'approvals', 'UPDATE', row);
 	return ok(c, row);
 });

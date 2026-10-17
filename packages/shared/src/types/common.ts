@@ -751,6 +751,7 @@ export const ActionCommentKind = {
 	SetupRepo: 'setup_repo',
 	HireProposal: 'hire_proposal',
 	GoalSuggestion: 'goal_suggestion',
+	TaskSuggestion: 'task_suggestion',
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 
@@ -816,6 +817,8 @@ export const ApprovalType = {
 	 * prompt document carries their edits and the agent's learned rules.
 	 */
 	RoleUpdate: 'role_update',
+	/** A task the CEO suggests; approving it creates the task. */
+	TaskSuggestion: 'task_suggestion',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 

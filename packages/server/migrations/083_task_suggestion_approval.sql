@@ -1,0 +1,14 @@
+-- The CEO's task suggestions, offered as one-click cards.
+--
+-- A suggestion is a pending approval of the new type, mirrored as an action
+-- comment on the CEO's suggestions task. Approving it creates the real task;
+-- denying it creates nothing. The suggestion lives in the approval's payload,
+-- like a goal suggestion, so nothing else in the schema changes.
+--
+-- The suggestion tool's checks (a cap per suggestions task, no duplicate title
+-- among a project's pending suggestions) filter on team_id and status, which
+-- `idx_approvals_status(team_id, status)` already serves.
+--
+-- ADD VALUE cannot be used by a later statement in the same transaction, and the
+-- runner wraps each file in one - so nothing below may name this value.
+ALTER TYPE approval_type ADD VALUE IF NOT EXISTS 'task_suggestion';

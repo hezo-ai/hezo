@@ -4,6 +4,7 @@ import { hireHandler } from './hire';
 import { roleUpdateHandler } from './role-update';
 import { skillProposalHandler } from './skill-proposal';
 import { strategyHandler } from './strategy';
+import { taskSuggestionHandler } from './task-suggestion';
 import type { ApprovalHandler } from './types';
 
 /**
@@ -23,4 +24,5 @@ export const APPROVAL_HANDLERS: Partial<Record<ApprovalType, ApprovalHandler>> =
 	[ApprovalType.SkillProposal]: skillProposalHandler,
 	[ApprovalType.GoalSuggestion]: goalSuggestionHandler,
 	[ApprovalType.RoleUpdate]: roleUpdateHandler,
+	[ApprovalType.TaskSuggestion]: taskSuggestionHandler,
 };

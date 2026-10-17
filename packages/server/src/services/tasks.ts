@@ -45,6 +45,11 @@ export interface CreateTaskInput {
 	blocked_by_task_ids?: string[];
 	/** Optional, non-gating link to the goal this task advances (set by the Captain). */
 	goal_id?: string;
+	/**
+	 * Internal only, not exposed on `create_task` or the REST route: the task
+	 * rules an approved task suggestion carries (its cadence, for a standing task).
+	 */
+	rules?: string;
 }
 
 export interface CreateTaskCaller {
@@ -166,9 +171,9 @@ export async function createTask(
 			`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id,
 			                     created_by_member_id, created_by_run_id,
 			                     number, identifier, title, description,
-			                     status, priority, labels, runtime_type, goal_id)
+			                     status, priority, labels, runtime_type, goal_id, rules)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			         $11::task_status, $12::task_priority, $13::jsonb, $14::agent_runtime, $15)
+			         $11::task_status, $12::task_priority, $13::jsonb, $14::agent_runtime, $15, $16)
 			 RETURNING ${TASK_COLUMNS_BARE}`,
 			[
 				teamId,
@@ -186,6 +191,7 @@ export async function createTask(
 				JSON.stringify(input.labels ?? []),
 				input.runtime_type ?? null,
 				goalId,
+				input.rules ?? null,
 			],
 		);
 		let created = r.rows[0];

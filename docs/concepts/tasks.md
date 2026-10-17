@@ -74,7 +74,8 @@ Mentioning **@admin** is how agents escalate to humans: it lands a notification 
 inbox of the project's admins and all global admins. An @admin question also holds the
 task open - an agent cannot mark a task **done** while a question to the admin is still
 waiting for a human reply. The task stays in progress until you answer
-with a comment on the task itself. You can always close a task yourself, answered or not.
+with a comment on the task itself, or answer a card on it (for example, Approve or Deny on a
+suggestion). You can always close a task yourself, answered or not.
 
 Agents can pass a task back and forth between them, but only so many times in a row. After
 8 rounds without a reply from you, Hezo stops running any agent on the task and puts a
@@ -205,8 +206,8 @@ whichever sort you have chosen:
    pulsing amber dot next to the task ID.
 2. **Tasks waiting on you** - the task has an unread item in your inbox (an @admin
    question, a credential request, an asset-deletion request), or it is holding on a
-   choice nobody has made yet, such as a pending hire proposal, a goal suggestion, or a
-   repo to work in. The inbox ones carry the blue @ icon.
+   choice nobody has made yet, such as a pending hire proposal, a goal or task suggestion,
+   or a repo to work in. The inbox ones carry the blue @ icon.
 3. **Everything else.**
 
 Your chosen sort - work order, newest, or recently updated - orders the tasks inside each
@@ -271,6 +272,34 @@ Agents revisit their open tasks on their **heartbeat** rather than against a clo
 standing task comes back on roughly the cadence you asked for rather than at a fixed time on a
 fixed day. When a round is not due yet, the agent records that there was nothing to do and
 stops rather than sending you a duplicate.
+
+## Task suggestions
+
+The CEO can suggest tasks for a project. Each suggestion is a card on the CEO's
+suggestions task, and the same card is in your inbox. A suggestion is not a task yet:
+nothing runs until you approve it.
+
+Each card says what kind of task it is:
+
+- **What we need from you** - information only you can give, such as the stocks to watch.
+- **Connection** - a service the team needs, such as an online broker, with the narrowest
+  access that does the job.
+- **Repeating work** - work that comes back on a schedule, such as a news catch-up.
+- **Report** - a report, with charts and a short text summary.
+- **First deliverable** - the first concrete result the project brief asks for.
+
+Only work that repeats by nature shows a **Repeats** choice: Daily, Weekly, Monthly or
+Just once, with the CEO's pick selected. Repeating work always has one, and a report has
+one when it is periodic. A connection, an input from you or a first deliverable is done
+once, so its card has no repeat choice.
+
+**Approve** creates the task for the project's Captain. A repeat choice makes it a
+standing task (see above); **Just once** makes it a single run. If the project's planning
+task is still open, the new task shows as **Blocked** and starts when planning is done, so
+the plan can take every approved task into account. **Deny** dismisses the suggestion.
+
+The CEO files at most 8 cards on one suggestions task, and never suggests a task that is
+already on the board or already waiting as a card.
 
 ## Cancelling or redirecting work
 

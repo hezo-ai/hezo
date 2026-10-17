@@ -193,6 +193,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ approval_id, status: "pending", payload }`. Files a goal *suggestion* the admin must approve - no goal exists until then. On approval the real goal is created and appears on the Goals page. Surfaces as an Approve/Deny card on the `task_id` thread (when given) and on the project Goals page. Returns `{ error }` if the caller is not the Captain/CEO, the project is HQ/internal, or the inputs are invalid.',
 		auth: 'Captain (its own team) or CEO (any team via `project`), and only from within an agent run.',
 	},
+	suggest_task: {
+		category: 'Tasks',
+		returns:
+			"`{ approval_id, status: \"pending\", payload }`. Files a task *suggestion* as an Approve/Deny card on the CEO's open task-suggestions task and in the inbox - no task exists until the admin approves. On approval the task is created for the project's Captain; while the project's planning task is open, the new task is blocked by it. A repeating suggestion lets the admin pick daily, weekly, monthly or just once on the card. Returns `{ error }` if the caller is not the CEO, the project is HQ, `task_id` is not the project's open task-suggestions task, the task already has 8 suggestions, the title matches an open task or pending suggestion, or the cadence breaks the rule for the kind.",
+		auth: 'The CEO only.',
+	},
 	update_goal_progress: {
 		category: 'Goals',
 		returns:

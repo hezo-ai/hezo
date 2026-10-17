@@ -348,6 +348,27 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 
 **Authorization:** An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 3.
 
+### `suggest_task`
+
+_Write tool._
+
+Suggest a task for the admin to approve, as an Approve/Deny card on your open task-suggestions task. CEO-only. This does NOT create a task: the task exists only once the admin approves, assigned to the project's Captain. While the project's planning task is open, an approved task waits for it. Pick a `kind`: `admin_input` (information only the admin can give), `connection` (a service to connect, with the narrowest access), `recurring` (work that comes back on a schedule), `report` (a report; ask for a visual plus a short text summary), `deliverable` (the first concrete output the brief asks for). Set `cadence` (daily, weekly or monthly) only for work that repeats by nature: `recurring` needs one, `report` takes one only when periodic, the other kinds take none. The admin can change the cadence on the card, or pick just once. At most 8 cards per task-suggestions task. A title that matches an open task or a pending suggestion in the project is refused, so check the board first.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `kind` | `admin_input` \| `connection` \| `recurring` \| `report` \| `deliverable` | Yes | What the suggested task is for. Decides whether it may repeat. |
+| `title` | `string` | Yes | Short task title. |
+| `description` | `string` | No | What the task asks for and why it helps the project. |
+| `cadence` | `string` | No | daily, weekly or monthly. Only for work that repeats by nature; leave it out otherwise. |
+| `task_id` | `string` | Yes | Your open task-suggestions task in this project, as an identifier (e.g. "SW-2") or UUID. |
+
+**Returns:** `{ approval_id, status: "pending", payload }`. Files a task *suggestion* as an Approve/Deny card on the CEO's open task-suggestions task and in the inbox - no task exists until the admin approves. On approval the task is created for the project's Captain; while the project's planning task is open, the new task is blocked by it. A repeating suggestion lets the admin pick daily, weekly, monthly or just once on the card. Returns `{ error }` if the caller is not the CEO, the project is HQ, `task_id` is not the project's open task-suggestions task, the task already has 8 suggestions, the title matches an open task or pending suggestion, or the cadence breaks the rule for the kind.
+
+**Authorization:** The CEO only.
+
 ### `create_tasks`
 
 _Write tool._

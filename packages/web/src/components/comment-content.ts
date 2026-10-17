@@ -246,6 +246,11 @@ export interface ActionContent {
 	actions?: string;
 	check_frequency?: string;
 	target_date?: string | null;
+	// task_suggestion snapshot (kind === 'task_suggestion'); `title` is shared
+	description?: string;
+	suggestion_kind?: string | null;
+	suggested_cadence?: string | null;
+	cadence?: string | null;
 }
 
 export interface CredentialRequestContent {
@@ -314,6 +319,9 @@ export interface ActionChosen {
 	};
 	// set when a hire_proposal action resolves
 	member_agent_slug?: string;
+	// set when a task_suggestion action is approved
+	created_task_identifier?: string;
+	blocked_by_identifier?: string | null;
 	resolution_note?: string;
 	resolved_at?: string;
 }

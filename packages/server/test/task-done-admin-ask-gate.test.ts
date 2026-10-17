@@ -109,6 +109,17 @@ async function humanReply(taskIdArg: string, text: string): Promise<void> {
 	expect(res.status).toBe(201);
 }
 
+/** A card on the task, answered now, by `userId` or (null) by no person. */
+async function insertAnsweredCard(taskIdArg: string, userId: string | null): Promise<void> {
+	await db.query(
+		`INSERT INTO task_comments
+		   (task_id, author_member_id, content_type, content, chosen_option, chosen_at, chosen_by_user_id)
+		 VALUES ($1, $2, 'action'::comment_content_type, '{"kind":"task_suggestion"}'::jsonb,
+		         '{"status":"approved"}'::jsonb, clock_timestamp(), $3)`,
+		[taskIdArg, captainId, userId],
+	);
+}
+
 async function finishRun(runId: string): Promise<void> {
 	await db.query(
 		`UPDATE heartbeat_runs SET status = 'succeeded'::heartbeat_run_status WHERE id = $1`,
@@ -200,6 +211,26 @@ describe('closure rules — an unanswered @admin ask blocks an agent closing the
 		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Cancelled);
 		expect(res.error).toBeUndefined();
 		expect(await taskStatus(taskId)).toBe(TaskStatus.Cancelled);
+	});
+
+	it("counts a person's card answer after the ask as the answer", async () => {
+		const taskId = await insertTask(captainId, 'Card answered by a person');
+		const { agentToken } = await postAdminAsk(taskId);
+		const user = await db.query<{ id: string }>('SELECT id FROM users ORDER BY created_at LIMIT 1');
+		await insertAnsweredCard(taskId, user.rows[0].id);
+
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Done);
+		expect(res.error).toBeUndefined();
+		expect(await taskStatus(taskId)).toBe(TaskStatus.Done);
+	});
+
+	it('does not count a card an agent or the system settled', async () => {
+		const taskId = await insertTask(captainId, 'Card settled without a person');
+		const { agentToken } = await postAdminAsk(taskId);
+		await insertAnsweredCard(taskId, null);
+
+		const res = await agentSetStatus(agentToken, taskId, TaskStatus.Done);
+		expect(res.error).toMatch(/@admin/);
 	});
 
 	it('does not count a human comment posted before the ask', async () => {

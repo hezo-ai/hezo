@@ -281,8 +281,10 @@ Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
 for **agent callers only** — no active `@admin` mention on the task lacking a later human
-`text` comment (an unanswered ask holds the task in a non-terminal status until a human
-replies on the task or closes it themselves; reading the mention does not count).
+`text` comment or a later card on the task a person answered (`personChoiceSql`, the same
+test the heartbeat park check uses; an unanswered ask holds the task in a non-terminal status
+until a human replies on the task, answers a card on it, or closes it themselves; reading the
+mention does not count).
 `cancelled` is deliberately ungated.
 
 **Summary and technical details.** A comment body and a task description are one text field
@@ -1661,6 +1663,24 @@ approval (`approval_type` enum extended by `038_goal_suggestion_approval.sql`) p
 (`approval-handlers/goal-suggestion.ts`), which creates the real `goals` row via `createGoal`
 and flips the comment. Pending suggestions surface on the task thread and the project Goals page
 (`GET /projects/:projectId/goals/suggestions`), each with inline Approve/Deny.
+
+**Task suggestions.** The CEO proposes tasks the same way. `suggest_task` (MCP, CEO-only)
+files a pending `task_suggestion` approval (`083_task_suggestion_approval.sql`) plus a
+`task_suggestion` action comment, and only on the project's open `task-suggestions` task
+(`services/task-suggestion.ts`). The payload carries a `kind` and two cadences:
+`suggested_cadence` is the CEO's and never changes, `cadence` is the admin's current choice.
+`TASK_SUGGESTION_KIND_RULES` (`@hezo/shared`) says per kind whether a cadence is forbidden,
+required or optional; `validateSuggestedCadence` enforces it in the tool and
+`validateCadenceChoice` in `PATCH /approvals/:approvalId`, which edits only the cadence and only
+on a card with a `suggested_cadence` (daily, weekly, monthly or `once`). The tool refuses HQ, a
+ninth card on one task (`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a
+title matching an open task or a pending suggestion. Approving runs `taskSuggestionHandler`
+(`approval-handlers/task-suggestion.ts`): `createTask` for the team's Captain, with the
+standing-task `rules` from `TASK_SUGGESTION_CADENCE_RULES` for a repeating choice (none for
+`once`), blocked by the project's open `planning` task when there is one, so dispatch parks the
+Captain's wake until planning closes. Either decision flips the card (`created_task_identifier`,
+`blocked_by_identifier`) and wakes the CEO on `task_suggestion_resolved`. The card snapshot
+stores the kind as `suggestion_kind`, because `kind` is the action-comment discriminator.
 
 Key source: `services/teams.ts` (`seedDefaultTeam`), `team-template-apply.ts`
 (`ensureInstanceCeo`/`ensureInstanceCoach`), `services/internal-intake.ts` (coordination

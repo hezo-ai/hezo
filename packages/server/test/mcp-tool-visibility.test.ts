@@ -134,6 +134,7 @@ describe('tools/list projection', () => {
 		expect(names).not.toContain('update_hire_proposal');
 		expect(names).not.toContain('set_agent_name');
 		expect(names).not.toContain('apply_marketplace_team');
+		expect(names).not.toContain('suggest_task');
 	});
 
 	it('gives a Captain its coordination surface but not the CEO-only tools', async () => {
@@ -145,6 +146,7 @@ describe('tools/list projection', () => {
 		expect(names).toContain('update_agent_system_prompt');
 		expect(names).not.toContain('create_project');
 		expect(names).not.toContain('start_team_setup');
+		expect(names).not.toContain('suggest_task');
 		expect(names).not.toContain('create_team');
 	});
 
@@ -154,6 +156,7 @@ describe('tools/list projection', () => {
 		expect(names).toContain('start_team_setup');
 		expect(names).toContain('apply_marketplace_team');
 		expect(names).toContain('suggest_goal');
+		expect(names).toContain('suggest_task');
 		// An HQ agent coordinates in the team it is scoped into.
 		expect(names).toContain('set_agent_reports_to');
 	});

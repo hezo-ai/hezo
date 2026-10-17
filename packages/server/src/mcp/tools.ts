@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SearchScope } from '@hezo/shared';
 import {
+	ActionCommentKind,
 	ADMIN_MENTION_SLUG,
 	AGENT_HUMAN_NAME_MAX,
 	AgentAdminStatus,
@@ -51,21 +52,25 @@ import {
 	isTextAssetMime,
 	learnedRulesCapError,
 	learnedRulesOnlyChange,
+	MAX_TASK_SUGGESTIONS_PER_TASK,
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
 	RETIRED_BUDGET_FIELDS,
 	ReactionKind,
+	type RepeatingCadence,
 	SEARCH_SCOPES,
 	SUMMARY_DETAILS_HEADING,
 	summarizeMethodAccess,
 	summaryDetailsWarnings,
 	TaskStatus,
+	TaskSuggestionKind,
 	TERMINAL_TASK_STATUSES,
 	THREAD_ROW_CATEGORIES,
 	type ThreadRowCategory,
 	taskStatusError,
 	type UsageTotals,
+	validateSuggestedCadence,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -138,7 +143,12 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
-import { isUniqueViolation, likePrefixPattern, withTransaction } from '../lib/sql';
+import {
+	isUniqueViolation,
+	likePrefixPattern,
+	terminalStatusParams,
+	withTransaction,
+} from '../lib/sql';
 import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
@@ -235,6 +245,12 @@ import {
 	taskUpdateMutationSql,
 	taskUpdateValueChanged,
 } from '../services/task-events';
+import {
+	insertTaskSuggestionApproval,
+	insertTaskSuggestionComment,
+	TASK_SUGGESTIONS_LABEL,
+	type TaskSuggestionPayload,
+} from '../services/task-suggestion';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -1916,6 +1932,154 @@ export function registerTools(
 		},
 		db,
 		{ write: true, audience: 'captain_or_ceo' },
+	);
+
+	tool(
+		server,
+		'suggest_task',
+		"Suggest a task for the admin to approve, as an Approve/Deny card on your open task-suggestions task. CEO-only. This does NOT create a task: the task exists only once the admin approves, assigned to the project's Captain. While the project's planning task is open, an approved task waits for it. Pick a `kind`: `admin_input` (information only the admin can give), `connection` (a service to connect, with the narrowest access), `recurring` (work that comes back on a schedule), `report` (a report; ask for a visual plus a short text summary), `deliverable` (the first concrete output the brief asks for). Set `cadence` (daily, weekly or monthly) only for work that repeats by nature: `recurring` needs one, `report` takes one only when periodic, the other kinds take none. The admin can change the cadence on the card, or pick just once. " +
+			`At most ${MAX_TASK_SUGGESTIONS_PER_TASK} cards per task-suggestions task. A title that matches an open task or a pending suggestion in the project is refused, so check the board first.`,
+		{
+			project: projectArg(),
+			kind: z
+				.enum(Object.values(TaskSuggestionKind) as [TaskSuggestionKind, ...TaskSuggestionKind[]])
+				.describe('What the suggested task is for. Decides whether it may repeat.'),
+			title: z.string().trim().min(1, 'title is required').describe('Short task title.'),
+			description: z
+				.string()
+				.optional()
+				.describe('What the task asks for and why it helps the project.'),
+			cadence: z
+				.string()
+				.optional()
+				.describe(
+					'daily, weekly or monthly. Only for work that repeats by nature; leave it out otherwise.',
+				),
+			task_id: z
+				.string()
+				.describe(
+					'Your open task-suggestions task in this project, as an identifier (e.g. "SW-2") or UUID.',
+				),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.memberId) {
+				return { error: 'suggest_task is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the CEO can suggest tasks' };
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const teamId = scope.teamId;
+
+			const proj = await db.query<{ is_internal: boolean }>(
+				`SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2`,
+				[scope.projectId, teamId],
+			);
+			if (proj.rows.length === 0) return { error: 'Project not found' };
+			if (proj.rows[0].is_internal) {
+				return { error: 'The HQ project does not take task suggestions' };
+			}
+
+			const kind = args.kind as TaskSuggestionKind;
+			const cadence = (args.cadence as string | undefined)?.trim() || undefined;
+			const cadenceError = validateSuggestedCadence(kind, cadence);
+			if (cadenceError) return { error: cadenceError };
+
+			const resolved = await resolveTaskId(db, teamId, args.task_id as string);
+			const terminal = terminalStatusParams(4);
+			const host = resolved
+				? await db.query<{ id: string }>(
+						`SELECT id FROM tasks
+						 WHERE id = $1 AND project_id = $2 AND labels @> $3::jsonb
+						   AND status NOT IN (${terminal.placeholders})`,
+						[
+							resolved,
+							scope.projectId,
+							JSON.stringify([TASK_SUGGESTIONS_LABEL]),
+							...terminal.values,
+						],
+					)
+				: null;
+			if (!resolved || !host || host.rows.length === 0) {
+				return {
+					error: `task_id must be your open ${TASK_SUGGESTIONS_LABEL} task in this project`,
+				};
+			}
+			const taskId = resolved;
+
+			const filed = await db.query<{ n: number }>(
+				`SELECT COUNT(*)::int AS n FROM task_comments
+				 WHERE task_id = $1 AND content->>'kind' = $2`,
+				[taskId, ActionCommentKind.TaskSuggestion],
+			);
+			if ((filed.rows[0]?.n ?? 0) >= MAX_TASK_SUGGESTIONS_PER_TASK) {
+				return {
+					error: `This task already has ${MAX_TASK_SUGGESTIONS_PER_TASK} suggestions, the most one task takes.`,
+				};
+			}
+
+			const title = args.title as string;
+			// Bounded by the project's tasks (project index) and the team's pending
+			// approvals (team + status index); runs once per suggestion.
+			const dup = await db.query<{ source: string }>(
+				`SELECT 'task' AS source FROM tasks
+				 WHERE project_id = $1 AND LOWER(BTRIM(title)) = LOWER($2)
+				   AND status NOT IN (${terminalStatusParams(6).placeholders})
+				 UNION ALL
+				 SELECT 'suggestion' FROM approvals
+				 WHERE team_id = $3 AND status = $4::approval_status AND type = $5::approval_type
+				   AND LOWER(BTRIM(payload->>'title')) = LOWER($2)
+				 LIMIT 1`,
+				[
+					scope.projectId,
+					title,
+					teamId,
+					ApprovalStatus.Pending,
+					ApprovalType.TaskSuggestion,
+					...TERMINAL_TASK_STATUSES,
+				],
+			);
+			if (dup.rows[0]) {
+				return {
+					error:
+						dup.rows[0].source === 'task'
+							? `An open task in this project already has the title "${title}".`
+							: `A pending suggestion in this project already has the title "${title}".`,
+				};
+			}
+
+			const suggested = cadence as RepeatingCadence | undefined;
+			const payload: TaskSuggestionPayload = {
+				project_id: scope.projectId,
+				kind,
+				title,
+				description: (args.description as string | undefined)?.trim() || undefined,
+				suggested_cadence: suggested ?? null,
+				cadence: suggested ?? null,
+				task_id: taskId,
+			};
+			const row = await insertTaskSuggestionApproval(db, teamId, payload, auth.memberId);
+			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			await insertTaskSuggestionComment(
+				db,
+				{
+					taskId,
+					approvalId: row.id as string,
+					payload: payload as unknown as Record<string, unknown>,
+					teamId,
+					projectId: scope.projectId,
+				},
+				wsManager,
+			);
+			return { approval_id: row.id, status: row.status, payload: row.payload };
+		},
+		db,
+		{ write: true, audience: 'ceo' },
 	);
 
 	tool(

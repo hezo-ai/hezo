@@ -243,6 +243,31 @@ test('a role-update approval names the agent and what accepting does', async () 
 	await findByText('Accepting keeps everything added since.');
 });
 
+test('a task suggestion names the task and, when it repeats, the current choice', async () => {
+	const { findByText, queryByText } = await renderTeamInbox(async ({ ws, projectId }) => {
+		await insertApproval(ws, {
+			type: 'task_suggestion',
+			payload: {
+				project_id: projectId,
+				kind: 'recurring',
+				title: 'Catch up on market news',
+				suggested_cadence: 'weekly',
+				cadence: 'monthly',
+			},
+		});
+		await insertApproval(ws, {
+			type: 'task_suggestion',
+			payload: { project_id: projectId, kind: 'connection', title: 'Connect the broker' },
+		});
+	});
+
+	await findByText('Catch up on market news', undefined, { timeout: 15_000 });
+	await findByText('Repeats monthly');
+	await findByText('Connect the broker');
+	// Only the repeating suggestion carries a repeat line.
+	expect(queryByText('Repeats weekly')).toBeNull();
+});
+
 test('an approval type with no dedicated message branch falls back to the de-underscored type label', async () => {
 	const { findAllByText } = await renderTeamInbox(async ({ ws }) => {
 		await insertApproval(ws, {

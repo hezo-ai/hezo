@@ -82,7 +82,7 @@ function preAttributionChoiceSql(c: string): string {
  * would miss it; `chosen_by_user_id` says who answered. A card settled by an
  * agent or by the system has none.
  */
-function personChoiceSql(c: string): string {
+export function personChoiceSql(c: string): string {
 	return `(${c}.chosen_by_user_id IS NOT NULL OR ${preAttributionChoiceSql(c)})`;
 }
 
