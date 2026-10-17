@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.71.0 - 2026-10-17
+
+### Features
+
+- **analytics:** page views, named clicks and session recording for hosted instances ([#1159](https://github.com/hezo-ai/hezo/pull/1159))
+
+### Bug Fixes
+
+- **web:** make Reply a round button ahead of the emoji button, translate comment card labels ([#1158](https://github.com/hezo-ai/hezo/pull/1158))
+
+### Tests
+
+- **browser:** drain the rail mock before the auto-scroll test ends ([#1161](https://github.com/hezo-ai/hezo/pull/1161))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.70.1...0.71.0
+
 ## 0.70.1 - 2026-10-10
 
 ### Bug Fixes
