@@ -6797,8 +6797,9 @@ wrote back. The first rides the public status; the second stays behind the owner
   (`@hezo/shared`), each prefixed `hezo_` because one Chatwoot account can serve more
   than one product and a key is unique across the account. The loader sends only while
   the panel is open (`chatwoot:opened` until `chatwoot:closed`), again on every change
-  while open, and again on `chatwoot:on-start-conversation`, because a conversation
-  started after a resolved one begins empty. **It always sends the whole object.** Before
+  while open, and again on `chatwoot:on-start-conversation` if the panel is still open
+  (otherwise when it next opens), because a conversation started after a resolved one
+  begins empty. **It always sends the whole object.** Before
   a conversation exists the widget merges what it is sent into what it will send with
   the first message; after that the inbox **replaces** the conversation's attributes, so
   a partial update would erase every key it left out. A missing fact travels as `""`,

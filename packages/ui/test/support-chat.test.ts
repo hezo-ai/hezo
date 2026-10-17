@@ -373,6 +373,25 @@ test('sends the context again when a conversation starts', async () => {
 	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith(SENT);
 });
 
+test('a conversation that starts after the panel closed waits for it to open again', async () => {
+	await readyChat();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	widgetEvent('closed');
+
+	// The first message went, the panel closed, and the start arrived after.
+	widgetEvent('on-start-conversation');
+	chat.setSupportChatContext({ ...CONTEXT, hezo_project: 'billing' });
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(1);
+
+	widgetEvent('opened');
+	expect(fake.setConversationCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setConversationCustomAttributes).toHaveBeenLastCalledWith({
+		...SENT,
+		hezo_project: 'billing',
+	});
+});
+
 test('after a reset, the next person is sent the context when they open the chat', async () => {
 	await readyChat();
 	widgetEvent('opened');

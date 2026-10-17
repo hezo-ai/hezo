@@ -117,13 +117,13 @@ test('a screen reached before signing in loads the widget, naming nobody', async
 	expect(chatwoot.toggleBubbleVisibility).toHaveBeenLastCalledWith('show');
 
 	// Opening it tells the support team which gate the person is stuck at, and
-	// names no project: there is no session to have one.
+	// names no project: there is no session to have one. The shell may still be
+	// settling on that gate when the chat opens; the open chat follows it there.
 	window.dispatchEvent(new Event('chatwoot:opened'));
+	await expect
+		.poll(() => chatwoot.setConversationCustomAttributes.mock.lastCall?.[0]?.hezo_screen)
+		.toBe('issuer-redirect');
 	expect(chatwoot.setConversationCustomAttributes).toHaveBeenLastCalledWith(
-		expect.objectContaining({
-			hezo_surface: 'instance',
-			hezo_screen: 'issuer-redirect',
-			hezo_project: '',
-		}),
+		expect.objectContaining({ hezo_surface: 'instance', hezo_project: '' }),
 	);
 });

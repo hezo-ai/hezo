@@ -176,10 +176,13 @@ function onClosed(): void {
  * A new conversation starts with no attributes. The widget keeps what it was
  * sent before the first message only until that message goes, so a second
  * conversation after the first is resolved would otherwise start empty.
+ *
+ * **Only the panel's own events say it is open.** This one arrives after the
+ * first message is answered, by which time the person may have closed the
+ * panel; the context then goes when they next open it.
  */
 function onConversationStarted(): void {
 	if (!state) return;
-	state.open = true;
 	state.sent = null;
 	sendContext();
 }
