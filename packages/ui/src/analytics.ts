@@ -1,0 +1,512 @@
+/**
+ * Product analytics and session recording through a self-hosted Umami, loaded
+ * once per page for one signed-in person.
+ *
+ * **Framework-neutral on purpose**, like the support chat loader: plain
+ * functions over module state rather than a hook or a provider, so any Hezo
+ * site can call them from wherever it decides a person is signed in.
+ *
+ * **Every call is safe at any moment.** The scripts load from another origin
+ * and define their API some time after install, a blocked load never defines
+ * it, and a call made in between waits in a short queue. Nothing here throws:
+ * analytics that fail stay out of the page that hosts them.
+ *
+ * **Both scripts are pinned.** They run in the signed-in person's session, so
+ * each tag carries the integrity hashes its file must match, and a server that
+ * starts serving anything else serves a script the browser refuses to run.
+ * Without a hash, nothing is loaded.
+ *
+ * **What the tracker sends is decided here.** Every payload passes through the
+ * before-send hook installed with the tracker, which replaces the page's real
+ * address and title with the route pattern the consumer names
+ * (`/projects/$projectId/tasks/$taskId`, never the project or the task) and cuts
+ * the referrer to an origin. A page that cannot be named is not sent at all. The
+ * recorder is not the tracker and has no such hook: it reads `location.href`
+ * itself for its page markers and heatmap events. What it does share with the
+ * tracker is the session, which is how a recording is stopped
+ * (`stopSessionRecording`).
+ *
+ * **Page views are the consumer's to report.** The tracker's own history hook is
+ * off (`data-auto-track="false"`): it watches `pushState` and `replaceState` but
+ * not back and forward, so leaving it on beside a router subscription counts
+ * some navigations twice and others not at all. The consumer calls
+ * `trackAnalyticsPageView` once per route change, every kind included;
+ * `installAnalytics` reports the page the visit starts on.
+ *
+ * **Recording sees no page text unless asked to show it.** `rr-mask` on `<html>`
+ * hides every text node under it from the recorder, and a component carrying
+ * `NEVER_RECORD_CLASS` is replaced by a blank box of the same size. Typed input
+ * is hidden by the Umami website's own mask level, which this module does not set.
+ */
+
+import { pinnedScript } from './pinned-script.js';
+import { readSessionStored, writeSessionStored } from './safe-storage.js';
+
+/**
+ * The class a component carries to be left out of every recording: the
+ * recorder replaces the element and everything under it, its attributes
+ * included, with a blank box of the same size. Put it on the component that
+ * renders the secret, not at a call site, so every screen that reuses it is
+ * covered.
+ */
+export const NEVER_RECORD_CLASS = 'rr-block';
+
+/** The class that hides every text node under an element from the recorder. */
+export const MASK_TEXT_CLASS = 'rr-mask';
+
+/**
+ * The attribute naming a click worth counting, as `data-analytics="create-task"`.
+ * The name is sent; the element's text never is.
+ */
+export const ANALYTICS_ATTRIBUTE = 'data-analytics';
+
+/** The global the tracker calls before every send, named on its script tag. */
+const BEFORE_SEND_HOOK = 'hezoAnalyticsBeforeSend';
+
+/** Where this browser session's recording decision is kept. */
+const RECORD_VISIT_KEY = 'hezo:analytics:record-visit';
+
+/**
+ * Calls made before the tracker loaded. Bounded because a blocked script never
+ * loads, and a page left open must not grow a list nobody will drain.
+ */
+const MAX_QUEUED_CALLS = 50;
+
+/** Kebab-case, within Umami's 50-character limit on an event name. */
+const EVENT_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MAX_EVENT_NAME_LENGTH = 50;
+
+export interface AnalyticsOptions {
+	/** Where `script.js` and `recorder.js` are served, with no trailing slash. */
+	host: string;
+	/** The Umami website the visits are counted under. */
+	websiteId: string;
+	/** Who the visitor is to that website: an account id, never an email. */
+	distinctId: string;
+	/**
+	 * The Subresource Integrity value `script.js` must match, as one or more
+	 * space-separated `sha256-`/`sha384-`/`sha512-` hashes. A blank value loads
+	 * nothing: the tracker never runs unpinned.
+	 */
+	scriptIntegrity: string;
+	/**
+	 * The current page's route pattern, as `/projects/$projectId/tasks/$taskId`.
+	 * Asked at the moment of every send, so it must describe the page the person
+	 * is on then; anything after a `?` or `#` is cut.
+	 */
+	pagePattern: () => string;
+}
+
+export interface SessionRecordingOptions {
+	/**
+	 * Record page text as shown. False hides it all. Typed input is the Umami
+	 * website's mask level to hide, whichever this is.
+	 */
+	showText: boolean;
+	/**
+	 * The Subresource Integrity value `recorder.js` must match, in the same form
+	 * as `scriptIntegrity`. A blank value records nothing.
+	 */
+	recorderIntegrity: string;
+}
+
+/** A tracker payload, as far as this module reads or rewrites it. */
+interface TrackerPayload {
+	url?: string;
+	title?: string;
+	referrer?: string;
+	[field: string]: unknown;
+}
+
+/** The part of the tracker's runtime API this module calls or replaces. */
+interface UmamiTracker {
+	track(event?: string | ((payload: TrackerPayload) => TrackerPayload)): unknown;
+	/** The tracker's session, which the recorder asks for before every send. */
+	getSession?(): { cache?: string } | undefined;
+}
+
+type BeforeSend = (type: string, payload: TrackerPayload) => TrackerPayload | false;
+
+interface AnalyticsHost {
+	umami?: UmamiTracker;
+	[BEFORE_SEND_HOOK]?: BeforeSend;
+}
+
+type TrackerCall = (umami: UmamiTracker) => unknown;
+
+interface AnalyticsState {
+	host: string;
+	websiteId: string;
+	pagePattern: () => string;
+	/** True once the tracker script has run; calls go straight to it from then on. */
+	loaded: boolean;
+	queue: TrackerCall[];
+	pageViews: number;
+	recording: boolean;
+	/** True once a running recording was stopped; it stays so until the next load. */
+	recordingStopped: boolean;
+	/**
+	 * True once the deployment stopped asking for analytics while the page was
+	 * open. Nothing is sent from then on, and it stays so until the next load.
+	 */
+	off: boolean;
+}
+
+let state: AnalyticsState | null = null;
+let clicksInstalled = false;
+
+function host(): Window & AnalyticsHost {
+	return window;
+}
+
+/** Call the tracker if it exists, and absorb anything it throws or rejects with. */
+function dispatch(call: TrackerCall): void {
+	const umami = host().umami;
+	if (!umami) return;
+	try {
+		Promise.resolve(call(umami)).catch(() => {});
+	} catch {
+		// A fault in the tracker is not a fault in the page that hosts it.
+	}
+}
+
+/**
+ * The page a queued call was made on, for the length of its send.
+ *
+ * A call made before the tracker loads waits in the queue, and by the time the
+ * queue drains the person may be on another page, which the hook would name
+ * instead. So a queued call carries its page and sets this while it is sent.
+ * Umami's `track` runs the before-send hook before its first `await` (3.4:
+ * `track` calls `send`, which calls the hook straight away), so the hook reads
+ * it inside the same call. A tracker that ran the hook later would find it
+ * unset and name the page of the send, as every unqueued call does.
+ */
+let queuedPage: string | null = null;
+
+/** The current page's pattern, or nothing where it cannot be named. */
+function pageNow(): string | null {
+	try {
+		return state ? asPattern(state.pagePattern()) : null;
+	} catch {
+		return null;
+	}
+}
+
+function enqueue(call: TrackerCall): void {
+	if (!state || state.off) return;
+	if (state.loaded) {
+		dispatch(call);
+		return;
+	}
+	if (state.queue.length >= MAX_QUEUED_CALLS) return;
+	const page = pageNow();
+	state.queue.push((umami) => {
+		queuedPage = page;
+		try {
+			return call(umami);
+		} finally {
+			queuedPage = null;
+		}
+	});
+}
+
+function onTrackerLoad(): void {
+	if (!state) return;
+	state.loaded = true;
+	if (state.recordingStopped) silenceRecorder();
+	for (const call of state.queue.splice(0)) dispatch(call);
+}
+
+/** What the tracker reports in place of its session once the recorder is silenced. */
+function noSession(): undefined {
+	return undefined;
+}
+
+/**
+ * Keep the recorder from sending anything more on this page, replay or heatmap.
+ *
+ * It has no stop hook, and its heatmap listeners (every click, scroll and
+ * address change) stay for the life of the page. But every send it makes first
+ * asks the tracker for its session and sends nothing without one (Umami 3.4:
+ * `sendPayload` reads `window.umami.getSession().cache`), so `window.umami`
+ * becomes a copy that reports none. A copy rather than a change in place, so a
+ * tracker object that refuses changes is still replaced. The tracker's own sends
+ * use the session it holds inside, so counting carries on.
+ *
+ * Before the tracker has run there is nothing to replace, and `onTrackerLoad`
+ * does it when the tracker arrives.
+ */
+function silenceRecorder(): void {
+	const umami = host().umami;
+	if (!umami || umami.getSession === noSession) return;
+	host().umami = { ...umami, getSession: noSession };
+}
+
+/** A route pattern as a path: nothing after `?` or `#`, and a leading slash. */
+function asPattern(value: string): string {
+	const path = String(value).split(/[?#]/, 1)[0] ?? '';
+	return path.startsWith('/') ? path : `/${path}`;
+}
+
+/**
+ * The referrer's origin when it is another site, and nothing when it is this
+ * one: the tracker reports a same-site referrer as the previous page's real path.
+ */
+function referrerOrigin(referrer: unknown): string {
+	if (typeof referrer !== 'string' || referrer === '') return '';
+	try {
+		const url = new URL(referrer, window.location.href);
+		if (url.origin === window.location.origin) return '';
+		return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : '';
+	} catch {
+		return '';
+	}
+}
+
+/** The hook the tracker runs on every payload before it leaves the browser. */
+function beforeSend(_type: string, payload: TrackerPayload): TrackerPayload | false {
+	if (!state || state.off) return false;
+	try {
+		const page = queuedPage ?? asPattern(state.pagePattern());
+		return { ...payload, url: page, title: page, referrer: referrerOrigin(payload.referrer) };
+	} catch {
+		// A page that cannot be named is not sent under its real address instead.
+		return false;
+	}
+}
+
+/**
+ * Load the tracker, pinned to `scriptIntegrity` and identified as one visitor,
+ * and report the page the visit starts on. Loads once per page; a later call
+ * does nothing.
+ */
+export function installAnalytics(options: AnalyticsOptions): void {
+	if (typeof window === 'undefined' || typeof document === 'undefined' || state) return;
+	try {
+		if (!options.scriptIntegrity.trim()) return;
+		const base = options.host.replace(/\/+$/, '');
+		state = {
+			host: base,
+			websiteId: options.websiteId,
+			pagePattern: options.pagePattern,
+			loaded: false,
+			queue: [],
+			pageViews: 0,
+			recording: false,
+			recordingStopped: false,
+			off: false,
+		};
+		host()[BEFORE_SEND_HOOK] = beforeSend;
+
+		const script = pinnedScript(`${base}/script.js`, options.scriptIntegrity);
+		script.defer = true;
+		// An inserted script runs whenever it arrives unless told otherwise; this
+		// keeps the tracker ahead of the recorder, which reads the tracker's session.
+		script.async = false;
+		script.setAttribute('data-website-id', options.websiteId);
+		// On the tag rather than through `identify()`, which in this tracker starts
+		// a new session and splits a recording in two.
+		script.setAttribute('data-distinct-id', options.distinctId);
+		script.setAttribute('data-before-send', BEFORE_SEND_HOOK);
+		script.setAttribute('data-auto-track', 'false');
+		script.addEventListener('load', onTrackerLoad);
+		document.head.appendChild(script);
+
+		trackAnalyticsPageView();
+	} catch {
+		// As in `dispatch`: analytics failing to start leaves the page alone.
+	}
+}
+
+/**
+ * Report a page view for the page the person is on now. Call it once per route
+ * change, back and forward included. Does nothing before install.
+ */
+export function trackAnalyticsPageView(): void {
+	if (!state) return;
+	const first = state.pageViews === 0;
+	state.pageViews += 1;
+	// Only the page a visit starts on has a referrer worth naming. The tracker
+	// keeps offering the one the page loaded with, so later views drop it.
+	enqueue((umami) =>
+		first ? umami.track() : umami.track((payload) => ({ ...payload, referrer: '' })),
+	);
+}
+
+/**
+ * Report a named event, such as `create-task`. A name that is not kebab-case,
+ * or is longer than 50 characters, is dropped rather than sent: a name is a
+ * fixed label, and one built from page content would carry that content out.
+ * Does nothing before install.
+ */
+export function trackAnalyticsEvent(name: string): void {
+	if (!state || name.length > MAX_EVENT_NAME_LENGTH || !EVENT_NAME.test(name)) return;
+	enqueue((umami) => umami.track(name));
+}
+
+function onClick(event: Event): void {
+	try {
+		const target = event.target;
+		if (!(target instanceof Element)) return;
+		const name = target.closest(`[${ANALYTICS_ATTRIBUTE}]`)?.getAttribute(ANALYTICS_ATTRIBUTE);
+		if (name) trackAnalyticsEvent(name);
+	} catch {
+		// A click is never worth an error in the page.
+	}
+}
+
+/**
+ * Count every click on an element carrying `data-analytics`, or inside one, as
+ * the event it names. One listener for the page, on the capture phase so a
+ * handler that stops propagation still counts. Installs once; never prevents
+ * the click or changes where it goes.
+ */
+export function installAnalyticsClicks(): void {
+	if (typeof document === 'undefined' || clicksInstalled) return;
+	try {
+		document.addEventListener('click', onClick, true);
+		clicksInstalled = true;
+	} catch {
+		// As in `dispatch`.
+	}
+}
+
+/**
+ * Whether this browser session is recorded, at `sampleRate` from 0 to 1.
+ *
+ * Decided once per browser session and kept in `sessionStorage`, so a visit is
+ * recorded whole or not at all rather than page by page. 0 is never and 1 is
+ * always, whatever an earlier page decided. A visit picked at 1 is kept as
+ * picked, so a rate lowered mid-visit (but not to 0) carries on recording it
+ * rather than rolling again. Where storage is unavailable the decision is made
+ * afresh on each load.
+ */
+export function shouldRecordThisVisit(sampleRate: number): boolean {
+	if (!(sampleRate > 0)) return false;
+	if (sampleRate >= 1) {
+		writeSessionStored(RECORD_VISIT_KEY, '1');
+		return true;
+	}
+	const kept = readSessionStored(RECORD_VISIT_KEY);
+	if (kept === '1') return true;
+	if (kept === '0') return false;
+	const record = Math.random() < sampleRate;
+	writeSessionStored(RECORD_VISIT_KEY, record ? '1' : '0');
+	return record;
+}
+
+/**
+ * Start recording this page, through the recorder served beside the tracker
+ * and pinned to `recorderIntegrity`. Hides all page text first unless
+ * `showText` is set. Starts once per page, and does nothing before
+ * `installAnalytics`, whose host and website it uses.
+ *
+ * **Called again while recording, it only ever tightens.** The recorder has no
+ * reconfigure hook, so a settings change reaches a running recording through
+ * the classes it reads: `showText` turning false hides the page text from then
+ * on, and the recorder's next full snapshot (every 30 seconds) drops what it
+ * showed before. Showing text that was hidden, or recording again after
+ * `stopSessionRecording`, waits for the next page load.
+ */
+export function startSessionRecording(options: SessionRecordingOptions): void {
+	if (!state) return;
+	if (state.recording) {
+		if (!options.showText) document.documentElement.classList.add(MASK_TEXT_CLASS);
+		return;
+	}
+	try {
+		if (!options.recorderIntegrity.trim()) return;
+		state.recording = true;
+		// Before the recorder loads, so its first snapshot is already masked.
+		if (!options.showText) document.documentElement.classList.add(MASK_TEXT_CLASS);
+
+		const script = pinnedScript(`${state.host}/recorder.js`, options.recorderIntegrity);
+		script.defer = true;
+		script.async = false;
+		script.setAttribute('data-website-id', state.websiteId);
+		document.head.appendChild(script);
+	} catch {
+		// As in `dispatch`.
+	}
+}
+
+/**
+ * Stop the recording running on this page, and its heatmap, for an account no
+ * longer recorded: the recorder sends nothing more, and drops what it had not
+ * yet sent. Counting carries on. Does nothing when nothing is recording; a
+ * later start waits for the next page load.
+ */
+export function stopSessionRecording(): void {
+	if (!state?.recording) return;
+	try {
+		state.recordingStopped = true;
+		silenceRecorder();
+	} catch {
+		// As in `dispatch`.
+	}
+}
+
+/** What a deployment asks this page to do, as the app last heard it. */
+export interface AnalyticsSettings {
+	analytics: AnalyticsOptions;
+	/** How this visitor is recorded, or nothing when their account never is. */
+	replay: { sampleRate: number; showText: boolean; recorderIntegrity: string } | null;
+}
+
+/**
+ * Apply what the deployment asks for now, whenever the app hears it.
+ *
+ * **The first settings a page receives start it**: the tracker, the click
+ * listener, and a recording if this visit is picked. **Every later call can
+ * only tighten what is running**, because the recorder cannot be unloaded or
+ * reconfigured and a page should never begin capturing more than it was loaded
+ * to capture:
+ *
+ * - nothing (analytics no longer configured): nothing more is sent, by the
+ *   tracker or the recorder;
+ * - a visit no longer picked, or no `replay` at all: the recording and its
+ *   heatmap stop, and counting carries on;
+ * - `showText` turning false: page text is hidden from then on.
+ *
+ * Anything that would start or loosen (analytics back on, a recording begun,
+ * text shown) waits for the next page load.
+ */
+export function applyAnalyticsSettings(settings: AnalyticsSettings | null): void {
+	try {
+		if (!state) {
+			if (!settings) return;
+			installAnalytics(settings.analytics);
+			installAnalyticsClicks();
+			if (settings.replay && shouldRecordThisVisit(settings.replay.sampleRate)) {
+				startSessionRecording({
+					showText: settings.replay.showText,
+					recorderIntegrity: settings.replay.recorderIntegrity,
+				});
+			}
+			return;
+		}
+		if (state.off) return;
+		if (!settings) {
+			state.off = true;
+			state.queue.length = 0;
+			stopSessionRecording();
+			return;
+		}
+		if (!state.recording) return;
+		if (!settings.replay || !shouldRecordThisVisit(settings.replay.sampleRate)) {
+			stopSessionRecording();
+			return;
+		}
+		if (!settings.replay.showText) document.documentElement.classList.add(MASK_TEXT_CLASS);
+	} catch {
+		// As in `dispatch`.
+	}
+}
+
+/**
+ * Whether analytics is running on this page and has not been turned off, so
+ * the app knows whether to keep asking for the settings.
+ */
+export function analyticsActive(): boolean {
+	return state !== null && !state.off;
+}

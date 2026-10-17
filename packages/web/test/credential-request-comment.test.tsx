@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -72,7 +73,9 @@ test('human can set allowed_hosts when fulfilling an unscoped request', async ()
 	const { findByTestId, user } = await renderTaskWithCredentialRequest([]);
 	await findByTestId('credential-request', undefined, { timeout: 15_000 });
 
-	await user.type(await findByTestId('credential-input'), 'tok-123');
+	const input = await findByTestId('credential-input');
+	expect(input.classList).toContain(NEVER_RECORD_CLASS);
+	await user.type(input, 'tok-123');
 	// The field prefills with an inferred suggestion (NETLIFY_* → api.netlify.com);
 	// clear it before typing the exact allowlist this test asserts on.
 	const hostsField = await findByTestId('credential-hosts-input');

@@ -2,19 +2,30 @@ import * as Popover from '@radix-ui/react-popover';
 import { Smile } from 'lucide-react';
 import { useState } from 'react';
 import { type ReactionGroup, useAddReaction, useRemoveReaction } from '../../hooks/use-comments';
+import { type MessageKey, useI18n } from '../../lib/i18n';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentData } from './comment-data';
 import { AVAILABLE_REACTION_KINDS, REACTION_GLYPH, REACTION_LABEL } from './helpers';
 
-function reactorName(m: { slug: string | null; display_name: string | null }): string {
-	if (m.slug) return `@${m.slug}`;
-	return m.display_name ?? 'someone';
+type Translate = (key: MessageKey) => string;
+
+function reactionLabel(kind: string, t: Translate): string {
+	const key = REACTION_LABEL[kind];
+	return key ? t(key) : kind;
 }
 
-function reactorsTooltip(group: ReactionGroup): string {
-	const names = group.members.map(reactorName);
-	if (names.length === 0) return REACTION_LABEL[group.kind] ?? group.kind;
-	return `${REACTION_LABEL[group.kind] ?? group.kind} · ${names.join(', ')}`;
+function reactorName(
+	m: { slug: string | null; display_name: string | null },
+	t: Translate,
+): string {
+	if (m.slug) return `@${m.slug}`;
+	return m.display_name ?? t('comment.reaction.someone');
+}
+
+function reactorsTooltip(group: ReactionGroup, t: Translate): string {
+	const names = group.members.map((m) => reactorName(m, t));
+	if (names.length === 0) return reactionLabel(group.kind, t);
+	return `${reactionLabel(group.kind, t)} · ${names.join(', ')}`;
 }
 
 interface Props {
@@ -24,6 +35,7 @@ interface Props {
 }
 
 export function CommentReactions({ comment, projectId, taskId }: Props) {
+	const { t } = useI18n();
 	const groups = comment.reactions ?? [];
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const addReaction = useAddReaction(projectId ?? '', taskId ?? '');
@@ -45,9 +57,9 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 	if (groups.length === 0 && availableToAdd.length === 0) return null;
 
 	return (
-		<div className="flex flex-wrap items-center gap-1.5 mt-2" data-testid="comment-reactions">
+		<div className="flex flex-wrap items-center gap-1.5" data-testid="comment-reactions">
 			{groups.map((g) => (
-				<Tooltip key={g.kind} content={reactorsTooltip(g)}>
+				<Tooltip key={g.kind} content={reactorsTooltip(g, t)}>
 					<button
 						type="button"
 						onClick={() => toggle(g.kind, g.you_reacted)}
@@ -72,7 +84,7 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 						<button
 							type="button"
 							disabled={busy}
-							aria-label="Add reaction"
+							aria-label={t('comment.addReaction')}
 							data-testid="add-reaction-button"
 							className="inline-flex items-center justify-center min-w-[28px] min-h-[28px] px-1.5 rounded-full border border-border text-text-2 hover:text-text-1 hover:border-border-strong disabled:opacity-60"
 						>
@@ -93,14 +105,14 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 							data-testid="reaction-picker"
 						>
 							{availableToAdd.map((kind) => (
-								<Tooltip key={kind} content={REACTION_LABEL[kind] ?? kind}>
+								<Tooltip key={kind} content={reactionLabel(kind, t)}>
 									<button
 										type="button"
 										onClick={() => {
 											setPickerOpen(false);
 											toggle(kind, false);
 										}}
-										aria-label={REACTION_LABEL[kind] ?? kind}
+										aria-label={reactionLabel(kind, t)}
 										className="inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2 rounded text-sm hover:bg-surface-2"
 										data-reaction-kind={kind}
 									>

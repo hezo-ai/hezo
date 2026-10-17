@@ -87,3 +87,24 @@ export async function redeemPendingSsoHandle(): Promise<boolean> {
 export function goToIssuer(url: string): void {
 	window.location.assign(url);
 }
+
+/**
+ * Set when sign-out hands this page to the issuer's logout, and held until the
+ * page goes. Signing out drops the session, so the gate behind the departing
+ * page comes up as a visitor to send to the issuer's sign-in. That second
+ * navigation cancels the logout if it has not yet committed, and the person
+ * stays signed in at the issuer, which sends them straight back.
+ */
+let leavingForIssuerLogout = false;
+
+export function markLeavingForIssuerLogout(): void {
+	leavingForIssuerLogout = true;
+}
+
+export function isLeavingForIssuerLogout(): boolean {
+	return leavingForIssuerLogout;
+}
+
+export function clearLeavingForIssuerLogout(): void {
+	leavingForIssuerLogout = false;
+}

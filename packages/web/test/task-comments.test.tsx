@@ -1,7 +1,7 @@
-import { COMMENT_TEXT_MAX_CHARS, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
+import { COMMENT_TEXT_MAX_CHARS, Language, SUMMARY_DETAILS_HEADING } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 async function setupTaskRoute() {
@@ -642,6 +642,95 @@ test('the reply preview quotes only the summary of a comment with technical deta
 	expect(indicator.textContent).toContain('Plain summary.');
 	expect(indicator.textContent).not.toContain('Hidden evidence');
 	expect(indicator.textContent).not.toContain(SUMMARY_DETAILS_HEADING);
+});
+
+test('the reply button leads the action row, just ahead of the add-reaction button', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Reply Position' });
+			const task = await seedTask(ws, project, { title: 'Reply Position Task' });
+			await seedComment(ws, task, 'Reply to me from the left');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const body = await findByText('Reply to me from the left');
+	const item = body.closest('[data-testid="comment-item"]') as HTMLElement;
+	const reply = item.querySelector('[data-testid="comment-reply"]') as HTMLElement;
+	const addReaction = item.querySelector('[data-testid="add-reaction-button"]') as HTMLElement;
+	expect(reply).not.toBeNull();
+	expect(addReaction).not.toBeNull();
+
+	// One row, reply first: the row's first child is the reply button and the
+	// add-reaction button follows it with nothing but reaction chips between.
+	const row = reply.parentElement as HTMLElement;
+	expect(row.firstElementChild).toBe(reply);
+	expect(row.contains(addReaction)).toBe(true);
+	expect(
+		reply.compareDocumentPosition(addReaction) & Node.DOCUMENT_POSITION_FOLLOWING,
+	).toBeTruthy();
+	expect(reply.tagName).toBe('BUTTON');
+	expect(reply.textContent).toContain('Reply');
+});
+
+test('the comment card labels follow the instance language', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const { apiBase } = getTestContext();
+			const ws = await seedWorkspace();
+			await apiBase('/api/instance-settings/locale', {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({ language: Language.De }),
+			});
+			const project = await seedProject(ws, { name: 'German Labels' });
+			const task = await seedTask(ws, project, { title: 'German Labels Task' });
+			const parent = await seedComment(ws, task, 'Erster Kommentar');
+			await apiBase(`/api/projects/${ws.internalSlug}/tasks/${task.id}/comments`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({
+					content_type: 'text',
+					content: { text: 'Zweiter Kommentar' },
+					parent_comment_id: parent.id,
+				}),
+			});
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const body = await findByText('Zweiter Kommentar');
+	const item = body.closest('[data-testid="comment-item"]') as HTMLElement;
+	const reply = item.querySelector('[data-testid="comment-reply"]') as HTMLElement;
+	await waitFor(() => expect(reply.textContent).toBe('Antworten'));
+	expect(reply.getAttribute('aria-label')).toBe('Auf Kommentar antworten');
+	expect(item.querySelector('[data-testid="comment-copy"]')?.getAttribute('aria-label')).toBe(
+		'Kommentar kopieren',
+	);
+	expect(item.querySelector('[data-testid="replying-to"]')?.textContent).toMatch(/^Antwort an /);
+
+	const addReaction = item.querySelector('[data-testid="add-reaction-button"]') as HTMLElement;
+	expect(addReaction.getAttribute('aria-label')).toBe('Reaktion hinzufügen');
+	await user.click(addReaction);
+	const picker = await findByTestId('reaction-picker');
+	expect(picker.querySelector('[data-reaction-kind="ack"]')?.getAttribute('aria-label')).toBe(
+		'Zur Kenntnis genommen',
+	);
 });
 
 test('copy button copies the comment body and confirms with a check icon', async () => {

@@ -1,4 +1,5 @@
 import { ApiKeyStatus } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { createFileRoute } from '@tanstack/react-router';
 import { Check, Copy, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
@@ -187,7 +188,10 @@ function ApiKeysPage() {
 				</div>
 
 				{newKey && (
-					<div className="border border-success rounded-md bg-success-soft p-3 mb-5">
+					<div
+						className={`border border-success rounded-md bg-success-soft p-3 mb-5 ${NEVER_RECORD_CLASS}`}
+						data-testid="api-key-created"
+					>
 						<p className="text-xs text-success-soft-fg font-medium mb-1">
 							New API key created - copy it now, it won't be shown again:
 						</p>
@@ -217,7 +221,12 @@ function ApiKeysPage() {
 								required
 								wrapperClassName="flex-1"
 							/>
-							<Button type="submit" size="sm" disabled={create.isPending}>
+							<Button
+								type="submit"
+								size="sm"
+								disabled={create.isPending}
+								data-analytics="create-api-key"
+							>
 								Create
 							</Button>
 						</div>

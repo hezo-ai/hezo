@@ -69,6 +69,15 @@ unlock it.
 Your instance comes back unlocked after an ordinary update. It comes back
 **locked** after a restart it did not plan, and asks you for the phrase.
 
+## Usage analytics
+
+Hezo Cloud counts the pages you open and the main buttons you click in your
+instance, and records your sessions with the page text and everything you type
+hidden. Screens that show a secret, the images you upload, your agents' logs and
+the chat are never recorded. Self-hosted Hezo does none of this. What is collected
+and how long it is kept: [Data & security on Hezo
+Cloud](/docs/cloud/data-and-security#how-we-see-you-use-the-app).
+
 ## Your address and where it runs
 
 - **Your address is `you.app.hezo.ai`**, chosen once when you sign up and kept

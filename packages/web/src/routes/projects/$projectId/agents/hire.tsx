@@ -186,6 +186,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 					disabled={
 						!values.title.trim() || heartbeatMinutes(values) === undefined || onboardAgent.isPending
 					}
+					data-analytics="hire-agent"
 				>
 					{onboardAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					Hire agent
@@ -284,7 +285,12 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 					{updateProposal.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					Save changes
 				</Button>
-				<Button type="button" disabled={busy || !values.title.trim()} onClick={handleApprove}>
+				<Button
+					type="button"
+					disabled={busy || !values.title.trim()}
+					onClick={handleApprove}
+					data-analytics="approve-hire"
+				>
 					{resolveApproval.isPending ? (
 						<Loader2 className="w-4 h-4 animate-spin" />
 					) : (

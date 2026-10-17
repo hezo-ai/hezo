@@ -17,6 +17,8 @@
  * rather than sharing it with sibling subdomains.
  */
 
+import { pinnedScript } from './pinned-script.js';
+
 export type SupportChatColorScheme = 'light' | 'dark' | 'auto';
 
 export interface SupportChatIdentity {
@@ -183,12 +185,7 @@ export function installSupportChat(options: SupportChatOptions): void {
 	};
 	window.addEventListener('chatwoot:ready', onReady);
 
-	const script = document.createElement('script');
-	script.src = `${baseUrl}/packs/js/sdk.js`;
-	script.integrity = options.sdkIntegrity;
-	// Integrity is checked only on a CORS response, and an anonymous request
-	// sends no credentials to the other origin.
-	script.crossOrigin = 'anonymous';
+	const script = pinnedScript(`${baseUrl}/packs/js/sdk.js`, options.sdkIntegrity);
 	script.async = true;
 	script.addEventListener('load', () => {
 		try {

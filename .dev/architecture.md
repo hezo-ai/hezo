@@ -6803,7 +6803,105 @@ wrote back. The first rides the public status; the second stays behind the owner
   in is **Contact support** in the Settings menu's deployer group (`PolicyGroup`, beside
   the plan link), rendered only when the query holds data.
   `logout()` (`lib/auth.ts`) calls `resetSupportChat` before handing the browser to the
-  issuer.
+  issuer, and marks the page as leaving for the issuer's logout. The gate behind it comes
+  up signed out, and `SsoRedirect` would otherwise send the browser to the issuer's
+  sign-in, a second navigation that cancels the logout if it has not yet committed.
+
+### Product analytics
+
+A deployment with `policy.analytics.umami` (§ *Configuration resolution*) counts the
+instance owner's page views and named clicks in a self-hosted Umami, and may record their
+sessions. Inert when the block is absent, and on any instance without an `sso` block:
+self-hosted Hezo loads none of it.
+
+- **Served to the owner only, and never before sign-in.** `GET /api/analytics`
+  (`routes/analytics.ts`) answers `{ umami: { host, website_id, distinct_id,
+  script_integrity, recorder_integrity, replay } }`, `replay` being
+  `{ sample_rate, show_text }` or `null`, only where `isHostedOwner`
+  (`lib/hosted-owner.ts`) holds - an Admin superuser session on an instance with an `sso`
+  block, the gate `GET /api/support` shares. Everyone else, and everyone when the block is
+  unset, gets `404`. Nothing rides `/api/status`: unlike the chat, analytics have no reason
+  to load on a screen before a session. No MCP twin. Read per request, so the heartbeat's
+  rewritten policy file turns recording on or off with no restart.
+- **The distinct id is the deployer's account id, written by the deployer.** Hezo never
+  derives it from `ownerSubject` and never sends an email. It rides the tracker's tag as
+  `data-distinct-id`, so the whole visit is identified from the first request; calling
+  `umami.identify()` after load would start a second session and split the recording.
+- **Both scripts are pinned.** They run in the owner's session, which keeps its token in
+  `localStorage`, so each tag carries the deployer's Subresource Integrity list and
+  `crossorigin="anonymous"` (`pinnedScript`, `@hezo/ui`, which the Chatwoot loader uses
+  too). A server that starts serving another file serves one the browser refuses to run. A
+  blank hash loads nothing. Rolling Umami lists the old and the new hash until every box
+  has the new file, then drops the old.
+- **One loader for every site.** `analytics.ts` in `@hezo/ui` is plain functions over module
+  state, each a no-op before install and none of them throwing. `installAnalytics` adds
+  `${host}/script.js` pinned to `scriptIntegrity`, with `data-website-id`,
+  `data-distinct-id`, `data-before-send` naming a global hook and `data-auto-track="false"`,
+  then reports the page the visit starts on. Calls made before the script runs wait in a
+  queue bounded at 50 and flush on its `load`; each queued call carries the page it was made
+  on, since Umami's `track` runs the before-send hook inside the call. `startSessionRecording` puts `rr-mask` on
+  `<html>` unless `showText`, then adds `${host}/recorder.js` pinned to its
+  `recorderIntegrity`; both tags are `async = false` so the tracker runs first, since the
+  recorder waits for the tracker's session. The app hands every answer to
+  `applyAnalyticsSettings`: the first starts the tracker, the click listener and a
+  recording if the visit is picked, and every later one only tightens, because the
+  recorder cannot be unloaded or reconfigured. Nothing (the route's 404 after a good
+  answer) turns the page off: the before-send hook refuses every tracker send and the
+  recording stops. So does losing the signed-in owner (the vault locked, or a 401 from
+  `/api/me` or from the recheck itself, as when the token expires on a tab left open),
+  because the owner's details and the last good answer stay cached after either. A visit
+  no longer picked, or no `replay`, stops the recording while counting carries on;
+  `showText` turning false gets `rr-mask`, and rrweb's full snapshot every 30 s then drops
+  what was shown. **A recording stops through the tracker's session.** Umami 3.4's recorder
+  keeps its heatmap listeners (clicks, scrolling, address changes) for the page's life and
+  has no hook to remove them, but every send it makes, replay or heatmap, first reads
+  `window.umami.getSession().cache` and sends nothing without one. `stopSessionRecording`
+  swaps `window.umami` for a copy whose `getSession` reports none (and `onTrackerLoad`
+  does it if the tracker had not yet run), so the recorder drops everything from then on,
+  buffered events included, while the tracker's own sends keep the session they hold
+  inside. A newer Umami needs this re-checked. Starting or loosening waits for the next
+  page load. `useAnalytics` refetches every two minutes while it holds an
+  answer and the last one was not a 404 or a 401, because the app never refetches on focus. `shouldRecordThisVisit(rate)` decides once per
+  browser session and keeps the answer in `sessionStorage` (`0` never, `1` always).
+  `installAnalyticsClicks` adds one capture-phase `click` listener on `document` that sends
+  `umami.track(name)` for the nearest `[data-analytics]` ancestor - a kebab-case name of at
+  most 50 characters, never the element's text. Umami's own `data-umami-event` is never
+  used: on a link it prevents the default and navigates itself, past the router.
+- **What leaves the browser is rewritten before it goes.** The before-send hook replaces
+  `url` and `title` with the route pattern the consumer's `pagePattern()` returns at the
+  moment of the send (`/projects/$projectId/tasks/$taskId` - addresses carry project and
+  file names), and cuts `referrer` to another site's origin, or nothing for this one. A
+  `pagePattern` that throws drops the payload rather than sending the address.
+- **Page views are the consumer's.** The tracker's history hook sees `pushState` and
+  `replaceState` but not back and forward, and keeps a last-seen address that goes stale on
+  a pop; left on beside a router subscription it double-counts some navigations and drops
+  others. So it is off, and `trackAnalyticsPageView` is called once per route change. Only
+  the first page view keeps the referrer the page loaded with.
+- **Tenant web.** `useProductAnalytics` (`hooks/use-analytics.ts`), called from `AppShell`
+  beside `useSupportChat`, asks `/api/analytics` only where the status carries `sso` **and a
+  session exists**, and does not retry the `404`. With an answer it installs the tracker
+  (the pattern is the deepest router match's `fullPath`, an index route's trailing slash
+  dropped), the click listener and, where `replay` is set and the visit is sampled, the
+  recorder; then it subscribes to the router's `onResolved` and reports a page view when
+  `pathChanged` - one per navigation of any kind, none for a change of query or fragment.
+- **Never recorded.** rrweb replaces an element carrying `rr-block` (`NEVER_RECORD_CLASS`)
+  with a blank box of the same size, its attributes included, and the mark sits on the
+  component so every screen reusing it is covered: `MasterKeyForm`'s form (the vault gate,
+  the setup wizard's re-entry and the forgot-password reset), `PasswordInput` (it turns
+  into plain text when revealed), the new API key, `DeviceCodeSteps`' rail (code, address,
+  pasted-back code), the subscription credential and requested-credential fields, images,
+  frames and links carrying a signed asset address (a key to that file while it lasts),
+  markdown links carrying a `sig` parameter, the shared `Avatar` image and the rail's HQ
+  icon (uploaded icons are signed too), `LogViewer`'s body (run and container logs) and
+  `ChatSurface`'s message list. Typed input is masked by the recorder's own setting.
+- **Known limits of a text-hidden recording.** The recorder sends `location.href` itself: in
+  rrweb's meta events, in its `url-change` custom event and in heatmap click and scroll
+  events. So a recording carries the real address of each page it covers, query included,
+  even though the page views do not. And `rr-mask` hides text nodes only: rrweb 2.0.1 under
+  Umami's recorder has no attribute masking to turn on, so a name the app puts in a
+  `title` or an `aria-label` (a task title, a filename, a labelled button) is recorded as
+  written. Neither is stripped across the app; `docs/cloud/data-and-security.md` and the
+  hezo.ai privacy page state both.
 
 ## 12. Build, release, migrations & upgrades
 
@@ -6859,6 +6957,17 @@ widget needs - an `https:` origin, an SRI hash list, 64 lowercase hex - and a ba
 fails the whole policy parse like any other bad key: at boot nothing is pinned, on reload
 the last good policy stays. An older release fails the same way on the unknown key, so a
 plane writes the block only for a release that reads it. What reads it: § *Support chat*.
+
+**`policy.analytics`.** The deployer's product analytics, today one key: `umami`, with
+`host` (an `https:` URL with no trailing slash, query or fragment, since the scripts are
+`${host}/script.js` and `${host}/recorder.js`), `websiteId` (a UUID), `distinctId` (1-50
+characters, the deployer's account id), `scriptIntegrity` and `recorderIntegrity` (each
+an SRI list checked by the same `sriList` as `chatwoot.sdkIntegrity`) and an optional
+`replay` of `sampleRate` (0-1) and `showText`. Absent `replay` means the account is never recorded. In `policy` for the reason
+`support` is, so a recording turned on or off for one account reaches the running instance
+on the next heartbeat. Every level is `.strict()`, so an older release fails the whole policy
+on the unknown key and the plane writes it only for a release that reads it. What reads it:
+§ *Product analytics*.
 
 **Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
 reading were removed with no shim and no warning, so an instance whose supervisor still

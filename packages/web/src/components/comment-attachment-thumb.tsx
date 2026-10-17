@@ -1,4 +1,5 @@
 import { assetBasename } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Link } from '@tanstack/react-router';
 import type { CommentAttachment } from '../hooks/use-comments';
 import { AssetIcon } from './asset-icon';
@@ -40,7 +41,7 @@ export function CommentAttachmentThumb({
 					aria-label={basename}
 					data-testid="comment-attachment-thumb"
 					data-filename={basename}
-					className={THUMB_CLASSES}
+					className={`${THUMB_CLASSES} ${NEVER_RECORD_CLASS}`}
 				>
 					<AssetIcon contentType={attachment.content_type} className="h-4 w-4" />
 				</a>

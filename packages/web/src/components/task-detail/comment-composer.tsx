@@ -267,6 +267,7 @@ export function CommentComposer({
 								commentTooLong ||
 								createComment.isPending
 							}
+							data-analytics="post-comment"
 						>
 							{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
 							Comment

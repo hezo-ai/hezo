@@ -1,4 +1,5 @@
 import { assetBasename, assetPath } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { ExternalLink, Loader2, X } from 'lucide-react';
 import type {
 	ErrorChip,
@@ -55,7 +56,7 @@ export function AttachmentChips({
 							href={projectId ? assetPath(projectId, a.original_filename) : a.url}
 							target="_blank"
 							rel="noopener noreferrer"
-							className="flex items-center gap-1 text-text-1 hover:underline"
+							className={`flex items-center gap-1 text-text-1 hover:underline ${NEVER_RECORD_CLASS}`}
 							data-testid={previewTestId}
 						>
 							<span className="max-w-[140px] truncate">{assetBasename(a.original_filename)}</span>

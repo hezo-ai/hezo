@@ -188,6 +188,7 @@ function PolicyGroup({ hosted, onAction }: { hosted: boolean; onAction?: () => v
 					}}
 					className={`${itemClass(false)} flex items-center gap-2`}
 					data-testid="settings-contact-support"
+					data-analytics="contact-support"
 				>
 					<span className="flex-1">{t('settings.managed.contactSupport')}</span>
 					<MessageCircle className="h-3 w-3 shrink-0" aria-hidden />

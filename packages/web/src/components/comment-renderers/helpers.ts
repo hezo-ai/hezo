@@ -10,6 +10,7 @@ import {
 	UserRoundCog,
 } from 'lucide-react';
 import type { ComponentType, MouseEvent, SVGProps } from 'react';
+import type { MessageKey } from '../../lib/i18n';
 import type { TextContent } from '../comment-content';
 import type { CommentData } from './comment-data';
 
@@ -41,7 +42,7 @@ export function commentText(content: TextContent): string {
 }
 
 export const REACTION_GLYPH: Record<string, string> = { ack: '✓' };
-export const REACTION_LABEL: Record<string, string> = { ack: 'Acknowledged' };
+export const REACTION_LABEL: Record<string, MessageKey> = { ack: 'comment.reaction.ack' };
 export const AVAILABLE_REACTION_KINDS = ['ack'] as const;
 
 export function runStatusLabel(status: string): string {

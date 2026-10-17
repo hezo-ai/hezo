@@ -1,5 +1,6 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { type InputHTMLAttributes, useState } from 'react';
+import { NEVER_RECORD_CLASS } from './analytics.js';
 import { hitAreaClassName, touchMinHeightClassName } from './density.js';
 
 export interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
@@ -20,6 +21,10 @@ export interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputEl
  * Password field with a trailing show/hide toggle. Renders only the input (plus
  * the eye button) — labels stay external so existing `getByLabelText` queries
  * and form layouts keep working. Styled to match the auth-form inputs.
+ *
+ * **Never recorded.** Revealing the value turns the field into plain text, which
+ * a session recording's input masking does not cover, so the whole field
+ * carries `NEVER_RECORD_CLASS`.
  */
 export function PasswordInput({
 	className = '',
@@ -29,7 +34,7 @@ export function PasswordInput({
 }: PasswordInputProps) {
 	const [visible, setVisible] = useState(false);
 	return (
-		<div className="relative">
+		<div className={`relative ${NEVER_RECORD_CLASS}`}>
 			{/* `type` after the spread, deliberately: the prop type forbids one, but a
 			    caller spreading a wider object gets past that and would otherwise be
 			    able to unmask the field. */}

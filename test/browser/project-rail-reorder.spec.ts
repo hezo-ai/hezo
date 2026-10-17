@@ -189,4 +189,10 @@ test('the rail auto-scrolls while dragging toward its bottom edge on an overflow
 		.poll(() => scroller.evaluate((el) => el.scrollTop), { timeout: 5_000 })
 		.toBeGreaterThan(0);
 	await page.mouse.up();
+	// The drop refetches the project index, and the test ends with that request
+	// still inside the mock's `route.fetch()`, which then rejects with "Target
+	// page, context or browser has been closed" and fails a test whose assertions
+	// all passed. The bare `page` fixture drains no routes on teardown, so drain
+	// them here, as agent-run-logs.spec.ts does: nothing reads that response.
+	await page.unrouteAll({ behavior: 'ignoreErrors' });
 });

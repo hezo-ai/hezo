@@ -6,6 +6,7 @@ import {
 	assetSortField,
 	assetTypeLabel,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Folder } from 'lucide-react';
 import type { ProjectAsset } from '../hooks/use-project-assets';
 import type { AssetFolderEntry } from '../lib/asset-folders';
@@ -52,7 +53,7 @@ function RowPreview({ asset }: { asset: ProjectAsset }) {
 					src={asset.url}
 					alt=""
 					loading="lazy"
-					className="h-full w-full object-cover"
+					className={`h-full w-full object-cover ${NEVER_RECORD_CLASS}`}
 					data-testid="asset-row-image"
 				/>
 			) : (

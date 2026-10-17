@@ -42,6 +42,7 @@ import { agentHoursRoutes } from './routes/agent-hours';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
+import { analyticsRoutes } from './routes/analytics';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
 import { assetReviewRoutes } from './routes/asset-review';
@@ -864,6 +865,7 @@ export function buildApp(
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);
 	app.route('/api', supportRoutes);
+	app.route('/api', analyticsRoutes);
 	// Storage metadata cards (General settings). Tests boot buildApp without
 	// the infos — derive the local defaults so the endpoints stay truthful.
 	app.route(

@@ -594,6 +594,7 @@ export function CreateProjectWithTeamDialog({
 										onClick={handlePlanWithCeo}
 										disabled={!canPlan}
 										data-testid="plan-with-ceo-submit"
+										data-analytics="plan-project-with-ceo"
 									>
 										{planWithCeo.isPending ? (
 											<Loader2 className="w-4 h-4 animate-spin" />
@@ -607,6 +608,7 @@ export function CreateProjectWithTeamDialog({
 										shortcut="mod+Enter"
 										disabled={!canSubmit}
 										data-testid="create-project-submit"
+										data-analytics="create-project"
 									>
 										{createProject.isPending ? (
 											<Loader2 className="w-4 h-4 animate-spin" />
