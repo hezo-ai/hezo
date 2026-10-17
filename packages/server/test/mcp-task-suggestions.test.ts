@@ -640,6 +640,21 @@ describe('suggest_task under parallel calls, and closing the suggestions task', 
 		expect(new Set(cards.rows.map((r) => r.title)).size).toBe(MAX_TASK_SUGGESTIONS_PER_TASK);
 	});
 
+	it('a filing that reaches a just-closed suggestions task files nothing', async () => {
+		const host = await suggestionsTask();
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [host.id]);
+		const result = await fileTaskSuggestion(db, {
+			teamId,
+			payload: { project_id: projectId, kind: 'deliverable', title: 'Too late', task_id: host.id },
+			requestedByMemberId: ceoId,
+		});
+		expect(result).toEqual({ ok: false, error: 'The suggestions task is no longer open.' });
+		const approvals = await db.query(
+			"SELECT 1 FROM approvals WHERE type = 'task_suggestion' AND payload->>'title' = 'Too late'",
+		);
+		expect(approvals.rows).toHaveLength(0);
+	});
+
 	it('the CEO cannot close its suggestions task while a card still waits', async () => {
 		const host = await suggestionsTask();
 		const first = await suggest(host.token, {

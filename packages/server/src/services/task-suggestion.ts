@@ -6,6 +6,7 @@ import {
 	ApprovalStatus as Status,
 	type TaskSuggestionCadence,
 	type TaskSuggestionKind,
+	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastCommentFamilyChange } from '../lib/broadcast';
@@ -130,7 +131,18 @@ export async function fileTaskSuggestion(
 			};
 		}
 
-		return db.transaction(async () => {
+		return db.transaction(async (): Promise<FileTaskSuggestionResult> => {
+			// The same row lock `update_task` takes to close the task: a close and a
+			// filing take turns, so no card lands on a task that just closed, and a
+			// close never misses a card filed just before it.
+			const host = await db.query<{ status: string }>(
+				'SELECT status::text AS status FROM tasks WHERE id = $1 FOR UPDATE',
+				[payload.task_id],
+			);
+			const status = host.rows[0]?.status;
+			if (!status || (TERMINAL_TASK_STATUSES as readonly string[]).includes(status)) {
+				return { ok: false, error: 'The suggestions task is no longer open.' };
+			}
 			const approval = await insertTaskSuggestionApproval(db, teamId, payload, requestedByMemberId);
 			const card = await insertTaskSuggestionComment(db, {
 				taskId: payload.task_id,
@@ -139,7 +151,7 @@ export async function fileTaskSuggestion(
 				teamId,
 				projectId: payload.project_id,
 			});
-			return { ok: true as const, approval, card };
+			return { ok: true, approval, card };
 		});
 	});
 }
