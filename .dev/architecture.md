@@ -6860,8 +6860,8 @@ self-hosted Hezo loads none of it.
   even though the page views do not. And `rr-mask` hides text nodes only: rrweb 2.0.1 under
   Umami's recorder has no attribute masking to turn on, so a name the app puts in a
   `title` or an `aria-label` (a task title, a filename, a labelled button) is recorded as
-  written. Neither is stripped across the app; the hosted disclosure (the hezo.ai privacy
-  page, outside this repo) states both.
+  written. Neither is stripped across the app; `docs/cloud/data-and-security.md` and the
+  hezo.ai privacy page state both.
 
 ## 12. Build, release, migrations & upgrades
 

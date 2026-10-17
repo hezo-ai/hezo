@@ -51,6 +51,6 @@ one to read: where it says *nothing*, no test will catch you.
 | **Removing** a feature | every stale reference repo-wide (`docs/**`, `.dev/`, READMEs, comments) - grep for it | **nothing - on you** |
 | A config mechanism, or a `policy` / `sso` / `seed` field | the hosted control plane's `.dev/track-h-spec.md` and its golden snapshot, in `hezo-ai/cloud` | **nothing - on you**, and nothing in this repo can see it |
 | Behaviour, a limit or a setup step that differs on the hosted tier | `docs/cloud/whats-different.md`, plus whichever `docs/cloud/` page owns it | **nothing - on you** |
-| A new screen showing a secret, a credential, a signed asset address or an agent's output | `NEVER_RECORD_CLASS` on the component that renders it, and the never-recorded list in `.dev/architecture.md` § *Product analytics* (the hosted disclosure is the hezo.ai privacy page, outside this repo) | `never-record.test.tsx` for the screens already listed; **a new one is on you** |
+| A new screen showing a secret, a credential, a signed asset address or an agent's output | `NEVER_RECORD_CLASS` on the component that renders it, and the never-recorded list in `docs/cloud/data-and-security.md` and `.dev/architecture.md` § *Product analytics* (the hezo.ai privacy page, outside this repo, says the same) | `never-record.test.tsx` for the screens already listed; **a new one is on you** |
 | A user-facing claim about what Hezo Cloud can see or keep | `docs/cloud/data-and-security.md` - and it must stay inside what the control plane's own §15 supports | **nothing - on you** |
 

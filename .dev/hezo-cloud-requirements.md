@@ -893,8 +893,8 @@ input masked) and its block selector empty (the components carry `rr-block`
 themselves); recording length and the 30-day retention set there. **An Umami
 upgrade is a hash rotation:** write the old and the new hash of each script into
 the block, upgrade, then drop the old one, or every box refuses the new file.
-Two limits stay, and the hezo.ai privacy page is where hosted customers are told
-of them: the recorder sends `location.href` itself, in its rrweb meta events,
+Two limits stay, and `docs/cloud/data-and-security.md` and the hezo.ai privacy
+page tell hosted customers of them: the recorder sends `location.href` itself, in its rrweb meta events,
 its `url-change` events and its heatmap events, so a recording carries real page
 addresses that the page views never do; and page text is masked but attributes
 are not, so a `title` or `aria-label` holding a name is recorded. Mechanism and
