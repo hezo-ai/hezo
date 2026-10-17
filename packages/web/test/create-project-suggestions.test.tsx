@@ -19,12 +19,13 @@ async function openDialogFromHome() {
 	return { ...utils, ws };
 }
 
-test('describing the project reveals ranked suggestions; picking one confirms it and shows the actions', async () => {
+test('describing the project reveals ranked suggestions; picking one confirms it and enables Create now', async () => {
 	const { user, findByText, findByPlaceholderText, findByTestId } = await openDialogFromHome();
 
-	// Empty state: a prompt, no cards, no action buttons.
+	// Empty state: a prompt and no cards. The actions show, but Create now waits
+	// for a team.
 	await findByText('Describe your project above to see suggested teams.');
-	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	expect((await findByTestId('create-project-submit')).hasAttribute('disabled')).toBe(true);
 
 	// A brief that overwhelmingly matches the Influencer Marketing team, so it ranks
 	// first and stays first once the marketplace catalog loads.
@@ -41,11 +42,15 @@ test('describing the project reveals ranked suggestions; picking one confirms it
 		timeout: 15_000,
 	});
 
-	// Picking a suggestion collapses to the confirmation card and reveals both actions.
+	// Picking a suggestion collapses to the confirmation card; with a name typed,
+	// Create now is enabled.
 	await user.click(topSuggestion);
 	await findByTestId('selected-team-card');
 	await findByTestId('choose-different-team');
-	await findByTestId('create-project-submit');
+	await user.type(await findByPlaceholderText('e.g. Marketing Site'), 'Brand Reach');
+	await waitFor(() =>
+		expect(screen.getByTestId('create-project-submit').hasAttribute('disabled')).toBe(false),
+	);
 	await findByTestId('plan-with-ceo-submit');
 });
 

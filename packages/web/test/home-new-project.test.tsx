@@ -23,8 +23,8 @@ test('home "New project" opens the create-project-with-team dialog (type picker)
 	await user.click(within(section).getByTestId('home-new-project'));
 
 	// The project-with-team dialog (not the old team-scoped one) opens on its entry
-	// step: name + description + a "View all teams" affordance. The action buttons
-	// stay hidden until a team is picked.
+	// step: name + description + a "View all teams" affordance. The actions show at
+	// once; Create now stays disabled until a team is picked.
 	await screen.findByPlaceholderText('e.g. Marketing Site');
 	expect(screen.getByTestId('view-all-teams')).toBeTruthy();
 	expect(
@@ -32,7 +32,7 @@ test('home "New project" opens the create-project-with-team dialog (type picker)
 			'What is this project? Domain, users, and the core problem it solves.',
 		),
 	).toBeTruthy();
-	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	expect(screen.getByTestId('create-project-submit').hasAttribute('disabled')).toBe(true);
 });
 
 test('the create-project dialog blocks on the container state when HQ is down', async () => {

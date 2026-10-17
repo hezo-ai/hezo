@@ -74,7 +74,8 @@ test('Back to teams returns to the catalog without selecting', async () => {
 	await waitFor(() => expect(screen.queryByTestId('team-detail')).toBeNull());
 	await user.click(await findByTestId('all-teams-back'));
 	expect(screen.queryByTestId('selected-team-card')).toBeNull();
-	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	// Nothing chosen, so Create now stays disabled.
+	expect((await findByTestId('create-project-submit')).hasAttribute('disabled')).toBe(true);
 });
 
 test("the Blank template's detail shows a Captain-only roster", async () => {

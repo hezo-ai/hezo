@@ -258,21 +258,23 @@ test('Create button stays disabled until name, description, and a team type are 
 	});
 	await user.click(await within(mainEl).findByRole('button', { name: 'New project' }));
 
-	// The action buttons don't render at all until a team is selected.
-	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	// Create now shows at once but stays disabled until a team is selected.
+	const createBtn = (await findByTestId('create-project-submit')) as HTMLButtonElement;
+	expect(createBtn.disabled).toBe(true);
 
 	await user.type(await findByPlaceholderText('e.g. Marketing Site'), 'Some Project');
 	await user.type(
 		await findByPlaceholderText(/What is this project/),
 		'A description long enough.',
 	);
-	// Name + description alone still don't reveal them — a team must be chosen.
-	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	// Name + description alone still leave it disabled: a team must be chosen.
+	expect(createBtn.disabled).toBe(true);
 
 	await user.click(await findByTestId('view-all-teams'));
 	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('team-detail-select'));
-	const createBtn = (await findByTestId('create-project-submit')) as HTMLButtonElement;
-	await waitFor(() => expect(createBtn.disabled).toBe(false));
+	await waitFor(() =>
+		expect((screen.getByTestId('create-project-submit') as HTMLButtonElement).disabled).toBe(false),
+	);
 }, 60_000);

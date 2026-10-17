@@ -144,7 +144,7 @@ test('Plan with the CEO sends the form as a chat message and creates nothing', a
 test('Plan with the CEO attaches the project plan to the message', async () => {
 	const projectName = uniqueName('Planned With Doc');
 
-	const { findByTestId, findByPlaceholderText, user } = await renderApp({
+	const { findByTestId, findByPlaceholderText, findByText, user } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {},
 	});
@@ -163,6 +163,8 @@ test('Plan with the CEO attaches the project plan to the message', async () => {
 		fileInput as HTMLInputElement,
 		new File(['# Plan\n\nShip the watchlist first.'], 'plan.markdown', { type: 'text/markdown' }),
 	);
+	// The field reads the file in the background; the name shows once it is loaded.
+	await findByText('plan.markdown');
 	await user.click(await findByTestId('plan-with-ceo-submit'));
 
 	await waitFor(
