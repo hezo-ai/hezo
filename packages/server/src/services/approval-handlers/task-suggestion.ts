@@ -1,4 +1,5 @@
 import {
+	AgentAdminStatus,
 	ApprovalStatus,
 	AuditActorType,
 	CAPTAIN_AGENT_SLUG,
@@ -52,10 +53,13 @@ export const taskSuggestionHandler: ApprovalHandler = {
 
 		// The project and the suggestions task must be this team's: the payload is
 		// read, never trusted to name where the task lands.
-		const scope = await db.query<{ captain_id: string | null }>(
-			`SELECT (SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			         WHERE m.team_id = p.team_id AND ma.slug = $4) AS captain_id
+		const scope = await db.query<{ captain_id: string | null; captain_status: string | null }>(
+			`SELECT c.id AS captain_id, c.admin_status::text AS captain_status
 			   FROM projects p
+			   LEFT JOIN LATERAL (
+			     SELECT ma.id, ma.admin_status FROM member_agents ma JOIN members m ON m.id = ma.id
+			      WHERE m.team_id = p.team_id AND ma.slug = $4 LIMIT 1
+			   ) c ON true
 			  WHERE p.id = $1 AND p.team_id = $2 AND p.is_internal = false
 			    AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = $3 AND t.project_id = p.id)`,
 			[p.project_id, teamId, p.task_id, CAPTAIN_AGENT_SLUG],
@@ -68,6 +72,12 @@ export const taskSuggestionHandler: ApprovalHandler = {
 		const captainId = scope.rows[0].captain_id;
 		if (!captainId) {
 			throw new ApprovalSideEffectError('The project has no Captain, so no task was created.');
+		}
+		// A disabled agent is never woken, so its task would sit open with nobody to run it.
+		if (scope.rows[0].captain_status !== AgentAdminStatus.Enabled) {
+			throw new ApprovalSideEffectError(
+				"The project's Captain is disabled, so no task was created. Enable the Captain, then approve again.",
+			);
 		}
 
 		const terminal = terminalStatusParams(3);

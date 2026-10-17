@@ -610,6 +610,47 @@ describe('deciding a suggestion: one decision, never a task in the wrong place',
 		expect(tasks.rows).toHaveLength(0);
 	});
 
+	it('approval with the Captain disabled creates nothing and stays pending', async () => {
+		const host = await suggestionsTask();
+		const filed = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Needs a Captain',
+			task_id: host.id,
+		});
+		const setCaptain = (status: string) =>
+			db.query('UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2', [
+				status,
+				captainId,
+			]);
+		await setCaptain('disabled');
+		try {
+			const res = await app.request(`/api/approvals/${filed.approval_id}/resolve`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'content-type': 'application/json' },
+				body: JSON.stringify({ status: 'approved' }),
+			});
+			expect(res.status).toBe(409);
+			expect((await res.json()).error.message).toMatch(/Captain is disabled/);
+			const row = await db.query<{ status: string }>(
+				'SELECT status::text AS status FROM approvals WHERE id = $1',
+				[filed.approval_id],
+			);
+			expect(row.rows[0].status).toBe('pending');
+			const none = await db.query('SELECT 1 FROM tasks WHERE title = $1', ['Needs a Captain']);
+			expect(none.rows).toHaveLength(0);
+		} finally {
+			await setCaptain('enabled');
+		}
+
+		// Once the Captain is enabled again, the same card approves.
+		await resolve(filed.approval_id as string, 'approved');
+		const created = await db.query<{ assignee_id: string }>(
+			'SELECT assignee_id FROM tasks WHERE title = $1',
+			['Needs a Captain'],
+		);
+		expect(created.rows).toEqual([{ assignee_id: captainId }]);
+	});
+
 	it('the generic approvals route refuses to file a task suggestion', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
@@ -709,6 +750,36 @@ describe('suggest_task under parallel calls, and closing the suggestions task', 
 			[host.id],
 		);
 		expect(row.rows[0].status).toBe('done');
+	});
+
+	it('the CEO cannot cancel its suggestions task while a card still waits', async () => {
+		const host = await suggestionsTask();
+		const filed = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Cancel gate',
+			task_id: host.id,
+		});
+		const cancel = async () =>
+			(await callMcpTool(app, host.token, 'update_task', {
+				project: projectSlug,
+				task_id: host.id,
+				status: 'cancelled',
+			})) as { error?: string };
+
+		expect((await cancel()).error).toMatch(/1 task suggestion card\(s\) on it still wait/);
+		const open = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM tasks WHERE id = $1',
+			[host.id],
+		);
+		expect(open.rows[0].status).toBe('in_progress');
+
+		await resolve(filed.approval_id as string, 'denied');
+		expect((await cancel()).error).toBeUndefined();
+		const cancelled = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM tasks WHERE id = $1',
+			[host.id],
+		);
+		expect(cancelled.rows[0].status).toBe('cancelled');
 	});
 
 	it('a run with nothing to suggest closes when it names the admin passively', async () => {

@@ -1691,8 +1691,9 @@ transaction and are announced after it commits. The tool refuses HQ, a ninth car
 (`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a title matching an open
 task or a pending suggestion; `fileTaskSuggestion` runs those checks and the insert under a keyed
 lock per suggestions task, so parallel calls cannot pass them together, and re-checks the task is
-open under the same row lock `update_task` takes to close it, so a filing and a close take turns. An agent cannot mark the
-suggestions task done while any suggestion filed on it is pending (`assertNoPendingTaskSuggestions`,
+open under the same row lock `update_task` takes to close it, so a filing and a close take turns. An agent cannot move the
+suggestions task to done or cancelled (either releases planning) while any suggestion filed on it
+is pending (`assertNoPendingTaskSuggestions`,
 read from the approvals rather than the cards, so a card that failed to flip cannot hold it), since
 one answered card already satisfies the `@admin` done check. That check counts only a card
 answered after the ask, so the task body has the CEO post its `@admin` summary before filing any
@@ -1701,7 +1702,8 @@ leaves an ask no card can answer. Approving runs `taskSuggestionHandler`
 (`approval-handlers/task-suggestion.ts`). It first checks that a person or an API key decided
 (`resolved_by_user_id`/`_api_key_id`; an agent, the CEO included, can neither approve nor deny a
 card, on either branch, and the approval stays pending) and
-that the payload's project and suggestions task belong to the approval's team, and credits the
+that the payload's project and suggestions task belong to the approval's team and that the team's
+Captain is enabled (a disabled agent is never woken), and credits the
 task to the approving admin member or API key; when that check or `createTask` refuses, it
 throws `ApprovalSideEffectError`, and `resolveApproval` puts the approval back to pending and
 answers `SIDE_EFFECT_FAILED` (409), so the card never reads as approved with no task. Otherwise

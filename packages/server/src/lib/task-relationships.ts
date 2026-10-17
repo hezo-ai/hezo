@@ -400,10 +400,11 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 	};
 }
 
-// A task-suggestions task holds while any suggestion filed on it waits for the
-// admin. On a new project the Captain's planning waits on this task, so closing
-// it early would start planning with suggestions still undecided. One answered
-// card is enough for the @admin check above, so that check alone cannot hold it.
+// A task-suggestions task holds, done or cancelled, while any suggestion filed on
+// it waits for the admin. On a new project the Captain's planning waits on this
+// task, and either terminal status releases it, so closing it early would start
+// planning with suggestions still undecided. One answered card is enough for the
+// @admin check above, so that check alone cannot hold it.
 // Read from the approvals, not the cards: the approval is the decision, and a
 // card that failed to flip must not hold the task forever. Bounded by the team's
 // pending approvals (team + status index). Agent callers only, like the @admin
@@ -422,6 +423,6 @@ export async function assertNoPendingTaskSuggestions(db: Db, taskId: string): Pr
 	if (pending === 0) return { ok: true };
 	return {
 		ok: false,
-		message: `Cannot mark this task done - ${pending} task suggestion card(s) on it still wait for the admin. Keep the task open: call report_no_work and end your turn. A decision on a card wakes you.`,
+		message: `Cannot close this task - ${pending} task suggestion card(s) on it still wait for the admin. Keep the task open: call report_no_work and end your turn. A decision on a card wakes you.`,
 	};
 }

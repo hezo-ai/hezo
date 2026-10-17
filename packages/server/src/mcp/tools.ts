@@ -2403,9 +2403,17 @@ export function registerTools(
 					if (callerMemberId !== null) {
 						const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
 						if (!adminAskCheck.ok) return { error: adminAskCheck.message };
-						const suggestionsCheck = await assertNoPendingTaskSuggestions(db, taskId);
-						if (!suggestionsCheck.ok) return { error: suggestionsCheck.message };
 					}
+				}
+				// Cancelled releases dependents just as done does, so an agent closes a
+				// task either way only once no suggestion on it waits for the admin.
+				if (
+					auth.type === AuthType.Agent &&
+					args.status !== currentStatus &&
+					(TERMINAL_TASK_STATUSES as readonly string[]).includes(args.status as string)
+				) {
+					const suggestionsCheck = await assertNoPendingTaskSuggestions(db, taskId);
+					if (!suggestionsCheck.ok) return { error: suggestionsCheck.message };
 				}
 
 				if (args.status !== undefined) {
