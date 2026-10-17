@@ -1675,8 +1675,9 @@ and flips the comment. Pending suggestions surface on the task thread and the pr
 
 **Task suggestions.** The CEO proposes tasks the same way. `suggest_task` (MCP, CEO-only)
 files a pending `task_suggestion` approval (`083_task_suggestion_approval.sql`) plus a
-`task_suggestion` action comment, and only on the project's open `task-suggestions` task
-(`services/task-suggestion.ts`). The payload carries a `kind` and two cadences:
+`task_suggestion` action comment in one transaction, and only on the project's open
+`task-suggestions` task (`services/task-suggestion.ts`). It is the only writer: the generic
+`POST /projects/:projectId/approvals` refuses the type. The payload carries a `kind` and two cadences:
 `suggested_cadence` is the CEO's and never changes, `cadence` is the admin's current choice.
 `TASK_SUGGESTION_KIND_RULES` (`@hezo/shared`) says per kind whether a cadence is forbidden,
 required or optional; `validateSuggestedCadence` enforces it in the tool and
@@ -1684,7 +1685,11 @@ required or optional; `validateSuggestedCadence` enforces it in the tool and
 on a card with a `suggested_cadence` (daily, weekly, monthly or `once`). The tool refuses HQ, a
 ninth card on one task (`MAX_TASK_SUGGESTIONS_PER_TASK`, counted from the task's comments), and a
 title matching an open task or a pending suggestion. Approving runs `taskSuggestionHandler`
-(`approval-handlers/task-suggestion.ts`): `createTask` for the team's Captain, with the
+(`approval-handlers/task-suggestion.ts`). It first checks that the payload's project and
+suggestions task belong to the approval's team; when that check or `createTask` refuses, it
+throws `ApprovalSideEffectError`, and `resolveApproval` puts the approval back to pending and
+answers `SIDE_EFFECT_FAILED` (409), so the card never reads as approved with no task. Otherwise
+it runs `createTask` for the team's Captain, with the
 standing-task `rules` from `TASK_SUGGESTION_CADENCE_RULES` for a repeating choice (none for
 `once`), blocked by the project's open `planning` task when there is one, so dispatch parks the
 Captain's wake until planning closes. Either decision flips the card (`created_task_identifier`,
@@ -1693,7 +1698,8 @@ stores the kind as `suggestion_kind`, because `kind` is the action-comment discr
 On an existing project, `POST /projects/:projectId/task-suggestions` (admin-equivalent) and its
 twin tool `start_task_suggestions` (admin or API key; among agents, the CEO) share
 `startTaskSuggestions` (`services/description-tasks.ts`): it refuses HQ and files an `on_demand`
-suggestions task that starts at once, or returns the open one (201 vs 200, `created`). The web
+suggestions task that starts at once, or returns the open one (201 vs 200, `created`). The lookup
+and the insert run under a per-team keyed lock, so two requests at once file one task. The web
 "Suggest tasks" button (`components/suggest-tasks-button.tsx`, superusers only, hidden on HQ)
 calls the route and opens the task.
 

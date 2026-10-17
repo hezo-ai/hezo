@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Solo una vez",
 	"taskSuggestion.cadence.weekly": "Cada semana",
 	"taskSuggestion.cadenceFailed": "No se pudo cambiar la frecuencia de la tarea",
+	"taskSuggestion.decideFailed": "No se pudo guardar tu decisión",
 	"taskSuggestion.denied": "La sugerencia de tarea {title} se rechazó",
 	"taskSuggestion.deny": "Rechazar",
 	"taskSuggestion.hint": "Aprueba para crear esta tarea o recházala para descartarla.",

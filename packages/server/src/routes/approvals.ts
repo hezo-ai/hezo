@@ -15,7 +15,7 @@ import { actingPersonFromAuth, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
-import { resolveApproval } from '../services/approval-resolve';
+import { type ResolveApprovalError, resolveApproval } from '../services/approval-resolve';
 import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
 import {
 	type HirePayloadPatchInput,
@@ -205,6 +205,16 @@ approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 	if (!body.type || !body.payload) {
 		return err(c, 'INVALID_REQUEST', 'type and payload are required', 400);
 	}
+	// A task suggestion becomes a task on approval, and only `suggest_task` checks
+	// the project and task it names.
+	if (body.type === ApprovalType.TaskSuggestion) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'Task suggestions are filed by the CEO with suggest_task',
+			400,
+		);
+	}
 
 	// A hire payload becomes an agent on approval, so it passes the checks every
 	// other hire path runs and is stored in their normalized form.
@@ -332,6 +342,14 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	return ok(c, row);
 });
 
+/** How each way a decision can fail reaches the client. */
+const RESOLVE_ERROR_RESPONSE: Record<ResolveApprovalError, [string, 404 | 409]> = {
+	NOT_FOUND: ['NOT_FOUND', 404],
+	INVALID_STATE: ['INVALID_STATE', 409],
+	// The side effect could not be applied; the approval is pending again.
+	SIDE_EFFECT_FAILED: ['CONFLICT', 409],
+};
+
 approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
@@ -395,10 +413,8 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	});
 
 	if (!resolved.ok) {
-		if (resolved.error === 'NOT_FOUND') {
-			return err(c, 'NOT_FOUND', resolved.message, 404);
-		}
-		return err(c, 'INVALID_STATE', resolved.message, 409);
+		const [code, status] = RESOLVE_ERROR_RESPONSE[resolved.error];
+		return err(c, code, resolved.message, status);
 	}
 
 	const { row, sideEffects } = resolved;

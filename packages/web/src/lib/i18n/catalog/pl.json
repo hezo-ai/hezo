@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Tylko raz",
 	"taskSuggestion.cadence.weekly": "Co tydzień",
 	"taskSuggestion.cadenceFailed": "Nie udało się zmienić częstotliwości zadania",
+	"taskSuggestion.decideFailed": "Nie udało się zapisać decyzji",
 	"taskSuggestion.denied": "Propozycja zadania {title} została odrzucona",
 	"taskSuggestion.deny": "Odrzuć",
 	"taskSuggestion.hint": "Zatwierdź, aby utworzyć to zadanie. Odrzucenie usuwa propozycję.",

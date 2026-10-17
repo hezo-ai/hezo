@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Bara en gång",
 	"taskSuggestion.cadence.weekly": "Varje vecka",
 	"taskSuggestion.cadenceFailed": "Kunde inte ändra hur ofta uppgiften upprepas",
+	"taskSuggestion.decideFailed": "Kunde inte spara ditt beslut",
 	"taskSuggestion.denied": "Uppgiftsförslaget {title} avslogs",
 	"taskSuggestion.deny": "Avslå",
 	"taskSuggestion.hint": "Godkänn för att skapa uppgiften, eller avslå för att avfärda förslaget.",

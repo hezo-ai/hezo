@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Nur einmal",
 	"taskSuggestion.cadence.weekly": "Wöchentlich",
 	"taskSuggestion.cadenceFailed": "Die Wiederholung konnte nicht geändert werden",
+	"taskSuggestion.decideFailed": "Ihre Entscheidung konnte nicht gespeichert werden",
 	"taskSuggestion.denied": "Aufgabenvorschlag {title} wurde abgelehnt",
 	"taskSuggestion.deny": "Ablehnen",
 	"taskSuggestion.hint": "Genehmigen Sie, um diese Aufgabe zu erstellen, oder lehnen Sie ab, um den Vorschlag zu verwerfen.",

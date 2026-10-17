@@ -600,7 +600,7 @@ export async function createProjectWithTeam(
 	const planningBlockers = [coherenceTaskId, suggestionsTask?.id].filter(
 		(id): id is string => typeof id === 'string',
 	);
-	const { planningTask } = await withTransaction(db, async () => {
+	const { planningTask } = await db.transaction(async () => {
 		const created = await createPlanningTask(db, {
 			teamId: team.id,
 			project,

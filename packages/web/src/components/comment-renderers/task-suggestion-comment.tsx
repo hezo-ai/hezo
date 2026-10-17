@@ -9,6 +9,7 @@ import {
 import { Link } from '@tanstack/react-router';
 import { Check, Lightbulb, X } from 'lucide-react';
 import { useResolveApproval, useSetTaskSuggestionCadence } from '../../hooks/use-approvals';
+import { toast } from '../../hooks/use-toast';
 import { Trans, useI18n } from '../../lib/i18n';
 import { queryClient } from '../../lib/query-client';
 import { queryKeys } from '../../lib/query-keys';
@@ -127,6 +128,8 @@ export function TaskSuggestionComment({ comment, projectId, taskId }: Props) {
 						});
 					}
 				},
+				// The server keeps the suggestion pending when it cannot act on it.
+				onError: (e) => toast.error(`${t('taskSuggestion.decideFailed')}: ${e.message}`),
 			},
 		);
 	};

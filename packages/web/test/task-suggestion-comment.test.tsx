@@ -22,6 +22,8 @@ async function renderSuggestionCard(input: {
 	kind: string;
 	title: string;
 	cadence?: 'daily' | 'weekly' | 'monthly';
+	/** A project the suggestion names instead of its own, which the server refuses. */
+	foreignProjectId?: string;
 }) {
 	const seeded: Seeded = { projectSlug: '', projectId: '', taskId: '', approvalId: '' };
 	const helpers = await renderApp({
@@ -32,7 +34,7 @@ async function renderSuggestionCard(input: {
 			const project = await seedProject(ws, { name: 'Stock Watch' });
 			const host = await seedTask(ws, project, { title: 'Suggest starter tasks' });
 			const payload = {
-				project_id: project.id,
+				project_id: input.foreignProjectId ?? project.id,
 				kind: input.kind as 'recurring',
 				title: input.title,
 				description: 'Why this helps the project.',
@@ -158,3 +160,26 @@ test('Deny dismisses the suggestion and creates no task', async () => {
 	]);
 	expect(created.rows).toHaveLength(0);
 });
+
+test('a decision the server refuses shows an error and leaves the card pending', async () => {
+	const { findByTestId, findByText, seeded } = await renderSuggestionCard({
+		kind: 'deliverable',
+		title: 'Refused deliverable',
+		foreignProjectId: crypto.randomUUID(),
+	});
+
+	await findByTestId('task-suggestion-pending', undefined, { timeout: 15_000 });
+	fireEvent.click(await findByTestId('task-suggestion-approve'));
+
+	await findByText(/Could not record your decision/, undefined, { timeout: 15_000 });
+	expect(await findByTestId('task-suggestion-pending')).toBeTruthy();
+	expect(await approvalStatus(seeded.approvalId)).toBe('pending');
+});
+
+async function approvalStatus(approvalId: string): Promise<string | undefined> {
+	const r = await getTestContext().db.query<{ status: string }>(
+		'SELECT status::text AS status FROM approvals WHERE id = $1',
+		[approvalId],
+	);
+	return r.rows[0]?.status;
+}

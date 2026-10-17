@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "1回だけ",
 	"taskSuggestion.cadence.weekly": "毎週",
 	"taskSuggestion.cadenceFailed": "繰り返しの頻度を変更できませんでした",
+	"taskSuggestion.decideFailed": "判断を保存できませんでした",
 	"taskSuggestion.denied": "タスクの提案 {title} は却下されました",
 	"taskSuggestion.deny": "却下",
 	"taskSuggestion.hint": "承認するとこのタスクが作成されます。却下すると提案は破棄されます。",

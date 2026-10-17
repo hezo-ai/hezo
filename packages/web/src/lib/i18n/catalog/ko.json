@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "한 번만",
 	"taskSuggestion.cadence.weekly": "매주",
 	"taskSuggestion.cadenceFailed": "반복 주기를 바꾸지 못했어요",
+	"taskSuggestion.decideFailed": "결정을 저장하지 못했어요",
 	"taskSuggestion.denied": "작업 제안 {title}이(가) 거절됐어요",
 	"taskSuggestion.deny": "거절",
 	"taskSuggestion.hint": "승인하면 이 작업이 만들어지고, 거절하면 제안이 사라져요.",

@@ -10,6 +10,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { getToolDefs } from '../src/mcp/server';
+import { resolveApproval } from '../src/services/approval-resolve';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -529,5 +530,82 @@ describe('PATCH /approvals/:id - the repeat choice on a card', () => {
 
 		await resolve(id, 'denied');
 		expect((await patchCadence(id, 'daily')).status).toBe(409);
+	});
+});
+
+describe('deciding a suggestion: one decision, never a task in the wrong place', () => {
+	it('two approvals at once create one task; the second is told it is already resolved', async () => {
+		const host = await suggestionsTask();
+		const result = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Raced deliverable',
+			task_id: host.id,
+		});
+		// Called directly so both reads of the pending row happen before either write.
+		const decide = () =>
+			resolveApproval(db, result.approval_id as string, {
+				status: 'approved',
+				resolutionNote: null,
+				dataDir: '',
+				actorMemberId: null,
+				decider: { user_id: null, api_key_id: null },
+			});
+		const outcomes = await Promise.all([decide(), decide()]);
+		expect(outcomes.map((o) => (o.ok ? 'ok' : o.error)).sort()).toEqual(['INVALID_STATE', 'ok']);
+		const tasks = await db.query('SELECT 1 FROM tasks WHERE project_id = $1 AND title = $2', [
+			projectId,
+			'Raced deliverable',
+		]);
+		expect(tasks.rows).toHaveLength(1);
+	});
+
+	it("a suggestion naming another team's project creates nothing and stays pending", async () => {
+		const otherTeam = (await (await createTestTeam(db, { name: 'Other Co' })).json()).data;
+		const other = (
+			await (await createTestProject(db, otherTeam.id, { name: 'Other Project' })).json()
+		).data;
+		const host = await suggestionsTask();
+		// Written straight to the table: no route files such a row.
+		const forged = await db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, payload, status)
+			 VALUES ($1, 'task_suggestion'::approval_type, $2::jsonb, 'pending'::approval_status)
+			 RETURNING id`,
+			[
+				teamId,
+				JSON.stringify({
+					project_id: other.id,
+					kind: 'deliverable',
+					title: 'Forged',
+					task_id: host.id,
+				}),
+			],
+		);
+		const res = await app.request(`/api/approvals/${forged.rows[0].id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'content-type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.message).toMatch(/outside its team/);
+		const row = await db.query<{ status: string; resolved_at: string | null }>(
+			'SELECT status::text AS status, resolved_at FROM approvals WHERE id = $1',
+			[forged.rows[0].id],
+		);
+		expect(row.rows[0]).toEqual({ status: 'pending', resolved_at: null });
+		const tasks = await db.query("SELECT 1 FROM tasks WHERE title = 'Forged'");
+		expect(tasks.rows).toHaveLength(0);
+	});
+
+	it('the generic approvals route refuses to file a task suggestion', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'content-type': 'application/json' },
+			body: JSON.stringify({
+				type: 'task_suggestion',
+				payload: { project_id: projectId, kind: 'deliverable', title: 'Via route' },
+			}),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toMatch(/suggest_task/);
 	});
 });

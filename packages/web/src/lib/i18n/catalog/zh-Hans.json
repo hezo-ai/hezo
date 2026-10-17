@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "仅一次",
 	"taskSuggestion.cadence.weekly": "每周",
 	"taskSuggestion.cadenceFailed": "无法更改任务的重复频率",
+	"taskSuggestion.decideFailed": "无法保存您的决定",
 	"taskSuggestion.denied": "任务建议 {title} 已被拒绝",
 	"taskSuggestion.deny": "拒绝",
 	"taskSuggestion.hint": "批准即可创建此任务，拒绝则放弃该建议。",

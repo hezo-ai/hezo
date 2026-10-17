@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Just once",
 	"taskSuggestion.cadence.weekly": "Weekly",
 	"taskSuggestion.cadenceFailed": "Could not change how often the task repeats",
+	"taskSuggestion.decideFailed": "Could not record your decision",
 	"taskSuggestion.denied": "Task suggestion {title} was denied",
 	"taskSuggestion.deny": "Deny",
 	"taskSuggestion.hint": "Approve to create this task, or deny to dismiss.",

@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Eenmalig",
 	"taskSuggestion.cadence.weekly": "Wekelijks",
 	"taskSuggestion.cadenceFailed": "Kon niet wijzigen hoe vaak de taak herhaalt",
+	"taskSuggestion.decideFailed": "Kon je beslissing niet opslaan",
 	"taskSuggestion.denied": "Taakvoorstel {title} is afgewezen",
 	"taskSuggestion.deny": "Afwijzen",
 	"taskSuggestion.hint": "Keur goed om deze taak aan te maken, of wijs af om het voorstel te laten vallen.",

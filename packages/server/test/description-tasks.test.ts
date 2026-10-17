@@ -551,6 +551,15 @@ describe('enqueueTaskSuggestionsTask', () => {
 		expect(wakes.rows.map((w) => w.member_id)).toEqual([ceoMemberId]);
 	});
 
+	it('two calls at once file one task', async () => {
+		const [a, b] = await Promise.all([
+			enqueueTaskSuggestionsTask(db, teamId, 'on_demand'),
+			enqueueTaskSuggestionsTask(db, teamId, 'on_demand'),
+		]);
+		expect([a?.created, b?.created].sort()).toEqual([false, true]);
+		expect(a?.id).toBe(b?.id);
+	});
+
 	it('reuses the open suggestions task rather than filing a second one', async () => {
 		const first = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand');
 		const second = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand');

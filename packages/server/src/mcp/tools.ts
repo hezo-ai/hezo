@@ -2066,19 +2066,29 @@ export function registerTools(
 				cadence: suggested ?? null,
 				task_id: taskId,
 			};
-			const row = await insertTaskSuggestionApproval(db, teamId, payload, auth.memberId);
-			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
-			await insertTaskSuggestionComment(
-				db,
-				{
+			// The approval and its card land together, and are announced once both have.
+			const { row, card } = await db.transaction(async () => {
+				const approval = await insertTaskSuggestionApproval(db, teamId, payload, auth.memberId);
+				const comment = await insertTaskSuggestionComment(db, {
 					taskId,
-					approvalId: row.id as string,
+					approvalId: approval.id as string,
 					payload: payload as unknown as Record<string, unknown>,
 					teamId,
 					projectId: scope.projectId,
-				},
-				wsManager,
-			);
+				});
+				return { row: approval, card: comment };
+			});
+			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			if (card) {
+				broadcastCommentFamilyChange(
+					wsManager,
+					teamId,
+					scope.projectId,
+					'task_comments',
+					'INSERT',
+					card,
+				);
+			}
 			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,

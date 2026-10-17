@@ -9,6 +9,7 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
+import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
@@ -170,7 +171,7 @@ async function createLabeledInternalTask(
 
 	// The identifier, the insert and the dependency edge land together, so a task
 	// never shows as blocked without the task it waits on.
-	const created = await withTransaction(db, async () => {
+	const created = await db.transaction(async () => {
 		const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.teamProjectId);
 		const insertResult = await db.query<{ id: string }>(
 			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
@@ -498,6 +499,14 @@ const TASK_SUGGESTIONS_TEXT: Record<
 	},
 };
 
+/**
+ * One key per team: the lookup for an open suggestions task and the insert of a
+ * new one run as a unit, so two "Suggest tasks" requests at once file one task.
+ * Per team, because the rule is one open suggestions task per project; held for
+ * those few queries only.
+ */
+const taskSuggestionsLocks: KeyedLockRegistry = new Map();
+
 /** The server-written body of the CEO's suggestions task. */
 export function buildTaskSuggestionsBody(reason: TaskSuggestionsReason, slug: string): string {
 	const text = TASK_SUGGESTIONS_TEXT[reason];
@@ -551,29 +560,31 @@ export async function enqueueTaskSuggestionsTask(
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 
-	const existing = await findOpenLabeledTask(db, teamId, TASK_SUGGESTIONS_LABEL);
-	if (existing) return { id: existing.id, identifier: existing.identifier, created: false };
+	return withKeyedLock(taskSuggestionsLocks, teamId, async () => {
+		const existing = await findOpenLabeledTask(db, teamId, TASK_SUGGESTIONS_LABEL);
+		if (existing) return { id: existing.id, identifier: existing.identifier, created: false };
 
-	const slug = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
-		ctx.teamProjectId,
-	]);
-	const blockedBy = opts.blockedByTaskId ?? null;
-	const created = await createLabeledInternalTask(
-		db,
-		ctx,
-		ctx.ceoMemberId,
-		TASK_SUGGESTIONS_TEXT[reason].title,
-		buildTaskSuggestionsBody(reason, slug.rows[0]?.slug ?? teamId),
-		TASK_SUGGESTIONS_LABEL,
-		TaskPriority.High,
-		{
-			autoStart: !blockedBy,
-			assignWithoutStart: true,
-			blockedByTaskId: blockedBy,
-			createdByRunId: opts.byRunId ?? null,
-		},
-	);
-	return { ...created, created: true };
+		const slug = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			ctx.teamProjectId,
+		]);
+		const blockedBy = opts.blockedByTaskId ?? null;
+		const created = await createLabeledInternalTask(
+			db,
+			ctx,
+			ctx.ceoMemberId,
+			TASK_SUGGESTIONS_TEXT[reason].title,
+			buildTaskSuggestionsBody(reason, slug.rows[0]?.slug ?? teamId),
+			TASK_SUGGESTIONS_LABEL,
+			TaskPriority.High,
+			{
+				autoStart: !blockedBy,
+				assignWithoutStart: true,
+				blockedByTaskId: blockedBy,
+				createdByRunId: opts.byRunId ?? null,
+			},
+		);
+		return { ...created, created: true };
+	});
 }
 
 export type StartTaskSuggestionsResult =

@@ -1037,6 +1037,7 @@
 	"taskSuggestion.cadence.once": "Solo una volta",
 	"taskSuggestion.cadence.weekly": "Ogni settimana",
 	"taskSuggestion.cadenceFailed": "Impossibile cambiare la frequenza dell'attività",
+	"taskSuggestion.decideFailed": "Impossibile salvare la tua decisione",
 	"taskSuggestion.denied": "Il suggerimento di attività {title} è stato rifiutato",
 	"taskSuggestion.deny": "Rifiuta",
 	"taskSuggestion.hint": "Approva per creare questa attività, oppure rifiuta per scartarla.",
