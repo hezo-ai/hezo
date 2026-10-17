@@ -5,7 +5,7 @@ import {
 	WakeupSource,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
@@ -542,6 +542,10 @@ describe('deciding a suggestion: one decision, never a task in the wrong place',
 			title: 'Raced deliverable',
 			task_id: host.id,
 		});
+		const admin = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser ORDER BY created_at LIMIT 1',
+		);
+		const adminUserId = admin.rows[0].id;
 		// Called directly so both reads of the pending row happen before either write.
 		const decide = () =>
 			resolveApproval(db, result.approval_id as string, {
@@ -549,7 +553,7 @@ describe('deciding a suggestion: one decision, never a task in the wrong place',
 				resolutionNote: null,
 				dataDir: '',
 				actorMemberId: null,
-				decider: { user_id: null, api_key_id: null },
+				decider: { user_id: adminUserId, api_key_id: null },
 			});
 		const outcomes = await Promise.all([decide(), decide()]);
 		expect(outcomes.map((o) => (o.ok ? 'ok' : o.error)).sort()).toEqual(['INVALID_STATE', 'ok']);
@@ -681,5 +685,70 @@ describe('suggest_task under parallel calls, and closing the suggestions task', 
 			[host.id],
 		);
 		expect(row.rows[0].status).toBe('done');
+	});
+});
+
+describe('who may approve a suggestion, and who the task is credited to', () => {
+	it('the CEO cannot approve its own suggestion: nothing is created and it stays pending', async () => {
+		const host = await suggestionsTask();
+		const result = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Self-approved deliverable',
+			task_id: host.id,
+		});
+		const self = (await callMcpTool(app, host.token, 'resolve_approval', {
+			approval_id: result.approval_id,
+			status: 'approved',
+		})) as { error?: string };
+		expect(self.error).toMatch(/Only the admin can approve a task suggestion/);
+		const row = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM approvals WHERE id = $1',
+			[result.approval_id],
+		);
+		expect(row.rows[0].status).toBe('pending');
+		const tasks = await db.query('SELECT 1 FROM tasks WHERE title = $1', [
+			'Self-approved deliverable',
+		]);
+		expect(tasks.rows).toHaveLength(0);
+	});
+
+	it('an API key that approves is credited with the task in the activity log', async () => {
+		const reg = await app.request('/api/api-keys/register', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Approver Bot' }),
+		});
+		const { id: keyId, token: keyToken } = (await reg.json()).data as { id: string; token: string };
+		await app.request(`/api/api-keys/${keyId}/approve`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+
+		const host = await suggestionsTask();
+		const result = await suggest(host.token, {
+			kind: 'deliverable',
+			title: 'Key-approved deliverable',
+			task_id: host.id,
+		});
+		const approved = (await callMcpTool(app, keyToken, 'resolve_approval', {
+			approval_id: result.approval_id,
+			status: 'approved',
+		})) as { error?: string };
+		expect(approved.error).toBeUndefined();
+
+		const task = await db.query<{ id: string; created_by_member_id: string | null }>(
+			'SELECT id, created_by_member_id FROM tasks WHERE title = $1',
+			['Key-approved deliverable'],
+		);
+		expect(task.rows).toHaveLength(1);
+		expect(task.rows[0].created_by_member_id).toBeNull();
+		await vi.waitFor(async () => {
+			const audit = await db.query<{ actor_type: string; actor_api_key_id: string | null }>(
+				`SELECT actor_type, actor_api_key_id FROM audit_log
+				 WHERE entity_type = 'task' AND action = 'created' AND entity_id = $1`,
+				[task.rows[0].id],
+			);
+			expect(audit.rows[0]).toEqual({ actor_type: 'api_key', actor_api_key_id: keyId });
+		});
 	});
 });

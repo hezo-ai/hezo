@@ -195,3 +195,36 @@ describe('new project, created by the CEO in its chat', () => {
 		expect(await wakeCount(ceoId, p.suggestions_task_id)).toBe(1);
 	});
 });
+
+describe('the CEO creating a project twice', () => {
+	it('refuses a name an existing project uses, naming that project', async () => {
+		const { token: chat } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			ceoId,
+			DEFAULT_TEAM_ID,
+			null,
+			{
+				crossProject: true,
+			},
+		);
+		const first = (await callMcpTool(app, chat, 'create_project', {
+			name: 'Retry Watch',
+			description: 'Created once.',
+			template_id: appTeamTemplateId,
+		})) as { slug?: string; error?: string };
+		expect(first.error).toBeUndefined();
+
+		// A retry after a lost result, with different casing and spacing.
+		const retry = (await callMcpTool(app, chat, 'create_project', {
+			name: '  retry watch ',
+			description: 'Created twice?',
+			template_id: appTeamTemplateId,
+		})) as { error?: string };
+		expect(retry.error).toContain(`already exists (${first.slug})`);
+		const n = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM projects WHERE LOWER(name) = 'retry watch'`,
+		);
+		expect(n.rows[0].n).toBe(1);
+	});
+});

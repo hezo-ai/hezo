@@ -3044,7 +3044,7 @@ export function registerTools(
 		'create_project',
 		"Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in your conversation with them - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project with three tasks in order - your coherence/setup task, your starter task-suggestions task, and the Captain's planning task, which waits on both - then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed with the admin - the exact roles to hire, any system-prompt rewrites, and the reporting structure. Record any starter tasks the admin already agreed under a `## " +
 			AGREED_TASKS_HEADING +
-			'` section of the returned suggestions_task_identifier with update_task; the suggestions run files them without a card. Then call start_team_setup(project) to begin the run. Returns the new project plus its planning, setup and suggestions task identifiers.',
+			'` section of the returned suggestions_task_identifier with update_task; the suggestions run files them without a card. Then call start_team_setup(project) to begin the run. A name an existing project already uses is refused, and the error names that project. Returns the new project plus its planning, setup and suggestions task identifiers.',
 		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -3065,6 +3065,19 @@ export function registerTools(
 			const { name, description } = input;
 			if (!containerDeps) {
 				return { error: 'Project creation is not available in this context' };
+			}
+
+			// No planning task keys the request, so the name does: a retry after a lost
+			// result finds the project it made instead of building a second team.
+			const sameName = await db.query<{ slug: string }>(
+				`SELECT slug FROM projects
+				 WHERE is_internal = false AND LOWER(BTRIM(name)) = LOWER($1) LIMIT 1`,
+				[name],
+			);
+			if (sameName.rows[0]) {
+				return {
+					error: `A project named "${name}" already exists (${sameName.rows[0].slug}). If you created it just now, continue with that project; otherwise ask the admin for a different name.`,
+				};
 			}
 
 			const result = await createProjectWithTeam(

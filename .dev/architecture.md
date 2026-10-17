@@ -1536,7 +1536,10 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
      (`POST /api/project-intakes`). An open one on an upgraded instance stays an ordinary HQ
      task; nothing reads the label. `create_project` no longer takes `intake_task_id`, and
      the zod object behind every tool drops an unknown key, so a CEO still following an old
-     intake body creates the project and closes that task itself.
+     intake body creates the project and closes that task itself. The intake task was also the
+     retry key; `create_project` now refuses a name a user-facing project already uses
+     (case- and space-insensitive) and names that project, so a retry after a lost result
+     finds the project it made instead of building a second team.
 3. **Seeded** - a hosted instance's signup brief (`seed.project`) is offered as the admin's
    first chat message, never turned into a task (§ *Hosted first run*). From the moment it
    is sent it is the CEO-assisted path above.
@@ -1690,8 +1693,10 @@ lock per suggestions task, so parallel calls cannot pass them together. An agent
 suggestions task done while any suggestion filed on it is pending (`assertNoPendingTaskSuggestions`,
 read from the approvals rather than the cards, so a card that failed to flip cannot hold it), since
 one answered card already satisfies the `@admin` done check. Approving runs `taskSuggestionHandler`
-(`approval-handlers/task-suggestion.ts`). It first checks that the payload's project and
-suggestions task belong to the approval's team; when that check or `createTask` refuses, it
+(`approval-handlers/task-suggestion.ts`). It first checks that a person or an API key decided
+(`resolved_by_user_id`/`_api_key_id`; an agent, the CEO included, cannot approve its own card) and
+that the payload's project and suggestions task belong to the approval's team, and credits the
+task to the approving admin member or API key; when that check or `createTask` refuses, it
 throws `ApprovalSideEffectError`, and `resolveApproval` puts the approval back to pending and
 answers `SIDE_EFFECT_FAILED` (409), so the card never reads as approved with no task. Otherwise
 it runs `createTask` for the team's Captain, with the

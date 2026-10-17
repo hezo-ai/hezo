@@ -296,7 +296,8 @@ Just once, with the CEO's pick selected. Repeating work always has one, and a re
 one when it is periodic. A connection, an input from you or a first deliverable is done
 once, so its card has no repeat choice.
 
-**Approve** creates the task for the project's Captain. A repeat choice makes it a
+**Approve** creates the task for the project's Captain. Only a person or an API key can
+approve a suggestion; the CEO cannot approve its own. A repeat choice makes it a
 standing task (see above); **Just once** makes it a single run. If the project's planning
 task is still open, the new task shows as **Blocked** and starts when planning is done, so
 the plan can take every approved task into account. **Deny** dismisses the suggestion.

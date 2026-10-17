@@ -25,15 +25,24 @@ import {
  * choice becomes the task's standing-task rules. While the project's planning
  * task is still open the new task waits on it, so the Captain's plan sees every
  * approved task before any of them runs. Denial flips the card and re-wakes too.
- * The task is credited to the approving admin, falling back to the CEO. When no
- * task can be created, the handler throws {@link ApprovalSideEffectError} and the
- * suggestion stays pending.
+ * The task is credited to the approving admin or API key. Only a person or an
+ * API key may approve. When no task can be created, the handler throws
+ * {@link ApprovalSideEffectError} and the suggestion stays pending.
  */
 export const taskSuggestionHandler: ApprovalHandler = {
 	async applyApproved(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]> {
 		const { db, approval, payload, actorMemberId, wsManager, events } = ctx;
 		const teamId = approval.team_id as string;
 		const p = payload as unknown as TaskSuggestionPayload;
+
+		// A suggestion is the admin's to approve: an agent resolving it, the CEO
+		// included, creates nothing and leaves it pending.
+		const apiKeyId = (approval.resolved_by_api_key_id as string | null) ?? null;
+		if (!approval.resolved_by_user_id && !apiKeyId) {
+			throw new ApprovalSideEffectError(
+				'Only the admin can approve a task suggestion, so no task was created.',
+			);
+		}
 
 		// The project and the suggestions task must be this team's: the payload is
 		// read, never trusted to name where the task lands.
@@ -65,7 +74,6 @@ export const taskSuggestionHandler: ApprovalHandler = {
 		);
 		const blocker = planning.rows[0] ?? null;
 
-		const creditedTo = actorMemberId ?? (approval.requested_by_member_id as string | null);
 		let task: Awaited<ReturnType<typeof createTask>>;
 		try {
 			task = await createTask(
@@ -81,10 +89,12 @@ export const taskSuggestionHandler: ApprovalHandler = {
 						: undefined,
 					blocked_by_task_ids: blocker ? [blocker.id] : undefined,
 				},
-				{
-					actorType: actorMemberId ? AuditActorType.Admin : AuditActorType.System,
-					actorMemberId: creditedTo,
-				},
+				// Credited to whoever approved it: the admin's member, or the API key.
+				actorMemberId
+					? { actorType: AuditActorType.Admin, actorMemberId }
+					: apiKeyId
+						? { actorType: AuditActorType.ApiKey, actorMemberId: null, actorApiKeyId: apiKeyId }
+						: { actorType: AuditActorType.Admin, actorMemberId: null },
 				wsManager,
 				events,
 			);
