@@ -1,6 +1,7 @@
 // Criteria #1 and #2 (real CSS layout + viewport-conditional behavior): the point
 // of this spec is the tap-target size of the reaction chip and the reply
-// button's place beside it, measured with boundingBox() at the `mobile`
+// button's place and shape beside it, measured with boundingBox() and computed
+// styles at the `mobile`
 // project's 390px viewport. happy-dom returns no box, so the reaction flow itself
 // is covered by a component test and only the layout assertions live here.
 import { expect, test } from '@playwright/test';
@@ -66,6 +67,10 @@ test.describe('Comment reactions (mobile)', () => {
 			Math.abs(replyBox!.y + replyBox!.height / 2 - (itemAddBox!.y + itemAddBox!.height / 2)),
 		).toBeLessThanOrEqual(2);
 		expect(Math.abs(replyBox!.x - bodyBox!.x)).toBeLessThanOrEqual(1);
+		// Both are round: the reply button's corner radius matches the emoji button's.
+		const radius = (el: Element) => getComputedStyle(el).borderTopLeftRadius;
+		const replyRadius = await item.getByTestId('comment-reply').evaluate(radius);
+		expect(replyRadius).toBe(await item.getByTestId('add-reaction-button').evaluate(radius));
 
 		await addButton.click();
 		const picker = page.getByTestId('reaction-picker');

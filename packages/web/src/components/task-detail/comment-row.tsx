@@ -9,6 +9,7 @@ import {
 } from '../../hooks/use-comments';
 import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
+import { useI18n } from '../../lib/i18n';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { AgentRef } from '../agent-ref';
 import {
@@ -31,6 +32,7 @@ import { Button } from '../ui/button';
  */
 function CopyCommentButton({ text }: { text: string }) {
 	const { copied, copy } = useCopyFeedback();
+	const { t } = useI18n();
 
 	const handleCopy = async () => {
 		await copy(text);
@@ -41,7 +43,7 @@ function CopyCommentButton({ text }: { text: string }) {
 			type="button"
 			onClick={handleCopy}
 			className="text-text-3 hover:text-text-1 shrink-0 p-1 -m-1"
-			aria-label={copied ? 'Copied' : 'Copy comment'}
+			aria-label={copied ? t('common.copied') : t('comment.copy')}
 			data-testid="comment-copy"
 		>
 			{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -104,6 +106,7 @@ export function CommentRow({
 	onStartReply,
 	working,
 }: CommentRowProps) {
+	const { t } = useI18n();
 	const needsBody = skeletonNeedsBody(c);
 	const { data: body } = useCommentBody(projectId, taskId, c.id);
 	const bodyLoaded = !needsBody || body !== undefined;
@@ -224,7 +227,7 @@ export function CommentRow({
 								data-testid="replying-to"
 							>
 								<CornerDownRight className="w-3 h-3" />
-								replying to {parent.author_name}
+								{t('comment.replyingTo', { name: parent.author_name })}
 							</a>
 						)}
 						{c.content_type === CommentContentType.Text && bodyLoaded && (
@@ -243,17 +246,20 @@ export function CommentRow({
 								retryableRunId={retryableRunId}
 							/>
 							<div className="mt-2 flex flex-wrap items-center gap-1.5">
+								{/* `rounded-full!`: the round shape matches the emoji button beside
+								    it, and must beat the size row's own corner radius. */}
 								<Button
 									variant="secondary"
 									size="sm"
+									className="rounded-full!"
 									onClick={() =>
 										onStartReply({ ...c, content: mergedContent } as unknown as Comment)
 									}
-									aria-label="Reply to comment"
+									aria-label={t('comment.replyTo')}
 									data-testid="comment-reply"
 								>
 									<Reply className="w-3.5 h-3.5" />
-									Reply
+									{t('comment.reply')}
 								</Button>
 								<CommentReactions comment={commentData} projectId={projectId} taskId={taskId} />
 							</div>
