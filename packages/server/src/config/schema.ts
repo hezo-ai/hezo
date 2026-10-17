@@ -133,12 +133,26 @@ const SRI_HASH = 'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}';
  * blocks the script, so it is checked here rather than found out in a browser.
  */
 function sriList(field: string) {
-	return z
-		.string()
-		.trim()
-		.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
-			message: `${field} must be one or more space-separated sha256-, sha384- or sha512- hashes`,
-		});
+	return (
+		z
+			.string()
+			.trim()
+			.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
+				message: `${field} must be one or more space-separated sha256-, sha384- or sha512- hashes`,
+			})
+			// A browser checks a script only against the strongest algorithm the
+			// list names and ignores every other entry, so a rollout listing the old
+			// script under sha384 and the new under sha512 refuses the old script
+			// before the new one is served.
+			.refine((value) => new Set(value.split(/ +/).map(sriAlgorithm)).size === 1, {
+				message: `${field} must list every hash under one algorithm: a browser checks only the strongest one listed`,
+			})
+	);
+}
+
+/** The algorithm an integrity hash names, as `sha384` for `sha384-...`. */
+function sriAlgorithm(hash: string): string {
+	return hash.slice(0, hash.indexOf('-'));
 }
 
 /**

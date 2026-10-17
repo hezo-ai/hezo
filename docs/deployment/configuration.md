@@ -238,7 +238,7 @@ no chat.
 |---|---|---|
 | `policy.support.chatwoot.baseUrl` | - | Where your Chatwoot runs. Must be `https:`. |
 | `policy.support.chatwoot.websiteToken` | - | The website inbox's token. |
-| `policy.support.chatwoot.sdkIntegrity` | - | The integrity hash the widget script must match, as `sha256-`, `sha384-` or `sha512-` followed by the base64 digest. List several, separated by spaces, while you roll out a new script. |
+| `policy.support.chatwoot.sdkIntegrity` | - | The integrity hash the widget script must match, as `sha256-`, `sha384-` or `sha512-` followed by the base64 digest. List several, separated by spaces and all under the same algorithm, while you roll out a new script: a browser checks a script only against the strongest algorithm listed. |
 | `policy.support.chatwoot.identifier` | - | Who the owner is in that inbox. |
 | `policy.support.chatwoot.identifierHash` | - | The inbox's HMAC-SHA256 of `identifier`, keyed with the inbox's HMAC token: exactly 64 lowercase hex characters. |
 | `policy.support.chatwoot.name` | - | The owner's name, as your support team sees it. |
@@ -268,7 +268,7 @@ event per named click. Leave it out and nothing is loaded.
 | `policy.analytics.umami.host` | - | Where Umami's `script.js` and `recorder.js` are served. Must be `https:`, with no trailing slash, query or fragment. |
 | `policy.analytics.umami.websiteId` | - | The Umami website the visits are counted under, as a UUID. |
 | `policy.analytics.umami.distinctId` | - | Who the owner is to that website: your own id for their account, 1 to 50 characters. Never an email. |
-| `policy.analytics.umami.scriptIntegrity` | - | The integrity hash `script.js` must match, as `sha256-`, `sha384-` or `sha512-` followed by the base64 digest. List several, separated by spaces, while you roll out a new script. |
+| `policy.analytics.umami.scriptIntegrity` | - | The integrity hash `script.js` must match, as `sha256-`, `sha384-` or `sha512-` followed by the base64 digest. List several, separated by spaces and all under the same algorithm, while you roll out a new script: a browser checks a script only against the strongest algorithm listed. |
 | `policy.analytics.umami.recorderIntegrity` | - | The integrity hash `recorder.js` must match, in the same form. |
 | `policy.analytics.umami.replay.sampleRate` | - | The share of browser sessions recorded, from `0` to `1`. Each browser session is picked once, so a visit is recorded whole or not at all. |
 | `policy.analytics.umami.replay.showText` | - | `false` hides all page text in a recording. `true` shows it. |
@@ -286,6 +286,10 @@ policy catches up.
 
 **Typed input is hidden by Umami, not by Hezo.** Leave the website's replay mask
 level at moderate or stricter, which masks every input, whatever `showText` says.
+
+**Sampling is Hezo's, not Umami's.** Set the website's replay sample rate in Umami
+to 1. Hezo has already picked which sessions to record from `replay.sampleRate`,
+and Umami samples again after it, so a lower value there multiplies the two rates.
 
 **It needs an `sso` block**, like the support chat, and only the account your
 issuer signs in loads it. Other sessions, and every session on an instance with no

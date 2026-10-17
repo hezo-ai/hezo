@@ -116,7 +116,7 @@ describe('the policy schema', () => {
 	])('accepts one integrity hash or several for %s', (field) => {
 		// Several hashes are how an Umami upgrade lists the old and the new
 		// script at once, so neither is refused while the files change over.
-		const rollout = `sha384-${'A'.repeat(64)} sha512-${'b'.repeat(86)}==`;
+		const rollout = `sha384-${'A'.repeat(64)} sha384-${'b'.repeat(64)}`;
 		expect(parse({ ...UMAMI, [field]: rollout }).success).toBe(true);
 		expect(parse({ ...UMAMI, [field]: `sha256-${'c'.repeat(43)}=` }).success).toBe(true);
 	});
@@ -131,6 +131,16 @@ describe('the policy schema', () => {
 			`sha384-${'A'.repeat(64)},sha384-${'B'.repeat(64)}`,
 		],
 		['scriptIntegrity', 'an empty value', '  '],
+		[
+			'scriptIntegrity',
+			'hashes under two algorithms, of which a browser checks only the strongest',
+			`sha384-${'A'.repeat(64)} sha512-${'b'.repeat(86)}==`,
+		],
+		[
+			'recorderIntegrity',
+			'hashes under two algorithms, of which a browser checks only the strongest',
+			`sha256-${'c'.repeat(43)}= sha384-${'A'.repeat(64)}`,
+		],
 		['recorderIntegrity', 'a missing value', undefined],
 		['recorderIntegrity', 'a value with no algorithm', 'A'.repeat(64)],
 		['recorderIntegrity', 'an algorithm browsers do not accept', `sha1-${'A'.repeat(28)}`],

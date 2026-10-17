@@ -105,7 +105,7 @@ describe('the policy schema', () => {
 		expect(parse({ ...CHATWOOT }).success).toBe(true);
 		// Several hashes are how a deployer rolls a new script with no moment
 		// where either the old or the new one is refused.
-		const rollout = `sha384-${'A'.repeat(64)} sha512-${'b'.repeat(86)}==`;
+		const rollout = `sha384-${'A'.repeat(64)} sha384-${'b'.repeat(64)}`;
 		expect(parse({ ...CHATWOOT, sdkIntegrity: rollout }).success).toBe(true);
 		expect(parse({ ...CHATWOOT, name: undefined }).success).toBe(true);
 		expect(parse({ ...CHATWOOT, email: undefined }).success).toBe(true);
@@ -115,6 +115,10 @@ describe('the policy schema', () => {
 		['an http origin', { baseUrl: 'http://chat.example' }],
 		['an integrity value with no algorithm', { sdkIntegrity: 'A'.repeat(64) }],
 		['an integrity algorithm browsers do not accept', { sdkIntegrity: `md5-${'A'.repeat(24)}` }],
+		[
+			'integrity hashes under two algorithms',
+			{ sdkIntegrity: `sha384-${'A'.repeat(64)} sha512-${'b'.repeat(86)}==` },
+		],
 		['an uppercase identity hash', { identifierHash: 'F'.repeat(64) }],
 		['a short identity hash', { identifierHash: 'f'.repeat(63) }],
 		['an empty website token', { websiteToken: '  ' }],
