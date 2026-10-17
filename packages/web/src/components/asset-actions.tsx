@@ -1,3 +1,4 @@
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import {
 	Archive,
 	ArchiveRestore,
@@ -80,7 +81,7 @@ export function AssetActions({
 					target="_blank"
 					rel="noopener noreferrer"
 					onClick={(e) => e.stopPropagation()}
-					className={buttonClass}
+					className={`${buttonClass} ${NEVER_RECORD_CLASS}`}
 					aria-label={t('assets.actions.openNewTab')}
 					data-testid="asset-popout"
 				>

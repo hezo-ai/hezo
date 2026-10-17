@@ -17,6 +17,7 @@ import {
 	matchesArchiveFilter,
 	normalizeAssetFolder,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Popover from '@radix-ui/react-popover';
 import { createFileRoute } from '@tanstack/react-router';
@@ -1230,13 +1231,17 @@ function AssetCard({
 	const isArchived = asset.archived_at != null;
 	const basename = assetBasename(asset.original_filename);
 	const thumbnail = isImage ? (
-		<img src={asset.url} alt={asset.original_filename} className="h-full w-full object-cover" />
+		<img
+			src={asset.url}
+			alt={asset.original_filename}
+			className={`h-full w-full object-cover ${NEVER_RECORD_CLASS}`}
+		/>
 	) : isHtml ? (
 		<iframe
 			src={asset.url}
 			title={asset.original_filename}
 			sandbox=""
-			className="pointer-events-none h-full w-full bg-surface"
+			className={`pointer-events-none h-full w-full bg-surface ${NEVER_RECORD_CLASS}`}
 		/>
 	) : isMarkdown ? (
 		<MarkdownThumbnail url={asset.url} contentType={asset.content_type} />

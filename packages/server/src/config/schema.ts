@@ -124,7 +124,44 @@ const logCompactionSchema = z
 	})
 	.strict();
 
-const SRI_HASH = 'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}';
+/**
+ * One hash: an algorithm a browser accepts, and its 32-, 48- or 64-byte digest
+ * in padded base64. A browser compares the value as a string with the encoding
+ * of the script's own digest, so one of any other length matches no script and
+ * the browser refuses the one it guards. One literal, because the hosted control
+ * plane restates it and a test there compares the two.
+ */
+const SRI_HASH =
+	'(?:sha256-[A-Za-z0-9+/]{43}=|sha384-[A-Za-z0-9+/]{64}|sha512-[A-Za-z0-9+/]{86}==)';
+
+/**
+ * A Subresource Integrity value a third-party script must match: one or more
+ * space-separated hashes, so a deployer can roll a new script with no moment
+ * where either the old or the new one is refused. A value that matches no hash
+ * blocks the script, so it is checked here rather than found out in a browser.
+ */
+function sriList(field: string) {
+	return (
+		z
+			.string()
+			.trim()
+			.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
+				message: `${field} must be one or more space-separated sha256-, sha384- or sha512- hashes, each with the whole base64 digest`,
+			})
+			// A browser checks a script only against the strongest algorithm the
+			// list names and ignores every other entry, so a rollout listing the old
+			// script under sha384 and the new under sha512 refuses the old script
+			// before the new one is served.
+			.refine((value) => new Set(value.split(/ +/).map(sriAlgorithm)).size === 1, {
+				message: `${field} must list every hash under one algorithm: a browser checks only the strongest one listed`,
+			})
+	);
+}
+
+/** The algorithm an integrity hash names, as `sha384` for `sha384-...`. */
+function sriAlgorithm(hash: string): string {
+	return hash.slice(0, hash.indexOf('-'));
+}
 
 /**
  * A support channel. Every value is what the browser hands the widget, so each
@@ -136,13 +173,7 @@ const chatwootSupportSchema = z
 	.object({
 		baseUrl: httpsUrl('baseUrl'),
 		websiteToken: z.string().trim().min(1),
-		sdkIntegrity: z
-			.string()
-			.trim()
-			.regex(new RegExp(`^${SRI_HASH}(?: +${SRI_HASH})*$`), {
-				message:
-					'sdkIntegrity must be one or more space-separated sha256-, sha384- or sha512- hashes',
-			}),
+		sdkIntegrity: sriList('sdkIntegrity'),
 		identifier: z.string().trim().min(1),
 		identifierHash: z.string().regex(/^[0-9a-f]{64}$/, {
 			message: 'identifierHash must be 64 lowercase hex characters',
@@ -156,6 +187,43 @@ const chatwootSupportSchema = z
 	.refine((value) => value.name !== undefined || value.email !== undefined, {
 		message: 'a name or an email is required',
 	});
+
+/**
+ * Product analytics. Every value lands on a script tag in the owner's browser,
+ * so each is checked for the shape that tag needs: the scripts are fetched from
+ * `${host}/script.js` and `${host}/recorder.js`, so a host carrying a trailing
+ * slash, a query or a fragment would load nothing, and an integrity value that
+ * matches no hash would block the script.
+ */
+const umamiAnalyticsSchema = z
+	.object({
+		host: httpsUrl('host').refine(
+			(value) => {
+				try {
+					const url = new URL(value);
+					return !value.endsWith('/') && url.search === '' && url.hash === '';
+				} catch {
+					return false;
+				}
+			},
+			{ message: 'host must have no trailing slash, query or fragment' },
+		),
+		websiteId: z.guid({ message: 'websiteId must be a UUID' }),
+		// Umami's own limit on a distinct id.
+		distinctId: z.string().trim().min(1).max(50),
+		// Both scripts run in the owner's session, so each is pinned to the exact
+		// file the deployer vetted; whoever serves `host` cannot swap in another.
+		scriptIntegrity: sriList('scriptIntegrity'),
+		recorderIntegrity: sriList('recorderIntegrity'),
+		replay: z
+			.object({
+				sampleRate: z.number().min(0).max(1),
+				showText: z.boolean(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
 
 /**
  * The pinned-settings block. Also the shape of the standalone policy file, which
@@ -193,6 +261,7 @@ export const policySchema = z
 			})
 			.strict(),
 		support: z.object({ chatwoot: chatwootSupportSchema }).strict().optional(),
+		analytics: z.object({ umami: umamiAnalyticsSchema }).strict().optional(),
 	})
 	.strict();
 

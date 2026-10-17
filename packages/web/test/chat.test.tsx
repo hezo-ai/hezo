@@ -1,5 +1,6 @@
 import { setMonthlyContainerHours } from '@hezo/server/src/lib/system-meta';
 import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import type { ChatMessage } from '@hezo/web/hooks/use-chat';
 import { toast } from '@hezo/web/hooks/use-toast';
 import { queryClient } from '@hezo/web/lib/query-client';
@@ -244,6 +245,8 @@ test('each message carries its role eyebrow — "You" for the operator, "CEO · 
 	// Scope to the thread: the switcher's pinned option also reads "CEO · HQ".
 	const messagesEl = await findByTestId('chat-messages');
 	await waitFor(() => expect(within(messagesEl).getByText('CEO · HQ')).toBeTruthy());
+	// The conversation streams in as it is written, and a recording never holds it.
+	expect(messagesEl.classList).toContain(NEVER_RECORD_CLASS);
 });
 
 test('shows the "chat compacted" marker at the top once older messages are compacted', async () => {

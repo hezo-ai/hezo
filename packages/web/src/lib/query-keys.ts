@@ -32,6 +32,8 @@ export const queryKeys = {
 	instanceSettings: () => ['instance', 'settings'],
 	/** The deployer's support channel, answered only to the instance owner. */
 	support: () => ['instance', 'support'],
+	/** The deployer's product analytics, answered only to the instance owner. */
+	analytics: () => ['instance', 'analytics'],
 	/** Storage backend metadata (server-side redacted) for the General settings page. */
 	databaseInfo: () => ['instance', 'database'],
 	/**

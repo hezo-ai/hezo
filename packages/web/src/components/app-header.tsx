@@ -147,6 +147,7 @@ export function AppHeader({
 					aria-label="Marketplace"
 					title="Team marketplace"
 					data-testid="app-header-marketplace"
+					data-analytics="open-marketplace"
 					className={iconLinkClass}
 				>
 					<Store className="w-4 h-4" />
@@ -156,6 +157,7 @@ export function AppHeader({
 					aria-label={t('nav.settings')}
 					title={t('nav.settings')}
 					data-testid="app-header-settings"
+					data-analytics="open-settings"
 					className={iconLinkClass}
 				>
 					<Settings className="w-4 h-4" />

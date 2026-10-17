@@ -7,6 +7,7 @@ import {
 	HQ_PROJECT_NAME,
 	HQ_PROJECT_SLUG,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import { Link } from '@tanstack/react-router';
 import {
 	ArrowRight,
@@ -397,10 +398,12 @@ export function ChatSurface({
 					data-testid="chat-drop"
 					overlayTestId="chat-drop-overlay"
 				>
+					{/* Never recorded: the conversation streams in token by token, and it
+					    is the owner's own words and the agents' answers. */}
 					<div
 						ref={scrollRef}
 						data-testid="chat-messages"
-						className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
+						className={`flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth ${NEVER_RECORD_CLASS}`}
 					>
 						{!loaded && (
 							<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
@@ -645,6 +648,7 @@ export function ChatSurface({
 									disabled={!canSubmit}
 									aria-label={buttonHint}
 									data-testid="chat-send"
+									data-analytics="send-chat-message"
 									data-mode={!busy ? 'send' : armed ? 'send-now' : 'queue'}
 									className={`relative flex h-9 shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded-full text-[11px] font-semibold uppercase tracking-wide transition-colors disabled:opacity-40 ${
 										busy && !armed

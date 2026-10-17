@@ -445,6 +445,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 							size="sm"
 							variant="secondary"
 							disabled={resolveApproval.isPending}
+							data-analytics="approve-request"
 							onClick={() =>
 								resolveApproval.mutate({
 									approvalId: approval.id,
@@ -465,6 +466,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 							variant="ghost"
 							className="text-danger"
 							disabled={resolveApproval.isPending}
+							data-analytics="deny-request"
 							onClick={() =>
 								resolveApproval.mutate({
 									approvalId: approval.id,

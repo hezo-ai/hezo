@@ -4,6 +4,7 @@ import {
 	normalizeMnemonic,
 	validateMnemonic,
 } from '@hezo/shared';
+import { NEVER_RECORD_CLASS } from '@hezo/ui';
 import {
 	AlertTriangle,
 	Copy,
@@ -82,6 +83,12 @@ interface MasterKeyFormProps {
 	onAuthenticated?: () => void;
 }
 
+/**
+ * Generate, confirm or enter the recovery phrase. The one component every screen
+ * showing the phrase renders - the vault gate, the setup wizard's re-entry and
+ * the forgot-password reset - so the never-record mark on its form covers all
+ * three.
+ */
 export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFormProps) {
 	// The locale the gate is showing is what setup records for the instance.
 	const { t, language, date_format, number_format } = useI18n();
@@ -244,7 +251,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 				</div>
 			)}
 
-			<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+			<form onSubmit={handleSubmit} className={`flex flex-col gap-4 ${NEVER_RECORD_CLASS}`}>
 				{isUnset && phase === 'generate' && !generatedKey && (
 					<Button type="button" variant="secondary" onClick={handleGenerate}>
 						<KeyRound className="w-4 h-4" />

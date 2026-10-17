@@ -274,6 +274,7 @@ export function CreateTaskDialog({
 							disabled={
 								!effectiveProjectId || !title.trim() || !assigneeId || activeMutation.isPending
 							}
+							data-analytics="create-task"
 						>
 							{activeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 							Create

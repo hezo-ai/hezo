@@ -189,6 +189,7 @@ function RunRetryButton({
 				disabled={retry.isPending || !containerReady}
 				aria-label="Retry failed run"
 				data-testid="retry-failed-run"
+				data-analytics="retry-run"
 				className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 			>
 				{retry.isPending ? (

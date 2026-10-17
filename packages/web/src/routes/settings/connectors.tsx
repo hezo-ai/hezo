@@ -369,6 +369,7 @@ function InstanceConnectorRow({
 							onClick={openConnect}
 							disabled={authStart.isPending}
 							data-testid="instance-connector-connect"
+							data-analytics="connect-connector"
 						>
 							{authStart.isPending
 								? 'Starting…'
