@@ -6798,8 +6798,9 @@ wrote back. The first rides the public status; the second stays behind the owner
   than one product and a key is unique across the account. Contact, not conversation:
   the widget's conversation write replaces the conversation's whole attribute set, which
   erases a pre-chat answer or a value an agent set; its contact write merges by key. The
-  loader sends only while the panel is open (`chatwoot:opened` until `chatwoot:closed`),
-  on every open whether or not anything changed (the widget sends the attributes in a
+  loader sends only while the panel is open (`chatwoot:opened` until `chatwoot:closed`,
+  which Chatwoot first sends in 4.2.0; an older server gets no context, and the
+  configuration guide names 4.2.0 as the minimum), on every open whether or not anything changed (the widget sends the attributes in a
   request of its own and swallows a failed one, so a call that went through proves
   nothing), and again on every change while open. **Every page sends every key.** One
   person is one contact from the marketing site through the hosted dashboard to their

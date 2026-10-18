@@ -298,6 +298,9 @@ export function installSupportChat(options: SupportChatOptions): void {
 		hideMessageBubble: options.hideBubble,
 	};
 	window.addEventListener('chatwoot:ready', onReady);
+	// Chatwoot 4.2.0 is the first release to send these two. Before it the panel
+	// never reads as open, so no context is sent; the configuration guide names
+	// that release as the minimum.
 	window.addEventListener('chatwoot:opened', onOpened);
 	window.addEventListener('chatwoot:closed', onClosed);
 

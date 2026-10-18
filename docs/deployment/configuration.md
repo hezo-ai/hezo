@@ -261,7 +261,9 @@ instance sets these attributes on the owner's Chatwoot contact, and updates them
 when the owner moves to another screen. They are contact attributes because
 Chatwoot merges a contact's attributes by key, while it replaces a
 conversation's whole set on every write and would erase a pre-chat answer or a
-value an agent set by hand.
+value an agent set by hand. This needs Chatwoot 4.2.0 or later, the first release
+that tells the page when the chat opens and closes. With an older Chatwoot the chat
+still works, but your team sees none of these attributes.
 
 | Attribute | Type | What it holds |
 |---|---|---|
