@@ -6793,21 +6793,22 @@ wrote back. The first rides the public status; the second stays behind the owner
   up signed out, and `SsoRedirect` would otherwise send the browser to the issuer's
   sign-in, a second navigation that cancels the logout if it has not yet committed.
 - **What the chat carries.** `setSupportChatContext` hands the loader where the person
-  is, as Chatwoot conversation attributes: the keys in `SUPPORT_CHAT_FIELDS`
+  is, as Chatwoot **contact** attributes: the keys in `SUPPORT_CHAT_FIELDS`
   (`@hezo/shared`), each prefixed `hezo_` because one Chatwoot account can serve more
-  than one product and a key is unique across the account. The loader sends only while
-  the panel is open (`chatwoot:opened` until `chatwoot:closed`), on every open whether
-  or not anything changed (the widget sends the attributes in a request of its own and
-  swallows a failed one, so a call that went through proves nothing), again on every
-  change while open, and again on `chatwoot:on-start-conversation` if the panel is still open
-  (otherwise when it next opens), because a conversation started after a resolved one
-  begins empty. **It always sends the whole object.** Before
-  a conversation exists the widget merges what it is sent into what it will send with
-  the first message; after that the inbox **replaces** the conversation's attributes, so
-  a partial update would erase every key it left out. A missing fact travels as `""`,
-  an unchanged context is not sent again while the panel stays open, and an empty one
-  is never sent (the widget
-  throws on it). The tenant web sends `hezo_surface: instance`, the screen from
+  than one product and a key is unique across the account. Contact, not conversation:
+  the widget's conversation write replaces the conversation's whole attribute set, which
+  erases a pre-chat answer or a value an agent set; its contact write merges by key. The
+  loader sends only while the panel is open (`chatwoot:opened` until `chatwoot:closed`),
+  on every open whether or not anything changed (the widget sends the attributes in a
+  request of its own and swallows a failed one, so a call that went through proves
+  nothing), and again on every change while open. **Every page sends every key.** One
+  person is one contact from the marketing site through the hosted dashboard to their
+  instance, so a key one page set and another left out would go on describing a page
+  the person has left; the table therefore carries the hosted pages' keys too
+  (`hezo_visit`, `hezo_instance_*`), and the instance sends them empty. A missing fact
+  travels as `""`, an unchanged context is not sent again while the panel stays open,
+  and an empty one is never sent (the widget throws on it). The tenant web sends
+  `hezo_surface: instance`, the screen from
   `shellGate` (`lib/shell-gate.ts`, the one decision the root's render also switches on),
   `setup` while no AI provider is configured, or the deepest route's **template**
   (`/projects/$projectId/tasks/$taskId`) once inside, the project slug, the version,

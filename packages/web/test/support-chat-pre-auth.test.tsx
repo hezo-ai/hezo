@@ -43,7 +43,7 @@ interface FakeChatwoot {
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
 	toggleBubbleVisibility: ReturnType<typeof vi.fn>;
-	setConversationCustomAttributes: ReturnType<typeof vi.fn>;
+	setCustomAttributes: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -80,7 +80,7 @@ test('a screen reached before signing in loads the widget, naming nobody', async
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
 		toggleBubbleVisibility: vi.fn(),
-		setConversationCustomAttributes: vi.fn(),
+		setCustomAttributes: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {
@@ -121,9 +121,9 @@ test('a screen reached before signing in loads the widget, naming nobody', async
 	// settling on that gate when the chat opens; the open chat follows it there.
 	window.dispatchEvent(new Event('chatwoot:opened'));
 	await expect
-		.poll(() => chatwoot.setConversationCustomAttributes.mock.lastCall?.[0]?.hezo_screen)
+		.poll(() => chatwoot.setCustomAttributes.mock.lastCall?.[0]?.hezo_screen)
 		.toBe('issuer-redirect');
-	expect(chatwoot.setConversationCustomAttributes).toHaveBeenLastCalledWith(
+	expect(chatwoot.setCustomAttributes).toHaveBeenLastCalledWith(
 		expect.objectContaining({ hezo_surface: 'instance', hezo_project: '' }),
 	);
 });

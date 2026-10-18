@@ -18,9 +18,8 @@
  *
  * **Where the person is reaches the inbox only while the chat is open.** The
  * page hands over its context whenever it changes; the module sends it every
- * time the panel opens, again on every change while it stays open, and again
- * when a conversation starts. Somebody who chatted once is not reported on every
- * page they visit afterwards.
+ * time the panel opens and again on every change while it stays open. Somebody
+ * who chatted once is not reported on every page they visit afterwards.
  */
 
 import { pinnedScript } from './pinned-script.js';
@@ -70,7 +69,7 @@ interface ChatwootApi {
 	setLocale(locale: string): void;
 	setColorScheme(scheme: SupportChatColorScheme): void;
 	toggleBubbleVisibility(state: 'hide' | 'show'): void;
-	setConversationCustomAttributes(attributes: Record<string, string>): void;
+	setCustomAttributes(attributes: Record<string, string>): void;
 	reset(): void;
 }
 
@@ -143,11 +142,15 @@ function serialise(context: Record<string, string>): string {
 /**
  * Send the context, if the panel is open and it changed since the last send.
  *
- * **Always the whole object.** Once a conversation exists, the inbox replaces
- * the conversation's attributes with what it is sent rather than merging, so a
- * partial update would erase every key it left out. A fact the page does not
- * have travels as an empty string, which clears whatever an earlier page said.
- * An empty object is never sent: the widget throws on one.
+ * **Contact attributes, so nothing else on the person is touched.** The inbox
+ * merges a contact's attributes by key, where it would replace a conversation's
+ * wholesale and erase a pre-chat answer or a value an agent set by hand.
+ *
+ * **Always the whole object.** A fact the page does not have travels as an
+ * empty string, which clears whatever an earlier page said under that key; the
+ * same person can write from several Hezo pages, and each one's keys stay on the
+ * contact until something sends them again. An empty object is never sent: the
+ * widget throws on one.
  */
 function sendContext(): void {
 	if (!state?.ready || !state.open || !state.context) return;
@@ -157,7 +160,7 @@ function sendContext(): void {
 	if (serialised === state.sent) return;
 	// Recorded only once the widget took it, so a send it refused is tried
 	// again on the next open or change rather than skipped as done.
-	if (withChatwoot((chatwoot) => chatwoot.setConversationCustomAttributes({ ...context }))) {
+	if (withChatwoot((chatwoot) => chatwoot.setCustomAttributes({ ...context }))) {
 		state.sent = serialised;
 	}
 }
@@ -176,21 +179,6 @@ function onOpened(): void {
 
 function onClosed(): void {
 	if (state) state.open = false;
-}
-
-/**
- * A new conversation starts with no attributes. The widget keeps what it was
- * sent before the first message only until that message goes, so a second
- * conversation after the first is resolved would otherwise start empty.
- *
- * **Only the panel's own events say it is open.** This one arrives after the
- * first message is answered, by which time the person may have closed the
- * panel; the context then goes when they next open it.
- */
-function onConversationStarted(): void {
-	if (!state) return;
-	state.sent = null;
-	sendContext();
 }
 
 function identify(identity: SupportChatIdentity): void {
@@ -266,7 +254,6 @@ export function installSupportChat(options: SupportChatOptions): void {
 	window.addEventListener('chatwoot:ready', onReady);
 	window.addEventListener('chatwoot:opened', onOpened);
 	window.addEventListener('chatwoot:closed', onClosed);
-	window.addEventListener('chatwoot:on-start-conversation', onConversationStarted);
 
 	const script = pinnedScript(`${baseUrl}/packs/js/sdk.js`, options.sdkIntegrity);
 	script.async = true;
@@ -308,8 +295,8 @@ export function resetSupportChat(): void {
 	if (!state) return;
 	state.identity = null;
 	state.openWhenReady = false;
-	// The widget reloads with no conversation, so the next one is sent the
-	// context afresh when the panel opens on it.
+	// The widget reloads as a new, anonymous contact, which is sent the context
+	// when the panel opens on it.
 	state.open = false;
 	state.sent = null;
 	withChatwoot((chatwoot) => chatwoot.reset());
@@ -332,10 +319,10 @@ export function setSupportChatLocale(locale: string): void {
 }
 
 /**
- * Say where the person is: the conversation attributes the inbox shows beside
- * the chat. Pass the page's whole context every time, with `null` for a fact it
- * does not have; the module sends it when the panel opens and whenever it
- * changes while open. Does nothing before install.
+ * Say where the person is: the contact attributes the inbox shows beside the
+ * person's conversations. Pass the page's whole context every time, with `null`
+ * for a fact it does not have; the module sends it when the panel opens and
+ * whenever it changes while open. Does nothing before install.
  */
 export function setSupportChatContext(context: Readonly<Record<string, string | null>>): void {
 	if (!state) return;

@@ -93,8 +93,8 @@ export interface SupportChatPlace {
  * request on a route that would answer 401 to a caller who has not signed in.
  *
  * **The support team sees where the owner is.** `place` and the page's own
- * language, theme and width become the conversation's attributes while the chat
- * is open: names the shell chose and the project's slug, never a path, a title
+ * language, theme and width become the contact's attributes while the chat is
+ * open: names the shell chose and the project's slug, never a path, a title
  * or other text the owner typed.
  */
 export function useSupportChat(
@@ -155,6 +155,13 @@ export function useSupportChat(
 			hezo_viewport: viewport,
 			hezo_project: project,
 			hezo_version: version,
+			// What a hosting provider's website and dashboard report about the
+			// same person: cleared here, so the contact does not go on showing a
+			// page they have left.
+			hezo_visit: null,
+			hezo_instance_status: null,
+			hezo_instance_job: null,
+			hezo_instance_error: null,
 		};
 		setSupportChatContext(context);
 	}, [offered, screen, project, version, language, resolvedTheme, viewport]);

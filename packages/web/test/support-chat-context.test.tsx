@@ -42,7 +42,7 @@ interface FakeChatwoot {
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
 	toggleBubbleVisibility: ReturnType<typeof vi.fn>;
-	setConversationCustomAttributes: ReturnType<typeof vi.fn>;
+	setCustomAttributes: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -78,7 +78,7 @@ test('the open chat names the screen and the project, never the path, and follow
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
 		toggleBubbleVisibility: vi.fn(),
-		setConversationCustomAttributes: vi.fn(),
+		setCustomAttributes: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {
@@ -86,7 +86,7 @@ test('the open chat names the screen and the project, never the path, and follow
 			testWindow.$chatwoot = chatwoot;
 		},
 	};
-	const lastSent = () => chatwoot.setConversationCustomAttributes.mock.lastCall?.[0];
+	const lastSent = () => chatwoot.setCustomAttributes.mock.lastCall?.[0];
 
 	let slug = '';
 	const { findByTestId, router } = await renderApp({
@@ -119,6 +119,12 @@ test('the open chat names the screen and the project, never the path, and follow
 		hezo_project: slug,
 		hezo_language: 'en',
 		hezo_viewport: 'desktop',
+		// One person is one contact on every Hezo page, so what a hosting
+		// dashboard or website said is cleared rather than left standing.
+		hezo_visit: '',
+		hezo_instance_status: '',
+		hezo_instance_job: '',
+		hezo_instance_error: '',
 	});
 	expect(lastSent()?.hezo_version).toMatch(/^\d+\.\d+\.\d+/);
 	expect(JSON.stringify(lastSent())).not.toContain(`/projects/${slug}`);

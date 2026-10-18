@@ -257,8 +257,11 @@ the token, and should never be given it: anyone holding it can write to your inb
 as any contact.
 
 **The chat tells your team where the owner is.** While the chat is open, the
-instance sets these conversation attributes, and updates them when the owner
-moves to another screen:
+instance sets these attributes on the owner's Chatwoot contact, and updates them
+when the owner moves to another screen. They are contact attributes because
+Chatwoot merges a contact's attributes by key, while it replaces a
+conversation's whole set on every write and would erase a pre-chat answer or a
+value an agent set by hand.
 
 | Attribute | Type | What it holds |
 |---|---|---|
@@ -270,10 +273,20 @@ moves to another screen:
 | `hezo_viewport` | List | `phone` (narrower than 768px), `tablet` (narrower than 1024px) or `desktop`. |
 | `hezo_project` | Text | The slug of the project the owner is in, or empty. |
 | `hezo_version` | Text | The Hezo release the instance runs. |
+| `hezo_visit` | Link | Always empty from an instance. A hosting provider's website sets it. |
+| `hezo_instance_status` | Text | Always empty from an instance. A hosting provider's dashboard sets it. |
+| `hezo_instance_job` | Text | Always empty from an instance. A hosting provider's dashboard sets it. |
+| `hezo_instance_error` | Text | Always empty from an instance. A hosting provider's dashboard sets it. |
+
+The last four are there because one person is one contact, whether they write
+from your website, your dashboard or their instance. Each page sends every key,
+with an empty value for what it does not know, so the contact never goes on
+showing a page the owner has left.
 
 Chatwoot shows an attribute only after an admin defines it, under **Settings >
-Custom Attributes > Conversation**, with the key, type and list values above.
-Nothing is sent while the chat is closed. Apart from `hezo_project`, the slug
+Custom Attributes > Contact**, with the key, type and list values above.
+Nothing is sent while the chat is closed, so the values show where the owner
+was when they last had it open. Apart from `hezo_project`, the slug
 Hezo makes from the name the owner gave the project, no value comes from text
 the owner typed. The owner's browser sets these values, so treat them as a hint
 about where to look, not as proof.

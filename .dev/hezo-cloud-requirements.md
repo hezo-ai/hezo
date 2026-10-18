@@ -908,9 +908,10 @@ rules: architecture § *Product analytics*.
 
 Somebody who writes "it does not work" leaves the support team asking where. The
 loader now takes a context, `setSupportChatContext`, and sends it as Chatwoot
-conversation attributes while the chat is open; the field table is
-`SUPPORT_CHAT_FIELDS` in `@hezo/shared`, so the plane's dashboard reports through
-the same keys and the plane's sync tool defines them in the inbox. The instance
+contact attributes while the chat is open; the field table is
+`SUPPORT_CHAT_FIELDS` in `@hezo/shared`, the plane's own keys included, so the
+plane's dashboard reports through the same keys, every page clears what another
+page said, and the plane's sync tool defines them in the inbox. The instance
 reports its gate or route template, project slug and version, never a path. No
 policy change: a release that predates it simply reports nothing. Mechanism and
 rules: architecture § *Support chat*.
