@@ -72,6 +72,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 	for (const [type, listener] of listeners.splice(0)) window.removeEventListener(type, listener);
 	for (const script of document.head.querySelectorAll('script')) script.remove();
@@ -289,6 +290,44 @@ test('the context of an open panel rides the request that names the person', asy
 	// The same context is not sent a second time beside it.
 	chat.setSupportChatContext(CONTEXT);
 	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(1);
+});
+
+// The widget says nothing when the merge is done, so a change made meanwhile
+// waits a while and then goes on its own, to the contact that is left.
+test('a change made while the person is being named waits for the merge', async () => {
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	await loaded();
+	vi.useFakeTimers();
+	ready();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+
+	chat.installSupportChat(OPTIONS);
+	chat.setSupportChatContext({ ...CONTEXT, hezo_screen: '/projects/$projectId' });
+	widgetEvent('opened');
+	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(1);
+
+	vi.advanceTimersByTime(chat.IDENTIFY_SETTLE_MS);
+	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setCustomAttributes).toHaveBeenLastCalledWith({
+		...SENT,
+		hezo_screen: '/projects/$projectId',
+	});
+});
+
+test('a panel asked open before the widget was ready also waits for the merge', async () => {
+	chat.installSupportChat(OPTIONS);
+	chat.openSupportChat();
+	chat.setSupportChatContext(CONTEXT);
+	await loaded();
+	vi.useFakeTimers();
+	ready();
+	widgetEvent('opened');
+	expect(fake.setCustomAttributes).not.toHaveBeenCalled();
+
+	vi.advanceTimersByTime(chat.IDENTIFY_SETTLE_MS);
+	expect(fake.setCustomAttributes).toHaveBeenCalledWith(SENT);
 });
 
 test('a closed panel names the person and sends nothing about where they are', async () => {

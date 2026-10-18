@@ -103,9 +103,19 @@ interface SupportChatState {
 	context: Record<string, string> | null;
 	/** The context last sent while the panel is open, serialised, so an unchanged one is not sent again. */
 	sent: string | null;
+	/** The wait after naming the person, during which no context is written on its own. */
+	settling: ReturnType<typeof setTimeout> | null;
 }
 
 let state: SupportChatState | null = null;
+
+/**
+ * How long the context is held back after the person is named with the panel
+ * open. Naming them can fold the anonymous contact into their existing one, and
+ * a write that lands before the merge is lost with the contact it went to; the
+ * widget reports nothing when the merge is done, so the hold is a time.
+ */
+export const IDENTIFY_SETTLE_MS = 3000;
 
 function host(): Window & ChatwootHost {
 	return window;
@@ -158,7 +168,7 @@ function serialise(context: Record<string, string>): string {
  * widget throws on one.
  */
 function sendContext(): void {
-	if (!state?.ready || !state.open || !state.context) return;
+	if (!state?.ready || !state.open || !state.context || state.settling !== null) return;
 	const context = state.context;
 	if (Object.keys(context).length === 0) return;
 	const serialised = serialise(context);
@@ -193,9 +203,12 @@ function onClosed(): void {
  * fold the anonymous contact into the person's existing one, and that merge
  * keeps the existing contact's values, so a separate write racing it can land
  * on the contact that is about to go. Inside the request, the inbox applies the
- * context after the merge.
+ * context after the merge. **A change made while the merge is in flight waits**
+ * for `IDENTIFY_SETTLE_MS`, then goes on its own, to the contact that is left.
+ *
+ * `opening` is the panel about to open, which is as good as open here.
  */
-function identify(identity: SupportChatIdentity): void {
+function identify(identity: SupportChatIdentity, opening = false): void {
 	const context =
 		state?.open && state.context && Object.keys(state.context).length > 0
 			? { ...state.context }
@@ -208,7 +221,19 @@ function identify(identity: SupportChatIdentity): void {
 			...(context ? { custom_attributes: context } : {}),
 		}),
 	);
-	if (state) state.sent = context && went ? serialise(context) : null;
+	if (!state) return;
+	state.sent = context && went ? serialise(context) : null;
+	if (went && (state.open || opening)) holdForMerge();
+}
+
+function holdForMerge(): void {
+	if (!state) return;
+	if (state.settling !== null) clearTimeout(state.settling);
+	state.settling = setTimeout(() => {
+		if (!state) return;
+		state.settling = null;
+		sendContext();
+	}, IDENTIFY_SETTLE_MS);
 }
 
 /**
@@ -219,7 +244,7 @@ function onReady(): void {
 	if (!state) return;
 	state.ready = true;
 	const { identity, locale, colorScheme } = state;
-	if (identity) identify(identity);
+	if (identity) identify(identity, state.openWhenReady);
 	withChatwoot((chatwoot) => {
 		chatwoot.setLocale(locale);
 		chatwoot.setColorScheme(colorScheme);
@@ -264,6 +289,7 @@ export function installSupportChat(options: SupportChatOptions): void {
 		open: false,
 		context: null,
 		sent: null,
+		settling: null,
 	};
 
 	host().chatwootSettings = {
@@ -319,6 +345,8 @@ export function resetSupportChat(): void {
 	// when the panel opens on it.
 	state.open = false;
 	state.sent = null;
+	if (state.settling !== null) clearTimeout(state.settling);
+	state.settling = null;
 	withChatwoot((chatwoot) => chatwoot.reset());
 }
 
