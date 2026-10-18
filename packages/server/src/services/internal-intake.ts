@@ -3,9 +3,9 @@ import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 
 /**
- * The instance-level coordination context. All coordination work — project intake,
- * hiring, coherence review, OAuth verification — lives in the single HQ project and
- * is owned by the CEO. Project-teams hold only the work they were created for.
+ * The instance-level coordination context. All coordination work — hiring,
+ * coherence review, OAuth verification — lives in the single HQ project and is
+ * owned by the CEO. Project-teams hold only the work they were created for.
  */
 export interface CoordinationContext {
 	ceoMemberId: string;

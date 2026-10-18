@@ -72,3 +72,33 @@ test('mobile: the roster stacks per role and Select team stays reachable', async
 	await select.click();
 	await expect(page.getByTestId('selected-team-card')).toBeVisible();
 });
+
+test('mobile: Plan with the CEO is reachable before a team is picked', async ({
+	sharedPage: page,
+}) => {
+	await mockMarketplaceCatalog(page, 4);
+	await page.goto('/home');
+	await waitForPageLoad(page);
+	await page.getByTestId('home-new-project').first().click();
+	await page.getByPlaceholder('e.g. Marketing Site').fill('Phone plan');
+	await page
+		.getByPlaceholder(/What is this project/)
+		.fill('A project planned from a phone, with no team picked yet.');
+
+	// Both actions stack full-width inside the sheet; only Plan with the CEO is
+	// enabled while no team is picked.
+	const plan = page.getByTestId('plan-with-ceo-submit');
+	const create = page.getByTestId('create-project-submit');
+	await plan.scrollIntoViewIfNeeded();
+	await expect(plan).toBeVisible();
+	await expect(plan).toBeEnabled();
+	await expect(create).toBeDisabled();
+	const box = await plan.boundingBox();
+	const viewport = page.viewportSize();
+	if (!box || !viewport) throw new Error('missing layout boxes');
+	expect(box.x).toBeGreaterThanOrEqual(0);
+	expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+	expect(
+		await page.getByRole('dialog').evaluate((el) => el.scrollWidth - el.clientWidth),
+	).toBeLessThanOrEqual(1);
+});

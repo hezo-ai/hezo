@@ -891,7 +891,7 @@ async function buildProjectsContext(db: Db): Promise<string> {
 		'Hezo is project-centric: one organisation containing many projects, each with its own Captain and roster of agents. As the instance CEO you have automatic cross-project reach over every one of them. The roster of projects below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project or task in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, task `TO-1`) — never a raw UUID. To read or act inside a project, pass its slug (shown on its line below) as the `project` argument to tools like `list_tasks` / `list_agents`; or call `list_projects` for this same live list.';
 
 	if (projects.rows.length === 0) {
-		return `${intro}\n\n_No projects exist yet beyond HQ. When the operator wants to start one, take it through project intake._`;
+		return `${intro}\n\n_No projects exist yet beyond HQ. When the operator wants to start one, scope it with them in chat and create it with \`create_project\` once they approve._`;
 	}
 
 	const lines = projects.rows

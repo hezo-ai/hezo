@@ -1,6 +1,7 @@
 import { ApprovalStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
+import { ApprovalSideEffectError } from './approval-handlers/types';
 import {
 	applyApprovalDeniedSideEffect,
 	applyApprovalSideEffect,
@@ -11,7 +12,7 @@ import type { WebSocketManager } from './ws';
 
 export type { SideEffectBroadcast } from './approval-side-effects';
 
-export type ResolveApprovalError = 'NOT_FOUND' | 'INVALID_STATE';
+export type ResolveApprovalError = 'NOT_FOUND' | 'INVALID_STATE' | 'SIDE_EFFECT_FAILED';
 
 export interface ResolveApprovalInput {
 	status: typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied;
@@ -49,41 +50,55 @@ export async function resolveApproval(
 		return { ok: false, error: 'INVALID_STATE', message: 'Approval is already resolved' };
 	}
 
+	// The claim is the update itself: only one of two concurrent decisions on a
+	// pending row gets it back, so a side effect never runs twice.
 	const result = await db.query(
 		`UPDATE approvals
 		    SET status = $1::approval_status, resolution_note = $2, resolved_at = now(),
 		        resolved_by_user_id = $4, resolved_by_api_key_id = $5
-		  WHERE id = $3 RETURNING *`,
+		  WHERE id = $3 AND status = $6::approval_status RETURNING *`,
 		[
 			input.status,
 			input.resolutionNote,
 			approvalId,
 			input.decider.user_id,
 			input.decider.api_key_id,
+			ApprovalStatus.Pending,
 		],
 	);
-	const row = result.rows[0] as Record<string, unknown>;
+	const row = result.rows[0] as Record<string, unknown> | undefined;
+	if (!row) {
+		return { ok: false, error: 'INVALID_STATE', message: 'Approval is already resolved' };
+	}
 
 	let sideEffects: SideEffectBroadcast[] = [];
-	if (input.status === ApprovalStatus.Approved) {
-		sideEffects = await applyApprovalSideEffect(
-			db,
-			row,
-			input.dataDir,
-			input.actorMemberId,
-			input.wsManager,
-			input.containerDeps,
-			input.events,
+	try {
+		sideEffects =
+			input.status === ApprovalStatus.Approved
+				? await applyApprovalSideEffect(
+						db,
+						row,
+						input.dataDir,
+						input.actorMemberId,
+						input.wsManager,
+						input.containerDeps,
+						input.events,
+					)
+				: // Denied: dispatch to any handler that defines a denied side effect
+					// (the proposal-style ones flip their card and re-wake the requester).
+					await applyApprovalDeniedSideEffect(db, row, input.actorMemberId, input.wsManager);
+	} catch (e) {
+		if (!(e instanceof ApprovalSideEffectError)) throw e;
+		// The handler wrote nothing, so the decision is undone rather than left
+		// reading as decided with nothing behind it.
+		await db.query(
+			`UPDATE approvals
+			    SET status = $2::approval_status, resolution_note = NULL, resolved_at = NULL,
+			        resolved_by_user_id = NULL, resolved_by_api_key_id = NULL
+			  WHERE id = $1`,
+			[approvalId, ApprovalStatus.Pending],
 		);
-	} else {
-		// Denied: dispatch to any handler that defines a denied side effect (today
-		// the hire handler flips its proposal comment and re-wakes the requester).
-		sideEffects = await applyApprovalDeniedSideEffect(
-			db,
-			row,
-			input.actorMemberId,
-			input.wsManager,
-		);
+		return { ok: false, error: 'SIDE_EFFECT_FAILED', message: e.message };
 	}
 
 	return { ok: true, row, sideEffects };

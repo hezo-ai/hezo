@@ -79,6 +79,27 @@ test.describe('Responsive — mobile (390px)', () => {
 		}
 	});
 
+	test('task list toolbar fits Suggest tasks and New task as icons', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { projectSlug } = freshWorkspace;
+		await page.goto(`/projects/${projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const suggest = page.getByTestId('task-list-suggest-tasks');
+		const create = page.getByTestId('task-list-new-task');
+		await expect(suggest).toBeVisible();
+		await expect(create).toBeVisible();
+		// Below the desktop breakpoint both are 40px icon squares on the filter row.
+		const [s, c] = await Promise.all([suggest.boundingBox(), create.boundingBox()]);
+		expect(s?.width).toBeLessThanOrEqual(41);
+		expect(c?.width).toBeLessThanOrEqual(41);
+		expect(Math.abs((s?.y ?? 0) - (c?.y ?? 0))).toBeLessThan(2);
+		await expect(suggest.getByText('Suggest tasks')).toBeHidden();
+		await expectNoHorizontalOverflow(page);
+	});
+
 	test('activity log table scrolls horizontally without page overflow', async ({
 		page,
 		lightWorkspace,

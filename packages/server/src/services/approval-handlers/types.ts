@@ -42,3 +42,16 @@ export interface ApprovalHandler {
 	applyApproved(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]>;
 	applyDenied?(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]>;
 }
+
+/**
+ * Thrown by `applyApproved` or `applyDenied` when the side effect could not be
+ * applied and wrote nothing. `resolveApproval` puts the approval back to pending
+ * and reports the message, so the decision can be made again instead of reading
+ * as made.
+ */
+export class ApprovalSideEffectError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'ApprovalSideEffectError';
+	}
+}

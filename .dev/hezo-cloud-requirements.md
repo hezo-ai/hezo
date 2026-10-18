@@ -43,8 +43,8 @@ together from H24 on.
 | H18 | A 1-vCPU Daytona shape | 38% off the container-hour rate | optional |
 | **H21** | Extract a `@hezo/ui` package | the control plane writing its own primitives | **done** |
 | **H24** | `seed` config block | a signup brief and language reaching the instance | **done** |
-| **H25** | Seed consumer: locale at boot, intake at first unlock | the CEO greeting a signup brief | **done** |
-| **H26** | Preset-aware intake prose | H25 reading as what it is | **done** |
+| **H25** | Seed consumer: locale at boot, brief offered as the first chat message | the CEO greeting a signup brief | **done**, reworked |
+| **H26** | Preset-aware intake prose | H25 reading as what it is | superseded by the H25 rework |
 | **H27** | Remove the language step; setup carries the language | one gate order on every instance | **done**, product change |
 | **H28** | Lock the locale route on the master key | tenants no longer world-writable | **done**, product change |
 | **H29** | Translate the first screens | the seeded language reaching the gate | **done**, product change |
@@ -770,39 +770,35 @@ the key; the plane writes the block only for a release that reads it.
 Documented in `docs/deployment/configuration.md` (hand-written; the comment
 claiming a generator was stale and is gone) and architecture § 12.
 
-## H25 — the seed consumer *(done)*
+## H25 — the seed consumer *(done; reworked)*
 
 `services/seed.ts`, the one reader of the block. `applySeedLocale` runs in the
 `workspace` startup phase after `seedDefaultTeam` and writes the locale only
 when none is configured, so `/api/status` reports `localeConfigured: true` from
-the first request and every browser adopts it. `consumeSeedProject` is
-registered on `masterKeyManager.onUnlock` - which `setup()` fires before the
-setup route returns - and opens one CEO intake for the brief, titled from its
-first sentence (`deriveProjectName`: syntax and controls stripped, 60 code
-points, "New project" when empty). Once-ness is a `system_meta` marker
-(`seed_project:consumed`) written as `INSERT ... ON CONFLICT DO NOTHING
-RETURNING` *before* the work, so a restart, a rebuilt host or two processes on
-one database open one intake and only a wiped database seeds again; a null or
-thrown intake gives the marker back for the next unlock. **A race the plan did
-not see:** the superuser used to be created after `setup()` returned, so the
-intake's admin mention found nobody and the CEO's heartbeat was never parked
-against the unanswered thread. `/auth/setup` now creates the superuser before it
-enrols the key. Proven by a test that boots `startup()` with a seed.
+the first request and every browser adopts it.
 
-## H26 — preset-aware intake prose *(done)*
+**The brief is an offer, not a task.** The first version opened a CEO intake
+task in HQ at the first unlock. New-project planning has since moved into the
+CEO chat, and the intake task with it. `pendingSeedBrief` now answers the
+brief while it is worth offering: no legacy `seed_project:consumed` marker (an
+instance where the first version already opened the task), no non-internal
+project, and no admin message in an HQ conversation. `GET /api/chat/conversation`
+carries it as `seed_brief` on the default thread, and the home screen's CEO chat
+shows a seed greeting and a chip that sends a translated lead line plus the brief
+as the admin's own first message. Nothing is written at unlock and no turn runs
+until the admin sends it, so the brief never needs an AI credential at boot. The
+`seed` config shape is unchanged; the control plane's spec and golden snapshot
+(`hezo-ai/cloud`, `.dev/track-h-spec.md`) still describe the first version and
+need the same rewording. `/auth/setup` still creates the superuser before it
+enrols the key.
 
-A brief from signup is not a Create Project form: nobody named the project or
-chose a team type, and the text was typed before its author saw the instance.
-`CreateProjectIntakeInput.origin` (`'form' | 'seed'`, required) selects a row of
-one prose table - the greeting's opener and closing ask, the task body's context
-paragraph, the baseline line (never "Blank (Captain only)" for a choice nobody
-made) and steps 2-3. The seed row says the brief was written at signup on
-hezo.ai, quotes it as a blockquote between two stated rules so a heading or a
-numbered step inside it cannot read as the CEO's instructions, names the admin's
-language from the instance locale and asks for the reply in it, and tells the
-CEO to propose a name the admin confirms rather than passing the working title
-to `create_project` (a non-Latin sentence slugs to nothing). The form row is the
-dialog's prose byte for byte. `agents/_instance/ceo.md` covers both origins.
+## H26 — preset-aware intake prose *(superseded)*
+
+The intake task carried a second prose row for a brief from signup: nobody named
+the project or chose a team, and the brief was quoted so its text could not read
+as the CEO's instructions. With the intake task gone the brief arrives as the
+admin's own chat message under a lead line, and the CEO prompt's *New projects*
+bullet covers a signup brief (propose a name and a team).
 
 ## H27 — remove the language step *(done; changes self-hosted behaviour)*
 
@@ -831,8 +827,9 @@ steps gets the browser-only save the switcher already explains.
 
 ## H29 — translate the first screens *(done; changes self-hosted behaviour)*
 
-The master-key gate, the home welcome card, the intake panel and the provider
-picker's heading were hardcoded English, so a seeded German instance showed a
+The master-key gate, the home welcome card, the intake panel (since removed,
+with its three `intake.*` keys) and the provider picker's heading were hardcoded
+English, so a seeded German instance showed a
 German corner switcher over an English vault. Thirty-five keys in all twelve
 catalogs, five existing keys reused; the English values are byte-identical to
 the literals they replaced, so every assertion matching the copy stands. Not in

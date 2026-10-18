@@ -1,10 +1,13 @@
-import { splitSummaryDetails } from '@hezo/shared';
+import { checkPromptStyle, MAX_TASK_SUGGESTIONS_PER_TASK, splitSummaryDetails } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	ACTIVE_ADMIN_MENTION_RULE,
+	AGREED_TASKS_HEADING,
+	buildTaskSuggestionsBody,
+	enqueueTaskSuggestionsTask,
 	enqueueTeamCoherenceReviewTask,
 } from '../src/services/description-tasks';
 import { safeClose } from './helpers';
@@ -490,5 +493,119 @@ describe('project creation', () => {
 			[ceoMemberId, coherence.rows[0].id],
 		);
 		expect(wakeups.rows[0].n).toBe(1);
+	});
+});
+
+describe('enqueueTaskSuggestionsTask', () => {
+	beforeEach(async () => {
+		await db.query(`DELETE FROM tasks WHERE labels @> '["task-suggestions"]'::jsonb`);
+	});
+
+	async function row(id: string) {
+		const r = await db.query<{
+			title: string;
+			status: string;
+			assignee_id: string | null;
+			labels: string[];
+			description: string;
+		}>(
+			`SELECT title, status::text AS status, assignee_id, labels, description FROM tasks WHERE id = $1`,
+			[id],
+		);
+		return r.rows[0];
+	}
+
+	it('on a new project: assigned to the CEO, blocked on setup, no wake yet', async () => {
+		const setup = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial');
+		const created = await enqueueTaskSuggestionsTask(db, teamId, 'new_project', {
+			blockedByTaskId: setup,
+		});
+		expect(created?.created).toBe(true);
+		const t = await row(created?.id as string);
+		expect(t.title).toBe('Suggest starter tasks');
+		expect(t.status).toBe('blocked');
+		expect(t.assignee_id).toBe(ceoMemberId);
+		expect(t.labels).toEqual(['internal', 'task-suggestions']);
+		const dep = await db.query(
+			'SELECT 1 FROM task_dependencies WHERE task_id = $1 AND blocked_by_task_id = $2',
+			[created?.id, setup],
+		);
+		expect(dep.rows).toHaveLength(1);
+		const wakes = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
+			[created?.id],
+		);
+		expect(wakes.rows).toHaveLength(0);
+	});
+
+	it('on demand: starts at once with a wake for the CEO', async () => {
+		const created = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand');
+		const t = await row(created?.id as string);
+		expect(t.title).toBe('Suggest tasks');
+		expect(t.status).toBe('backlog');
+		expect(t.assignee_id).toBe(ceoMemberId);
+		const wakes = await db.query<{ member_id: string }>(
+			`SELECT member_id FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
+			[created?.id],
+		);
+		expect(wakes.rows.map((w) => w.member_id)).toEqual([ceoMemberId]);
+	});
+
+	it('two calls at once file one task', async () => {
+		const [a, b] = await Promise.all([
+			enqueueTaskSuggestionsTask(db, teamId, 'on_demand'),
+			enqueueTaskSuggestionsTask(db, teamId, 'on_demand'),
+		]);
+		expect([a?.created, b?.created].sort()).toEqual([false, true]);
+		expect(a?.id).toBe(b?.id);
+	});
+
+	it('reuses the open suggestions task rather than filing a second one', async () => {
+		const first = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand');
+		const second = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand');
+		expect(second).toEqual({ id: first?.id, identifier: first?.identifier, created: false });
+		const n = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM tasks WHERE team_id = $1 AND labels @> '["task-suggestions"]'::jsonb`,
+			[teamId],
+		);
+		expect(n.rows[0].n).toBe(1);
+	});
+});
+
+describe('buildTaskSuggestionsBody', () => {
+	for (const reason of ['new_project', 'on_demand'] as const) {
+		it(`${reason}: passes the prompt style check and names the tools and the rules`, () => {
+			const body = buildTaskSuggestionsBody(reason, 'stock-watch');
+			expect(checkPromptStyle(body)).toEqual([]);
+			const { summary, details } = splitSummaryDetails(body);
+			expect(summary).toContain('stock-watch');
+			expect(details).toContain('`suggest_task`');
+			expect(details).toContain('`list_tasks`');
+			expect(details).toContain(`at most ${MAX_TASK_SUGGESTIONS_PER_TASK} cards`);
+			expect(details).toContain(
+				'Never give a cadence to setup, a connection or an input from the admin',
+			);
+			expect(details).toContain('`report_no_work`');
+			expect(details).toContain(ACTIVE_ADMIN_MENTION_RULE);
+			// The summary ask comes before the cards, so every card decision answers it,
+			// and a run with nothing to suggest asks nothing.
+			const summaryAt = (details ?? '').indexOf(
+				'**Post one summary comment before you file a card.**',
+			);
+			const cardsAt = (details ?? '').indexOf('**File each card with `suggest_task`.**');
+			expect(summaryAt).toBeGreaterThan(-1);
+			expect(summaryAt).toBeLessThan(cardsAt);
+			expect(details).toContain('names the admin as `@@admin`, never `@admin`');
+		});
+	}
+
+	it('only a new project files the tasks the admin agreed, blocked on planning', () => {
+		const fresh = buildTaskSuggestionsBody('new_project', 'stock-watch');
+		expect(fresh).toContain(`## ${AGREED_TASKS_HEADING}`);
+		expect(fresh).toContain('`blocked_by_task_ids`');
+		expect(fresh).toContain("The Captain's planning task starts after that.");
+		const later = buildTaskSuggestionsBody('on_demand', 'stock-watch');
+		expect(later).not.toContain(AGREED_TASKS_HEADING);
+		expect(later).not.toContain('planning task starts after');
 	});
 });

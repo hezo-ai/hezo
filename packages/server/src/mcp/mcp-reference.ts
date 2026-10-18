@@ -86,8 +86,8 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			"The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task, which the planning task is blocked on. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.",
-		auth: 'CEO only - call after the admin has explicitly approved the scope and team type in intake.',
+			"The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task - and the CEO's starter task-suggestions task (`suggestions_task_id`, `suggestions_task_identifier`), which waits on setup. The planning task waits on both. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails or the name is already used by a project, naming that project.",
+		auth: 'CEO only - call after the admin has explicitly approved the scope and team type.',
 	},
 	start_team_setup: {
 		category: 'Projects',
@@ -192,6 +192,18 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'`{ approval_id, status: "pending", payload }`. Files a goal *suggestion* the admin must approve - no goal exists until then. On approval the real goal is created and appears on the Goals page. Surfaces as an Approve/Deny card on the `task_id` thread (when given) and on the project Goals page. Returns `{ error }` if the caller is not the Captain/CEO, the project is HQ/internal, or the inputs are invalid.',
 		auth: 'Captain (its own team) or CEO (any team via `project`), and only from within an agent run.',
+	},
+	suggest_task: {
+		category: 'Tasks',
+		returns:
+			"`{ approval_id, status: \"pending\", payload }`. Files a task *suggestion* as an Approve/Deny card on the CEO's open task-suggestions task and in the inbox - no task exists until the admin approves. On approval the task is created for the project's Captain; while the project's planning task is open, the new task is blocked by it. A repeating suggestion lets the admin pick daily, weekly, monthly or just once on the card. Returns `{ error }` if the caller is not the CEO, the project is HQ, `task_id` is not the project's open task-suggestions task, the task already has 8 suggestions, the title matches an open task or pending suggestion, or the cadence breaks the rule for the kind.",
+		auth: 'The CEO only.',
+	},
+	start_task_suggestions: {
+		category: 'Tasks',
+		returns:
+			"`{ task_id, task_identifier, created }`. Opens the CEO's task-suggestions task on the project (assigned to the CEO, which starts at once), or returns the open one with `created: false`. Returns `{ error }` on HQ or when the caller may not ask. Twin of `POST /projects/:projectId/task-suggestions`.",
+		auth: 'A superuser admin or an API key; among agents, the CEO only.',
 	},
 	update_goal_progress: {
 		category: 'Goals',

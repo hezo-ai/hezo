@@ -162,38 +162,6 @@ describe('POST /api/projects with marketplace_slug', () => {
 	});
 });
 
-describe('POST /api/project-intakes with marketplace_slug', () => {
-	it('records the marketplace team as the CEO baseline', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Intake Co',
-				description: 'Scope with the CEO.',
-				marketplace_slug: 'app-dev',
-			}),
-		});
-		expect(res.status).toBe(201);
-		const intake = (await res.json()).data as { intake_task_id: string };
-		// The intake ticket embeds the marketplace baseline for the CEO.
-		const task = await db.query<{ description: string }>(
-			`SELECT description FROM tasks WHERE id = $1`,
-			[intake.intake_task_id],
-		);
-		expect(task.rows[0].description).toContain('marketplace_slug');
-		expect(task.rows[0].description).toContain('app-dev');
-	});
-
-	it('404s on an unknown marketplace slug', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Intake Co 2', description: 'x', marketplace_slug: 'nope' }),
-		});
-		expect(res.status).toBe(404);
-	});
-});
-
 describe('POST /api/projects/:projectId/marketplace-team', () => {
 	it('kicks off a CEO task to add the roster to an existing project', async () => {
 		// Create a Blank project first (Captain only), then add the sw-dev team.

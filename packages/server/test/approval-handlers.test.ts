@@ -16,6 +16,7 @@ describe('approval handler registry', () => {
 			ApprovalType.Strategy,
 			ApprovalType.SkillProposal,
 			ApprovalType.GoalSuggestion,
+			ApprovalType.TaskSuggestion,
 		];
 		for (const type of expected) {
 			expect(APPROVAL_HANDLERS[type]).toBeDefined();
@@ -24,14 +25,18 @@ describe('approval handler registry', () => {
 	});
 
 	it('only the proposal-style approvals carry a denied side effect', () => {
-		// Hire and goal-suggestion both flip their proposal comment to "denied" and
-		// re-wake the requester on a deny; the other side-effecting types (strategy,
-		// skill_proposal) have no denied behaviour, and project creation is no longer
-		// an approval at all.
+		// Hire, goal-suggestion and task-suggestion all flip their proposal comment
+		// to "denied" and re-wake the requester on a deny; the other side-effecting
+		// types (strategy, skill_proposal) have no denied behaviour, and project
+		// creation is no longer an approval at all.
 		const withDenied = Object.entries(APPROVAL_HANDLERS)
 			.filter(([, handler]) => typeof handler?.applyDenied === 'function')
 			.map(([type]) => type);
-		expect(withDenied).toEqual([ApprovalType.Hire, ApprovalType.GoalSuggestion]);
+		expect(withDenied).toEqual([
+			ApprovalType.Hire,
+			ApprovalType.GoalSuggestion,
+			ApprovalType.TaskSuggestion,
+		]);
 	});
 
 	it('has no handler for pure status-flip approval types or project creation', () => {

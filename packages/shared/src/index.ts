@@ -25,6 +25,7 @@ export * from './run-log-maintenance.js';
 export * from './search/terms.js';
 export * from './system-prompt-vars.js';
 export * from './task-progress.js';
+export * from './task-suggestions.js';
 export * from './task-thread.js';
 export * from './token-buckets.js';
 export * from './types/index.js';

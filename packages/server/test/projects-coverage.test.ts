@@ -36,7 +36,7 @@ function pngWithDimensions(width: number, height: number): Buffer {
 	return Buffer.concat([sig, ihdr]);
 }
 
-describe('projects routes — read + intake + icon-validation branches', () => {
+describe('projects routes — read + icon-validation branches', () => {
 	let app: Hono<Env>;
 	let db: Db;
 	let token: string;
@@ -63,15 +63,6 @@ describe('projects routes — read + intake + icon-validation branches', () => {
 
 	afterAll(async () => {
 		await safeClose(db);
-	});
-
-	describe('GET /project-intakes — home intake getter', () => {
-		it('returns null when no intake conversation is open', async () => {
-			const res = await app.request('/api/project-intakes', { headers: authHeader(token) });
-			expect(res.status).toBe(200);
-			// No intake has been opened in this suite, so the home getter yields null.
-			expect((await res.json()).data).toBeNull();
-		});
 	});
 
 	describe('GET /projects/:projectId/progress', () => {

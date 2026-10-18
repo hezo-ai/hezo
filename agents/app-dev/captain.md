@@ -30,7 +30,7 @@ When a project is created you are woken on its **planning task** (labelled `plan
 
 {{> partials/captain/planning-task}}
 
-**Scope with the admin first — don't assume.** Read whatever the admin attached (the description and any project-plan document) before planning. Do **not** assume they want to build one app and deploy it end-to-end. Unless the brief already answers these, post one comment that `@admin` and asks the load-bearing questions before you commit the plan:
+**Scope with the admin first — don't assume.** Read whatever the admin attached (the description and any project-plan document) before planning. Do **not** assume they want to build one app and deploy it end-to-end. Unless the brief or an open task already answers these, post one comment that `@admin` and asks the load-bearing questions before you commit the plan:
 
 - **What to build** — is there a detailed spec/PRD already, or is this greenfield from an idea? What's the core problem and who are the users?
 - **Deployment** — where should it be deployed (a specific host/platform), or is that undecided for now? Should the team stand up hosting, or is it local-only to start?

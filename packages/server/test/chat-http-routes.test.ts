@@ -7,6 +7,7 @@ import {
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { resetRuntimeConfig, runtimeConfig, setRuntimeConfig } from '../src/config/runtime';
 import { encrypt } from '../src/crypto/encryption';
 import { setMonthlyContainerHours } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
@@ -337,6 +338,39 @@ describe('CEO chat HTTP routes', () => {
 				'SELECT COUNT(*)::int AS n FROM chat_conversations',
 			);
 			expect(rows.rows[0].n).toBe(1);
+		});
+
+		test('offers the signup brief on the default thread only', async () => {
+			const brief = 'Track my portfolio and send a weekly report.';
+			setRuntimeConfig({ ...runtimeConfig(), seed: { project: { description: brief } } });
+			try {
+				const res = await app.request('/api/chat/conversation', {
+					headers: authHeader(ctx.token),
+				});
+				const body = (await res.json()).data;
+				expect(body.seed_brief).toBe(brief);
+
+				// An explicit thread is never the home landing, so it carries no offer.
+				const explicit = await app.request(
+					`/api/chat/conversation?conversation_id=${body.conversation_id}`,
+					{ headers: authHeader(ctx.token) },
+				);
+				expect((await explicit.json()).data.seed_brief).toBeNull();
+
+				// Once the admin has written to the CEO, the offer is gone.
+				await seedMessage({ conversationId: body.conversation_id, content: 'Hi' });
+				const after = await app.request('/api/chat/conversation', {
+					headers: authHeader(ctx.token),
+				});
+				expect((await after.json()).data.seed_brief).toBeNull();
+			} finally {
+				resetRuntimeConfig();
+			}
+		});
+
+		test('offers no brief when the instance was not seeded', async () => {
+			const res = await app.request('/api/chat/conversation', { headers: authHeader(ctx.token) });
+			expect((await res.json()).data.seed_brief).toBeNull();
 		});
 	});
 

@@ -17,11 +17,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	string,
 	(cid: string, row: Record<string, unknown>) => QueryKey[]
 > = {
-	tasks: (cid) => [
-		queryKeys.projects.tasks(cid),
-		queryKeys.projects.all(),
-		queryKeys.projectIntakes(),
-	],
+	tasks: (cid) => [queryKeys.projects.tasks(cid), queryKeys.projects.all()],
 	heartbeat_runs: (cid, row) => {
 		const keys: QueryKey[] = [queryKeys.projects.tasks(cid), queryKeys.projects.agents(cid)];
 		// A run starting/finishing flips the task's run-now availability (task_busy),
@@ -63,7 +59,6 @@ const TABLE_TO_QUERY_KEY: Record<
 	member_agents: (cid) => [queryKeys.projects.agents(cid), queryKeys.projects.budgetStatus(cid)],
 	projects: (cid) => [
 		queryKeys.projects.all(),
-		queryKeys.projectIntakes(),
 		// The Captain refreshing the progress summary broadcasts a projects UPDATE.
 		queryKeys.projects.progress(cid),
 		queryKeys.projects.detail(cid),
@@ -336,7 +331,6 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 		joinRoom(room);
 		const unsubscribe = subscribe(WsMessageType.ProjectsChanged, () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true });
-			queryClient.invalidateQueries({ queryKey: queryKeys.projectIntakes() });
 		});
 		return () => {
 			unsubscribe();

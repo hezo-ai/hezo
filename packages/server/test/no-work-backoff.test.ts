@@ -439,7 +439,7 @@ describe('parkedOnAdminAsk', () => {
 		await clearRuns();
 		await insertAgentComment({ minutesAgo: 10, raisesAdminMention: true });
 
-		// The exact leak: an intake whose last word is a question to a human, woken
+		// The exact leak: a task whose last word is a question to a human, woken
 		// again every heartbeat to re-read a thread nobody has added to.
 		expect(await parkedOnAdminAsk(db, agentId, taskId, false)).toBe(true);
 	});

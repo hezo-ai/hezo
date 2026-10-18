@@ -5,6 +5,7 @@ import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
 import { GoalSuggestionComment } from './goal-suggestion-comment';
 import { HireProposalComment } from './hire-proposal-comment';
+import { TaskSuggestionComment } from './task-suggestion-comment';
 
 interface Props {
 	comment: CommentDataOf<'action'>;
@@ -12,7 +13,7 @@ interface Props {
 	taskId?: string;
 }
 
-export function ActionComment({ comment, projectId }: Props) {
+export function ActionComment({ comment, projectId, taskId }: Props) {
 	const kind = comment.content?.kind ?? '';
 
 	if (kind === ActionCommentKind.HireProposal) {
@@ -21,6 +22,10 @@ export function ActionComment({ comment, projectId }: Props) {
 
 	if (kind === ActionCommentKind.GoalSuggestion) {
 		return <GoalSuggestionComment comment={comment} projectId={projectId} />;
+	}
+
+	if (kind === ActionCommentKind.TaskSuggestion) {
+		return <TaskSuggestionComment comment={comment} projectId={projectId} taskId={taskId} />;
 	}
 
 	if (kind !== ActionCommentKind.SetupRepo) {

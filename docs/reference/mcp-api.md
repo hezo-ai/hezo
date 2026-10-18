@@ -148,7 +148,7 @@ Replace the project progress summary shown at the top of the project dashboard. 
 
 _Write tool._
 
-Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and setup task identifiers.
+Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in your conversation with them - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project with three tasks in order - your coherence/setup task, your starter task-suggestions task, and the Captain's planning task, which waits on both - then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed with the admin - the exact roles to hire, any system-prompt rewrites, and the reporting structure. Record any starter tasks the admin already agreed under a `## Agreed with the admin` section of the returned suggestions_task_identifier with update_task; the suggestions run files them without a card. Then call start_team_setup(project) to begin the run. A name an existing project already uses is refused, and the error names that project. Returns the new project plus its planning, setup and suggestions task identifiers.
 
 **Parameters:**
 
@@ -160,18 +160,17 @@ Create a new project together with its dedicated team. CEO-only. Call this ONLY 
 | `initial_project_plan` | `string` | No | Optional project plan document (markdown), seeded as project-plan.md |
 | `template_id` | `string` | No | Team-type template id (from list_team_templates). Mutually exclusive with source_team_id; defaults to Blank when neither is given. |
 | `source_team_id` | `string` | No | Existing team to clone into a fresh template. Mutually exclusive with template_id. |
-| `marketplace_slug` | `string` | No | A marketplace team slug (from get_marketplace_team / the intake baseline) to provision the roster from directly. Mutually exclusive with template_id and source_team_id. |
-| `intake_task_id` | `string` | No | The HQ project-intake task this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success. |
+| `marketplace_slug` | `string` | No | A marketplace team slug (from list_marketplace_teams / get_marketplace_team, or the team the admin named) to provision the roster from directly. Mutually exclusive with template_id and source_team_id. |
 
-**Returns:** The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task, which the planning task is blocked on. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.
+**Returns:** The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task - and the CEO's starter task-suggestions task (`suggestions_task_id`, `suggestions_task_identifier`), which waits on setup. The planning task waits on both. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails or the name is already used by a project, naming that project.
 
-**Authorization:** CEO only - call after the admin has explicitly approved the scope and team type in intake.
+**Authorization:** CEO only - call after the admin has explicitly approved the scope and team type.
 
 ### `start_team_setup`
 
 _Write tool._
 
-Kick off the initial team-coherence/setup run for a project you created via create_project. CEO-only. Projects created directly from the admin form start their coherence pass automatically; projects you create do NOT. First author the coherence task with update_task - replace its description with the concrete plan you agreed in intake (the exact roles to hire and why, any system-prompt rewrites, and the reporting structure) - then call this to assign the task to yourself and start the run. Returns the started task; errors if there is no open setup task for the project or a run is already active on it.
+Kick off the initial team-coherence/setup run for a project you created via create_project. CEO-only. Projects created directly from the admin form start their coherence pass automatically; projects you create do NOT. First author the coherence task with update_task - replace its description with the concrete plan you agreed with the admin (the exact roles to hire and why, any system-prompt rewrites, and the reporting structure) - then call this to assign the task to yourself and start the run. Returns the started task; errors if there is no open setup task for the project or a run is already active on it.
 
 **Parameters:**
 
@@ -348,6 +347,43 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 **Returns:** The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` - flagged even before that asset exists). Returns `{ error }` on a validation failure.
 
 **Authorization:** An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 3.
+
+### `suggest_task`
+
+_Write tool._
+
+Suggest a task for the admin to approve, as an Approve/Deny card on your open task-suggestions task. CEO-only. This does NOT create a task: the task exists only once the admin approves, assigned to the project's Captain. While the project's planning task is open, an approved task waits for it. Pick a `kind`: `admin_input` (information only the admin can give), `connection` (a service to connect, with the narrowest access), `recurring` (work that comes back on a schedule), `report` (a report; ask for a visual plus a short text summary), `deliverable` (the first concrete output the brief asks for). Set `cadence` (daily, weekly or monthly) only for work that repeats by nature: `recurring` needs one, `report` takes one only when periodic, the other kinds take none. The admin can change the cadence on the card, or pick just once. At most 8 cards per task-suggestions task. A title that matches an open task or a pending suggestion in the project is refused, so check the board first.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `kind` | `admin_input` \| `connection` \| `recurring` \| `report` \| `deliverable` | Yes | What the suggested task is for. Decides whether it may repeat. |
+| `title` | `string` | Yes | Short task title. |
+| `description` | `string` | No | What the task asks for and why it helps the project. |
+| `cadence` | `string` | No | daily, weekly or monthly. Only for work that repeats by nature; leave it out otherwise. |
+| `task_id` | `string` | Yes | Your open task-suggestions task in this project, as an identifier (e.g. "SW-2") or UUID. |
+
+**Returns:** `{ approval_id, status: "pending", payload }`. Files a task *suggestion* as an Approve/Deny card on the CEO's open task-suggestions task and in the inbox - no task exists until the admin approves. On approval the task is created for the project's Captain; while the project's planning task is open, the new task is blocked by it. A repeating suggestion lets the admin pick daily, weekly, monthly or just once on the card. Returns `{ error }` if the caller is not the CEO, the project is HQ, `task_id` is not the project's open task-suggestions task, the task already has 8 suggestions, the title matches an open task or pending suggestion, or the cadence breaks the rule for the kind.
+
+**Authorization:** The CEO only.
+
+### `start_task_suggestions`
+
+_Write tool._
+
+Open the CEO's task-suggestions task on an existing project, or return the open one. The CEO then reads the board and suggests tasks as Approve/Deny cards (see suggest_task). An admin or API key may call it; among agents, only the CEO. Never on HQ. Returns the task and whether it was created.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+
+**Returns:** `{ task_id, task_identifier, created }`. Opens the CEO's task-suggestions task on the project (assigned to the CEO, which starts at once), or returns the open one with `created: false`. Returns `{ error }` on HQ or when the caller may not ask. Twin of `POST /projects/:projectId/task-suggestions`.
+
+**Authorization:** A superuser admin or an API key; among agents, the CEO only.
 
 ### `create_tasks`
 

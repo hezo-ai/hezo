@@ -27,7 +27,7 @@ describe('prompt-bearing classification', () => {
 				'marketplace/teams/investment.json',
 				'packages/server/src/services/template-resolver.ts',
 				'packages/server/src/services/chat-session-manager.ts',
-				'packages/server/src/services/project-intake.ts',
+				'packages/server/src/services/description-tasks.ts',
 			]),
 		).toHaveLength(7);
 	});
@@ -48,8 +48,8 @@ describe('prompt-bearing classification', () => {
 		const hit = (f: string) => PROMPT_BEARING_PATTERNS.some((p) => p.test(f));
 		expect(hit('packages/server/src/services/template-resolver.ts')).toBe(true);
 		expect(hit('packages/server/test/template-resolver.test.ts')).toBe(false);
-		expect(hit('packages/server/src/services/project-intake.ts')).toBe(true);
-		expect(hit('packages/server/test/project-intake.test.ts')).toBe(false);
+		expect(hit('packages/server/src/services/description-tasks.ts')).toBe(true);
+		expect(hit('packages/server/test/description-tasks.test.ts')).toBe(false);
 	});
 });
 

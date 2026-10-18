@@ -20,6 +20,7 @@ import { requireAdminEquivalent, requireTeamAccessForResource } from '../middlew
 import { checkProjectAssetIds } from '../services/asset-ownership';
 import { postChatSystemMessage } from '../services/chat-breadcrumbs';
 import { hoursQuotaExhausted } from '../services/run-concurrency';
+import { pendingSeedBrief } from '../services/seed';
 import { CreateTaskError, createTask } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
 import { buildCreateTaskCaller } from './tasks';
@@ -84,7 +85,8 @@ chatRoutes.get('/chat/conversation', async (c) => {
 
 	const manager = c.get('chatSessionManager');
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
-	const conversationId = await resolveConversationId(c, c.req.query('conversation_id'));
+	const explicitConversation = c.req.query('conversation_id');
+	const conversationId = await resolveConversationId(c, explicitConversation);
 	if (!conversationId) return err(c, 'NOT_FOUND', 'conversation not found', 404);
 
 	// The chatbox shows the active window — the non-compacted messages. Older
@@ -112,6 +114,11 @@ chatRoutes.get('/chat/conversation', async (c) => {
 		// turn that needs a new container is refused while this is true, and
 		// learning that only after sending is the failure this answer prevents.
 		hours_exhausted: await hoursQuotaExhausted(db),
+		// A hosted instance's signup brief, offered on the home screen as a
+		// one-tap first message. Only the default thread offers it; the home
+		// landing renders that thread. Here, not on `/api/status`, because the
+		// brief is the admin's own words and status is unauthenticated.
+		seed_brief: explicitConversation ? null : await pendingSeedBrief(db),
 	});
 });
 

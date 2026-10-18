@@ -1,12 +1,15 @@
-import { ApprovalStatus, type BlockedTicket } from '@hezo/shared';
+import { ApprovalStatus, type BlockedTicket, type TaskSuggestionCadence } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useI18n } from '../lib/i18n';
 import {
 	invalidateAllTeamAgentCaches,
 	invalidateTeamAgentCaches,
 } from '../lib/invalidate-team-caches';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import type { CommentSkeleton } from './use-comments';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Approval {
 	id: string;
@@ -160,5 +163,31 @@ export function useUpdateHireProposal() {
 			projectSlug?: string;
 		}) => api.patch<Approval>(`/api/approvals/${approvalId}`, edits),
 		onSuccess: (_data, variables) => invalidateApprovalCaches(variables.projectSlug),
+	});
+}
+
+/**
+ * The admin's repeat choice on a pending task suggestion card. The card's
+ * stored snapshot lives on the comment skeleton, so the new choice shows at once
+ * and rolls back if the server refuses it.
+ */
+export function useSetTaskSuggestionCadence(projectSlug: string, taskId: string) {
+	const { t } = useI18n();
+	return useOptimisticMutation<
+		{ approvalId: string; commentId: string; cadence: TaskSuggestionCadence },
+		Approval,
+		CommentSkeleton[]
+	>({
+		mutationFn: ({ approvalId, cadence }) =>
+			api.patch<Approval>(`/api/approvals/${approvalId}`, { cadence }),
+		queryKey: queryKeys.projects.taskCommentSkeletons(projectSlug, taskId),
+		applyOptimistic: (current, { commentId, cadence }) =>
+			current?.map((c) =>
+				c.id === commentId
+					? { ...c, content: { ...(c.content as Record<string, unknown>), cadence } }
+					: c,
+			),
+		invalidateOnSettled: [queryKeys.approvals.root()],
+		errorMessage: t('taskSuggestion.cadenceFailed'),
 	});
 }

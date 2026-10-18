@@ -29,7 +29,6 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		invalidateQueriesForRowChange(client, SLUG, 'tasks', {});
 		expect(keys).toContainEqual(queryKeys.projects.tasks(SLUG));
 		expect(keys).toContainEqual(queryKeys.projects.all());
-		expect(keys).toContainEqual(queryKeys.projectIntakes());
 	});
 
 	test('approvals row change invalidates approvals + inbox count', () => {

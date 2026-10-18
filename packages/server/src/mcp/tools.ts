@@ -51,21 +51,25 @@ import {
 	isTextAssetMime,
 	learnedRulesCapError,
 	learnedRulesOnlyChange,
+	MAX_TASK_SUGGESTIONS_PER_TASK,
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
 	RETIRED_BUDGET_FIELDS,
 	ReactionKind,
+	type RepeatingCadence,
 	SEARCH_SCOPES,
 	SUMMARY_DETAILS_HEADING,
 	summarizeMethodAccess,
 	summaryDetailsWarnings,
 	TaskStatus,
+	TaskSuggestionKind,
 	TERMINAL_TASK_STATUSES,
 	THREAD_ROW_CATEGORIES,
 	type ThreadRowCategory,
 	taskStatusError,
 	type UsageTotals,
+	validateSuggestedCadence,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -138,16 +142,23 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
-import { isUniqueViolation, likePrefixPattern, withTransaction } from '../lib/sql';
+import {
+	isUniqueViolation,
+	likePrefixPattern,
+	terminalStatusParams,
+	withTransaction,
+} from '../lib/sql';
 import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
+	assertNoPendingTaskSuggestions,
 	assertNoUnansweredAdminMentions,
 	resolveParentAssignment,
 } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
+import { isAdminEquivalent } from '../middleware/auth';
 import { setAgentAdminStatus } from '../services/agent-admin';
 import { loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
@@ -180,9 +191,11 @@ import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { writeCustomPrompt } from '../services/custom-prompt';
 import {
+	AGREED_TASKS_HEADING,
 	COHERENCE_LABEL,
 	enqueueTeamCoherenceReviewTask,
 	findOpenLabeledTask,
+	startTaskSuggestions,
 } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
@@ -209,7 +222,6 @@ import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
 import { setConnectorAuthError } from '../services/oauth/token-resolver';
 import { createProjectWithTeam } from '../services/project-create';
-import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import { authoredPromptError, authoredPromptWarning } from '../services/prompt-style-guard';
 import {
@@ -236,6 +248,11 @@ import {
 	taskUpdateMutationSql,
 	taskUpdateValueChanged,
 } from '../services/task-events';
+import {
+	fileTaskSuggestion,
+	TASK_SUGGESTIONS_LABEL,
+	type TaskSuggestionPayload,
+} from '../services/task-suggestion';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -1921,6 +1938,152 @@ export function registerTools(
 
 	tool(
 		server,
+		'suggest_task',
+		"Suggest a task for the admin to approve, as an Approve/Deny card on your open task-suggestions task. CEO-only. This does NOT create a task: the task exists only once the admin approves, assigned to the project's Captain. While the project's planning task is open, an approved task waits for it. Pick a `kind`: `admin_input` (information only the admin can give), `connection` (a service to connect, with the narrowest access), `recurring` (work that comes back on a schedule), `report` (a report; ask for a visual plus a short text summary), `deliverable` (the first concrete output the brief asks for). Set `cadence` (daily, weekly or monthly) only for work that repeats by nature: `recurring` needs one, `report` takes one only when periodic, the other kinds take none. The admin can change the cadence on the card, or pick just once. " +
+			`At most ${MAX_TASK_SUGGESTIONS_PER_TASK} cards per task-suggestions task. A title that matches an open task or a pending suggestion in the project is refused, so check the board first.`,
+		{
+			project: projectArg(),
+			kind: z
+				.enum(Object.values(TaskSuggestionKind) as [TaskSuggestionKind, ...TaskSuggestionKind[]])
+				.describe('What the suggested task is for. Decides whether it may repeat.'),
+			title: z.string().trim().min(1, 'title is required').describe('Short task title.'),
+			description: z
+				.string()
+				.optional()
+				.describe('What the task asks for and why it helps the project.'),
+			cadence: z
+				.string()
+				.optional()
+				.describe(
+					'daily, weekly or monthly. Only for work that repeats by nature; leave it out otherwise.',
+				),
+			task_id: z
+				.string()
+				.describe(
+					'Your open task-suggestions task in this project, as an identifier (e.g. "SW-2") or UUID.',
+				),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.memberId) {
+				return { error: 'suggest_task is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the CEO can suggest tasks' };
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const teamId = scope.teamId;
+
+			const proj = await db.query<{ is_internal: boolean }>(
+				`SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2`,
+				[scope.projectId, teamId],
+			);
+			if (proj.rows.length === 0) return { error: 'Project not found' };
+			if (proj.rows[0].is_internal) {
+				return { error: 'The HQ project does not take task suggestions' };
+			}
+
+			const kind = args.kind as TaskSuggestionKind;
+			const cadence = (args.cadence as string | undefined)?.trim() || undefined;
+			const cadenceError = validateSuggestedCadence(kind, cadence);
+			if (cadenceError) return { error: cadenceError };
+
+			const resolved = await resolveTaskId(db, teamId, args.task_id as string);
+			const terminal = terminalStatusParams(4);
+			const host = resolved
+				? await db.query<{ id: string }>(
+						`SELECT id FROM tasks
+						 WHERE id = $1 AND project_id = $2 AND labels @> $3::jsonb
+						   AND status NOT IN (${terminal.placeholders})`,
+						[
+							resolved,
+							scope.projectId,
+							JSON.stringify([TASK_SUGGESTIONS_LABEL]),
+							...terminal.values,
+						],
+					)
+				: null;
+			if (!resolved || !host || host.rows.length === 0) {
+				return {
+					error: `task_id must be your open ${TASK_SUGGESTIONS_LABEL} task in this project`,
+				};
+			}
+			const taskId = resolved;
+
+			const suggested = cadence as RepeatingCadence | undefined;
+			const payload: TaskSuggestionPayload = {
+				project_id: scope.projectId,
+				kind,
+				title: args.title as string,
+				description: (args.description as string | undefined)?.trim() || undefined,
+				suggested_cadence: suggested ?? null,
+				cadence: suggested ?? null,
+				task_id: taskId,
+			};
+			const filed = await fileTaskSuggestion(db, {
+				teamId,
+				payload,
+				requestedByMemberId: auth.memberId,
+			});
+			if (!filed.ok) return { error: filed.error };
+			const { approval: row, card } = filed;
+			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			if (card) {
+				broadcastCommentFamilyChange(
+					wsManager,
+					teamId,
+					scope.projectId,
+					'task_comments',
+					'INSERT',
+					card,
+				);
+			}
+			return { approval_id: row.id, status: row.status, payload: row.payload };
+		},
+		db,
+		{ write: true, audience: 'ceo' },
+	);
+
+	tool(
+		server,
+		'start_task_suggestions',
+		"Open the CEO's task-suggestions task on an existing project, or return the open one. The CEO then reads the board and suggests tasks as Approve/Deny cards (see suggest_task). An admin or API key may call it; among agents, only the CEO. Never on HQ. Returns the task and whether it was created.",
+		{ project: projectArg() },
+		async (args, db, auth) => {
+			if (auth.type === AuthType.Agent) {
+				const caller = await db.query<{ slug: string }>(
+					'SELECT slug FROM member_agents WHERE id = $1',
+					[auth.memberId],
+				);
+				if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+					return { error: 'Only the CEO can start task suggestions' };
+				}
+			} else if (!isAdminEquivalent(auth)) {
+				return { error: 'Admin access required' };
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const result = await startTaskSuggestions(db, scope.teamId, scope.projectId, {
+				byRunId: auth.type === AuthType.Agent ? (auth.runId ?? null) : null,
+				wsManager,
+			});
+			if (!result.ok) return { error: result.message };
+			return {
+				task_id: result.task_id,
+				task_identifier: result.task_identifier,
+				created: result.created,
+			};
+		},
+		db,
+		{ write: true, audience: 'ceo_if_agent' },
+	);
+
+	tool(
+		server,
 		'list_goals',
 		"List a project's goals (the objectives the Captain tracks). Each goal has a title, a `measurement` (the precise definition of when the goal is achieved - the bar to judge against), optional `actions` (admin guidance on what to do/check toward it), the Captain's current progress_percent (0-100), a health (pending/on_track/at_risk/off_track), a status_blurb, a check_frequency (daily/weekly/monthly), an optional target_date (deadline), and last_checked_at. As the Captain, call this during your heartbeat to see which goals are due for a fresh assessment, then call update_goal_progress for each. Archived goals are excluded unless include_archived is true.",
 		{
@@ -2241,6 +2404,16 @@ export function registerTools(
 						const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
 						if (!adminAskCheck.ok) return { error: adminAskCheck.message };
 					}
+				}
+				// Cancelled releases dependents just as done does, so an agent closes a
+				// task either way only once no suggestion on it waits for the admin.
+				if (
+					auth.type === AuthType.Agent &&
+					args.status !== currentStatus &&
+					(TERMINAL_TASK_STATUSES as readonly string[]).includes(args.status as string)
+				) {
+					const suggestionsCheck = await assertNoPendingTaskSuggestions(db, taskId);
+					if (!suggestionsCheck.ok) return { error: suggestionsCheck.message };
 				}
 
 				if (args.status !== undefined) {
@@ -2871,19 +3044,15 @@ export function registerTools(
 			.string()
 			.optional()
 			.describe(
-				'A marketplace team slug (from get_marketplace_team / the intake baseline) to provision the roster from directly. Mutually exclusive with template_id and source_team_id.',
-			),
-		intake_task_id: z
-			.string()
-			.optional()
-			.describe(
-				'The HQ project-intake task this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success.',
+				'A marketplace team slug (from list_marketplace_teams / get_marketplace_team, or the team the admin named) to provision the roster from directly. Mutually exclusive with template_id and source_team_id.',
 			),
 	} satisfies z.ZodRawShape;
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and setup task identifiers.',
+		"Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in your conversation with them - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project with three tasks in order - your coherence/setup task, your starter task-suggestions task, and the Captain's planning task, which waits on both - then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed with the admin - the exact roles to hire, any system-prompt rewrites, and the reporting structure. Record any starter tasks the admin already agreed under a `## " +
+			AGREED_TASKS_HEADING +
+			'` section of the returned suggestions_task_identifier with update_task; the suggestions run files them without a card. Then call start_team_setup(project) to begin the run. A name an existing project already uses is refused, and the error names that project. Returns the new project plus its planning, setup and suggestions task identifiers.',
 		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -2906,27 +3075,17 @@ export function registerTools(
 				return { error: 'Project creation is not available in this context' };
 			}
 
-			// Idempotency: if this fulfils an intake ticket, that ticket must still be
-			// open — otherwise a re-run (e.g. after a timeout) would create a second
-			// project + team. Check before creating anything.
-			const rawIntakeTaskId = input.intake_task_id?.trim() || undefined;
-			let intakeTaskId: string | undefined;
-			let intakeTeamId: string | undefined;
-			if (rawIntakeTaskId) {
-				// Accept either the intake ticket's identifier (e.g. "HQ-1") or its
-				// UUID, like every other task reference on the MCP surface. Intake
-				// tickets always live in HQ, so resolve within the default team.
-				intakeTaskId = (await resolveTaskId(db, DEFAULT_TEAM_ID, rawIntakeTaskId)) ?? undefined;
-				if (!intakeTaskId) return { error: 'Intake task not found' };
-				const intake = await db.query<{ status: string; team_id: string }>(
-					'SELECT status::text AS status, team_id FROM tasks WHERE id = $1',
-					[intakeTaskId],
-				);
-				if (intake.rows.length === 0) return { error: 'Intake task not found' };
-				if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(intake.rows[0].status)) {
-					return { error: 'This intake has already been completed' };
-				}
-				intakeTeamId = intake.rows[0].team_id;
+			// No planning task keys the request, so the name does: a retry after a lost
+			// result finds the project it made instead of building a second team.
+			const sameName = await db.query<{ slug: string }>(
+				`SELECT slug FROM projects
+				 WHERE is_internal = false AND LOWER(BTRIM(name)) = LOWER($1) LIMIT 1`,
+				[name],
+			);
+			if (sameName.rows[0]) {
+				return {
+					error: `A project named "${name}" already exists (${sameName.rows[0].slug}). If you created it just now, continue with that project; otherwise ask the admin for a different name.`,
+				};
 			}
 
 			const result = await createProjectWithTeam(
@@ -2942,40 +3101,15 @@ export function registerTools(
 					actorType: 'agent',
 					actorMemberId: auth.memberId,
 					// CEO-created: the coherence/setup ticket is created unassigned and
-					// does NOT auto-run. The CEO drafts its description with the intake
-					// plan, then calls start_team_setup to begin the run.
+					// does NOT auto-run. The CEO drafts its description with the setup it
+					// agreed with the admin, then calls start_team_setup to begin the run.
 					suppressCoherenceAutoStart: true,
 				},
 				{ events },
 			);
 			if (!result.ok) return { error: result.message };
 
-			const { project, planningTask, team, coherenceTask } = result;
-
-			if (intakeTaskId) {
-				const completed = await completeProjectIntakeAfterProvisioning(
-					db,
-					intakeTaskId,
-					name,
-					project.slug as string,
-					wsManager,
-				);
-				if (wsManager && intakeTeamId) {
-					const room = wsRoom.team(intakeTeamId);
-					if (completed.summaryComment) {
-						broadcastRowChange(
-							wsManager,
-							room,
-							'task_comments',
-							'INSERT',
-							completed.summaryComment,
-						);
-					}
-					if (completed.task) {
-						broadcastRowChange(wsManager, room, 'tasks', 'UPDATE', completed.task);
-					}
-				}
-			}
+			const { project, planningTask, team, coherenceTask, suggestionsTask } = result;
 
 			return {
 				...project,
@@ -2984,6 +3118,8 @@ export function registerTools(
 				planning_task_identifier: planningTask.identifier,
 				setup_task_id: coherenceTask?.id ?? null,
 				setup_task_identifier: coherenceTask?.identifier ?? null,
+				suggestions_task_id: suggestionsTask?.id ?? null,
+				suggestions_task_identifier: suggestionsTask?.identifier ?? null,
 			};
 		},
 		db,
@@ -2996,7 +3132,7 @@ export function registerTools(
 		'Kick off the initial team-coherence/setup run for a project you created via create_project. ' +
 			'CEO-only. Projects created directly from the admin form start their coherence pass automatically; ' +
 			'projects you create do NOT. First author the coherence task with update_task - replace its ' +
-			'description with the concrete plan you agreed in intake (the exact roles to hire and why, any ' +
+			'description with the concrete plan you agreed with the admin (the exact roles to hire and why, any ' +
 			'system-prompt rewrites, and the reporting structure) - then call this to assign the task to ' +
 			'yourself and start the run. Returns the started task; errors if there is no open setup task ' +
 			'for the project or a run is already active on it.',

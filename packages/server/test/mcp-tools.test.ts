@@ -1450,40 +1450,34 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		return (await callMcpTool(app, tokenStr, toolName, args)) as Record<string, unknown>;
 	}
 
-	async function startIntake(
-		name: string,
-	): Promise<{ intake_task_id: string; intake_task_identifier: string }> {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, description: 'Build the thing.' }),
-		});
-		expect(res.status).toBe(201);
-		return (await res.json()).data;
-	}
-
 	async function startupTemplateId(): Promise<string> {
 		const res = await app.request('/api/team-templates', { headers: authHeader(token) });
 		return (await res.json()).data.find((t: { name: string }) => t.name === 'App Team').id;
 	}
 
-	it('creates the project + team + planning task and closes the intake', async () => {
-		const intake = await startIntake(`CEO Create ${Date.now()}`);
+	// The CEO calls create_project from its chat turn, which carries no task and
+	// reaches every project.
+	async function ceoChatToken(): Promise<{ ceoId: string; ceoToken: string }> {
 		const ceoId = await instanceCeoId(db);
 		const { token: ceoToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			ceoId,
 			DEFAULT_TEAM_ID,
-			intake.intake_task_id,
+			null,
+			{ crossProject: true },
 		);
+		return { ceoId, ceoToken };
+	}
+
+	it('creates the project + team + planning task', async () => {
+		const { ceoToken } = await ceoChatToken();
 		const tplId = await startupTemplateId();
 
 		const result = await callToolAs(ceoToken, 'create_project', {
 			name: 'CEO Built Project',
 			description: 'A project the CEO created after approval.',
 			template_id: tplId,
-			intake_task_id: intake.intake_task_id,
 		});
 		expect(result.error).toBeUndefined();
 		expect(result.team_slug).toBeTruthy();
@@ -1507,131 +1501,68 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 			[project.rows[0].id],
 		);
 		expect(planning.rows[0].n).toBe(1);
-
-		// The intake ticket is closed.
-		const intakeTask = await db.query<{ status: string }>(
-			'SELECT status::text AS status FROM tasks WHERE id = $1',
-			[intake.intake_task_id],
-		);
-		expect(intakeTask.rows[0].status).toBe('done');
 	});
 
-	it('accepts the intake task identifier (e.g. HQ-1), not only its UUID', async () => {
-		const intake = await startIntake(`CEO Identifier ${Date.now()}`);
-		const ceoId = await instanceCeoId(db);
-		const { token: ceoToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			ceoId,
-			DEFAULT_TEAM_ID,
-			intake.intake_task_id,
+	it('ignores a stale intake_task_id and leaves that HQ task alone', async () => {
+		// An instance upgraded from a release that opened intake tasks can still
+		// hold one whose body tells the CEO to pass its id. The key is no longer
+		// part of the tool: the project is created and the old task is untouched.
+		const legacy = await callToolAs(token, 'create_task', {
+			project: 'hq',
+			title: 'Open new project: Legacy',
+			assignee_slug: 'ceo',
+		});
+		expect(legacy.error).toBeUndefined();
+		await db.query(
+			`UPDATE tasks SET status = 'in_progress', labels = '["project-intake"]'::jsonb WHERE id = $1`,
+			[legacy.id],
 		);
-
-		// Pass the human-readable identifier the agent sees in the thread, not the UUID.
+		const { ceoToken } = await ceoChatToken();
 		const result = await callToolAs(ceoToken, 'create_project', {
-			name: 'Identifier Project',
-			description: 'Created by passing the intake identifier.',
-			intake_task_id: intake.intake_task_identifier,
+			name: 'Legacy Intake Project',
+			description: 'Created by a CEO still following an old intake body.',
+			intake_task_id: legacy.id,
 		});
 		expect(result.error).toBeUndefined();
 		expect(result.slug).toBeTruthy();
-
-		// The intake ticket resolved from the identifier is closed.
-		const intakeTask = await db.query<{ status: string }>(
+		const after = await db.query<{ status: string }>(
 			'SELECT status::text AS status FROM tasks WHERE id = $1',
-			[intake.intake_task_id],
+			[legacy.id],
 		);
-		expect(intakeTask.rows[0].status).toBe('done');
-	});
-
-	it('errors clearly when the intake identifier does not resolve', async () => {
-		const ceoId = await instanceCeoId(db);
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, DEFAULT_TEAM_ID);
-		const result = await callToolAs(ceoToken, 'create_project', {
-			name: 'No Intake Project',
-			description: 'Intake reference is bogus.',
-			intake_task_id: 'HQ-999999',
-		});
-		expect(result.error).toBe('Intake task not found');
-	});
-
-	it('is idempotent — a second call on a closed intake errors instead of duplicating', async () => {
-		const intake = await startIntake(`CEO Idem ${Date.now()}`);
-		const ceoId = await instanceCeoId(db);
-		const { token: ceoToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			ceoId,
-			DEFAULT_TEAM_ID,
-			intake.intake_task_id,
-		);
-
-		const first = await callToolAs(ceoToken, 'create_project', {
-			name: 'Idem Project',
-			description: 'First creation.',
-			intake_task_id: intake.intake_task_id,
-		});
-		expect(first.error).toBeUndefined();
-
-		const second = await callToolAs(ceoToken, 'create_project', {
-			name: 'Idem Project Dup',
-			description: 'Should not create a second.',
-			intake_task_id: intake.intake_task_id,
-		});
-		expect(second.error).toContain('already been completed');
+		expect(after.rows[0].status).toBe('in_progress');
 	});
 
 	it('rejects a non-CEO agent', async () => {
-		const intake = await startIntake(`CEO Guard ${Date.now()}`);
 		const { token: workerToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const result = await callToolAs(workerToken, 'create_project', {
 			name: 'Worker Project',
 			description: 'Should be rejected.',
-			intake_task_id: intake.intake_task_id,
 		});
 		expect(result.error).toContain('Only the CEO');
 	});
 
 	it('rejects a malformed task_prefix', async () => {
-		const intake = await startIntake(`CEO Prefix ${Date.now()}`);
-		const ceoId = await instanceCeoId(db);
-		const { token: ceoToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			ceoId,
-			DEFAULT_TEAM_ID,
-			intake.intake_task_id,
-		);
+		const { ceoToken } = await ceoChatToken();
 		const result = await callToolAs(ceoToken, 'create_project', {
 			name: 'Prefix Project',
 			description: 'Bad prefix.',
 			task_prefix: 'lowercase-too-long',
-			intake_task_id: intake.intake_task_id,
 		});
 		expect(typeof result.error).toBe('string');
 		expect(result.error as string).toContain('task_prefix');
 	});
 
-	// Create a project as the CEO (the chat/intake path) and return the CEO token +
-	// the create_project result so a follow-up start_team_setup test can drive it.
+	// Create a project as the CEO (the chat path) and return the CEO token + the
+	// create_project result so a follow-up start_team_setup test can drive it.
 	async function createProjectAsCeo(
 		label: string,
 	): Promise<{ ceoToken: string; ceoId: string; result: Record<string, unknown> }> {
-		const intake = await startIntake(`${label} ${Date.now()}`);
-		const ceoId = await instanceCeoId(db);
-		const { token: ceoToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			ceoId,
-			DEFAULT_TEAM_ID,
-			intake.intake_task_id,
-		);
+		const { ceoId, ceoToken } = await ceoChatToken();
 		const tplId = await startupTemplateId();
 		const result = await callToolAs(ceoToken, 'create_project', {
 			name: `${label} ${Date.now()}`,
 			description: `${label} description.`,
 			template_id: tplId,
-			intake_task_id: intake.intake_task_id,
 		});
 		expect(result.error).toBeUndefined();
 		return { ceoToken, ceoId, result };

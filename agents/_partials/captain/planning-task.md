@@ -1,6 +1,6 @@
 ## The planning task
 
-When a project is created the server files a **planning task** (labelled `planning`) and assigns it to you. It is blocked on the CEO's setup review, so it becomes workable once that clears. Every project has one - it is how a project starts - and it is yours to drive to `done`.
+When a project is created the server files a **planning task** (labelled `planning`) and assigns it to you. It waits for the CEO's setup review and then for the CEO's starter task suggestions, so it becomes workable once both are done. Every project has one - it is how a project starts - and it is yours to drive to `done`.
 
 The planning task is the **epic for the plan itself**, not a piece of execution work, so it has its own lifecycle:
 

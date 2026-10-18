@@ -1,13 +1,20 @@
-import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	isRepeatingCadence,
+	isTaskSuggestionCadence,
+	OAuthRequestReason,
+} from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Check, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
 import { agentAvatarUrl } from '../lib/agent-avatar';
-import { useI18n } from '../lib/i18n';
+import { Trans, useI18n } from '../lib/i18n';
 import { AGENT_ERROR_ROW, isAgentErrorApproval } from '../lib/inbox-row-kind';
 import { approvalTypeColor } from '../lib/status-meta';
+import { TASK_SUGGESTION_REPEATS_NOTE } from '../lib/task-suggestion-labels';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
@@ -43,6 +50,7 @@ function EntityLink({
 }
 
 function ApprovalMessage({ approval }: { approval: Approval }) {
+	const { t } = useI18n();
 	const p = approval.payload;
 
 	switch (approval.type) {
@@ -166,6 +174,24 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 					{p.measurement && (
 						<span className="block text-xs text-text-2 mt-1">
 							Measure: {p.measurement as string}
+						</span>
+					)}
+				</>
+			);
+		}
+		case ApprovalType.TaskSuggestion: {
+			const cadence = p.cadence as string | null | undefined;
+			return (
+				<>
+					<span>
+						<Trans
+							k="approval.taskSuggestion.message"
+							vars={{ title: <span className="font-medium">{(p.title as string) ?? ''}</span> }}
+						/>
+					</span>
+					{isRepeatingCadence(p.suggested_cadence) && isTaskSuggestionCadence(cadence) && (
+						<span className="block text-xs text-text-2 mt-1">
+							{t(TASK_SUGGESTION_REPEATS_NOTE[cadence])}
 						</span>
 					)}
 				</>

@@ -48,9 +48,9 @@ export function isNameOnlyRole(slug: string): boolean {
 }
 /**
  * The single instance-level coordination project, living in the HQ (default)
- * team. There is exactly one across the instance — it hosts the CEO + Coach and
- * the pre-creation project-intake conversations. Normal project-teams have no
- * internal project of their own.
+ * team. There is exactly one across the instance — it hosts the CEO + Coach,
+ * their chat, and instance-level tasks. Normal project-teams have no internal
+ * project of their own.
  */
 export const HQ_PROJECT_SLUG = 'hq';
 export const HQ_PROJECT_NAME = 'HQ';
@@ -626,8 +626,6 @@ export const DEFAULT_HEARTBEAT_INTERVAL_MIN = 720;
  * which is better than the browser guessing.
  */
 export const HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT = 60;
-
-export const PROJECT_INTAKE_LABEL = 'project-intake';
 
 /**
  * Canonical public documentation site entry point. The agent-facing manifest

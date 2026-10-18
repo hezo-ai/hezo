@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 37,
+			"version": 38,
 			"roster_count": 10,
-			"latest_notes": "The Researcher's report summary is now the plain summary of its task comment, and the full findings go under the technical details line, which people see collapsed."
+			"latest_notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and skips any scoping question an open task already answers."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 27,
+			"version": 28,
 			"roster_count": 7,
-			"latest_notes": "The Captain's goal notes now follow the same link rules as task comments, so a pull request, GitHub issue or commit named there links to its page."
+			"latest_notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and asks the admin only what no open task already asks."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 29,
+			"version": 30,
 			"roster_count": 6,
-			"latest_notes": "The Risk Verifier's findings comment now opens with the verdict and the handoff in plain words. The section-by-section findings go under the technical details line, which people see collapsed."
+			"latest_notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and asks the admin only what no open task already asks, such as the stocks to watch."
 		}
 	]
 }

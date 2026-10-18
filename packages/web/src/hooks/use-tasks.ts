@@ -205,6 +205,23 @@ export function useCreateTask(projectId: string) {
 	});
 }
 
+/**
+ * Ask the CEO for task suggestions on a project: opens the CEO's suggestions
+ * task, or returns the open one. Response-driven: the caller goes to the task
+ * the server names.
+ */
+export function useStartTaskSuggestions(projectId: string) {
+	return useMutation({
+		mutationFn: () =>
+			api.post<{ task_id: string; task_identifier: string; created: boolean }>(
+				`/api/projects/${projectId}/task-suggestions`,
+				{},
+			),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.tasks(projectId) }),
+	});
+}
+
 interface UpdateTaskVars {
 	title?: string;
 	description?: string;

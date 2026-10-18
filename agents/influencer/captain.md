@@ -16,7 +16,7 @@ When a project is created you are woken on its **planning task** (labelled `plan
 
 {{> partials/captain/planning-task}}
 
-1. **Ask the admin, then wait.** Post one clear comment on the planning task that `@admin` and asks:
+1. **Ask the admin what the board leaves open, then wait.** Post one clear comment on the planning task that `@admin` and asks each question below that no open task already asks:
    - **Accounts** — which social accounts they want the team to work on (X, Instagram, TikTok, YouTube, LinkedIn, a newsletter, …), and let them know they can connect accounts and publishing tools on the project's **Connections** page so the team can read their style and, later, publish for them.
    - **Persona & niche** — who they are, their niche, and who their audience is.
    - **Brand & voice** — their tone, do's and don'ts, topics to avoid, and any visual/brand guidelines.

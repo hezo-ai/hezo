@@ -107,8 +107,6 @@ export const queryKeys = {
 		oauthConnections: (teamId: string) => ['teams', teamId, 'oauth-connections'],
 	},
 
-	projectIntakes: () => ['project-intakes'],
-
 	approvals: {
 		root: () => ['approvals'],
 		all: (projectKey: string, opts: KeyParam) => ['approvals', 'all', projectKey, opts],

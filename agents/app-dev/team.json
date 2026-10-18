@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 38,
+			"notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and skips any scoping question an open task already answers."
+		},
+		{
 			"version": 37,
 			"notes": "The Researcher's report summary is now the plain summary of its task comment, and the full findings go under the technical details line, which people see collapsed."
 		},

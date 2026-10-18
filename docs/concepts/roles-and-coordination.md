@@ -15,8 +15,9 @@ exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq---the
 so it can see and act across every project. You chat with the CEO to get things done
 across the whole instance:
 
-- **Intake** - describe a new project and the CEO scopes it with you, then provisions the
-  team once you've confirmed the plan (see
+- **New projects** - describe a new project in the chat, or send the **New project** form
+  to the chat with **Plan with the CEO**. The CEO scopes it with you, then creates the
+  project and its team once you've confirmed the plan (see
   [Your first project](/docs/getting-started/first-project)). It won't create anything
   until you give the go-ahead.
 - **Coordination** - ask about any project's status, tasks, or roster; the CEO
@@ -26,6 +27,9 @@ across the whole instance:
   agent. When the CEO creates a project with you, it sets the team up according to the plan
   you agreed (the roles to hire and how they fit together), then starts it; a project
   created directly from the form gets an automatic coherence check instead.
+- **Task suggestions** - after setup, and before the Captain plans, the CEO reads what is
+  already on a new project's board and suggests tasks as cards you approve or deny. See
+  [Task suggestions](/docs/concepts/tasks#task-suggestions).
 - **Actioning changes** - hire new agents, retire ones a team no longer needs, adjust
   system prompts, and change settings, all through the conversation. See
   [Hiring & customizing agents](/docs/concepts/hiring-and-agents).

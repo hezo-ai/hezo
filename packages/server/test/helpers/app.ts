@@ -418,8 +418,8 @@ export async function createTestApp(
 	]);
 	const token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
-	// Seed the HQ team (CEO + Coach + HQ project). Coordination flows (intake,
-	// hiring, coherence, OAuth verification) resolve the CEO from here.
+	// Seed the HQ team (CEO + Coach + HQ project). Coordination flows (hiring,
+	// coherence, OAuth verification) resolve the CEO from here.
 	await seedDefaultTeam({
 		db,
 		docker,
@@ -752,9 +752,8 @@ export interface CreatedTestProject {
 
 /**
  * Test-only helper: creates a user-facing project plus its planning task by
- * calling the project service directly. Bypasses the CEO-assisted intake flow
- * that project creation can trigger (an intake ticket and a pending approval).
- * Use in tests that need a ready-to-use project.
+ * calling the project service directly, without the CEO setup pass a created
+ * project starts with. Use in tests that need a ready-to-use project.
  *
  * The return value is shaped like a `fetch` Response so existing tests that
  * call `.json()` followed by `.data.id` extraction keep working unchanged

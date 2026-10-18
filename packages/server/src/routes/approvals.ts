@@ -1,5 +1,13 @@
-import { ApprovalStatus, ApprovalType, AuthType, summaryPreviewLine, wsRoom } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	AuthType,
+	summaryPreviewLine,
+	validateCadenceChoice,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
+import type { Db } from '../db/database';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
@@ -7,7 +15,7 @@ import { actingPersonFromAuth, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
-import { resolveApproval } from '../services/approval-resolve';
+import { type ResolveApprovalError, resolveApproval } from '../services/approval-resolve';
 import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
 import {
 	type HirePayloadPatchInput,
@@ -16,6 +24,11 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
+import {
+	broadcastTaskSuggestionCards,
+	refreshTaskSuggestionComment,
+} from '../services/task-suggestion';
+import type { WebSocketManager } from '../services/ws';
 
 export const approvalsRoutes = new Hono<Env>();
 
@@ -195,6 +208,16 @@ approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 	if (!body.type || !body.payload) {
 		return err(c, 'INVALID_REQUEST', 'type and payload are required', 400);
 	}
+	// A task suggestion becomes a task on approval, and only `suggest_task` checks
+	// the project and task it names.
+	if (body.type === ApprovalType.TaskSuggestion) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'Task suggestions are filed by the CEO with suggest_task',
+			400,
+		);
+	}
 
 	// A hire payload becomes an agent on approval, so it passes the checks every
 	// other hire path runs and is stored in their normalized form.
@@ -233,6 +256,51 @@ approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
+type PayloadPatch = { error: string } | { patch: Record<string, unknown> };
+
+/**
+ * The pending approvals a person may edit before deciding, by type: how to turn
+ * the request body into a payload patch, and what else to refresh once it lands.
+ */
+const PAYLOAD_EDITORS: Partial<
+	Record<
+		ApprovalType,
+		{
+			prepare: (
+				db: Db,
+				teamId: string,
+				payload: Record<string, unknown>,
+				body: unknown,
+			) => Promise<PayloadPatch>;
+			/**
+			 * Writes in the same transaction as the payload update, and returns what
+			 * to announce once that transaction commits.
+			 */
+			afterUpdate?: (
+				db: Db,
+				row: Record<string, unknown>,
+			) => Promise<(wsManager: WebSocketManager | undefined) => void>;
+		}
+	>
+> = {
+	[ApprovalType.Hire]: {
+		prepare: (db, teamId, payload, body) =>
+			prepareHirePayloadPatch(db, teamId, payload, body as HirePayloadPatchInput),
+	},
+	[ApprovalType.TaskSuggestion]: {
+		// Only the cadence changes, and only on a card the CEO gave a cadence.
+		prepare: async (_db, _teamId, payload, body) => {
+			const cadence = (body as { cadence?: unknown } | null)?.cadence;
+			const error = validateCadenceChoice(payload.suggested_cadence as string | null, cadence);
+			return error ? { error } : { patch: { cadence } };
+		},
+		afterUpdate: async (db, row) => {
+			const cards = await refreshTaskSuggestionComment(db, row);
+			return (wsManager) => broadcastTaskSuggestionCards(wsManager, row, cards);
+		},
+	},
+};
+
 approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
@@ -251,26 +319,56 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	const resourceAccess = await requireTeamAccessForResource(db, c, approval.team_id);
 	if (resourceAccess instanceof Response) return resourceAccess;
 
-	if (approval.type !== ApprovalType.Hire) {
-		return err(c, 'INVALID_REQUEST', 'Only hire proposals can be edited', 400);
+	const editor = PAYLOAD_EDITORS[approval.type as ApprovalType];
+	if (!editor) {
+		return err(c, 'INVALID_REQUEST', 'Only hire proposals and task suggestions can be edited', 400);
 	}
 	if (approval.status !== ApprovalStatus.Pending) {
 		return err(c, 'INVALID_STATE', 'Approval is already resolved', 409);
 	}
 
-	const body = await c.req.json<HirePayloadPatchInput>();
-	const prepared = await prepareHirePayloadPatch(db, approval.team_id, approval.payload, body);
+	const body = await c.req.json<unknown>();
+	const prepared = await editor.prepare(db, approval.team_id, approval.payload, body);
 	if ('error' in prepared) return err(c, 'INVALID_REQUEST', prepared.error, 400);
 	const { patch } = prepared;
 
-	const updated = await db.query<Record<string, unknown>>(
-		`UPDATE approvals SET payload = payload || $1::jsonb WHERE id = $2 RETURNING *`,
-		[JSON.stringify(patch), approvalId],
-	);
-	const row = updated.rows[0];
+	// Only a still-pending row takes the edit: one decided since the read above
+	// keeps the payload it was decided on. An edit that changes nothing writes
+	// nothing. The payload and whatever mirrors it change together.
+	const updated = await db.transaction(async () => {
+		const result = await db.query<Record<string, unknown>>(
+			`UPDATE approvals SET payload = payload || $1::jsonb
+			 WHERE id = $2 AND status = $3::approval_status AND NOT (payload @> $1::jsonb)
+			 RETURNING *`,
+			[JSON.stringify(patch), approvalId, ApprovalStatus.Pending],
+		);
+		const changed = result.rows[0];
+		if (!changed) return null;
+		return { row: changed, announce: await editor.afterUpdate?.(db, changed) };
+	});
+	if (!updated) {
+		const current = await db.query<Record<string, unknown>>(
+			'SELECT * FROM approvals WHERE id = $1',
+			[approvalId],
+		);
+		if (current.rows[0]?.status !== ApprovalStatus.Pending) {
+			return err(c, 'INVALID_STATE', 'Approval is already resolved', 409);
+		}
+		return ok(c, current.rows[0]);
+	}
+	const { row, announce } = updated;
+	announce?.(c.get('wsManager'));
 	broadcastChange(c, wsRoom.team(approval.team_id), 'approvals', 'UPDATE', row);
 	return ok(c, row);
 });
+
+/** How each way a decision can fail reaches the client. */
+const RESOLVE_ERROR_RESPONSE: Record<ResolveApprovalError, [string, 404 | 409]> = {
+	NOT_FOUND: ['NOT_FOUND', 404],
+	INVALID_STATE: ['INVALID_STATE', 409],
+	// The side effect could not be applied; the approval is pending again.
+	SIDE_EFFECT_FAILED: ['CONFLICT', 409],
+};
 
 approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	const db = c.get('db');
@@ -335,10 +433,8 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	});
 
 	if (!resolved.ok) {
-		if (resolved.error === 'NOT_FOUND') {
-			return err(c, 'NOT_FOUND', resolved.message, 404);
-		}
-		return err(c, 'INVALID_STATE', resolved.message, 409);
+		const [code, status] = RESOLVE_ERROR_RESPONSE[resolved.error];
+		return err(c, code, resolved.message, status);
 	}
 
 	const { row, sideEffects } = resolved;

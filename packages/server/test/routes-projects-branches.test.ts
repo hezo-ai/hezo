@@ -9,9 +9,8 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 /**
  * Remaining branch coverage for packages/server/src/routes/projects.ts that
  * projects-coverage.test.ts / projects-routes-extended.test.ts / projects.test.ts
- * don't reach: the requireAdminEquivalent denial arms on the create/intake
- * routes, the missing-name validation, the Blank/template/source baseline arms
- * of POST /project-intakes, the description-only PATCH set, the icon-bearing
+ * don't reach: the requireAdminEquivalent denial arm on the create route, the
+ * missing-name validation, the description-only PATCH set, the icon-bearing
  * row in the GET /projects index.
  */
 
@@ -74,89 +73,6 @@ describe('POST /projects — authorization + validation arms', () => {
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toMatch(/name is required/);
-	});
-});
-
-describe('POST /project-intakes — baseline arms', () => {
-	it('403s for a non-superuser admin', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: jsonHeaders(nonAdminToken),
-			body: JSON.stringify({ name: 'X', description: 'Y' }),
-		});
-		expect(res.status).toBe(403);
-	});
-
-	it('400s when name is missing', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: jsonHeaders(token),
-			body: JSON.stringify({ description: 'no name' }),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/name is required/);
-	});
-
-	it('400s when description is missing', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: jsonHeaders(token),
-			body: JSON.stringify({ name: 'Has name' }),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/description is required/);
-	});
-
-	it('404s for an unknown template_id', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: jsonHeaders(token),
-			body: JSON.stringify({
-				name: 'Bad Template Intake',
-				description: 'A description.',
-				template_id: '00000000-0000-0000-0000-000000000000',
-			}),
-		});
-		expect(res.status).toBe(404);
-		expect((await res.json()).error.message).toMatch(/Team template not found/);
-	});
-
-	it('opens an intake with the Blank baseline when neither template nor source is given', async () => {
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: jsonHeaders(token),
-			body: JSON.stringify({
-				name: 'Blank Baseline Intake',
-				description: 'CEO will scope this with the admin.',
-			}),
-		});
-		expect(res.status).toBe(201);
-		const body = (await res.json()).data;
-		expect(body.intake_task_id).toBeTruthy();
-		expect(body.intake_task_identifier).toBeTruthy();
-	});
-
-	it('opens an intake with a real source team as the baseline', async () => {
-		const srcRes = await createTestTeam(db, { name: 'Intake Source Co' });
-		const srcId = (await srcRes.json()).data.id;
-		const res = await app.request('/api/project-intakes', {
-			method: 'POST',
-			headers: jsonHeaders(token),
-			body: JSON.stringify({
-				name: 'Source Baseline Intake',
-				description: 'Clone the source roster as the baseline.',
-				source_team_id: srcId,
-			}),
-		});
-		expect(res.status).toBe(201);
-		expect((await res.json()).data.intake_task_id).toBeTruthy();
-	});
-});
-
-describe('GET /project-intakes — authorization arm', () => {
-	it('403s for a non-superuser admin', async () => {
-		const res = await app.request('/api/project-intakes', { headers: authHeader(nonAdminToken) });
-		expect(res.status).toBe(403);
 	});
 });
 

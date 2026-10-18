@@ -1,16 +1,22 @@
 import {
 	joinSummaryDetails,
+	MAX_TASK_SUGGESTIONS_PER_TASK,
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { broadcastRowChange } from '../lib/broadcast';
+import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { loadTeamCoordinationContext, type TeamCoordinationContext } from './internal-intake';
+import { TASK_SUGGESTIONS_LABEL } from './task-suggestion';
 import { createWakeup } from './wakeup';
+import type { WebSocketManager } from './ws';
 
 const log = logger.child('description-tasks');
 
@@ -153,32 +159,48 @@ async function createLabeledInternalTask(
 		autoStart: boolean;
 		/** The agent run whose change filed the task, when an agent made it. */
 		createdByRunId: string | null;
+		/** Assign the task without waking the assignee; a blocker's close wakes it. */
+		assignWithoutStart?: boolean;
+		/** Insert the task `blocked`, waiting on this task. */
+		blockedByTaskId?: string | null;
 	},
-): Promise<string | null> {
+): Promise<{ id: string; identifier: string }> {
 	const { autoStart, createdByRunId } = opts;
-	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.teamProjectId);
+	const blockedBy = opts.blockedByTaskId ?? null;
+	const assigned = autoStart || opts.assignWithoutStart === true;
 
-	const insertResult = await db.query<{ id: string }>(
-		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
-		                     title, description, status, priority, labels, created_by_run_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb, $11)
-		 RETURNING id`,
-		[
-			ctx.teamId,
-			ctx.teamProjectId,
-			autoStart ? assigneeMemberId : null,
-			taskNumber,
-			identifier,
-			title,
-			body,
-			TaskStatus.Backlog,
-			priority,
-			JSON.stringify(['internal', label]),
-			createdByRunId,
-		],
-	);
-
-	const taskId = insertResult.rows[0].id;
+	// The identifier, the insert and the dependency edge land together, so a task
+	// never shows as blocked without the task it waits on.
+	const created = await db.transaction(async () => {
+		const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.teamProjectId);
+		const insertResult = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
+			                     title, description, status, priority, labels, created_by_run_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb, $11)
+			 RETURNING id`,
+			[
+				ctx.teamId,
+				ctx.teamProjectId,
+				assigned ? assigneeMemberId : null,
+				taskNumber,
+				identifier,
+				title,
+				body,
+				blockedBy ? TaskStatus.Blocked : TaskStatus.Backlog,
+				priority,
+				JSON.stringify(['internal', label]),
+				createdByRunId,
+			],
+		);
+		const id = insertResult.rows[0].id;
+		if (blockedBy) {
+			await db.query(
+				`INSERT INTO task_dependencies (task_id, blocked_by_task_id) VALUES ($1, $2)`,
+				[id, blockedBy],
+			);
+		}
+		return { id, identifier };
+	});
 
 	// When not auto-starting (a CEO-created project), the ticket is left
 	// unassigned and no wakeup fires — the CEO drafts the concrete setup plan into
@@ -190,7 +212,7 @@ async function createLabeledInternalTask(
 				assigneeMemberId,
 				ctx.teamId,
 				WakeupSource.Assignment,
-				{ task_id: taskId },
+				{ task_id: created.id },
 				undefined,
 				createdByRunId,
 			);
@@ -199,7 +221,7 @@ async function createLabeledInternalTask(
 		}
 	}
 
-	return taskId;
+	return created;
 }
 
 /**
@@ -207,9 +229,9 @@ async function createLabeledInternalTask(
  *
  * A comment that merely *says* it needs admin confirmation raises no
  * `admin_mentions` row, so it reaches no inbox and the task waits on an answer
- * nobody was asked for. Shared with the project-intake body rather than written
- * twice, so the two cannot drift apart on the one instruction that decides
- * whether a question is actually delivered.
+ * nobody was asked for. Shared by every server-written task body rather than
+ * written into each, so they cannot drift apart on the one instruction that
+ * decides whether a question is actually delivered.
  */
 export const ACTIVE_ADMIN_MENTION_RULE =
 	'Put an active `@admin` in any comment where you need them to answer - without it the question reaches no inbox and the task stalls.';
@@ -223,7 +245,7 @@ function buildTeamCoherenceReviewBody(
 	const draftBanner = autoStart
 		? ''
 		: `> **Setup plan — fill this in before you start.**
-> You created this project from an intake conversation, so this setup task has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this task to yourself and begin the run. Until you do, the Captain's planning task stays blocked on it.
+> You created this project after planning it with the admin in your chat, so this setup task has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this task to yourself and begin the run. Until you do, your starter suggestions task and the Captain's planning task stay blocked on it.
 
 `;
 	const changesSection = changeSummary
@@ -439,7 +461,7 @@ export async function enqueueTeamCoherenceReviewTask(
 		autoStart,
 		opts.changeSummary,
 	);
-	return createLabeledInternalTask(
+	const created = await createLabeledInternalTask(
 		db,
 		ctx,
 		assigneeMemberId,
@@ -449,4 +471,167 @@ export async function enqueueTeamCoherenceReviewTask(
 		TaskPriority.High,
 		{ autoStart, createdByRunId: opts.byRunId ?? null },
 	);
+	return created.id;
+}
+
+/** Why a suggestions task is filed: a project was just created, or the admin asked. */
+export type TaskSuggestionsReason = 'new_project' | 'on_demand';
+
+/** The heading the CEO records the tasks the admin already agreed under, as a `##` section. */
+export const AGREED_TASKS_HEADING = 'Agreed with the admin';
+
+const TASK_SUGGESTIONS_TEXT: Record<
+	TaskSuggestionsReason,
+	{ title: string; summary: (slug: string) => string; close: string }
+> = {
+	new_project: {
+		title: 'Suggest starter tasks',
+		summary: (slug) =>
+			`Suggest starter tasks for the new **${slug}** project. Read what is already on the board, then file one-click cards for the admin to approve or deny. The Captain's planning starts when this task is done.`,
+		close:
+			"Move this task to **done** when every card is decided. The Captain's planning task starts after that.",
+	},
+	on_demand: {
+		title: 'Suggest tasks',
+		summary: (slug) =>
+			`The admin asked for task suggestions for the **${slug}** project. Read what is already on the board, then file one-click cards for the admin to approve or deny.`,
+		close: 'Move this task to **done** when every card is decided.',
+	},
+};
+
+/**
+ * One key per team: the lookup for an open suggestions task and the insert of a
+ * new one run as a unit, so two "Suggest tasks" requests at once file one task.
+ * Per team, because the rule is one open suggestions task per project; held for
+ * those few queries only.
+ */
+const taskSuggestionsLocks: KeyedLockRegistry = new Map();
+
+/** The server-written body of the CEO's suggestions task. */
+export function buildTaskSuggestionsBody(reason: TaskSuggestionsReason, slug: string): string {
+	const text = TASK_SUGGESTIONS_TEXT[reason];
+	const agreedStep =
+		reason === 'new_project'
+			? `
+3. **File what the admin already agreed, without a card.** If this description has a section headed \`## ${AGREED_TASKS_HEADING}\`, file each task it lists with \`create_task\`. Assign each task to the role that owns it. Set \`blocked_by_task_ids\` to the open planning task (label \`planning\`), so the task waits for the plan.`
+			: '';
+	const n = reason === 'new_project' ? 4 : 3;
+	return joinSummaryDetails(
+		text.summary(slug),
+		`## ${text.title}
+
+An approved card becomes a task for the Captain. While the planning task is open, an approved task waits for it. Use \`project\` = \`${slug}\` for the tool calls below.
+
+${ACTIVE_ADMIN_MENTION_RULE}
+
+**Steps**
+
+1. **Read the board first.** Call \`list_tasks\` for open and closed tasks, and \`list_approvals\` for pending cards. Never suggest work that is already a task or a card.
+2. **Read the team and the brief.** Call \`list_agents\` and \`get_agent_system_prompt\` for each role. Read the project description, and project-plan.md when it exists.${agreedStep}
+${n}. **Decide the rest of your list.** Plan at most ${MAX_TASK_SUGGESTIONS_PER_TASK} cards, only for work this team can do and the brief needs. Pick one kind per card:
+
+   | Kind | Use it for | Cadence |
+   |---|---|---|
+   | \`admin_input\` | Information only the admin can give, such as the stocks to watch | None |
+   | \`connection\` | A service the team needs, with the narrowest access, such as read-only | None |
+   | \`recurring\` | Work that comes back on a schedule, such as a news catch-up that updates the analysis | Always |
+   | \`report\` | A report with a visual and a short text summary | Only when periodic |
+   | \`deliverable\` | The first concrete output the brief asks for | None |
+
+${n + 1}. **Give a cadence only to work that repeats by nature.** Never give a cadence to setup, a connection or an input from the admin.
+${n + 2}. **Post one summary comment before you file a card.** Start it with \`@admin - \`, say how many cards of each kind follow, and ask the admin to decide each one. A decision on a card answers this comment only when the card comes after it.
+${n + 3}. **Nothing to suggest? Do not ask.** Say why in a comment that names the admin as \`@@admin\`, never \`@admin\`, and skip to the last step. An active \`@admin\` here waits for a reply nobody needs to give.
+${n + 4}. **File each card with \`suggest_task\`.** Set \`task_id\` to this task. If every card is refused, say so in a comment and wait for the admin's reply.
+${n + 5}. **Keep this task open while a card is pending.** Call \`report_no_work\` and end your turn. A decision on a card wakes you. Post no new \`@admin\` comment unless you need a new answer.
+${n + 6}. ${text.close}`,
+	);
+}
+
+/**
+ * File the CEO's suggestions task for a project, or return the open one. On a
+ * new project it waits on the setup task (`blockedByTaskId`) and starts when
+ * setup closes; filed on demand it starts at once. Returns null for a team with
+ * no coordination context (no CEO).
+ */
+export async function enqueueTaskSuggestionsTask(
+	db: Db,
+	teamId: string,
+	reason: TaskSuggestionsReason,
+	opts: { blockedByTaskId?: string | null; byRunId?: string | null } = {},
+): Promise<{ id: string; identifier: string; created: boolean } | null> {
+	const ctx = await loadTeamContext(db, teamId);
+	if (!ctx) return null;
+
+	return withKeyedLock(taskSuggestionsLocks, teamId, async () => {
+		const existing = await findOpenLabeledTask(db, teamId, TASK_SUGGESTIONS_LABEL);
+		if (existing) return { id: existing.id, identifier: existing.identifier, created: false };
+
+		const slug = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			ctx.teamProjectId,
+		]);
+		const blockedBy = opts.blockedByTaskId ?? null;
+		const created = await createLabeledInternalTask(
+			db,
+			ctx,
+			ctx.ceoMemberId,
+			TASK_SUGGESTIONS_TEXT[reason].title,
+			buildTaskSuggestionsBody(reason, slug.rows[0]?.slug ?? teamId),
+			TASK_SUGGESTIONS_LABEL,
+			TaskPriority.High,
+			{
+				autoStart: !blockedBy,
+				assignWithoutStart: true,
+				blockedByTaskId: blockedBy,
+				createdByRunId: opts.byRunId ?? null,
+			},
+		);
+		return { ...created, created: true };
+	});
+}
+
+export type StartTaskSuggestionsResult =
+	| { ok: true; task_id: string; task_identifier: string; created: boolean }
+	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
+
+/**
+ * Open the CEO's suggestions task on an existing project, or return the open one.
+ * Behind both `POST /projects/:projectId/task-suggestions` and its tool twin
+ * `start_task_suggestions`; the caller has already checked who may ask.
+ */
+export async function startTaskSuggestions(
+	db: Db,
+	teamId: string,
+	projectId: string,
+	opts: { byRunId?: string | null; wsManager?: WebSocketManager } = {},
+): Promise<StartTaskSuggestionsResult> {
+	const project = await db.query<{ is_internal: boolean }>(
+		'SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
+	);
+	if (project.rows[0]?.is_internal !== false) {
+		return {
+			ok: false,
+			code: 'INVALID_REQUEST',
+			message: 'The HQ project does not take task suggestions',
+			status: 400,
+		};
+	}
+	const task = await enqueueTaskSuggestionsTask(db, teamId, 'on_demand', { byRunId: opts.byRunId });
+	if (!task) {
+		return {
+			ok: false,
+			code: 'CONFLICT',
+			message: 'This project has no CEO to suggest tasks',
+			status: 409,
+		};
+	}
+	if (task.created && opts.wsManager) {
+		const row = await db.query<Record<string, unknown>>('SELECT * FROM tasks WHERE id = $1', [
+			task.id,
+		]);
+		if (row.rows[0]) {
+			broadcastRowChange(opts.wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', row.rows[0]);
+		}
+	}
+	return { ok: true, task_id: task.id, task_identifier: task.identifier, created: task.created };
 }

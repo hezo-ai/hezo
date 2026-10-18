@@ -1,11 +1,14 @@
 import {
 	ACTIVE_WAKEUP_STATUSES,
+	ApprovalStatus,
+	ApprovalType,
 	CommentContentType,
 	HeartbeatRunStatus,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { personChoiceSql } from '../services/no-work-backoff';
 import { resolveTaskId } from './resolve';
 
 export const MAX_SUB_TASK_DEPTH = 3;
@@ -349,7 +352,10 @@ export async function assertNoOutstandingActivity(
 // done while it has no answer. "Answered" is computed from the comment
 // timeline: a human text comment on the same task posted after the mention
 // comment (humans post with author_member_id NULL; the content-type filter
-// keeps NULL-author system/run comments from counting as replies). read_at is
+// keeps NULL-author system/run comments from counting as replies), or a card on
+// the task a person answered after it, as the heartbeat park check counts, or
+// one whose approval an API key decided (admin-equivalent; the card itself
+// records only a user as its answerer). read_at is
 // deliberately ignored — reading is not answering. Enforced for agent callers
 // only: a human closing a ticket is itself the human's decision.
 //
@@ -372,6 +378,17 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 		       AND reply.author_member_id IS NULL
 		       AND reply.created_at > tc.created_at
 		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_comments card
+		     WHERE card.task_id = am.task_id
+		       AND card.chosen_at > tc.created_at
+		       AND (${personChoiceSql('card')}
+		            OR EXISTS (
+		              SELECT 1 FROM approvals ap
+		              WHERE card.content ? 'approval_id'
+		                AND ap.id = (card.content->>'approval_id')::uuid
+		                AND ap.resolved_by_api_key_id IS NOT NULL))
+		   )
 		 ORDER BY tc.created_at ASC
 		 LIMIT 1`,
 		[taskId, CommentContentType.Text],
@@ -380,5 +397,32 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 	return {
 		ok: false,
 		message: `Cannot mark this task done — an @admin question on it (comment ${r.rows[0].public_id}) has not been answered by a human yet. Keep the task in_progress and end your turn; the admin's reply on this task wakes you automatically. Ask before closing — never mark a task done while an @admin ask is still open.`,
+	};
+}
+
+// A task-suggestions task holds, done or cancelled, while any suggestion filed on
+// it waits for the admin. On a new project the Captain's planning waits on this
+// task, and either terminal status releases it, so closing it early would start
+// planning with suggestions still undecided. One answered card is enough for the
+// @admin check above, so that check alone cannot hold it.
+// Read from the approvals, not the cards: the approval is the decision, and a
+// card that failed to flip must not hold the task forever. Bounded by the team's
+// pending approvals (team + status index). Agent callers only, like the @admin
+// check.
+export async function assertNoPendingTaskSuggestions(db: Db, taskId: string): Promise<Check> {
+	const r = await db.query<{ n: number }>(
+		`SELECT count(*)::int AS n
+		   FROM approvals a
+		   JOIN tasks t ON t.id = $1 AND a.team_id = t.team_id
+		  WHERE a.status = $2::approval_status
+		    AND a.type = $3::approval_type
+		    AND a.payload->>'task_id' = $1::text`,
+		[taskId, ApprovalStatus.Pending, ApprovalType.TaskSuggestion],
+	);
+	const pending = r.rows[0]?.n ?? 0;
+	if (pending === 0) return { ok: true };
+	return {
+		ok: false,
+		message: `Cannot close this task - ${pending} task suggestion card(s) on it still wait for the admin. Keep the task open: call report_no_work and end your turn. A decision on a card wakes you.`,
 	};
 }
