@@ -199,6 +199,31 @@ describe('sending the seeded brief to the CEO chat', () => {
 		expect(await pendingSeedBrief(ctx.db)).toBe(BRIEF);
 	});
 
+	it('waits, sending nothing, while the CEO is over its token budget', async () => {
+		await addCredential();
+		const ceo = await ctx.db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+			 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+			[DEFAULT_TEAM_ID],
+		);
+		const ceoId = ceo.rows[0].id;
+		await ctx.db.query('UPDATE member_agents SET daily_budget_tokens = 1 WHERE id = $1', [ceoId]);
+		await ctx.db.query(
+			`INSERT INTO usage_entries (member_id, input_tokens, description) VALUES ($1, 5, 'prior')`,
+			[ceoId],
+		);
+		try {
+			expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
+			expect(await adminMessages()).toEqual([]);
+			expect(await pendingSeedBrief(ctx.db)).toBe(BRIEF);
+		} finally {
+			await ctx.db.query('UPDATE member_agents SET daily_budget_tokens = 0 WHERE id = $1', [ceoId]);
+			await ctx.db.query('DELETE FROM usage_entries WHERE member_id = $1', [ceoId]);
+		}
+		// Once the budget allows a turn, the next trigger sends it.
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(true);
+	});
+
 	it('sends nothing on an instance that was not seeded', async () => {
 		resetRuntimeConfig();
 		await addCredential();

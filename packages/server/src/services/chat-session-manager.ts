@@ -1880,12 +1880,14 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * Why a CEO turn cannot start right now, or null when it can. The credential
-	 * check `sendTurn` makes after it stores the message, run before anything is
-	 * stored, so a server-side sender can wait instead of posting a message the
-	 * CEO never answers.
+	 * Why a CEO turn cannot start right now, or null when it can. The two
+	 * refusals `sendTurn` makes after it stores the message - the budget gate and
+	 * the credential check - run before anything is stored, so a server-side
+	 * sender can wait instead of posting a message the CEO never answers.
 	 */
 	async ceoTurnBlocker(): Promise<string | null> {
+		const overBudget = await this.checkChatBudget();
+		if (overBudget) return chatBudgetExceededNotice(overBudget);
 		try {
 			await this.resolveInvocationSelection(await this.resolveCeoMemberId());
 			return null;

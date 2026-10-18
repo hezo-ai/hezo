@@ -6766,8 +6766,8 @@ points where the instance can first act on them:
   after a credential is stored (`POST /api/ai-providers` and the subscription sign-in
   success, awaited so the chat the admin lands on holds it) and on unlock (covering a restart
   between the store and the send, and an upgrade with a credential already present). It
-  sends nothing while `ceoTurnBlocker` reports a reason, because `sendTurn` stores the
-  message before it checks the credential. `pendingSeedBrief` gates it: null once the
+  sends nothing while `ceoTurnBlocker` reports a reason (over the chat budget, or no usable
+  credential), because `sendTurn` stores the message before either of those checks. `pendingSeedBrief` gates it: null once the
   `seed_project:consumed` marker exists, a non-internal project exists, or the admin has
   written a message in an HQ conversation. The marker is the claim (`INSERT … ON CONFLICT
   DO NOTHING RETURNING`), so concurrent triggers send once; a send that throws deletes it so
