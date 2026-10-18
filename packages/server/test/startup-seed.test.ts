@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
+import { ChatMessageRole, deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
 import type { SeedConfig } from '../src/config/types';
+import { encrypt } from '../src/crypto/encryption';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import { getInstanceLocale, getSystemMeta, setInstanceLocale } from '../src/lib/system-meta';
@@ -17,8 +18,8 @@ import { testHezoConfig } from './helpers/config';
 // provisioned instance boots. Route tests build the app without startup(), so
 // this is the only proof that the locale is wired to the workspace phase, and
 // that an unlock - a CLI master key enrolls and unlocks in one boot, firing the
-// hook exactly as the setup route does - turns the brief into nothing but an
-// offer on the home screen.
+// hook exactly as the setup route does - sends the brief to the CEO chat only
+// once a model credential exists.
 
 const PHRASE =
 	'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -38,6 +39,15 @@ async function countTasks(db: Db): Promise<number> {
 	return r.rows[0].count;
 }
 
+/** What the admin has said in any chat, oldest first. */
+async function adminMessages(db: Db): Promise<string[]> {
+	const r = await db.query<{ content: string }>(
+		'SELECT content FROM chat_messages WHERE role = $1 ORDER BY created_at',
+		[ChatMessageRole.User],
+	);
+	return r.rows.map((row) => row.content);
+}
+
 describe('startup with a seed block', () => {
 	const savedEnv: Record<string, string | undefined> = {};
 	const dataDirs: string[] = [];
@@ -55,6 +65,16 @@ describe('startup with a seed block', () => {
 		setRuntimeConfig(config);
 		result = await startup(config);
 		return result;
+	}
+
+	/**
+	 * The unlock's work runs off the job manager's start, an untracked chain, so
+	 * wait for that start and then for the background work it queued.
+	 */
+	async function settleUnlock(booted: StartupResult): Promise<void> {
+		const jm = booted.jobManager as unknown as { started: boolean };
+		await vi.waitFor(() => expect(jm.started).toBe(true), { timeout: 15_000 });
+		await waitForBackground();
 	}
 
 	async function shutdown(): Promise<void> {
@@ -95,7 +115,7 @@ describe('startup with a seed block', () => {
 		}
 	});
 
-	it('applies the locale at boot and only offers the brief, across two unlocks', async () => {
+	it('applies the locale at boot, and sends nothing at unlock while no model is connected', async () => {
 		const dataDir = freshDataDir();
 		const first = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
 		expect(first.masterKeyState).toBe('unlocked');
@@ -110,10 +130,12 @@ describe('startup with a seed block', () => {
 		expect(body.localeConfigured).toBe(true);
 		expect(body.locale.language).toBe('de');
 
-		// The unlock creates nothing for the brief: no task, no marker. The home
-		// screen offers it instead.
+		// The CEO cannot answer yet, so the unlock sends nothing and claims nothing:
+		// no task, no message, no marker. The brief waits for a model.
 		await waitForBackground();
+		await settleUnlock(first);
 		expect(await countTasks(first.db)).toBe(0);
+		expect(await adminMessages(first.db)).toEqual([]);
 		expect(await getSystemMeta(first.db, SEED_PROJECT_CONSUMED_KEY)).toBeNull();
 		expect(await pendingSeedBrief(first.db)).toBe(BRIEF);
 		await shutdown();
@@ -121,10 +143,37 @@ describe('startup with a seed block', () => {
 		// The same instance restarted and unlocked again, seed still in the file.
 		const second = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
 		expect(second.masterKeyState).toBe('unlocked');
-		await waitForBackground();
-		expect(await countTasks(second.db)).toBe(0);
+		await settleUnlock(second);
+		expect(await adminMessages(second.db)).toEqual([]);
 		expect(await pendingSeedBrief(second.db)).toBe(BRIEF);
 	}, 120_000);
+
+	it('sends the brief at unlock when a model is already connected, once across restarts', async () => {
+		const dataDir = freshDataDir();
+		const first = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
+		await settleUnlock(first);
+		const key = first.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		// A model added while the instance was up, then a restart before the brief
+		// went out: the unlock is what sends it.
+		await first.db.query(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('anthropic', 'api_key', 'test', $1, true, 'verified', 'claude-sonnet-4-6')`,
+			[encrypt('sk-ant-test', key)],
+		);
+		await shutdown();
+
+		const second = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
+		await vi.waitFor(async () => expect(await adminMessages(second.db)).toEqual([BRIEF]), {
+			timeout: 15_000,
+		});
+		expect(await getSystemMeta(second.db, SEED_PROJECT_CONSUMED_KEY)).not.toBeNull();
+		await shutdown();
+
+		const third = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
+		await settleUnlock(third);
+		expect(await adminMessages(third.db)).toEqual([BRIEF]);
+	}, 180_000);
 
 	it('opens nothing and configures nothing when the file carries no seed', async () => {
 		const booted = await boot(freshDataDir(), { masterKey: MASTER_KEY });

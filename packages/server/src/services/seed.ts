@@ -1,8 +1,15 @@
-import { ChatMessageRole } from '@hezo/shared';
+import { ChatChannel, ChatMessageRole } from '@hezo/shared';
 import { runtimeConfig } from '../config/runtime';
 import type { Db } from '../db/database';
-import { getSystemMeta, instanceLocaleIsConfigured, setInstanceLocale } from '../lib/system-meta';
+import {
+	deleteSystemMeta,
+	getSystemMeta,
+	instanceLocaleIsConfigured,
+	setInstanceLocale,
+} from '../lib/system-meta';
 import { logger } from '../logger';
+import type { ChatSessionManager } from './chat-session-manager';
+import { getSuperuserId } from './superuser';
 
 const log = logger.child('seed');
 
@@ -12,18 +19,25 @@ const log = logger.child('seed');
  * A provisioner that stands an instance up on someone's behalf writes the
  * language they chose and the brief they typed into the config file (H24).
  * This module is the one consumer of that block: the locale lands in
- * `system_meta` at boot, once, and the brief is offered on the home screen's
- * CEO chat until the admin sends it, creates a first project, or writes to the
- * CEO first. Both read the config inside the function, never at module scope,
- * and both are no-ops on an instance whose file carries no `seed`.
+ * `system_meta` at boot, once, and the brief is sent to the CEO chat as the
+ * admin's first message as soon as the CEO can answer it. Both read the config
+ * inside the function, never at module scope, and both are no-ops on an
+ * instance whose file carries no `seed`.
  */
 
 /**
- * The `system_meta` marker an earlier release wrote when it opened a CEO intake
- * task for the seeded brief. Read only: an instance that already turned its
- * brief into that task is not offered the brief a second time.
+ * The `system_meta` marker that claims the seeded brief, so it reaches the CEO
+ * once. An earlier release wrote the same key when it turned the brief into an
+ * intake task, and an instance carrying it from then is not sent the brief again.
  */
 export const SEED_PROJECT_CONSUMED_KEY = 'seed_project:consumed';
+
+/**
+ * What the CEO is told, for its first reply only, about the message that opens
+ * the chat. Never stored: the admin's message is the brief exactly as typed.
+ */
+export const SEED_BRIEF_CONTEXT =
+	'The admin wrote this first message on the Hezo website when signing up, before this instance existed. It names no project and no team. Treat it as a new project request: propose a project name and a team.';
 
 /**
  * Write the seeded locale into `system_meta`, once.
@@ -47,16 +61,15 @@ export async function applySeedLocale(db: Db): Promise<boolean> {
 }
 
 /**
- * The seeded brief, while it is still worth offering; otherwise null.
+ * The seeded brief, while it is still worth sending; otherwise null.
  *
- * The home screen's CEO chat offers it as a one-tap first message. It stops
- * being offered once any of these holds: an earlier release already opened an
- * intake task for it, a project exists, or the admin has written in an HQ
- * conversation. No marker is written: the conditions are the record.
+ * It stops being worth sending once any of these holds: it was already sent
+ * (the claim marker), a project exists, or the admin has written in an HQ
+ * conversation.
  *
- * Read on the CEO chat's default-thread fetch. The checks run cheapest first
- * and only while a brief is configured; the project check settles it for good
- * once the first project exists, so the message check needs no index of its own.
+ * The checks run cheapest first and only while a brief is configured; the
+ * project check settles it for good once the first project exists, so the
+ * message check needs no index of its own.
  */
 export async function pendingSeedBrief(db: Db): Promise<string | null> {
 	const brief = runtimeConfig().seed?.project?.description;
@@ -73,4 +86,47 @@ export async function pendingSeedBrief(db: Db): Promise<string | null> {
 		[ChatMessageRole.User],
 	);
 	return r.rows[0]?.settled ? null : brief;
+}
+
+/**
+ * Send the seeded brief to the CEO chat as the admin's first message, once.
+ *
+ * Called when a model credential is stored and when the instance unlocks: the
+ * CEO can answer only once a credential exists, and on a hosted box the admin
+ * adds one after unlocking. Waits, sending nothing, while the CEO cannot start
+ * a turn, because the chat stores a message before it checks the credential.
+ * The marker claim makes concurrent callers send it once; a send that throws
+ * gives the claim back, so the next trigger tries again.
+ *
+ * Returns whether it sent the brief.
+ */
+export async function deliverSeedBrief(
+	db: Db,
+	manager: Pick<ChatSessionManager, 'ceoTurnBlocker' | 'sendTurn'>,
+): Promise<boolean> {
+	const brief = await pendingSeedBrief(db);
+	if (!brief) return false;
+	if (await manager.ceoTurnBlocker()) return false;
+
+	const claimed = await db.query<{ key: string }>(
+		`INSERT INTO system_meta (key, value) VALUES ($1, $2)
+		 ON CONFLICT (key) DO NOTHING
+		 RETURNING key`,
+		[SEED_PROJECT_CONSUMED_KEY, new Date().toISOString()],
+	);
+	if (claimed.rows.length === 0) return false;
+
+	try {
+		await manager.sendTurn({
+			text: brief,
+			channel: ChatChannel.Web,
+			authorUserId: await getSuperuserId(db),
+			injectedContext: SEED_BRIEF_CONTEXT,
+		});
+	} catch (err) {
+		await deleteSystemMeta(db, SEED_PROJECT_CONSUMED_KEY);
+		throw err;
+	}
+	log.info('Sent the seeded brief to the CEO chat');
+	return true;
 }

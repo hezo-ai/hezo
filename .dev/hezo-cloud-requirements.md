@@ -43,7 +43,7 @@ together from H24 on.
 | H18 | A 1-vCPU Daytona shape | 38% off the container-hour rate | optional |
 | **H21** | Extract a `@hezo/ui` package | the control plane writing its own primitives | **done** |
 | **H24** | `seed` config block | a signup brief and language reaching the instance | **done** |
-| **H25** | Seed consumer: locale at boot, brief offered as the first chat message | the CEO greeting a signup brief | **done**, reworked |
+| **H25** | Seed consumer: locale at boot, brief sent as the first chat message | the CEO greeting a signup brief | **done**, reworked |
 | **H26** | Preset-aware intake prose | H25 reading as what it is | superseded by the H25 rework |
 | **H27** | Remove the language step; setup carries the language | one gate order on every instance | **done**, product change |
 | **H28** | Lock the locale route on the master key | tenants no longer world-writable | **done**, product change |
@@ -778,28 +778,29 @@ claiming a generator was stale and is gone) and architecture § 12.
 when none is configured, so `/api/status` reports `localeConfigured: true` from
 the first request and every browser adopts it.
 
-**The brief is an offer, not a task.** The first version opened a CEO intake
-task in HQ at the first unlock. New-project planning has since moved into the
-CEO chat, and the intake task with it. `pendingSeedBrief` now answers the
-brief while it is worth offering: no legacy `seed_project:consumed` marker (an
-instance where the first version already opened the task), no non-internal
-project, and no admin message in an HQ conversation. `GET /api/chat/conversation`
-carries it as `seed_brief` on the default thread, and the home screen's CEO chat
-shows a seed greeting and a chip that sends a translated lead line plus the brief
-as the admin's own first message. Nothing is written at unlock and no turn runs
-until the admin sends it, so the brief never needs an AI credential at boot. The
-`seed` config shape is unchanged; the control plane's spec and golden snapshot
-(`hezo-ai/cloud`, `.dev/track-h-spec.md`) still describe the first version and
-need the same rewording. `/auth/setup` still creates the superuser before it
-enrols the key.
+**The brief is a chat message, not a task.** The first version opened a CEO
+intake task in HQ at the first unlock. New-project planning has since moved into
+the CEO chat, and the intake task with it. `deliverSeedBrief` now sends the
+brief, verbatim, as the admin's own first message on the default CEO thread, with
+a one-turn note telling the CEO it is a signup brief. It runs when a model
+credential is stored and on unlock, and sends nothing while the CEO cannot start
+a turn, so a fresh hosted box sends it the moment its owner connects a model. The
+`seed_project:consumed` marker is its claim, so it is sent once; an instance
+where the first version already opened the intake task carries the same marker
+and is not sent it again. It is also not sent once a non-internal project or an
+admin message in an HQ conversation exists. The `seed` config shape is
+unchanged, so the golden snapshot is unaffected; the control plane's spec
+(`hezo-ai/cloud`, `.dev/track-h-spec.md`) needs the same rewording.
+`/auth/setup` still creates the superuser before it enrols the key.
 
 ## H26 — preset-aware intake prose *(superseded)*
 
 The intake task carried a second prose row for a brief from signup: nobody named
 the project or chose a team, and the brief was quoted so its text could not read
 as the CEO's instructions. With the intake task gone the brief arrives as the
-admin's own chat message under a lead line, and the CEO prompt's *New projects*
-bullet covers a signup brief (propose a name and a team).
+admin's own chat message, the CEO's first reply carries a note that it came from
+signup, and the CEO prompt's *New projects* bullet covers a signup brief (propose
+a name and a team).
 
 ## H27 — remove the language step *(done; changes self-hosted behaviour)*
 

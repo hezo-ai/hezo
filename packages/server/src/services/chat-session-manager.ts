@@ -1879,6 +1879,21 @@ export class ChatSessionManager {
 		return resolved.id;
 	}
 
+	/**
+	 * Why a CEO turn cannot start right now, or null when it can. The credential
+	 * check `sendTurn` makes after it stores the message, run before anything is
+	 * stored, so a server-side sender can wait instead of posting a message the
+	 * CEO never answers.
+	 */
+	async ceoTurnBlocker(): Promise<string | null> {
+		try {
+			await this.resolveInvocationSelection(await this.resolveCeoMemberId());
+			return null;
+		} catch (e) {
+			return (e as Error).message;
+		}
+	}
+
 	/** Resolve the conversation for an inbound turn (explicit id, or resolve/create). */
 	private async resolveConversationForInput(input: {
 		channel?: ChatChannel;

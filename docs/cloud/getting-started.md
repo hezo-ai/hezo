@@ -53,11 +53,17 @@ durable before you continue - a password manager, or paper in a drawer. See
 
 You will be asked for it again if your instance restarts.
 
-## 5. Meet your team
+## 5. Connect an AI model
 
-Your home screen opens on the CEO chat, with a button that sends your brief as
-your first message. The CEO picks it up from there - scoping the work with you
-and staffing a team for it. Nothing is created until you tell it to go ahead.
+Your agents run on a model you bring. Paste an API key, or sign in with a
+subscription where the provider supports it. See
+[AI model support](/docs/ai-models) for the providers and where to get a key.
+
+## 6. Meet your team
+
+Your home screen opens on the CEO chat. Your brief is already there as your
+first message, and the CEO is answering it: it scopes the work with you and
+proposes a team. Nothing is created until you tell it to go ahead.
 From here the rest of
 these docs apply: see [Your first project](/docs/getting-started/first-project)
 for what to expect, and [What's different from

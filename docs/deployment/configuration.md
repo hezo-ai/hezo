@@ -423,7 +423,7 @@ instance wants.
 | `seed.locale.language` | - | The language the instance starts in. One of the twelve language codes. |
 | `seed.locale.date_format` | - | The date field order: `dmy`, `mdy`, `ymd` or `d-mon-y`. |
 | `seed.locale.number_format` | - | How amounts are punctuated: `dot-comma`, `comma-dot` or `space-comma`. |
-| `seed.project.description` | - | A project brief. The home screen offers it as a one-tap first message to the CEO. At most 2,000 characters; tabs and line breaks are fine, other control characters are refused. |
+| `seed.project.description` | - | A project brief. It is sent to the CEO as the person's first chat message once a model is connected. At most 2,000 characters; tabs and line breaks are fine, other control characters are refused. |
 
 Both halves are optional and independent; the three locale fields travel together.
 
@@ -443,11 +443,11 @@ that finds no language chosen yet, and never again: once anyone has saved a lang
 the setup gate or from Settings, the file's value is ignored. A wiped database starts over,
 and the seed is applied again.
 
-**The brief is a message, not a project.** The home screen offers it as a one-tap first
-message to the CEO until it is sent, the first project exists, or the person writes to the
-CEO first. Nothing is created and no agent runs until the person sends it. Sending it starts
-an ordinary conversation: the CEO scopes the work and creates a project only once the person
-tells it to go ahead.
+**The brief is a message, not a project.** As soon as the first AI model is connected, Hezo
+sends the brief to the CEO chat as the person's own first message, exactly as written, and
+the CEO starts replying. It is sent once. It is not sent if a project already exists or the
+person has already written to the CEO. From there it is an ordinary conversation: the CEO
+scopes the work and creates a project only once the person tells it to go ahead.
 
 **The brief is plain text in a config file.** It is not a secret, but it is the person's own
 words and it sits in the file for the life of the instance. Give the file mode 600 as

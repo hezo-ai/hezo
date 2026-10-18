@@ -8,9 +8,10 @@ import { ChatSurface } from './chat-surface';
  * home content (a landing state, not a route - decision: chat lives in rooms).
  * The empty state carries the CEO's proactive greeting and starter chips; a
  * chip click sends its text as the operator's first message, so onboarding
- * starts as a conversation. A hosted instance's signup brief, while the server
- * still offers it, leads the chips as a one-tap first message. Once the first
- * project exists the dashboard takes over and the CEO continues in the dock.
+ * starts as a conversation. A hosted instance's signup brief needs neither: the
+ * server sends it as the operator's first message once a model is connected, so
+ * the landing opens on that conversation. Once the first project exists the
+ * dashboard takes over and the CEO continues in the dock.
  */
 export function CeoLandingChat({ onCreateProject }: { onCreateProject: () => void }) {
 	const { t } = useI18n();
@@ -39,7 +40,7 @@ export function CeoLandingChat({ onCreateProject }: { onCreateProject: () => voi
 				<ChatSurface
 					room={CEO_ROOM}
 					active
-					emptyState={(send, { seedBrief }) => (
+					emptyState={(send) => (
 						<div
 							className="flex flex-col items-center gap-4 px-4 py-10 text-center"
 							data-testid="ceo-landing-greeting"
@@ -48,21 +49,9 @@ export function CeoLandingChat({ onCreateProject }: { onCreateProject: () => voi
 								CEO
 							</span>
 							<p className="max-w-md text-[14px] leading-relaxed text-text-1">
-								{seedBrief ? t('chat.landing.seedGreeting') : t('chat.landing.greeting')}
+								{t('chat.landing.greeting')}
 							</p>
 							<div className="flex flex-wrap justify-center gap-1.5">
-								{seedBrief && (
-									<button
-										type="button"
-										data-testid="ceo-landing-seed-brief"
-										onClick={() =>
-											send(`${t('chat.seedBrief.lead')}\n\n${seedBrief}`).catch(() => undefined)
-										}
-										className="rounded-full border border-accent px-3 py-1.5 text-[12px] text-accent transition-colors hover:bg-accent-solid hover:text-accent-solid-fg"
-									>
-										{t('chat.starter.sendSeedBrief')}
-									</button>
-								)}
 								{starters.map((text) => (
 									<button
 										key={text}

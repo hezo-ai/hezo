@@ -1540,9 +1540,9 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
      retry key; `create_project` now refuses a name a user-facing project already uses
      (case- and space-insensitive) and names that project, so a retry after a lost result
      finds the project it made instead of building a second team.
-3. **Seeded** - a hosted instance's signup brief (`seed.project`) is offered as the admin's
-   first chat message, never turned into a task (§ *Hosted first run*). From the moment it
-   is sent it is the CEO-assisted path above.
+3. **Seeded** - a hosted instance's signup brief (`seed.project`) is sent as the admin's
+   first chat message once a model is connected, never turned into a task (§ *Hosted first
+   run*). From then on it is the CEO-assisted path above.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
@@ -6759,16 +6759,20 @@ points where the instance can first act on them:
   `localeConfigured: true` from the first request, and `useSyncInstanceLocale` adopts the
   language on every browser. A locale anyone chose - from the gate's corner switcher or
   from Settings - is never overwritten, on this or any later boot.
-- **The brief, as an offer.** Nothing happens at unlock. `pendingSeedBrief` answers the
-  brief while it is still worth offering and null once any of these holds: the legacy
-  `seed_project:consumed` marker exists (an earlier release turned the brief into an HQ
-  intake task on that instance), a non-internal project exists, or the admin has written a
-  message in an HQ conversation. No marker is written; those conditions are the record.
-  `GET /api/chat/conversation` carries it as `seed_brief` on the default thread only (not
-  on `/api/status`, which is unauthenticated and would expose the person's words), and
-  `CeoLandingChat` renders it as a seed greeting plus a first chip that sends a translated
-  lead line and the brief as the admin's own message. The turn runs then, after the
-  AI-provider step, so the brief never needs a credential at unlock.
+- **The brief, once the CEO can answer.** `deliverSeedBrief` sends it through
+  `ChatSessionManager.sendTurn` as the superuser's own first message on the default CEO
+  thread, verbatim, with `SEED_BRIEF_CONTEXT` as that turn's `injectedContext` (prompt-only,
+  never stored) telling the CEO it is a signup brief naming no project or team. It runs
+  after a credential is stored (`POST /api/ai-providers` and the subscription sign-in
+  success, awaited so the chat the admin lands on holds it) and on unlock (covering a restart
+  between the store and the send, and an upgrade with a credential already present). It
+  sends nothing while `ceoTurnBlocker` reports a reason, because `sendTurn` stores the
+  message before it checks the credential. `pendingSeedBrief` gates it: null once the
+  `seed_project:consumed` marker exists, a non-internal project exists, or the admin has
+  written a message in an HQ conversation. The marker is the claim (`INSERT … ON CONFLICT
+  DO NOTHING RETURNING`), so concurrent triggers send once; a send that throws deletes it so
+  the next trigger retries. An earlier release wrote the same key when it opened an intake
+  task for the brief, so such an instance is not sent it again.
 
 The superuser is still created before `masterKeyManager.setup()` on `POST /api/auth/setup`,
 so anything that runs on the unlock hook and addresses the admin finds them.
