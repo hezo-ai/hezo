@@ -7020,7 +7020,8 @@ running instance applies to the same data - `parseLocaleSettingsPatch` for the l
 `PROJECT_BRIEF_MAX_CHARS` in code points so a brief the signup form accepted is never refused
 here. Like `sso`, it is file-only and inert when absent; unlike `sso`, every key inside is
 optional. `services/seed.ts` consumes it: the locale at boot when none is configured, the
-brief once at the first unlock (§ *Hosted first run*). An older binary
+brief once as the admin's first CEO chat message when a working credential exists (§
+*Hosted first run*). An older binary
 handed a file carrying `seed` refuses to start naming the key, which is the strict schema
 doing its job - a plane writes the block only for a release that reads it.
 

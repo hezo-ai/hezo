@@ -414,9 +414,9 @@ need not have any of its settings pinned.
 
 Where something provisions an instance on a person's behalf, it can hand the first run
 a starting point: the language the person chose, and the project brief they wrote. Set a
-`seed` block and the instance starts in that language and offers the brief as the person's
-first message to the CEO; leave it out and nothing happens, which is what an ordinary
-instance wants.
+`seed` block and the instance starts in that language and sends the brief to the CEO as the
+person's first message once a working model is connected; leave it out and nothing happens,
+which is what an ordinary instance wants.
 
 | Setting | Default | Description |
 |---|---|---|

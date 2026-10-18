@@ -48,8 +48,8 @@ const log = logger.child('routes');
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
 
 /**
- * A credential stored, repaired, re-verified or made the default can make the
- * CEO runnable, which is when a hosted signup brief can reach it
+ * A credential stored, repaired, re-verified or made the default, or a deleted
+ * default handing over to another, can make the CEO runnable, which is when a hosted signup brief can reach it
  * (services/seed). Awaited so the chat the admin lands on already holds it, and
  * caught so a failed send never fails the credential change that triggered it.
  */
@@ -350,6 +350,9 @@ aiProvidersRoutes.delete('/ai-providers/:configId', async (c) => {
 	if (!deleted) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
+	// Deleting the default hands it to another credential, which can make the CEO
+	// runnable.
+	await sendPendingSeedBrief(c);
 
 	return ok(c, { deleted: true });
 });

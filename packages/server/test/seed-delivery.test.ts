@@ -395,6 +395,25 @@ describe('sending the seeded brief to the CEO chat', () => {
 		expect((await adminMessages()).map((m) => m.content)).toEqual([BRIEF]);
 	});
 
+	it('is sent once the admin deletes a refused default and a working key takes over', async () => {
+		const refusedId = await addRefusedDefault();
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		await ctx.db.query(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('anthropic', 'api_key', 'working', $1, false, 'verified', 'claude-sonnet-4-6')`,
+			[encrypt('sk-ant-working', key)],
+		);
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
+
+		const res = await app.request(`/api/ai-providers/${refusedId}`, {
+			method: 'DELETE',
+			headers: authHeader(ctx.token),
+		});
+		expect(res.status).toBe(200);
+		expect((await adminMessages()).map((m) => m.content)).toEqual([BRIEF]);
+	});
+
 	it('is in the chat the admin lands on once they connect their first model', async () => {
 		const prevSkip = process.env.SKIP_AI_KEY_VALIDATION;
 		process.env.SKIP_AI_KEY_VALIDATION = '1';
