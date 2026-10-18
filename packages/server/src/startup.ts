@@ -113,7 +113,7 @@ import { DOCKER_CONTAINER_HOST_ALIAS } from './services/sandbox/endpoints';
 import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
-import { applySeedLocale, deliverSeedBrief } from './services/seed';
+import { applySeedLocale, deliverSeedBrief, releaseInterruptedSeedBrief } from './services/seed';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { setStartupPhase } from './startup-progress';
@@ -474,6 +474,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		await applySeedLocale(db);
 	} catch (err) {
 		log.error('Failed to apply the seeded locale:', err);
+	}
+	// Before anything can send the seeded brief: a claim a previous run left
+	// mid-send is released, so the next trigger can send it.
+	try {
+		await releaseInterruptedSeedBrief(db);
+	} catch (err) {
+		log.error('Failed to release an unfinished seeded-brief send:', err);
 	}
 	// After HQ exists: the notice for budgets an upgrade converted to tokens is
 	// posted on an HQ task.

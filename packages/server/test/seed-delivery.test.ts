@@ -11,7 +11,7 @@ import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRuntimeConfig, runtimeConfig, setRuntimeConfig } from '../src/config/runtime';
 import { encrypt } from '../src/crypto/encryption';
-import { getSystemMeta } from '../src/lib/system-meta';
+import { getSystemMeta, setSystemMeta } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
@@ -19,7 +19,9 @@ import { LogStreamBroker } from '../src/services/log-stream-broker';
 import {
 	deliverSeedBrief,
 	pendingSeedBrief,
+	releaseInterruptedSeedBrief,
 	SEED_BRIEF_CONTEXT,
+	SEED_BRIEF_SENDING,
 	SEED_PROJECT_CONSUMED_KEY,
 } from '../src/services/seed';
 import { getWorkspacePath } from '../src/services/workspace';
@@ -262,6 +264,45 @@ describe('sending the seeded brief to the CEO chat', () => {
 		expect(await pendingSeedBrief(ctx.db)).toBe(BRIEF);
 
 		expect(await deliverSeedBrief(ctx.db, manager)).toBe(true);
+		expect(await adminMessages()).toHaveLength(1);
+	});
+
+	it('stamps a finished send, so a boot never releases it', async () => {
+		await addCredential();
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(true);
+		const stamp = await getSystemMeta(ctx.db, SEED_PROJECT_CONSUMED_KEY);
+		expect(stamp).not.toBeNull();
+		expect(stamp).not.toBe(SEED_BRIEF_SENDING);
+		expect(await releaseInterruptedSeedBrief(ctx.db)).toBe(false);
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
+		expect(await adminMessages()).toHaveLength(1);
+	});
+
+	it('sends the brief after a boot when the last run stopped mid-send', async () => {
+		await addCredential();
+		// The claim a run took just before it died, with no message stored.
+		await setSystemMeta(ctx.db, SEED_PROJECT_CONSUMED_KEY, SEED_BRIEF_SENDING);
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
+
+		expect(await releaseInterruptedSeedBrief(ctx.db)).toBe(true);
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(true);
+		expect(await adminMessages()).toEqual([
+			{ content: BRIEF, author_user_id: await superuserId() },
+		]);
+	});
+
+	it('does not send it twice when the last run stored it before it stopped', async () => {
+		await addCredential();
+		await setSystemMeta(ctx.db, SEED_PROJECT_CONSUMED_KEY, SEED_BRIEF_SENDING);
+		const conversationId = await manager.getConversationId();
+		await ctx.db.query(
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content, author_user_id)
+			 VALUES ($1, $2, 'web', 'complete', $3, $4)`,
+			[conversationId, ChatMessageRole.User, BRIEF, await superuserId()],
+		);
+
+		expect(await releaseInterruptedSeedBrief(ctx.db)).toBe(true);
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
 		expect(await adminMessages()).toHaveLength(1);
 	});
 

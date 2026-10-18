@@ -6771,8 +6771,11 @@ points where the instance can first act on them:
   blocker: the brief is stored and shown with that refusal's notice, as a typed message is. `pendingSeedBrief` gates it: null once the
   `seed_project:consumed` marker exists, a non-internal project exists, or the admin has
   written a message in an HQ conversation. The marker is the claim (`INSERT … ON CONFLICT
-  DO NOTHING RETURNING`), so concurrent triggers send once; a send that throws deletes it so
-  the next trigger retries. An earlier release wrote the same key when it opened an intake
+  DO NOTHING RETURNING`, value `sending`), so concurrent triggers send once; a send that
+  throws deletes it so the next trigger retries, and a finished send stamps it with the
+  time. `releaseInterruptedSeedBrief` runs at boot, before anything can send, and deletes a
+  claim still marked `sending`: its process died between the claim and the message. If the
+  message was stored first, the admin-message condition still stops a second send. An earlier release wrote the same key when it opened an intake
   task for the brief, so such an instance is not sent it again.
 
 The superuser is still created before `masterKeyManager.setup()` on `POST /api/auth/setup`,

@@ -6,6 +6,7 @@ import {
 	getSystemMeta,
 	instanceLocaleIsConfigured,
 	setInstanceLocale,
+	setSystemMeta,
 } from '../lib/system-meta';
 import { logger } from '../logger';
 import type { ChatSessionManager } from './chat-session-manager';
@@ -31,6 +32,9 @@ const log = logger.child('seed');
  * intake task, and an instance carrying it from then is not sent the brief again.
  */
 export const SEED_PROJECT_CONSUMED_KEY = 'seed_project:consumed';
+
+/** The claim's value while a send is under way; a finished send stamps the time. */
+export const SEED_BRIEF_SENDING = 'sending';
 
 /**
  * What the CEO is told, for its first reply only, about the message that opens
@@ -96,7 +100,8 @@ export async function pendingSeedBrief(db: Db): Promise<string | null> {
  * adds one after unlocking. Waits, sending nothing, while the CEO cannot start
  * a turn, because the chat stores a message before it checks the credential.
  * The marker claim makes concurrent callers send it once; a send that throws
- * gives the claim back, so the next trigger tries again.
+ * gives the claim back, so the next trigger tries again, and a process that
+ * dies mid-send leaves it marked as sending for the next boot to release.
  *
  * Returns whether it sent the brief.
  */
@@ -112,7 +117,7 @@ export async function deliverSeedBrief(
 		`INSERT INTO system_meta (key, value) VALUES ($1, $2)
 		 ON CONFLICT (key) DO NOTHING
 		 RETURNING key`,
-		[SEED_PROJECT_CONSUMED_KEY, new Date().toISOString()],
+		[SEED_PROJECT_CONSUMED_KEY, SEED_BRIEF_SENDING],
 	);
 	if (claimed.rows.length === 0) return false;
 
@@ -127,6 +132,25 @@ export async function deliverSeedBrief(
 		await deleteSystemMeta(db, SEED_PROJECT_CONSUMED_KEY);
 		throw err;
 	}
+	await setSystemMeta(db, SEED_PROJECT_CONSUMED_KEY, new Date().toISOString());
 	log.info('Sent the seeded brief to the CEO chat');
+	return true;
+}
+
+/**
+ * Release a claim a process left mid-send. Runs at boot, before anything can
+ * send, so a claim still marked as sending belongs to a process that died
+ * between the claim and the message. When the message was stored first, the
+ * admin-message check in `pendingSeedBrief` still stops a second send.
+ *
+ * Returns whether it released one.
+ */
+export async function releaseInterruptedSeedBrief(db: Db): Promise<boolean> {
+	const r = await db.query<{ key: string }>(
+		'DELETE FROM system_meta WHERE key = $1 AND value = $2 RETURNING key',
+		[SEED_PROJECT_CONSUMED_KEY, SEED_BRIEF_SENDING],
+	);
+	if (r.rows.length === 0) return false;
+	log.warn('Released a seeded-brief send that a previous run left unfinished');
 	return true;
 }

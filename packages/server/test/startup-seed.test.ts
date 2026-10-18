@@ -8,8 +8,17 @@ import type { SeedConfig } from '../src/config/types';
 import { encrypt } from '../src/crypto/encryption';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
-import { getInstanceLocale, getSystemMeta, setInstanceLocale } from '../src/lib/system-meta';
-import { pendingSeedBrief, SEED_PROJECT_CONSUMED_KEY } from '../src/services/seed';
+import {
+	getInstanceLocale,
+	getSystemMeta,
+	setInstanceLocale,
+	setSystemMeta,
+} from '../src/lib/system-meta';
+import {
+	pendingSeedBrief,
+	SEED_BRIEF_SENDING,
+	SEED_PROJECT_CONSUMED_KEY,
+} from '../src/services/seed';
 import { getRunSocketDir } from '../src/services/workspace';
 import { type HezoConfig, type StartupResult, startup } from '../src/startup';
 import { testHezoConfig } from './helpers/config';
@@ -174,6 +183,28 @@ describe('startup with a seed block', () => {
 		await settleUnlock(third);
 		expect(await adminMessages(third.db)).toEqual([BRIEF]);
 	}, 180_000);
+
+	it('sends the brief after a restart when the last run stopped mid-send', async () => {
+		const dataDir = freshDataDir();
+		const first = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
+		await settleUnlock(first);
+		const key = first.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		await first.db.query(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('anthropic', 'api_key', 'test', $1, true, 'verified', 'claude-sonnet-4-6')`,
+			[encrypt('sk-ant-test', key)],
+		);
+		// The claim a run took just before it died, with no message stored.
+		await setSystemMeta(first.db, SEED_PROJECT_CONSUMED_KEY, SEED_BRIEF_SENDING);
+		await shutdown();
+
+		const second = await boot(dataDir, { masterKey: MASTER_KEY, seed: SEED });
+		await vi.waitFor(async () => expect(await adminMessages(second.db)).toEqual([BRIEF]), {
+			timeout: 15_000,
+		});
+		expect(await getSystemMeta(second.db, SEED_PROJECT_CONSUMED_KEY)).not.toBe(SEED_BRIEF_SENDING);
+	}, 120_000);
 
 	it('opens nothing and configures nothing when the file carries no seed', async () => {
 		const booted = await boot(freshDataDir(), { masterKey: MASTER_KEY });
