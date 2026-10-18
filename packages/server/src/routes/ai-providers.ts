@@ -12,7 +12,7 @@ import {
 	type SubscriptionLoginFailure,
 	validateAllowanceDailyShare,
 } from '@hezo/shared';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { isUniqueViolation } from '../lib/sql';
 import type { AuthInfo, Env } from '../lib/types';
@@ -32,6 +32,7 @@ import {
 import { listCredentialModels } from '../services/credential-models';
 import { initialDefaultModel, refreshModelPins } from '../services/model-pins';
 import { probeProvesCredentialDead, probeProviderCatalog } from '../services/provider-catalog';
+import { deliverSeedBrief } from '../services/seed';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
 import {
 	LOGIN_FLOW_TTL_MS,
@@ -45,6 +46,22 @@ import { releaseUsageHeldWakeups } from '../services/wakeup';
 const log = logger.child('routes');
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
+
+/**
+ * A credential stored, repaired, re-verified or made the default, or a deleted
+ * default handing over to another, can make the CEO runnable, which is when a hosted signup brief can reach it
+ * (services/seed). Awaited so the chat the admin lands on already holds it, and
+ * caught so a failed send never fails the credential change that triggered it.
+ */
+async function sendPendingSeedBrief(c: Context<Env>): Promise<void> {
+	const manager = c.get('chatSessionManager');
+	if (!manager) return;
+	try {
+		await deliverSeedBrief(c.get('db'), manager);
+	} catch (e) {
+		log.error('Failed to send the seeded brief to the CEO chat:', e);
+	}
+}
 
 type RuntimeChoice = { ok: true; value: AgentRuntime | null } | { ok: false; error: string };
 
@@ -297,6 +314,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		// something keyed on the stored config (listing its model catalog), and a
 		// re-read to learn its label would race the write it just made.
 		const created = await getAiProviderConfig(db, configId);
+		await sendPendingSeedBrief(c);
 		return ok(c, created ?? { id: configId }, 201);
 	} catch (e) {
 		const message = e instanceof Error ? e.message : 'Failed to store AI provider config';
@@ -332,6 +350,9 @@ aiProvidersRoutes.delete('/ai-providers/:configId', async (c) => {
 	if (!deleted) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
+	// Deleting the default hands it to another credential, which can make the CEO
+	// runnable.
+	await sendPendingSeedBrief(c);
 
 	return ok(c, { deleted: true });
 });
@@ -348,6 +369,7 @@ aiProvidersRoutes.patch('/ai-providers/:configId/default', async (c) => {
 	if (!updated) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
+	await sendPendingSeedBrief(c);
 
 	return ok(c, { updated: true });
 });
@@ -393,6 +415,7 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 				`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`,
 				[AiProviderStatus.Verified, configId],
 			);
+			await sendPendingSeedBrief(c);
 			return ok(c, { valid: true, checked: true });
 		}
 
@@ -583,6 +606,8 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		}
 		throw e;
 	}
+
+	await sendPendingSeedBrief(c);
 
 	// Nothing derived from the credential goes back over the wire — not a prefix,
 	// a length, or a masked form.
@@ -820,6 +845,7 @@ aiProvidersRoutes.get('/ai-providers/subscription-login/:flowId', async (c) => {
 
 	try {
 		const configId = await pending;
+		await sendPendingSeedBrief(c);
 		return ok(c, { status: 'succeeded', config_id: configId });
 	} catch (e) {
 		forgetFlow(flowId);

@@ -94,12 +94,6 @@ interface ConversationData {
 	 * types, and this is a response the surface already loads.
 	 */
 	hours_exhausted?: boolean;
-	/**
-	 * CEO default thread only: the brief a hosted instance's owner wrote at
-	 * signup, while it is still worth offering as their first message. Null
-	 * once sent, once a project exists, or once they wrote to the CEO first.
-	 */
-	seed_brief?: string | null;
 }
 
 /**
@@ -870,8 +864,6 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		// The allowance is spent: a reply needing a new container will not start.
 		// Warm reuse still serves, so this warns rather than locking the composer.
 		hoursExhausted: query.data?.hours_exhausted === true,
-		// The signup brief the home landing offers as a one-tap first message.
-		seedBrief: query.data?.seed_brief ?? null,
 		// Group rooms: the roster (author-label lookup), the pending strip, its
 		// cancel, and the local "tag a teammate" nudge. Inert everywhere else.
 		participants: query.data?.participants ?? EMPTY_PARTICIPANTS,

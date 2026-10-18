@@ -82,30 +82,30 @@ describe('the seed consumer on a fresh instance', () => {
 	});
 
 	describe('pendingSeedBrief', () => {
-		it('offers nothing without a seeded brief', async () => {
+		it('has nothing to send without a seeded brief', async () => {
 			withSeed(null);
 			expect(await pendingSeedBrief(db)).toBeNull();
 			withSeed({ locale: SEED.locale });
 			expect(await pendingSeedBrief(db)).toBeNull();
 		});
 
-		it('offers the brief on a fresh instance, without writing anything', async () => {
+		it('has the brief to send on a fresh instance, and reading it writes nothing', async () => {
 			withSeed(SEED);
 			expect(await pendingSeedBrief(db)).toBe(BRIEF);
-			// Offering is a read: asking twice offers it twice.
+			// A read: asking twice answers twice.
 			expect(await pendingSeedBrief(db)).toBe(BRIEF);
 			expect(await getSystemMeta(db, SEED_PROJECT_CONSUMED_KEY)).toBeNull();
 			const tasks = await db.query<{ count: number }>('SELECT count(*)::int AS count FROM tasks');
 			expect(tasks.rows[0].count).toBe(0);
 		});
 
-		it('stops offering once an earlier release turned the brief into an intake task', async () => {
+		it('stops once the brief is claimed: sent, or opened as an intake task by an earlier release', async () => {
 			withSeed(SEED);
 			await setSystemMeta(db, SEED_PROJECT_CONSUMED_KEY, new Date().toISOString());
 			expect(await pendingSeedBrief(db)).toBeNull();
 		});
 
-		it('stops offering once a project exists', async () => {
+		it('stops once a project exists', async () => {
 			withSeed(SEED);
 			const team = await db.query<{ id: string }>(
 				`INSERT INTO teams (name, slug) VALUES ('Gym', 'gym') RETURNING id`,
@@ -117,7 +117,7 @@ describe('the seed consumer on a fresh instance', () => {
 			expect(await pendingSeedBrief(db)).toBeNull();
 		});
 
-		it('stops offering once the admin has written to the CEO', async () => {
+		it('stops once the admin has written to the CEO', async () => {
 			withSeed(SEED);
 			// A CEO line alone is not the admin speaking.
 			await postHqChatMessage(db, ChatMessageRole.Assistant);

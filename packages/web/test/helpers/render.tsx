@@ -54,6 +54,8 @@ interface TestAppContext {
 	// specs pre-create `workspace/<repo name>/.git` so repo-sync treats a repo
 	// as already cloned instead of attempting a real SSH clone.
 	dataDir: string;
+	/** The CEO chat the app serves, for specs that drive it server-side. */
+	chatSessionManager: NonNullable<Awaited<ReturnType<typeof createTestApp>>['chatSessionManager']>;
 }
 
 let activeContext: TestAppContext | null = null;

@@ -340,37 +340,19 @@ describe('CEO chat HTTP routes', () => {
 			expect(rows.rows[0].n).toBe(1);
 		});
 
-		test('offers the signup brief on the default thread only', async () => {
-			const brief = 'Track my portfolio and send a weekly report.';
-			setRuntimeConfig({ ...runtimeConfig(), seed: { project: { description: brief } } });
+		test('carries no signup brief: the server sends it as a message instead', async () => {
+			setRuntimeConfig({
+				...runtimeConfig(),
+				seed: { project: { description: 'Track my portfolio and send a weekly report.' } },
+			});
 			try {
 				const res = await app.request('/api/chat/conversation', {
 					headers: authHeader(ctx.token),
 				});
-				const body = (await res.json()).data;
-				expect(body.seed_brief).toBe(brief);
-
-				// An explicit thread is never the home landing, so it carries no offer.
-				const explicit = await app.request(
-					`/api/chat/conversation?conversation_id=${body.conversation_id}`,
-					{ headers: authHeader(ctx.token) },
-				);
-				expect((await explicit.json()).data.seed_brief).toBeNull();
-
-				// Once the admin has written to the CEO, the offer is gone.
-				await seedMessage({ conversationId: body.conversation_id, content: 'Hi' });
-				const after = await app.request('/api/chat/conversation', {
-					headers: authHeader(ctx.token),
-				});
-				expect((await after.json()).data.seed_brief).toBeNull();
+				expect((await res.json()).data).not.toHaveProperty('seed_brief');
 			} finally {
 				resetRuntimeConfig();
 			}
-		});
-
-		test('offers no brief when the instance was not seeded', async () => {
-			const res = await app.request('/api/chat/conversation', { headers: authHeader(ctx.token) });
-			expect((await res.json()).data.seed_brief).toBeNull();
 		});
 	});
 

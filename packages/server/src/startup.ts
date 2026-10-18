@@ -113,7 +113,7 @@ import { DOCKER_CONTAINER_HOST_ALIAS } from './services/sandbox/endpoints';
 import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
-import { applySeedLocale } from './services/seed';
+import { applySeedLocale, deliverSeedBrief, releaseInterruptedSeedBrief } from './services/seed';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { setStartupPhase } from './startup-progress';
@@ -475,6 +475,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	} catch (err) {
 		log.error('Failed to apply the seeded locale:', err);
 	}
+	// Before anything can send the seeded brief: a claim a previous run left
+	// mid-send is released, so the next trigger can send it.
+	try {
+		await releaseInterruptedSeedBrief(db);
+	} catch (err) {
+		log.error('Failed to release an unfinished seeded-brief send:', err);
+	}
 	// After HQ exists: the notice for budgets an upgrade converted to tokens is
 	// posted on an HQ task.
 	try {
@@ -524,6 +531,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 					jobManager
 						.ensureHqContainerRunning()
 						.catch((err) => log.error('Failed to warm HQ container on startup:', err)),
+				);
+				// A hosted brief reaches the CEO once a credential exists, which is
+				// usually when the admin adds one (routes/ai-providers). This covers an
+				// instance that restarted in between, or that had one when it upgraded.
+				trackBackground(
+					deliverSeedBrief(db, chatSessionManager).catch((err) =>
+						log.error('Failed to send the seeded brief to the CEO chat:', err),
+					),
 				);
 			});
 		// Reading a credential's live model list needs the master key, so the check
