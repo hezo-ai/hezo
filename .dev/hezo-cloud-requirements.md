@@ -783,8 +783,8 @@ intake task in HQ at the first unlock. New-project planning has since moved into
 the CEO chat, and the intake task with it. `deliverSeedBrief` now sends the
 brief, verbatim, as the admin's own first message on the default CEO thread, with
 a one-turn note telling the CEO it is a signup brief. It runs when a model
-credential is stored and on unlock, and sends nothing while the CEO cannot start
-a turn, so a fresh hosted box sends it the moment its owner connects a model. The
+credential is stored, repaired or made the default, and on unlock, and sends
+nothing while the CEO has no usable credential, so a fresh hosted box sends it the moment its owner connects a model. The
 `seed_project:consumed` marker is its claim, so it is sent once; an instance
 where the first version already opened the intake task carries the same marker
 and is not sent it again. It is also not sent once a non-internal project or an

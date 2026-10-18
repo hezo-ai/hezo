@@ -48,11 +48,12 @@ const log = logger.child('routes');
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
 
 /**
- * A stored credential is when a hosted signup brief can first reach the CEO
+ * A credential stored, repaired, re-verified or made the default can make the
+ * CEO runnable, which is when a hosted signup brief can reach it
  * (services/seed). Awaited so the chat the admin lands on already holds it, and
- * caught so a failed send never fails the credential that was just saved.
+ * caught so a failed send never fails the credential change that triggered it.
  */
-async function sendSeedBriefAfterStore(c: Context<Env>): Promise<void> {
+async function sendPendingSeedBrief(c: Context<Env>): Promise<void> {
 	const manager = c.get('chatSessionManager');
 	if (!manager) return;
 	try {
@@ -313,7 +314,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		// something keyed on the stored config (listing its model catalog), and a
 		// re-read to learn its label would race the write it just made.
 		const created = await getAiProviderConfig(db, configId);
-		await sendSeedBriefAfterStore(c);
+		await sendPendingSeedBrief(c);
 		return ok(c, created ?? { id: configId }, 201);
 	} catch (e) {
 		const message = e instanceof Error ? e.message : 'Failed to store AI provider config';
@@ -365,6 +366,7 @@ aiProvidersRoutes.patch('/ai-providers/:configId/default', async (c) => {
 	if (!updated) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
+	await sendPendingSeedBrief(c);
 
 	return ok(c, { updated: true });
 });
@@ -410,6 +412,7 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 				`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`,
 				[AiProviderStatus.Verified, configId],
 			);
+			await sendPendingSeedBrief(c);
 			return ok(c, { valid: true, checked: true });
 		}
 
@@ -600,6 +603,8 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		}
 		throw e;
 	}
+
+	await sendPendingSeedBrief(c);
 
 	// Nothing derived from the credential goes back over the wire — not a prefix,
 	// a length, or a masked form.
@@ -837,7 +842,7 @@ aiProvidersRoutes.get('/ai-providers/subscription-login/:flowId', async (c) => {
 
 	try {
 		const configId = await pending;
-		await sendSeedBriefAfterStore(c);
+		await sendPendingSeedBrief(c);
 		return ok(c, { status: 'succeeded', config_id: configId });
 	} catch (e) {
 		forgetFlow(flowId);

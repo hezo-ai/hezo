@@ -343,6 +343,58 @@ describe('sending the seeded brief to the CEO chat', () => {
 		expect(checkPromptStyle(SEED_BRIEF_CONTEXT)).toEqual([]);
 	});
 
+	/** A default credential the provider refused, as an upgraded instance may hold. */
+	async function addRefusedDefault(): Promise<string> {
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		const r = await ctx.db.query<{ id: string }>(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('anthropic', 'api_key', 'refused', $1, true, 'invalid', 'claude-sonnet-4-6')
+			 RETURNING id`,
+			[encrypt('sk-ant-old', key)],
+		);
+		return r.rows[0].id;
+	}
+
+	it('is sent once the admin replaces a refused default key', async () => {
+		const configId = await addRefusedDefault();
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
+
+		const prevSkip = process.env.SKIP_AI_KEY_VALIDATION;
+		process.env.SKIP_AI_KEY_VALIDATION = '1';
+		try {
+			const res = await app.request(`/api/ai-providers/${configId}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ api_key: 'sk-ant-new' }),
+			});
+			expect(res.status).toBe(200);
+		} finally {
+			process.env.SKIP_AI_KEY_VALIDATION = prevSkip;
+		}
+		expect((await adminMessages()).map((m) => m.content)).toEqual([BRIEF]);
+	});
+
+	it('is sent once the admin makes a working key the default', async () => {
+		await addRefusedDefault();
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		const working = await ctx.db.query<{ id: string }>(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('openai', 'api_key', 'working', $1, false, 'verified', 'gpt-5')
+			 RETURNING id`,
+			[encrypt('sk-openai-test', key)],
+		);
+		expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
+
+		const res = await app.request(`/api/ai-providers/${working.rows[0].id}/default`, {
+			method: 'PATCH',
+			headers: authHeader(ctx.token),
+		});
+		expect(res.status).toBe(200);
+		expect((await adminMessages()).map((m) => m.content)).toEqual([BRIEF]);
+	});
+
 	it('is in the chat the admin lands on once they connect their first model', async () => {
 		const prevSkip = process.env.SKIP_AI_KEY_VALIDATION;
 		process.env.SKIP_AI_KEY_VALIDATION = '1';

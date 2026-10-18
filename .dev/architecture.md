@@ -6763,9 +6763,11 @@ points where the instance can first act on them:
   `ChatSessionManager.sendTurn` as the superuser's own first message on the default CEO
   thread, verbatim, with `SEED_BRIEF_CONTEXT` as that turn's `injectedContext` (prompt-only,
   never stored) telling the CEO it is a signup brief naming no project or team. It runs
-  after a credential is stored (`POST /api/ai-providers` and the subscription sign-in
-  success, awaited so the chat the admin lands on holds it) and on unlock (covering a restart
-  between the store and the send, and an upgrade with a credential already present). It
+  whenever a credential change can make the CEO runnable (a credential stored through
+  `POST /api/ai-providers` or the subscription sign-in, updated, re-verified, or made the
+  default), awaited so the chat the admin lands on holds it, and on unlock (covering a
+  restart between the change and the send, and an upgrade with a credential already
+  present). It
   sends nothing while `ceoTurnBlocker` reports no usable credential, because `sendTurn`
   stores the message before it checks the credential. A budget or hours refusal is not a
   blocker: the brief is stored and shown with that refusal's notice, as a typed message is. `pendingSeedBrief` gates it: null once the
