@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.72.0 - 2026-10-18
+
+### Breaking Changes
+
+- **onboarding:** plan new projects in the CEO chat, with CEO task suggestions ([#1163](https://github.com/hezo-ai/hezo/pull/1163))
+
+### Features
+
+- **web:** tell the support chat where the owner is ([#1164](https://github.com/hezo-ai/hezo/pull/1164))
+- **onboarding:** plan new projects in the CEO chat, with CEO task suggestions ([#1163](https://github.com/hezo-ai/hezo/pull/1163))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.71.0...0.72.0
+
 ## 0.71.0 - 2026-10-17
 
 ### Features
