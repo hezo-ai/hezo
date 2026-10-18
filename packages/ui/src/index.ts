@@ -176,10 +176,12 @@ export {
 	installSupportChat,
 	openSupportChat,
 	resetSupportChat,
+	SUPPORT_CHAT_IDENTIFY_SETTLE_MS,
 	type SupportChatColorScheme,
 	type SupportChatIdentity,
 	type SupportChatOptions,
 	setSupportChatBubble,
+	setSupportChatContext,
 	setSupportChatLocale,
 	setSupportChatTheme,
 } from './support-chat.js';

@@ -42,6 +42,8 @@ interface FakeChatwoot {
 	toggle: ReturnType<typeof vi.fn>;
 	setLocale: ReturnType<typeof vi.fn>;
 	setColorScheme: ReturnType<typeof vi.fn>;
+	toggleBubbleVisibility: ReturnType<typeof vi.fn>;
+	setCustomAttributes: ReturnType<typeof vi.fn>;
 	reset: ReturnType<typeof vi.fn>;
 }
 
@@ -128,6 +130,8 @@ test('the owner gets the row, an identified widget, and a reset on sign-out', as
 		toggle: vi.fn(),
 		setLocale: vi.fn(),
 		setColorScheme: vi.fn(),
+		toggleBubbleVisibility: vi.fn(),
+		setCustomAttributes: vi.fn(),
 		reset: vi.fn(),
 	};
 	testWindow.chatwootSDK = {

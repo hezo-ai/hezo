@@ -23,6 +23,7 @@ export * from './model-pins.js';
 export * from './prompt-style.js';
 export * from './run-log-maintenance.js';
 export * from './search/terms.js';
+export * from './support-chat.js';
 export * from './system-prompt-vars.js';
 export * from './task-progress.js';
 export * from './task-suggestions.js';

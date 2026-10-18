@@ -6747,6 +6747,9 @@ sign-in); then `/home`. There is no language step: the master-key gate renders i
 browser's language, the corner switcher can change it, and the setup request records
 whichever is showing - unless the seed already did.
 
+`shellGate` (`lib/shell-gate.ts`) is that order as one pure decision; the root switches on
+it, and the support chat reports the same name.
+
 `services/seed.ts` is the one consumer of the block, and the two halves land at the two
 points where the instance can first act on them:
 
@@ -6830,6 +6833,46 @@ wrote back. The first rides the public status; the second stays behind the owner
   issuer, and marks the page as leaving for the issuer's logout. The gate behind it comes
   up signed out, and `SsoRedirect` would otherwise send the browser to the issuer's
   sign-in, a second navigation that cancels the logout if it has not yet committed.
+- **What the chat carries.** `setSupportChatContext` hands the loader where the person
+  is, as Chatwoot **contact** attributes: the keys in `SUPPORT_CHAT_FIELDS`
+  (`@hezo/shared`), each prefixed `hezo_` because one Chatwoot account can serve more
+  than one product and a key is unique across the account. Contact, not conversation:
+  the widget's conversation write replaces the conversation's whole attribute set, which
+  erases a pre-chat answer or a value an agent set; its contact write merges by key. The
+  loader sends only while the panel is open (`chatwoot:opened` until `chatwoot:closed`,
+  which Chatwoot first sends in 4.2.0; an older server gets no context, and the
+  configuration guide names 4.2.0 as the minimum), on every open whether or not anything changed (the widget sends the attributes in a
+  request of its own and swallows a failed one, so a call that went through proves
+  nothing), and again on every change while open. **Every page sends every key.** One
+  person is one contact from the marketing site through the hosted dashboard to their
+  instance, so a key one page set and another left out would go on describing a page
+  the person has left; the table therefore carries the hosted pages' keys too
+  (`hezo_visit`, `hezo_instance_*`), and the instance sends them empty. A missing fact
+  travels as `""`, an unchanged context is not sent again while the panel stays open,
+  and an empty one is never sent (the widget throws on it). The tenant web sends
+  `hezo_surface: instance`, the screen from
+  `shellGate` (`lib/shell-gate.ts`, the one decision the root's render also switches on),
+  `setup` while no AI provider is configured, or the deepest route's **template**
+  (`/projects/$projectId/tasks/$taskId`) once inside, the project slug, the version,
+  the language, the resolved theme and a width class (`supportChatViewport`), which it
+  watches, since a resize changes nothing else the shell would re-render for. Never a
+  path, a title or other typed text - the project slug, made from the name the owner
+  gave it, is the one value that is: an instance path carries task and document ids, and
+  the fragment can carry the issuer's token. A send the widget throws on is not
+  recorded as sent, so the next open or change tries it again. When the person is named
+  while the panel is open, the context rides `setUser`'s own request: naming can merge
+  the anonymous contact into the person's existing one, which keeps the existing values,
+  so a separate write racing it could land on the contact that goes. So every write
+  after naming the person, on sign-in or on a signed-in page's ready, waits
+  `SUPPORT_CHAT_IDENTIFY_SETTLE_MS` (the widget reports nothing when the merge is done)
+  and then goes on its own. The context is written again when that wait ends, even if
+  it rode the naming: the SDK drops a `setUser` whose name, email and hash match the
+  last one it sent from this browser (its cookie hashes those fields and not the
+  attributes), and reports nothing. A `setUser` that throws starts no merge, so the
+  context goes at once. Every value is set by the person's own
+  browser, so it is a hint for the support team, not a fact. The inbox shows a key only
+  once an admin defines it there; the hosted plane's sync tool defines the hosted
+  inbox's from this table.
 
 ### Product analytics
 

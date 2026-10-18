@@ -97,6 +97,21 @@ Recordings and the click data behind them are kept for 30 days, then deleted.
 
 Self-hosted Hezo sends none of this.
 
+## The support chat
+
+When you open the support chat, from the dashboard or from your instance, it
+tells our support team where you are, so you do not have to explain it. From
+your instance that is the screen you are on, the short name of the project you
+are in, your Hezo version, and your language, theme and screen size. From the
+dashboard it is the page you are on and your instance's status, its current
+setup step and its last error.
+
+It never sends the text of your tasks or documents. The project's short name is
+made from the name you gave the project; apart from that, nothing it sends is
+text you typed outside the chat. Nothing is sent while the chat is closed. What
+it sends is kept with your contact in the support chat, and replaced each time
+you open the chat.
+
 ## Payment details
 
 Your card never reaches us. Payment is handled entirely by Stripe, which is the

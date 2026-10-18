@@ -51,6 +51,7 @@ together from H24 on.
 | **H30** | Refuse to be framed | the launch modal's threat model | **done** |
 | **H34** | `policy.support` block, owner-only route, shared chat loader | one support contact from the site through the tenant | **done** |
 | **H35** | `policy.analytics` block, owner-only route, shared analytics loader | page views, named clicks and session recordings of the owner's own use | **done** |
+| **H36** | the support chat says where the owner is | the support team sees the screen a person is stuck on | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -899,6 +900,18 @@ its `url-change` events and its heatmap events, so a recording carries real page
 addresses that the page views never do; and page text is masked but attributes
 are not, so a `title` or `aria-label` holding a name is recorded. Mechanism and
 rules: architecture § *Product analytics*.
+
+## H36 — the support chat says where the owner is *(done)*
+
+Somebody who writes "it does not work" leaves the support team asking where. The
+loader now takes a context, `setSupportChatContext`, and sends it as Chatwoot
+contact attributes while the chat is open; the field table is
+`SUPPORT_CHAT_FIELDS` in `@hezo/shared`, the plane's own keys included, so the
+plane's dashboard reports through the same keys, every page clears what another
+page said, and the plane's sync tool defines them in the inbox. The instance
+reports its gate or route template, project slug and version, never a path. No
+policy change: a release that predates it simply reports nothing. Mechanism and
+rules: architecture § *Support chat*.
 
 ---
 

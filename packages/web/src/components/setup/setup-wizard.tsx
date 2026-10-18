@@ -136,9 +136,12 @@ export function SetupWizard({ hosted }: { hosted?: boolean }) {
  * SetupGate is only mounted when the master key is unlocked, so this hook does
  * not re-check master-key state — that would add a second observer to
  * useStatus() and trigger a refetch loop against AppShell's isFetching gate.
+ *
+ * `enabled: false` is for a caller above the gates that only reads what the
+ * gate fetched: the query key is the gate's own.
  */
-export function useWizardStep(): WizardStep | 'loading' {
-	const { data: providerStatus, isPending } = useAiProviderStatus();
+export function useWizardStep(options: { enabled?: boolean } = {}): WizardStep | 'loading' {
+	const { data: providerStatus, isPending } = useAiProviderStatus(options);
 	if (isPending) return 'loading';
 	if (!providerStatus?.configured) return 'ai-provider';
 	return 'done';
