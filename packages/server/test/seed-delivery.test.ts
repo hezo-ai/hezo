@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import {
 	ChatMessageRole,
 	ChatMessageStatus,
+	ChatSystemMessageKind,
 	checkPromptStyle,
 	DEFAULT_TEAM_ID,
 } from '@hezo/shared';
@@ -199,7 +200,7 @@ describe('sending the seeded brief to the CEO chat', () => {
 		expect(await pendingSeedBrief(ctx.db)).toBe(BRIEF);
 	});
 
-	it('waits, sending nothing, while the CEO is over its token budget', async () => {
+	it('sends the brief with the budget notice while the CEO is over its token budget', async () => {
 		await addCredential();
 		const ceo = await ctx.db.query<{ id: string }>(
 			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
@@ -213,15 +214,22 @@ describe('sending the seeded brief to the CEO chat', () => {
 			[ceoId],
 		);
 		try {
-			expect(await deliverSeedBrief(ctx.db, manager)).toBe(false);
-			expect(await adminMessages()).toEqual([]);
-			expect(await pendingSeedBrief(ctx.db)).toBe(BRIEF);
+			// Shown like a message the admin typed: the brief stands, and the notice
+			// under it says why the CEO cannot answer yet.
+			expect(await deliverSeedBrief(ctx.db, manager)).toBe(true);
+			expect(await adminMessages()).toEqual([
+				{ content: BRIEF, author_user_id: await superuserId() },
+			]);
+			const notice = await ctx.db.query<{ system_kind: string | null }>(
+				'SELECT system_kind FROM chat_messages WHERE role = $1',
+				[ChatMessageRole.System],
+			);
+			expect(notice.rows).toEqual([{ system_kind: ChatSystemMessageKind.BudgetExceeded }]);
+			expect(await getSystemMeta(ctx.db, SEED_PROJECT_CONSUMED_KEY)).not.toBeNull();
 		} finally {
 			await ctx.db.query('UPDATE member_agents SET daily_budget_tokens = 0 WHERE id = $1', [ceoId]);
 			await ctx.db.query('DELETE FROM usage_entries WHERE member_id = $1', [ceoId]);
 		}
-		// Once the budget allows a turn, the next trigger sends it.
-		expect(await deliverSeedBrief(ctx.db, manager)).toBe(true);
 	});
 
 	it('sends nothing on an instance that was not seeded', async () => {
