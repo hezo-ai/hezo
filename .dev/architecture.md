@@ -6820,9 +6820,10 @@ wrote back. The first rides the public status; the second stays behind the owner
   recorded as sent, so the next open or change tries it again. When the person is named
   while the panel is open, the context rides `setUser`'s own request: naming can merge
   the anonymous contact into the person's existing one, which keeps the existing values,
-  so a separate write racing it could land on the contact that goes. A change made in
-  that window waits `IDENTIFY_SETTLE_MS` (the widget reports nothing when the merge is
-  done) and then goes on its own. Every value is set by the person's own
+  so a separate write racing it could land on the contact that goes. So every write
+  after naming the person, on sign-in or on a signed-in page's ready, waits
+  `SUPPORT_CHAT_IDENTIFY_SETTLE_MS` (the widget reports nothing when the merge is done)
+  and then goes on its own. Every value is set by the person's own
   browser, so it is a hint for the support team, not a fact. The inbox shows a key only
   once an admin defines it there; the hosted plane's sync tool defines the hosted
   inbox's from this table.

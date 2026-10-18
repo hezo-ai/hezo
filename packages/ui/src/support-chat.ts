@@ -110,12 +110,12 @@ interface SupportChatState {
 let state: SupportChatState | null = null;
 
 /**
- * How long the context is held back after the person is named with the panel
- * open. Naming them can fold the anonymous contact into their existing one, and
- * a write that lands before the merge is lost with the contact it went to; the
- * widget reports nothing when the merge is done, so the hold is a time.
+ * How long the context is held back after the person is named. Naming them can
+ * fold the anonymous contact into their existing one, and a write that lands
+ * before the merge is lost with the contact it went to; the widget reports
+ * nothing when the merge is done, so the hold is a time.
  */
-export const IDENTIFY_SETTLE_MS = 3000;
+export const SUPPORT_CHAT_IDENTIFY_SETTLE_MS = 3000;
 
 function host(): Window & ChatwootHost {
 	return window;
@@ -203,12 +203,12 @@ function onClosed(): void {
  * fold the anonymous contact into the person's existing one, and that merge
  * keeps the existing contact's values, so a separate write racing it can land
  * on the contact that is about to go. Inside the request, the inbox applies the
- * context after the merge. **A change made while the merge is in flight waits**
- * for `IDENTIFY_SETTLE_MS`, then goes on its own, to the contact that is left.
- *
- * `opening` is the panel about to open, which is as good as open here.
+ * context after the merge. **Anything sent after it waits** for
+ * `SUPPORT_CHAT_IDENTIFY_SETTLE_MS`, then goes on its own, to the contact that
+ * is left: an open that follows a sign-in or a page load as much as a change
+ * made meanwhile.
  */
-function identify(identity: SupportChatIdentity, opening = false): void {
+function identify(identity: SupportChatIdentity): void {
 	const context =
 		state?.open && state.context && Object.keys(state.context).length > 0
 			? { ...state.context }
@@ -223,7 +223,7 @@ function identify(identity: SupportChatIdentity, opening = false): void {
 	);
 	if (!state) return;
 	state.sent = context && went ? serialise(context) : null;
-	if (went && (state.open || opening)) holdForMerge();
+	if (went) holdForMerge();
 }
 
 function holdForMerge(): void {
@@ -233,7 +233,7 @@ function holdForMerge(): void {
 		if (!state) return;
 		state.settling = null;
 		sendContext();
-	}, IDENTIFY_SETTLE_MS);
+	}, SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
 }
 
 /**
@@ -244,7 +244,7 @@ function onReady(): void {
 	if (!state) return;
 	state.ready = true;
 	const { identity, locale, colorScheme } = state;
-	if (identity) identify(identity, state.openWhenReady);
+	if (identity) identify(identity);
 	withChatwoot((chatwoot) => {
 		chatwoot.setLocale(locale);
 		chatwoot.setColorScheme(colorScheme);

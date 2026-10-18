@@ -6,6 +6,7 @@ import {
 } from '@hezo/server/src/config/runtime';
 import type { ChatwootSupportConfig, SsoConfig } from '@hezo/server/src/config/types';
 import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
+import { SUPPORT_CHAT_IDENTIFY_SETTLE_MS } from '@hezo/ui';
 import * as sso from '@hezo/web/lib/sso';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -111,7 +112,11 @@ test('the open chat names the screen and the project, never the path, and follow
 	await expect.poll(() => testWindow.$chatwoot).toBe(chatwoot);
 	window.dispatchEvent(new Event('chatwoot:ready'));
 	window.dispatchEvent(new Event('chatwoot:opened'));
-	await expect.poll(() => lastSent()?.hezo_screen).toBe('/projects/$projectId/documents');
+	// Naming the owner on ready holds every write while the inbox may still be
+	// merging their contacts, so the first one arrives after that hold.
+	await expect
+		.poll(() => lastSent()?.hezo_screen, { timeout: SUPPORT_CHAT_IDENTIFY_SETTLE_MS + 2000 })
+		.toBe('/projects/$projectId/documents');
 
 	expect(lastSent()).toMatchObject({
 		hezo_surface: 'instance',

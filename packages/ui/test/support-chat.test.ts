@@ -112,10 +112,13 @@ const SENT = {
 	hezo_version: '',
 };
 
+/** Install named, report ready, and let the hold after naming the person pass. */
 async function readyChat(): Promise<void> {
 	chat.installSupportChat(OPTIONS);
 	await loaded();
+	vi.useFakeTimers();
 	ready();
+	vi.advanceTimersByTime(chat.SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
 }
 
 test('loads the widget script under integrity, without credentials', () => {
@@ -308,7 +311,7 @@ test('a change made while the person is being named waits for the merge', async 
 	widgetEvent('opened');
 	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(1);
 
-	vi.advanceTimersByTime(chat.IDENTIFY_SETTLE_MS);
+	vi.advanceTimersByTime(chat.SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
 	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(2);
 	expect(fake.setCustomAttributes).toHaveBeenLastCalledWith({
 		...SENT,
@@ -326,7 +329,21 @@ test('a panel asked open before the widget was ready also waits for the merge', 
 	widgetEvent('opened');
 	expect(fake.setCustomAttributes).not.toHaveBeenCalled();
 
-	vi.advanceTimersByTime(chat.IDENTIFY_SETTLE_MS);
+	vi.advanceTimersByTime(chat.SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
+	expect(fake.setCustomAttributes).toHaveBeenCalledWith(SENT);
+});
+
+// An open soon after a signed-in page loads would race the same merge.
+test('an open soon after the person is named waits for the merge', async () => {
+	chat.installSupportChat(OPTIONS);
+	await loaded();
+	vi.useFakeTimers();
+	ready();
+	chat.setSupportChatContext(CONTEXT);
+	widgetEvent('opened');
+	expect(fake.setCustomAttributes).not.toHaveBeenCalled();
+
+	vi.advanceTimersByTime(chat.SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
 	expect(fake.setCustomAttributes).toHaveBeenCalledWith(SENT);
 });
 
