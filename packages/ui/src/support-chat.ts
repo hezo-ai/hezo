@@ -206,7 +206,10 @@ function onClosed(): void {
  * context after the merge. **Anything sent after it waits** for
  * `SUPPORT_CHAT_IDENTIFY_SETTLE_MS`, then goes on its own, to the contact that
  * is left: an open that follows a sign-in or a page load as much as a change
- * made meanwhile.
+ * made meanwhile. **The context is written again when the wait ends**, because
+ * the widget drops a naming whose name, email and hash match the last one it
+ * sent from this browser, attributes and all, and says nothing. A naming the
+ * widget refused starts no merge, so the context goes at once.
  */
 function identify(identity: SupportChatIdentity): void {
 	const context =
@@ -222,8 +225,9 @@ function identify(identity: SupportChatIdentity): void {
 		}),
 	);
 	if (!state) return;
-	state.sent = context && went ? serialise(context) : null;
+	state.sent = null;
 	if (went) holdForMerge();
+	else sendContext();
 }
 
 function holdForMerge(): void {
@@ -232,6 +236,7 @@ function holdForMerge(): void {
 	state.settling = setTimeout(() => {
 		if (!state) return;
 		state.settling = null;
+		state.sent = null;
 		sendContext();
 	}, SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
 }

@@ -278,6 +278,7 @@ test('the context of an open panel rides the request that names the person', asy
 	const { identity: _, ...anonymous } = OPTIONS;
 	chat.installSupportChat(anonymous);
 	await loaded();
+	vi.useFakeTimers();
 	ready();
 	widgetEvent('opened');
 	chat.setSupportChatContext(CONTEXT);
@@ -290,9 +291,33 @@ test('the context of an open panel rides the request that names the person', asy
 		identifier_hash: 'f'.repeat(64),
 		custom_attributes: SENT,
 	});
-	// The same context is not sent a second time beside it.
+	// Nothing goes beside it while the merge may still be running.
 	chat.setSupportChatContext(CONTEXT);
 	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(1);
+
+	// The widget drops a naming it already sent from this browser, attributes
+	// and all, so the context is written again once the merge has had its time.
+	vi.advanceTimersByTime(chat.SUPPORT_CHAT_IDENTIFY_SETTLE_MS);
+	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setCustomAttributes).toHaveBeenLastCalledWith(SENT);
+});
+
+// A naming the widget threw on starts no merge, so there is nothing to wait for.
+test('a naming the widget refused sends the context at once', async () => {
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	await loaded();
+	vi.useFakeTimers();
+	ready();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	fake.setUser.mockImplementation(() => {
+		throw new Error('widget fault');
+	});
+
+	chat.installSupportChat(OPTIONS);
+	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(2);
+	expect(fake.setCustomAttributes).toHaveBeenLastCalledWith(SENT);
 });
 
 // The widget says nothing when the merge is done, so a change made meanwhile

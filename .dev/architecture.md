@@ -6824,7 +6824,11 @@ wrote back. The first rides the public status; the second stays behind the owner
   so a separate write racing it could land on the contact that goes. So every write
   after naming the person, on sign-in or on a signed-in page's ready, waits
   `SUPPORT_CHAT_IDENTIFY_SETTLE_MS` (the widget reports nothing when the merge is done)
-  and then goes on its own. Every value is set by the person's own
+  and then goes on its own. The context is written again when that wait ends, even if
+  it rode the naming: the SDK drops a `setUser` whose name, email and hash match the
+  last one it sent from this browser (its cookie hashes those fields and not the
+  attributes), and reports nothing. A `setUser` that throws starts no merge, so the
+  context goes at once. Every value is set by the person's own
   browser, so it is a hint for the support team, not a fact. The inbox shows a key only
   once an admin defines it there; the hosted plane's sync tool defines the hosted
   inbox's from this table.
