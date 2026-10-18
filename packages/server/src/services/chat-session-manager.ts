@@ -1887,12 +1887,8 @@ export class ChatSessionManager {
 	 * is stored and shown with that refusal's notice, as a typed one would be.
 	 */
 	async ceoTurnBlocker(): Promise<string | null> {
-		try {
-			await this.resolveInvocationSelection(await this.resolveCeoMemberId());
-			return null;
-		} catch (e) {
-			return (e as Error).message;
-		}
+		const resolved = await this.tryResolveInvocationSelection(await this.resolveCeoMemberId());
+		return resolved.ok ? null : resolved.reason;
 	}
 
 	/** Resolve the conversation for an inbound turn (explicit id, or resolve/create). */
@@ -2158,6 +2154,19 @@ export class ChatSessionManager {
 	 * different rule from the one that started it.
 	 */
 	private async resolveInvocationSelection(memberId: string): Promise<InvocationSelection> {
+		const resolved = await this.tryResolveInvocationSelection(memberId);
+		if (!resolved.ok) throw new Error(resolved.reason);
+		return resolved.selection;
+	}
+
+	/**
+	 * {@link resolveInvocationSelection}, answering "no usable credential" as a
+	 * value instead of a throw. A lookup that fails still throws: it is a fault,
+	 * not a reason to wait.
+	 */
+	private async tryResolveInvocationSelection(
+		memberId: string,
+	): Promise<{ ok: true; selection: InvocationSelection } | { ok: false; reason: string }> {
 		const { db } = this.deps;
 		const override = await db.query<{ provider: AiProvider | null; model: string | null }>(
 			`SELECT model_override_provider AS provider, model_override_model AS model
@@ -2168,13 +2177,16 @@ export class ChatSessionManager {
 			overrideProvider: override.rows[0]?.provider ?? null,
 			taskRuntimeType: null,
 		});
-		if (!selection.ok) throw new Error(selection.reason);
+		if (!selection.ok) return { ok: false, reason: selection.reason };
 		return {
-			provider: selection.provider,
-			runtimeType: selection.runtime,
-			configId: selection.config.configId,
-			modelOverride: override.rows[0]?.model ?? selection.config.defaultModel ?? null,
-			requiredRuntime: selection.requiredRuntime,
+			ok: true,
+			selection: {
+				provider: selection.provider,
+				runtimeType: selection.runtime,
+				configId: selection.config.configId,
+				modelOverride: override.rows[0]?.model ?? selection.config.defaultModel ?? null,
+				requiredRuntime: selection.requiredRuntime,
+			},
 		};
 	}
 

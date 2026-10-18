@@ -306,6 +306,39 @@ describe('sending the seeded brief to the CEO chat', () => {
 		expect(await adminMessages()).toHaveLength(1);
 	});
 
+	it('reports a failed lookup as an error, not as a reason to wait', async () => {
+		await addCredential();
+		// A database that drops the CEO's model lookup, as a lost connection would.
+		const flaky = new Proxy(ctx.db, {
+			get(target, prop) {
+				if (prop !== 'query') return Reflect.get(target, prop);
+				return (sql: string, params?: unknown[]) => {
+					if (sql.includes('model_override_provider')) {
+						return Promise.reject(new Error('connection reset'));
+					}
+					return target.query(sql, params);
+				};
+			},
+		});
+		const broken = new ChatSessionManager({
+			db: flaky,
+			docker: createStubDocker(),
+			masterKeyManager: ctx.masterKeyManager,
+			serverPort: 0,
+			dataDir: ctx.dataDir,
+			wsManager: new WebSocketManager(),
+			logs: new LogStreamBroker(),
+		});
+		try {
+			await expect(broken.ceoTurnBlocker()).rejects.toThrow('connection reset');
+			await expect(deliverSeedBrief(ctx.db, broken)).rejects.toThrow('connection reset');
+			expect(await getSystemMeta(ctx.db, SEED_PROJECT_CONSUMED_KEY)).toBeNull();
+			expect(await pendingSeedBrief(ctx.db)).toBe(BRIEF);
+		} finally {
+			await broken.stop();
+		}
+	});
+
 	it('tells the CEO in the house register', () => {
 		expect(checkPromptStyle(SEED_BRIEF_CONTEXT)).toEqual([]);
 	});
