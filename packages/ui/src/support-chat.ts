@@ -63,7 +63,12 @@ export interface SupportChatOptions {
 interface ChatwootApi {
 	setUser(
 		identifier: string,
-		user: { name?: string; email?: string; identifier_hash: string },
+		user: {
+			name?: string;
+			email?: string;
+			identifier_hash: string;
+			custom_attributes?: Record<string, string>;
+		},
 	): void;
 	toggle(state: 'open' | 'close'): void;
 	setLocale(locale: string): void;
@@ -181,14 +186,29 @@ function onClosed(): void {
 	if (state) state.open = false;
 }
 
+/**
+ * Name the person to the inbox.
+ *
+ * **An open panel's context rides the identifying request.** Identifying can
+ * fold the anonymous contact into the person's existing one, and that merge
+ * keeps the existing contact's values, so a separate write racing it can land
+ * on the contact that is about to go. Inside the request, the inbox applies the
+ * context after the merge.
+ */
 function identify(identity: SupportChatIdentity): void {
-	withChatwoot((chatwoot) =>
+	const context =
+		state?.open && state.context && Object.keys(state.context).length > 0
+			? { ...state.context }
+			: null;
+	const went = withChatwoot((chatwoot) =>
 		chatwoot.setUser(identity.identifier, {
 			...(identity.name ? { name: identity.name } : {}),
 			...(identity.email ? { email: identity.email } : {}),
 			identifier_hash: identity.identifierHash,
+			...(context ? { custom_attributes: context } : {}),
 		}),
 	);
+	if (state) state.sent = context && went ? serialise(context) : null;
 }
 
 /**

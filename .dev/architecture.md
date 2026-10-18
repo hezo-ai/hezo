@@ -6817,7 +6817,10 @@ wrote back. The first rides the public status; the second stays behind the owner
   path, a title or other typed text - the project slug, made from the name the owner
   gave it, is the one value that is: an instance path carries task and document ids, and
   the fragment can carry the issuer's token. A send the widget throws on is not
-  recorded as sent, so the next open or change tries it again. Every value is set by the person's own
+  recorded as sent, so the next open or change tries it again. When the person is named
+  while the panel is open, the context rides `setUser`'s own request: naming can merge
+  the anonymous contact into the person's existing one, which keeps the existing values,
+  so a separate write racing it could land on the contact that goes. Every value is set by the person's own
   browser, so it is a hint for the support team, not a fact. The inbox shows a key only
   once an admin defines it there; the hosted plane's sync tool defines the hosted
   inbox's from this table.

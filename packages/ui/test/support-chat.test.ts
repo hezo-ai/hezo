@@ -267,6 +267,41 @@ test('adopts an identity handed to the install already running', async () => {
 	expect(scripts()).toHaveLength(1);
 });
 
+// Identifying can fold the anonymous contact into the person's existing one,
+// keeping that one's values; a separate write racing the merge can land on the
+// contact that goes. Inside the identifying request it is applied after.
+test('the context of an open panel rides the request that names the person', async () => {
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	await loaded();
+	ready();
+	widgetEvent('opened');
+	chat.setSupportChatContext(CONTEXT);
+	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(1);
+
+	chat.installSupportChat(OPTIONS);
+	expect(fake.setUser).toHaveBeenCalledWith('contact-1', {
+		name: 'Ada',
+		email: 'ada@example.com',
+		identifier_hash: 'f'.repeat(64),
+		custom_attributes: SENT,
+	});
+	// The same context is not sent a second time beside it.
+	chat.setSupportChatContext(CONTEXT);
+	expect(fake.setCustomAttributes).toHaveBeenCalledTimes(1);
+});
+
+test('a closed panel names the person and sends nothing about where they are', async () => {
+	const { identity: _, ...anonymous } = OPTIONS;
+	chat.installSupportChat(anonymous);
+	await loaded();
+	ready();
+	chat.setSupportChatContext(CONTEXT);
+
+	chat.installSupportChat(OPTIONS);
+	expect(fake.setUser.mock.lastCall?.[1]).not.toHaveProperty('custom_attributes');
+});
+
 test('an identity already held is not replaced by a later anonymous install', async () => {
 	chat.installSupportChat(OPTIONS);
 	await loaded();
