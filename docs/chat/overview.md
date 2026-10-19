@@ -24,6 +24,10 @@ The **CEO monogram in the top bar always opens the CEO**, whatever room you were
 in. To come back to a specific agent or room, open it from the project menu's chat
 cards.
 
+An agent's direct message or a group room belongs to its project. When you open another
+project, or a page outside any project, the dock closes. The CEO stays open as you move
+between pages, except on a phone, where any page change closes the dock.
+
 ## Chat thinks, tasks work
 
 A chat turn is for discussing, deciding and coordinating. The moment something needs

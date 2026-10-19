@@ -13,7 +13,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { api } from '../lib/api';
@@ -32,14 +32,19 @@ import { toast } from './use-toast';
  *   every project surface is.
  * - `group` — a project group room (several agents, mention-driven turns).
  *   Rooms have no slug, so the conversation id is their identity.
+ *
+ * A team room's `projectSlug` is the handle its requests go to, and changes
+ * when the project is renamed; `projectUuid` is the project it belongs to,
+ * and never does.
  */
 export type ChatRoom =
 	| { kind: 'ceo' }
 	| { kind: 'thread'; id: string }
-	| { kind: 'agent'; projectSlug: string; agentSlug: string; title: string }
+	| { kind: 'agent'; projectSlug: string; projectUuid: string; agentSlug: string; title: string }
 	| {
 			kind: 'group';
 			projectSlug: string;
+			projectUuid: string;
 			conversationId: string;
 			title: string;
 			isGeneral?: boolean;
@@ -47,12 +52,15 @@ export type ChatRoom =
 
 export const CEO_ROOM: ChatRoom = { kind: 'ceo' };
 
-/** Stable identity key for a room — query keys, queue buckets, persistence. */
+/**
+ * Stable identity key for a room — queue buckets and per-room state. Team rooms
+ * key on the project's UUID, so a rename that re-points the room keeps them.
+ */
 export function chatRoomKey(room: ChatRoom): string {
 	if (room.kind === 'ceo') return 'ceo';
 	if (room.kind === 'thread') return `thread:${room.id}`;
-	if (room.kind === 'group') return `group:${room.projectSlug}:${room.conversationId}`;
-	return `agent:${room.projectSlug}:${room.agentSlug}`;
+	if (room.kind === 'group') return `group:${room.projectUuid}:${room.conversationId}`;
+	return `agent:${room.projectUuid}:${room.agentSlug}`;
 }
 
 export interface ChatMessage {
@@ -438,6 +446,25 @@ function roomQueryKey(room: ChatRoom): readonly unknown[] {
 }
 
 /**
+ * Re-point a team room at another handle for its project - the new slug after a
+ * rename. The room's history is cached under its slug, so the entry is carried
+ * over first: the next render reads the same messages under the new key, with
+ * no reload that would leave the conversation while a reply streams. It
+ * replaces whatever that key holds - an older snapshot from a visit by the
+ * other handle - since the room on screen is the live copy.
+ */
+export function repointTeamRoom(
+	queryClient: QueryClient,
+	room: Extract<ChatRoom, { kind: 'agent' | 'group' }>,
+	projectSlug: string,
+): ChatRoom {
+	const next = { ...room, projectSlug };
+	const cached = queryClient.getQueryData<ConversationData>(roomQueryKey(room));
+	if (cached) queryClient.setQueryData(roomQueryKey(next), cached);
+	return next;
+}
+
+/**
  * Drives one chat room. The TanStack Query cache is the source of truth for
  * messages (keyed per room); the initial history loads via `useQuery` and
  * streamed start/delta/complete events are folded into the same cache entry via
@@ -482,6 +509,11 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const queueKey = chatRoomKey(room);
 	const queue = queues[queueKey] ?? EMPTY_QUEUE;
 	const queryKey = roomQueryKey(room);
+	// The cache entry's identity, for the stream handlers that patch `queryKey`.
+	// It moves with the room, and also alone when a project rename re-points a
+	// team room to its new slug - the queue key, which keys on the project's
+	// UUID, does not.
+	const queryKeyId = JSON.stringify(queryKey);
 
 	// Room-scoped transient state: a switched-to room starts with no strip and
 	// no nudge — both belong to the room they happened in.
@@ -540,6 +572,9 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	// cache never goes stale on its own). Refetch on activation so a switched-
 	// back room shows the server's truth instead of eternal typing dots - and a
 	// reply genuinely still streaming simply resumes from the refetched row.
+	// Keyed on the room's identity, not its cache key: a rename's re-point
+	// carries a live stream over, and the server's copy of an in-flight reply is
+	// empty until it completes, so refetching it then would wipe the reply.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: run on room activation
 	useEffect(() => {
 		if (!active) return;
@@ -577,8 +612,8 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 			.catch(() => undefined);
 	}, [active, resolvedConversationId, serverMessagesForMark, room, queryClient]);
 
-	// queryKey is derived from the room; the string key is the stable identity.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: queryKey identity is the room key
+	// queryKey is derived from the room; queryKeyId is its stable identity.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: queryKey identity is queryKeyId
 	useEffect(() => {
 		const patch = (fn: (messages: ChatMessage[]) => ChatMessage[]) => {
 			queryClient.setQueryData<ConversationData>(queryKey, (prev) =>
@@ -699,7 +734,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 			offCompacted();
 			offPending();
 		};
-	}, [subscribe, queryClient, queueKey]);
+	}, [subscribe, queryClient, queueKey, queryKeyId]);
 
 	const sendMutation = useMutation({
 		mutationFn: (batch: OutboundChatMessage[]) => postChatTurn(room, batch),

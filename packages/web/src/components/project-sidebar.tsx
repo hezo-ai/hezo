@@ -280,8 +280,13 @@ export function ProjectSidebar({
 			</div>
 			<div className="flex-1 min-h-0 overflow-y-auto">
 				<SidebarNav sections={sections} />
-				{chatRooms.length > 0 && (
-					<ProjectChatCards projectId={projectId} rooms={chatRooms} groups={chatGroups} />
+				{chatRooms.length > 0 && project && (
+					<ProjectChatCards
+						projectId={projectId}
+						projectUuid={project.id}
+						rooms={chatRooms}
+						groups={chatGroups}
+					/>
 				)}
 			</div>
 			<CreateTaskDialog
@@ -302,10 +307,12 @@ export function ProjectSidebar({
  */
 function ProjectChatCards({
 	projectId,
+	projectUuid,
 	rooms,
 	groups,
 }: {
 	projectId: string;
+	projectUuid: string;
 	rooms: ProjectChatRoomSummary[];
 	groups: readonly ProjectChatGroupSummary[];
 }) {
@@ -333,6 +340,7 @@ function ProjectChatCards({
 									room: {
 										kind: 'group',
 										projectSlug: projectId,
+										projectUuid,
 										conversationId: group.id,
 										title,
 										isGeneral: group.is_general,
@@ -374,6 +382,7 @@ function ProjectChatCards({
 								room: {
 									kind: 'agent',
 									projectSlug: projectId,
+									projectUuid,
 									agentSlug: room.slug,
 									title: room.title,
 								},

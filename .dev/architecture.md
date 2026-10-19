@@ -6307,6 +6307,15 @@ shell watches). Clients react by refetching the per-caller-authorized project in
 left project rail updates live — for the dialog, the CEO's `create_project`, and other
 sessions alike — without a row on the shared room leaking a project a user can't see.
 
+**A rename moves the route.** Renaming a project rewrites its slug and the server keeps no
+slug history, so every request under the old slug fails from that moment. The project layout
+(`hooks/use-follow-project-rename.ts`) remembers which project the route's handle named while it
+resolved; once a refetched index no longer knows the handle, it swaps the project's new slug
+into the address in place. The index refetches after every rename - the settings save
+invalidates it, and a rename made elsewhere arrives as the team room's `projects` row change -
+so this one mechanism covers both. The memory is keyed by handle, so a typed unknown slug never
+jumps to the project viewed before it.
+
 **Row-change → project-slug resolution** (`resolveProjectSlugForChange` in
 `hooks/use-websocket.ts`) picks a resolver per table, and getting it wrong silently drops
 the event (an unresolved row invalidates nothing):
@@ -6384,7 +6393,24 @@ route rather than in each link's `onClick` is deliberate — the global Cmd/Ctrl
 open modal and navigates from somewhere that modal never sees. The CEO chat is
 **viewport-conditional**: only its blocking presentation - the mobile full-screen sheet, which
 takes the scrim - reacts and closes on navigation; the desktop **right rail** is a deliberately
-persistent companion that survives navigation and takes no scrim. There is no expand mode. The
+persistent companion that survives navigation and takes no scrim. It survives only within its
+room's scope: a **team room** (an agent DM or a group room) closes, and the selection resets to
+the CEO, once the route no longer names the room's project - another project or a global route -
+so one team's conversation never sits over another's work. A team room carries its project's
+UUID beside the slug its requests go to. It stays while the route param equals that slug, or
+resolves to that UUID (the id alias, or the new slug after a rename), and in the second case
+adopts the route's handle, since a renamed project's old slug resolves nowhere. Adopting only
+once the route has moved keeps the handles from disagreeing while the index no longer knows the
+old slug. `chatRoomKey` keys team rooms by the UUID, so the queue survives the re-point;
+`repointTeamRoom` carries the room's cached history to the new slug's key, so the room never
+reloads (and leaves its conversation) mid-reply; and `useChat`'s stream handlers rebind on the
+cache key, not the room key, so they patch the entry the view reads. Its activation refetch
+stays on the room key: the server's copy of an in-flight reply is empty until it completes, so
+refetching a carried-over stream would wipe it. The
+reset runs while the dock is closed too, so the next launch never renders a room from the project
+left behind for the one frame before its own room lands. The CEO and HQ threads are unscoped and
+stay. Every team-room launcher sits inside that room's project, so the switcher never carries a
+room from another project. There is no expand mode. The
 rail runs from under the `h-12` shell header to the bottom, flush to the right edge, overlaying
 the page rather than displacing it, and is drag-resizable through `useResizableSplit` with
 `measureContainer` - a `fixed` panel shares the viewport rather than a grid track, so it also
