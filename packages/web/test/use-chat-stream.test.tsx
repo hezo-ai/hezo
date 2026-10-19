@@ -411,6 +411,13 @@ test('a reply streaming through a project rename lands under the new slug', asyn
 		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
 	});
 	qc.setQueryData(queryKeys.agentChatRoom('old-slug', 'engineer'), streaming);
+	// An older snapshot under the destination key, from an earlier visit by that
+	// handle: the shown room's messages replace it.
+	qc.setQueryData(queryKeys.agentChatRoom('new-slug', 'engineer'), {
+		conversation_id: 'convo-dm',
+		messages: [],
+		compacted_count: 0,
+	});
 	const { rerender } = render(
 		<QueryClientProvider client={qc}>
 			<RoomProbe room={room} />

@@ -449,7 +449,9 @@ function roomQueryKey(room: ChatRoom): readonly unknown[] {
  * Re-point a team room at another handle for its project - the new slug after a
  * rename. The room's history is cached under its slug, so the entry is carried
  * over first: the next render reads the same messages under the new key, with
- * no reload that would leave the conversation while a reply streams.
+ * no reload that would leave the conversation while a reply streams. It
+ * replaces whatever that key holds - an older snapshot from a visit by the
+ * other handle - since the room on screen is the live copy.
  */
 export function repointTeamRoom(
 	queryClient: QueryClient,
@@ -458,9 +460,7 @@ export function repointTeamRoom(
 ): ChatRoom {
 	const next = { ...room, projectSlug };
 	const cached = queryClient.getQueryData<ConversationData>(roomQueryKey(room));
-	if (cached && !queryClient.getQueryData(roomQueryKey(next))) {
-		queryClient.setQueryData(roomQueryKey(next), cached);
-	}
+	if (cached) queryClient.setQueryData(roomQueryKey(next), cached);
 	return next;
 }
 
