@@ -128,14 +128,21 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	// closed, so the next launch never opens on a room from the project left
 	// behind. Every surface launching a team room does so from that room's own
 	// project, so this never shuts a launch. Read the route's slug, not
-	// `projectSlug`: that one is null while the metadata loads.
+	// `projectSlug`: that one is null while the metadata loads. The handles are
+	// also compared as projects, because a room launched on a project's id alias
+	// carries the id while the rail links the slug.
 	const activeSlug = active?.slug ?? null;
+	const activeProjectId = activeProjectMeta?.id;
+	const roomProjectId = useProjectMeta(
+		room.kind === 'agent' || room.kind === 'group' ? room.projectSlug : '',
+	)?.id;
 	useEffect(() => {
 		if (room.kind !== 'agent' && room.kind !== 'group') return;
 		if (room.projectSlug === activeSlug) return;
+		if (roomProjectId && roomProjectId === activeProjectId) return;
 		if (open) setOpen(false);
 		selectRoom(CEO_ROOM);
-	}, [activeSlug, room, open, setOpen, selectRoom]);
+	}, [activeSlug, activeProjectId, roomProjectId, room, open, setOpen, selectRoom]);
 
 	// CEO-scope threads, grouped for the switcher. The live stream is reached
 	// through the pinned CEO entry (server-resolved), so open web threads are not

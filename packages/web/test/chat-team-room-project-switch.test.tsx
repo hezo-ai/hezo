@@ -12,25 +12,29 @@ import { seedProject, seedWorkspace } from './helpers/seed';
 
 interface TwoProjects {
 	alpha: string;
+	alphaId: string;
 	beta: string;
 	agent: { slug: string; title: string };
 }
 
-async function renderTwoProjects() {
-	const seeded: TwoProjects = { alpha: '', beta: '', agent: { slug: '', title: '' } };
+/** Lands on Alpha's tasks board - by slug, or by its id alias with `viaId`. */
+async function renderTwoProjects({ viaId = false } = {}) {
+	const seeded: TwoProjects = { alpha: '', alphaId: '', beta: '', agent: { slug: '', title: '' } };
 	const app = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const a = await seedWorkspace();
 			const b = await seedWorkspace();
-			seeded.alpha = (await seedProject(a, { name: 'Alpha' })).slug;
+			const alpha = await seedProject(a, { name: 'Alpha' });
+			seeded.alpha = alpha.slug;
+			seeded.alphaId = alpha.id;
 			seeded.beta = (await seedProject(b, { name: 'Beta' })).slug;
 			seeded.agent = a.agents[0];
 		},
 	});
 	await app.router.navigate({
 		to: '/projects/$projectId/tasks',
-		params: { projectId: seeded.alpha },
+		params: { projectId: viaId ? seeded.alphaId : seeded.alpha },
 	});
 	await app.findByTestId('project-sidebar-chat', undefined, { timeout: 15_000 });
 	return { ...app, ...seeded };
@@ -72,6 +76,25 @@ test('moving between pages of the same project keeps the agent DM open', async (
 	await router.navigate({ to: '/projects/$projectId/dashboard', params: { projectId: alpha } });
 
 	await waitFor(() => expect(router.state.location.pathname).toBe(`/projects/${alpha}/dashboard`));
+	expect(screen.getByTestId('chat-panel')).toBeTruthy();
+	expect(currentRoomValue()).toBe(`agent:${agent.slug}`);
+});
+
+test("a DM opened on the project's id alias stays open on its slug", async () => {
+	// The menu launches the room with whatever handle the route carries; the
+	// rail links the slug. Same project, so the dock must not read it as a switch.
+	const { findByTestId, user, router, alpha, agent } = await renderTwoProjects({ viaId: true });
+
+	await user.click(await findByTestId(`chat-card-${agent.slug}`));
+	await findByTestId('chat-panel');
+
+	await user.click(
+		await findByTestId(`project-rail-avatar-${alpha}`, undefined, { timeout: 15_000 }),
+	);
+
+	await waitFor(() =>
+		expect(router.state.location.pathname).toMatch(new RegExp(`^/projects/${alpha}/`)),
+	);
 	expect(screen.getByTestId('chat-panel')).toBeTruthy();
 	expect(currentRoomValue()).toBe(`agent:${agent.slug}`);
 });

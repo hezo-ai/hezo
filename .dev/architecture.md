@@ -6390,7 +6390,9 @@ the CEO, once the route's project slug is no longer the room's own - another pro
 route - so one team's conversation never sits over another's work. The reset runs while the dock
 is closed too, so the next launch never renders a room from the project left behind for the one
 frame before its own room lands. It reads the route param, not the project metadata, which is
-absent while it loads. The CEO and HQ threads are unscoped and stay. Every team-room launcher
+absent while it loads, and also compares the two handles as projects: a room launched on a
+project's id alias carries the id while the rail links the slug. The CEO and HQ threads are
+unscoped and stay. Every team-room launcher
 sits inside that room's project, so the switcher never carries a room from another project.
 There is no expand mode. The
 rail runs from under the `h-12` shell header to the bottom, flush to the right edge, overlaying
