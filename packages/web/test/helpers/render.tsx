@@ -1,6 +1,7 @@
 import { createTestApp, encrypt, seedProjectContainer } from '@hezo/server/test/helpers/app';
 import { TooltipProvider } from '@hezo/ui';
 import { Toaster } from '@hezo/web/components/ui/toast';
+import { clearToasts } from '@hezo/web/hooks/use-toast';
 import { api } from '@hezo/web/lib/api';
 import { I18nProvider } from '@hezo/web/lib/i18n';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
@@ -200,6 +201,15 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	// Radix starts a close timer for every open toast and never clears it on
+	// unmount, so a toast left open can fire after the environment is gone and
+	// fail the run with "document is not defined". A window blur pauses every
+	// toast, and pausing clears its timer, so it has to land while the tree is
+	// still mounted - this hook runs before setup.ts's cleanup. The list is
+	// module state and would draw the same toast again in the next test.
+	window.dispatchEvent(new Event('blur'));
+	clearToasts();
+
 	// Let work the just-unmounted tree started settle while its token and app are
 	// still valid. A request that lands after `api.clearToken()` below comes back
 	// 401 with nobody listening, and one unhandled rejection fails the whole run

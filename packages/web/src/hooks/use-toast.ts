@@ -57,6 +57,13 @@ export const toast = {
 	dismiss,
 };
 
+/** Drop every toast. The list outlives the tree that draws it, so a test teardown starts the next test from none. */
+export function clearToasts(): void {
+	if (toasts.length === 0) return;
+	toasts = [];
+	emit();
+}
+
 export function useToasts(): Toast[] {
 	return useSyncExternalStore(
 		(listener) => {

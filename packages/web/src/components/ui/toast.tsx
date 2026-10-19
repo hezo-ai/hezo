@@ -4,7 +4,7 @@ import { dismissConnectionOffline, useConnectionStatus } from '../../hooks/use-c
 import { toast, useToasts } from '../../hooks/use-toast';
 import { useI18n } from '../../lib/i18n';
 
-const ERROR_DURATION_MS = 6000;
+export const ERROR_DURATION_MS = 6000;
 
 const TOAST_TITLE_KEYS = {
 	error: 'toast.error',
