@@ -80,6 +80,7 @@ test('Add provider modal shows a card for every offered provider (incl. OpenRout
 		'Kimi',
 		'xAI',
 		'OpenRouter',
+		'Requesty',
 		'Ollama',
 		'LM Studio',
 	]) {

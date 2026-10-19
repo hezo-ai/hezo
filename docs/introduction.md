@@ -68,10 +68,10 @@ from hurting you. A few guarantees sit underneath everything:
   they ship, with no prompt tuning from you. See
   [The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
 - **Bring your own models, each via a real agentic runtime.** Claude, ChatGPT, Gemini,
-  Grok, DeepSeek, Z.ai, Kimi, and OpenRouter are all supported - Claude, ChatGPT, Gemini, and
+  Grok, DeepSeek, Z.ai, Kimi, OpenRouter, and Requesty are all supported - Claude, ChatGPT, Gemini, and
   Grok through their own first-party command-line tooling, DeepSeek, Z.ai, and Kimi through
   Claude Code against their Anthropic-compatible endpoints (Kimi can alternatively run on
-  Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode. You can also run
+  Moonshot's own Kimi Code CLI), and OpenRouter and Requesty through OpenCode. You can also run
   **entirely on your own hardware** with Ollama or LM Studio, at no per-token cost. You can
   give any individual agent its own model. See [AI model support](/docs/ai-models).
 - **Put a hard ceiling on usage.** Per-agent and per-project token budgets *pause* runs
