@@ -65,6 +65,7 @@ vitest runs under Node, the server runs under Bun, and vitest can't be flipped t
 - Set up with `seedWorkspace()` / `seedProject(ws, { name })` / `seedTask(ws, project, { title })` / `seedComment(ws, task, body)` — they drive the real API.
 - Navigate via `router.navigate({ to: '/projects/$projectId/tasks', params: { projectId: ws.internalSlug } })`.
 - Each test gets a fresh PGlite + Hono in `beforeEach`, but module-level singletons (`api`, the queryClient) still leak across specs — keep setup contained.
+- **Reset a module-level store, or stop a library timer, in `render.tsx`'s `afterEach`**, which runs before the tree unmounts. A store left alone draws its state into the next test; a timer that outlives the file fails the whole run with `document is not defined`.
 - Radix dialogs/popovers render into a portal — query `document.body`, not `container`.
 - Auto-wait with `findBy*` / `waitFor`. jest-dom matchers aren't loaded, so read `disabled` off the element rather than `expect(...).toBeDisabled()`.
 
