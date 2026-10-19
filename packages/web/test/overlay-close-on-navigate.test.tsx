@@ -119,12 +119,14 @@ test('the mobile nav drawer closes when a rail link navigates', async () => {
 	await waitFor(() => expect(screen.queryByTestId('mobile-nav-drawer')).toBeNull());
 });
 
-test('the anchored chat dock survives navigation', async () => {
+test('the anchored CEO dock survives navigation', async () => {
 	// The deliberate exclusion, worth pinning so nobody "fixes" it later: the
 	// anchored desktop corner panel does not cover the page, so it stays open
 	// across a navigation. happy-dom reports a 1024px viewport, so this tier is
 	// the desktop branch; the mobile full-screen sheet — which DOES strand the
-	// reader, and closes — is covered in test/browser/chat.spec.ts.
+	// reader, and closes — is covered in test/browser/chat.spec.ts. A team room
+	// still closes when the operator leaves its project -
+	// chat-team-room-project-switch.test.tsx.
 	const { findByTestId, user, router } = await renderApp({ initialPath: '/home' });
 
 	await user.click(await findByTestId('app-header-chat', undefined, { timeout: 15_000 }));

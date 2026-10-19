@@ -6384,7 +6384,15 @@ route rather than in each link's `onClick` is deliberate — the global Cmd/Ctrl
 open modal and navigates from somewhere that modal never sees. The CEO chat is
 **viewport-conditional**: only its blocking presentation - the mobile full-screen sheet, which
 takes the scrim - reacts and closes on navigation; the desktop **right rail** is a deliberately
-persistent companion that survives navigation and takes no scrim. There is no expand mode. The
+persistent companion that survives navigation and takes no scrim. It survives only within its
+room's scope: a **team room** (an agent DM or a group room) closes, and the selection resets to
+the CEO, once the route's project slug is no longer the room's own - another project or a global
+route - so one team's conversation never sits over another's work. The reset runs while the dock
+is closed too, so the next launch never renders a room from the project left behind for the one
+frame before its own room lands. It reads the route param, not the project metadata, which is
+absent while it loads. The CEO and HQ threads are unscoped and stay. Every team-room launcher
+sits inside that room's project, so the switcher never carries a room from another project.
+There is no expand mode. The
 rail runs from under the `h-12` shell header to the bottom, flush to the right edge, overlaying
 the page rather than displacing it, and is drag-resizable through `useResizableSplit` with
 `measureContainer` - a `fixed` panel shares the viewport rather than a grid track, so it also

@@ -72,11 +72,6 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		groups: projectGroups,
 		loaded: roomsLoaded,
 	} = useProjectChatRooms(projectSlug, open);
-	// The selected room's own project names the header scope - which can differ
-	// from the ACTIVE project when the operator navigated away mid-conversation.
-	const roomProjectMeta = useProjectMeta(
-		room.kind === 'agent' || room.kind === 'group' ? room.projectSlug : '',
-	);
 	const { t } = useI18n();
 	// The create-room dialog (the "+" in the header). Project rooms only.
 	const [creatingGroup, setCreatingGroup] = useState(false);
@@ -121,9 +116,26 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 
 	// Navigating away only strands the reader in the blocking presentation - the
 	// mobile full-screen panel with its backdrop. The anchored desktop corner
-	// panel is a deliberately persistent companion and survives navigation.
+	// panel is a deliberately persistent companion and survives navigation,
+	// within the bounds of its room's scope below.
 	const isDesktop = useMediaQuery('(min-width: 768px)');
 	useCloseOnRouteChange(open && !isDesktop, () => setOpen(false));
+
+	// A team room (an agent DM or a group room) belongs to its project's pages:
+	// leaving them - for another project or a page outside any - closes the
+	// dock, so one team's conversation never sits over another's work. The CEO
+	// and HQ threads are not project-scoped and stay. The room resets even while
+	// closed, so the next launch never opens on a room from the project left
+	// behind. Every surface launching a team room does so from that room's own
+	// project, so this never shuts a launch. Read the route's slug, not
+	// `projectSlug`: that one is null while the metadata loads.
+	const activeSlug = active?.slug ?? null;
+	useEffect(() => {
+		if (room.kind !== 'agent' && room.kind !== 'group') return;
+		if (room.projectSlug === activeSlug) return;
+		if (open) setOpen(false);
+		selectRoom(CEO_ROOM);
+	}, [activeSlug, room, open, setOpen, selectRoom]);
 
 	// CEO-scope threads, grouped for the switcher. The live stream is reached
 	// through the pinned CEO entry (server-resolved), so open web threads are not
@@ -159,7 +171,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 					: 'CEO';
 	const roomScope =
 		room.kind === 'agent' || room.kind === 'group'
-			? (roomProjectMeta?.name ?? room.projectSlug)
+			? (activeProjectMeta?.name ?? room.projectSlug)
 			: HQ_PROJECT_NAME;
 
 	// A remembered thread can be closed later; a remembered agent can be fired.
@@ -169,8 +181,9 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		if (!open || room.kind !== 'thread' || !threadsLoaded) return;
 		if (!conversations.some((c) => c.id === room.id)) selectRoom(CEO_ROOM);
 	}, [open, room, threadsLoaded, conversations, selectRoom]);
-	// Same for a remembered group room of the CURRENT project that no longer
-	// exists (a foreign project's room cannot be verified from here and stays).
+	// Same for a remembered group room that no longer exists. A room is only
+	// judged against its own project's list - not while the project's metadata
+	// is still loading and `projectSlug` is null.
 	useEffect(() => {
 		if (!open || room.kind !== 'group' || !roomsLoaded) return;
 		if (room.projectSlug !== projectSlug) return;
@@ -188,20 +201,14 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	// The dock renders nothing while closed: the header monogram is the launcher.
 	if (!open) return null;
 
-	// A selected agent or group room from ANOTHER project (the operator
-	// navigated away) stays reachable: it renders as its own option so the
-	// switcher never shows a value it does not carry.
-	const foreignAgentRoom =
-		room.kind === 'agent' && (!projectSlug || room.projectSlug !== projectSlug) ? room : null;
-	const foreignGroupRoom =
-		room.kind === 'group' && (!projectSlug || room.projectSlug !== projectSlug) ? room : null;
-	// The switcher's option values. The current project's DM options are keyed by
+	// The switcher's option values. An open team room is always the current
+	// project's (leaving the project closes it), so its DM options are keyed by
 	// bare agent slug (the project is implied by the optgroup) and its rooms by
-	// bare conversation id; only a foreign room's option carries the full key.
+	// bare conversation id.
 	const roomValue =
-		room.kind === 'agent' && !foreignAgentRoom
+		room.kind === 'agent'
 			? `agent:${room.agentSlug}`
-			: room.kind === 'group' && !foreignGroupRoom
+			: room.kind === 'group'
 				? `group:${room.conversationId}`
 				: chatRoomKey(room);
 	const onSwitcherChange = (value: string) => {
@@ -232,26 +239,11 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	};
 
 	// The switcher's options, in the order the panel draws them: the pinned CEO,
-	// a foreign room the operator navigated away from, then the current project's
-	// DMs and group rooms, external chats, read-only channels and History. Each
-	// section is a `group`, which the panel labels once and drops when a filter
-	// empties it.
+	// then the current project's DMs and group rooms, external chats, read-only
+	// channels and History. Each section is a `group`, which the panel labels
+	// once and drops when a filter empties it.
 	const roomOptions: SearchableSelectOption[] = (() => {
 		const opts: SearchableSelectOption[] = [{ value: 'ceo', label: `CEO · ${HQ_PROJECT_NAME}` }];
-		if (foreignAgentRoom) {
-			opts.push({
-				value: roomValue,
-				label: foreignAgentRoom.title,
-				description: foreignAgentRoom.projectSlug,
-			});
-		}
-		if (foreignGroupRoom) {
-			opts.push({
-				value: roomValue,
-				label: foreignGroupRoom.title,
-				description: foreignGroupRoom.projectSlug,
-			});
-		}
 		if (projectSlug && projectRooms.length > 0) {
 			const label = activeProjectMeta?.name ?? projectSlug;
 			for (const r of projectRooms) {
