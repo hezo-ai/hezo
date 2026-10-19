@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.73.0 - 2026-10-19
+
+### Features
+
+- **onboarding:** send the signup brief to the CEO automatically ([#1165](https://github.com/hezo-ai/hezo/pull/1165))
+
+### Tests
+
+- **web:** stop open toasts' close timers before a test unmounts ([#1167](https://github.com/hezo-ai/hezo/pull/1167))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.72.0...0.73.0
+
 ## 0.72.0 - 2026-10-18
 
 ### Breaking Changes
