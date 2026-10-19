@@ -15,6 +15,11 @@ project. You don't manage teams separately; you reach a team through its project
 A project's agents, tasks, budget, containers, and connections all belong to that project,
 and nothing leaks between projects.
 
+Renaming a project in its **Settings** changes its address too. Pages you have open on the
+project move to the new address, and an open chat with its team stays open and keeps
+working (on a phone the chat closes, as it does on any page change). Links that use the old
+name stop working.
+
 A project's containers run only while there is work: one starts automatically when an
 agent run or the assistant needs it - each run going at once gets a container of its own
 - and it stops again after sitting idle, so projects you aren't actively using cost

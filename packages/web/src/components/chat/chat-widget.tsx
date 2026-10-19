@@ -128,21 +128,26 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	// closed, so the next launch never opens on a room from the project left
 	// behind. Every surface launching a team room does so from that room's own
 	// project, so this never shuts a launch. Read the route's slug, not
-	// `projectSlug`: that one is null while the metadata loads. The handles are
-	// also compared as projects, because a room launched on a project's id alias
-	// carries the id while the rail links the slug.
+	// `projectSlug`: that one is null while the metadata loads.
+	//
+	// The room stays while the route carries its handle, or names its project
+	// by another one - the id alias, or the new slug after a rename. It then
+	// adopts the route's handle, so its requests follow the project: after a
+	// rename the old slug resolves nowhere. Adopting only once the route has
+	// moved keeps the two handles from disagreeing in between, when the index
+	// no longer knows the old slug.
 	const activeSlug = active?.slug ?? null;
 	const activeProjectId = activeProjectMeta?.id;
-	const roomProjectId = useProjectMeta(
-		room.kind === 'agent' || room.kind === 'group' ? room.projectSlug : '',
-	)?.id;
 	useEffect(() => {
 		if (room.kind !== 'agent' && room.kind !== 'group') return;
 		if (room.projectSlug === activeSlug) return;
-		if (roomProjectId && roomProjectId === activeProjectId) return;
+		if (activeSlug && room.projectUuid === activeProjectId) {
+			selectRoom({ ...room, projectSlug: activeSlug });
+			return;
+		}
 		if (open) setOpen(false);
 		selectRoom(CEO_ROOM);
-	}, [activeSlug, activeProjectId, roomProjectId, room, open, setOpen, selectRoom]);
+	}, [activeSlug, activeProjectId, room, open, setOpen, selectRoom]);
 
 	// CEO-scope threads, grouped for the switcher. The live stream is reached
 	// through the pinned CEO entry (server-resolved), so open web threads are not
@@ -225,10 +230,11 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		if (value.startsWith('group:')) {
 			const id = value.slice(6);
 			const g = projectGroups.find((row) => row.id === id);
-			if (g && projectSlug) {
+			if (g && projectSlug && activeProjectId) {
 				selectRoom({
 					kind: 'group',
 					projectSlug,
+					projectUuid: activeProjectId,
 					conversationId: g.id,
 					title: groupLabel(g),
 					isGeneral: g.is_general,
@@ -239,8 +245,14 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		if (value.startsWith('agent:')) {
 			const slug = value.slice(6);
 			const row = projectRooms.find((r) => r.slug === slug);
-			if (row && projectSlug) {
-				selectRoom({ kind: 'agent', projectSlug, agentSlug: row.slug, title: row.title });
+			if (row && projectSlug && activeProjectId) {
+				selectRoom({
+					kind: 'agent',
+					projectSlug,
+					projectUuid: activeProjectId,
+					agentSlug: row.slug,
+					title: row.title,
+				});
 			}
 		}
 	};
@@ -437,7 +449,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 				/>
 			</div>
 
-			{creatingGroup && projectSlug && (
+			{creatingGroup && projectSlug && activeProjectId && (
 				<CreateGroupDialog
 					projectSlug={projectSlug}
 					agents={projectRooms}
@@ -447,6 +459,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 						selectRoom({
 							kind: 'group',
 							projectSlug,
+							projectUuid: activeProjectId,
 							conversationId: created.conversationId,
 							title: created.title,
 						});

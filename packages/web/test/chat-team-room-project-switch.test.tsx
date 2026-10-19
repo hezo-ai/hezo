@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { currentRoomValue } from './helpers/chat-switcher';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
 
 // A team room - an agent DM or a group room - belongs to its project: leaving
@@ -97,6 +97,67 @@ test("a DM opened on the project's id alias stays open on its slug", async () =>
 	);
 	expect(screen.getByTestId('chat-panel')).toBeTruthy();
 	expect(currentRoomValue()).toBe(`agent:${agent.slug}`);
+});
+
+test('renaming the project keeps its DM open, now sending to the new slug', async () => {
+	const {
+		findByTestId,
+		findByRole,
+		findByLabelText,
+		getByRole,
+		user,
+		router,
+		alpha,
+		alphaId,
+		agent,
+	} = await renderTwoProjects();
+
+	await user.click(await findByTestId(`chat-card-${agent.slug}`));
+	await findByTestId('chat-panel');
+
+	await router.navigate({ to: '/projects/$projectId/settings', params: { projectId: alpha } });
+	await user.click(await findByRole('button', { name: 'Edit' }, { timeout: 15_000 }));
+	const name = (await findByLabelText('Name')) as HTMLInputElement;
+	await user.clear(name);
+	await user.type(name, 'Gamma');
+	await user.click(getByRole('button', { name: 'Save' }));
+
+	const { db } = getTestContext();
+	const renamed = await waitFor(async () => {
+		const res = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			alphaId,
+		]);
+		expect(res.rows[0].slug).not.toBe(alpha);
+		return res.rows[0].slug;
+	});
+	await waitFor(() => expect(router.state.location.pathname).toBe(`/projects/${renamed}/settings`));
+	expect(screen.getByTestId('chat-panel')).toBeTruthy();
+	expect(currentRoomValue()).toBe(`agent:${agent.slug}`);
+
+	// The room follows the project to its new slug: a send addresses it, where
+	// the old slug would now 404.
+	const sentTo: string[] = [];
+	const passthrough = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+		const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+		if (method === 'POST' && url.includes('/chat/agents/')) {
+			sentTo.push(new URL(url, 'http://x').pathname);
+			return new Response(JSON.stringify({ data: {} }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		return passthrough(input as RequestInfo, init);
+	}) as typeof globalThis.fetch;
+	try {
+		await user.type(await findByTestId('chat-input'), 'still here?{Enter}');
+		await waitFor(() =>
+			expect(sentTo).toEqual([`/api/projects/${renamed}/chat/agents/${agent.slug}/messages`]),
+		);
+	} finally {
+		globalThis.fetch = passthrough;
+	}
 });
 
 test('the CEO stays open across a project switch', async () => {

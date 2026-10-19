@@ -27,17 +27,26 @@ import { Tooltip } from './ui/tooltip';
  * (the CEO's opens the pinned CEO stream; the Coach reviews rather than chats,
  * so its card carries no shortcut).
  */
-function MemberCard({ projectId, agent }: { projectId: string; agent: Agent }) {
+function MemberCard({
+	projectId,
+	projectUuid,
+	agent,
+}: {
+	projectId: string;
+	projectUuid: string | undefined;
+	agent: Agent;
+}) {
 	const { t } = useI18n();
 	const launchChat = useLaunchChat();
 	const isCeo = agent.is_instance && agent.slug === CEO_AGENT_SLUG;
 	const chatRoom = isCeo
 		? CEO_ROOM
-		: agent.is_instance
+		: agent.is_instance || !projectUuid
 			? null
 			: ({
 					kind: 'agent',
 					projectSlug: projectId,
+					projectUuid,
 					agentSlug: agent.slug,
 					title: agent.title,
 				} as const);
@@ -203,7 +212,12 @@ export function TeamPanel({
 					className="mt-6 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3"
 				>
 					{roster.map((agent) => (
-						<MemberCard key={agent.id} projectId={projectId} agent={agent} />
+						<MemberCard
+							key={agent.id}
+							projectId={projectId}
+							projectUuid={project?.id}
+							agent={agent}
+						/>
 					))}
 					{canHire && (
 						<button

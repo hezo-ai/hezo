@@ -32,14 +32,19 @@ import { toast } from './use-toast';
  *   every project surface is.
  * - `group` — a project group room (several agents, mention-driven turns).
  *   Rooms have no slug, so the conversation id is their identity.
+ *
+ * A team room's `projectSlug` is the handle its requests go to, and changes
+ * when the project is renamed; `projectUuid` is the project it belongs to,
+ * and never does.
  */
 export type ChatRoom =
 	| { kind: 'ceo' }
 	| { kind: 'thread'; id: string }
-	| { kind: 'agent'; projectSlug: string; agentSlug: string; title: string }
+	| { kind: 'agent'; projectSlug: string; projectUuid: string; agentSlug: string; title: string }
 	| {
 			kind: 'group';
 			projectSlug: string;
+			projectUuid: string;
 			conversationId: string;
 			title: string;
 			isGeneral?: boolean;
@@ -47,12 +52,15 @@ export type ChatRoom =
 
 export const CEO_ROOM: ChatRoom = { kind: 'ceo' };
 
-/** Stable identity key for a room — query keys, queue buckets, persistence. */
+/**
+ * Stable identity key for a room — queue buckets and per-room state. Team rooms
+ * key on the project's UUID, so a rename that re-points the room keeps them.
+ */
 export function chatRoomKey(room: ChatRoom): string {
 	if (room.kind === 'ceo') return 'ceo';
 	if (room.kind === 'thread') return `thread:${room.id}`;
-	if (room.kind === 'group') return `group:${room.projectSlug}:${room.conversationId}`;
-	return `agent:${room.projectSlug}:${room.agentSlug}`;
+	if (room.kind === 'group') return `group:${room.projectUuid}:${room.conversationId}`;
+	return `agent:${room.projectUuid}:${room.agentSlug}`;
 }
 
 export interface ChatMessage {

@@ -2,9 +2,11 @@ import { createFileRoute, Outlet } from '@tanstack/react-router';
 import { BudgetBanner } from '../../../components/budget-banner';
 import { ConnectorHealthBanner } from '../../../components/connector-health-banner';
 import { ContainerStatusBanner } from '../../../components/container-status-banner';
+import { useFollowProjectRename } from '../../../hooks/use-follow-project-rename';
 
 function ProjectLayout() {
 	const { projectId } = Route.useParams();
+	useFollowProjectRename(projectId);
 
 	return (
 		<div>
