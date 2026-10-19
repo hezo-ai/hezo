@@ -1,5 +1,6 @@
 import { HQ_PROJECT_NAME } from '@hezo/shared';
 import { NameSwitcherButton, type SearchableSelectOption } from '@hezo/ui';
+import { useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Plus, X } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
 import type { ChatLaunch } from '../../contexts/chat-launch-context';
@@ -10,6 +11,7 @@ import {
 	type ChatRoom,
 	chatRoomKey,
 	type ProjectChatGroupSummary,
+	repointTeamRoom,
 	useChatConversations,
 	useProjectChatRooms,
 } from '../../hooks/use-chat';
@@ -138,16 +140,17 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	// no longer knows the old slug.
 	const activeSlug = active?.slug ?? null;
 	const activeProjectId = activeProjectMeta?.id;
+	const queryClient = useQueryClient();
 	useEffect(() => {
 		if (room.kind !== 'agent' && room.kind !== 'group') return;
 		if (room.projectSlug === activeSlug) return;
 		if (activeSlug && room.projectUuid === activeProjectId) {
-			selectRoom({ ...room, projectSlug: activeSlug });
+			selectRoom(repointTeamRoom(queryClient, room, activeSlug));
 			return;
 		}
 		if (open) setOpen(false);
 		selectRoom(CEO_ROOM);
-	}, [activeSlug, activeProjectId, room, open, setOpen, selectRoom]);
+	}, [activeSlug, activeProjectId, room, open, setOpen, selectRoom, queryClient]);
 
 	// CEO-scope threads, grouped for the switcher. The live stream is reached
 	// through the pinned CEO entry (server-resolved), so open web threads are not

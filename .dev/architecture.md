@@ -6401,7 +6401,10 @@ UUID beside the slug its requests go to. It stays while the route param equals t
 resolves to that UUID (the id alias, or the new slug after a rename), and in the second case
 adopts the route's handle, since a renamed project's old slug resolves nowhere. Adopting only
 once the route has moved keeps the handles from disagreeing while the index no longer knows the
-old slug. `chatRoomKey` keys team rooms by the UUID, so the queue survives the re-point. The
+old slug. `chatRoomKey` keys team rooms by the UUID, so the queue survives the re-point;
+`repointTeamRoom` carries the room's cached history to the new slug's key, so the room never
+reloads (and leaves its conversation) mid-reply; and `useChat`'s stream handlers rebind on the
+cache key, not the room key, so they patch the entry the view reads. The
 reset runs while the dock is closed too, so the next launch never renders a room from the project
 left behind for the one frame before its own room lands. The CEO and HQ threads are unscoped and
 stay. Every team-room launcher sits inside that room's project, so the switcher never carries a

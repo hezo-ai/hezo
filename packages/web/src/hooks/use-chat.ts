@@ -13,7 +13,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { api } from '../lib/api';
@@ -446,6 +446,25 @@ function roomQueryKey(room: ChatRoom): readonly unknown[] {
 }
 
 /**
+ * Re-point a team room at another handle for its project - the new slug after a
+ * rename. The room's history is cached under its slug, so the entry is carried
+ * over first: the next render reads the same messages under the new key, with
+ * no reload that would leave the conversation while a reply streams.
+ */
+export function repointTeamRoom(
+	queryClient: QueryClient,
+	room: Extract<ChatRoom, { kind: 'agent' | 'group' }>,
+	projectSlug: string,
+): ChatRoom {
+	const next = { ...room, projectSlug };
+	const cached = queryClient.getQueryData<ConversationData>(roomQueryKey(room));
+	if (cached && !queryClient.getQueryData(roomQueryKey(next))) {
+		queryClient.setQueryData(roomQueryKey(next), cached);
+	}
+	return next;
+}
+
+/**
  * Drives one chat room. The TanStack Query cache is the source of truth for
  * messages (keyed per room); the initial history loads via `useQuery` and
  * streamed start/delta/complete events are folded into the same cache entry via
@@ -490,6 +509,10 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const queueKey = chatRoomKey(room);
 	const queue = queues[queueKey] ?? EMPTY_QUEUE;
 	const queryKey = roomQueryKey(room);
+	// The cache entry's identity, for effects that read `queryKey`. It moves with
+	// the room, and also alone when a project rename re-points a team room to its
+	// new slug - the queue key, which keys on the project's UUID, does not.
+	const queryKeyId = JSON.stringify(queryKey);
 
 	// Room-scoped transient state: a switched-to room starts with no strip and
 	// no nudge — both belong to the room they happened in.
@@ -556,7 +579,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		if (tail && tail.role === 'assistant' && tail.status === 'streaming') {
 			queryClient.invalidateQueries({ queryKey });
 		}
-	}, [active, queueKey, queryClient]);
+	}, [active, queryKeyId, queryClient]);
 
 	// Server-side read watermark: while the room is open, the newest message is
 	// what the operator has seen. Written only when the tail actually moves, and
@@ -585,8 +608,8 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 			.catch(() => undefined);
 	}, [active, resolvedConversationId, serverMessagesForMark, room, queryClient]);
 
-	// queryKey is derived from the room; the string key is the stable identity.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: queryKey identity is the room key
+	// queryKey is derived from the room; queryKeyId is its stable identity.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: queryKey identity is queryKeyId
 	useEffect(() => {
 		const patch = (fn: (messages: ChatMessage[]) => ChatMessage[]) => {
 			queryClient.setQueryData<ConversationData>(queryKey, (prev) =>
@@ -707,7 +730,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 			offCompacted();
 			offPending();
 		};
-	}, [subscribe, queryClient, queueKey]);
+	}, [subscribe, queryClient, queueKey, queryKeyId]);
 
 	const sendMutation = useMutation({
 		mutationFn: (batch: OutboundChatMessage[]) => postChatTurn(room, batch),

@@ -11,7 +11,7 @@ import { ChatMessageStatus, WsMessageType } from '@hezo/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { useCeoUnread, useChat } from '../src/hooks/use-chat';
+import { type ChatRoom, repointTeamRoom, useCeoUnread, useChat } from '../src/hooks/use-chat';
 import { api } from '../src/lib/api';
 import { queryKeys } from '../src/lib/query-keys';
 
@@ -25,9 +25,11 @@ const socket = vi.hoisted(() => {
 	};
 });
 
-// use-chat resolves useSocket from this module; swap it for the emitter.
-vi.mock('../src/contexts/socket-context', () => ({
-	useSocket: () => ({
+// use-chat resolves useSocket from this module; swap it for the emitter. One
+// stable value, like the provider's memoised callbacks: a fresh `subscribe` per
+// render would re-run every effect keyed on it and hide a stale subscription.
+vi.mock('../src/contexts/socket-context', () => {
+	const value = {
 		connected: true,
 		subscribe: (type: string, handler: (msg: unknown) => void) => {
 			let set = socket.handlers.get(type);
@@ -40,8 +42,9 @@ vi.mock('../src/contexts/socket-context', () => ({
 		},
 		joinRoom: () => {},
 		leaveRoom: () => {},
-	}),
-}));
+	};
+	return { useSocket: () => value };
+});
 
 let latest: ReturnType<typeof useChat>;
 
@@ -371,4 +374,68 @@ test('a preview complete frame does not truncate a reply that already arrived wh
 	});
 	await waitFor(() => expect(latest.streaming).toBe(false));
 	expect(latest.messages[0]?.content).toBe(LONG_MESSAGE);
+});
+
+function RoomProbe({ room }: { room: ChatRoom }) {
+	latest = useChat(true, room);
+	return null;
+}
+
+test('a reply streaming through a project rename lands under the new slug', async () => {
+	// A rename re-points the open team room to the project's new slug. The room's
+	// identity (its UUID) is unchanged, but its cache entry moves: the entry is
+	// carried over, and the stream's handlers must follow it or the visible reply
+	// freezes mid-stream.
+	const room = {
+		kind: 'agent',
+		projectSlug: 'old-slug',
+		projectUuid: 'project-uuid',
+		agentSlug: 'engineer',
+		title: 'Engineer',
+	} as const;
+	const streaming = {
+		conversation_id: 'convo-dm',
+		messages: [
+			{
+				id: 'm1',
+				role: 'assistant',
+				channel: 'web',
+				status: 'streaming',
+				content: 'Work',
+				created_at: '2026-07-06T10:00:00.000Z',
+			},
+		],
+		compacted_count: 0,
+	};
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+	});
+	qc.setQueryData(queryKeys.agentChatRoom('old-slug', 'engineer'), streaming);
+	const { rerender } = render(
+		<QueryClientProvider client={qc}>
+			<RoomProbe room={room} />
+		</QueryClientProvider>,
+	);
+	await waitFor(() => expect(latest.messages[0]?.content).toBe('Work'));
+
+	const repointed = repointTeamRoom(qc, room, 'new-slug');
+	rerender(
+		<QueryClientProvider client={qc}>
+			<RoomProbe room={repointed} />
+		</QueryClientProvider>,
+	);
+	// No reload: the carried-over entry renders at once under the new key.
+	expect(latest.loaded).toBe(true);
+	expect(latest.messages[0]?.content).toBe('Work');
+	act(() => {
+		socket.emit(WsMessageType.ChatMessageComplete, {
+			...completeEvent('m1'),
+			conversationId: 'convo-dm',
+			content: 'Work done',
+		});
+	});
+
+	await waitFor(() => expect(latest.messages[0]).toMatchObject({ status: 'complete' }));
+	expect(latest.messages[0].content).toBe('Work done');
+	expect(latest.streaming).toBe(false);
 });
