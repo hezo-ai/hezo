@@ -509,9 +509,10 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const queueKey = chatRoomKey(room);
 	const queue = queues[queueKey] ?? EMPTY_QUEUE;
 	const queryKey = roomQueryKey(room);
-	// The cache entry's identity, for effects that read `queryKey`. It moves with
-	// the room, and also alone when a project rename re-points a team room to its
-	// new slug - the queue key, which keys on the project's UUID, does not.
+	// The cache entry's identity, for the stream handlers that patch `queryKey`.
+	// It moves with the room, and also alone when a project rename re-points a
+	// team room to its new slug - the queue key, which keys on the project's
+	// UUID, does not.
 	const queryKeyId = JSON.stringify(queryKey);
 
 	// Room-scoped transient state: a switched-to room starts with no strip and
@@ -571,6 +572,9 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	// cache never goes stale on its own). Refetch on activation so a switched-
 	// back room shows the server's truth instead of eternal typing dots - and a
 	// reply genuinely still streaming simply resumes from the refetched row.
+	// Keyed on the room's identity, not its cache key: a rename's re-point
+	// carries a live stream over, and the server's copy of an in-flight reply is
+	// empty until it completes, so refetching it then would wipe the reply.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: run on room activation
 	useEffect(() => {
 		if (!active) return;
@@ -579,7 +583,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		if (tail && tail.role === 'assistant' && tail.status === 'streaming') {
 			queryClient.invalidateQueries({ queryKey });
 		}
-	}, [active, queryKeyId, queryClient]);
+	}, [active, queueKey, queryClient]);
 
 	// Server-side read watermark: while the room is open, the newest message is
 	// what the operator has seen. Written only when the tail actually moves, and

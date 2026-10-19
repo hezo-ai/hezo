@@ -425,13 +425,22 @@ test('a reply streaming through a project rename lands under the new slug', asyn
 	);
 	await waitFor(() => expect(latest.messages[0]?.content).toBe('Work'));
 
+	// The server's copy of an in-flight reply is empty until it completes, so a
+	// read now would wipe the streamed text.
+	const get = vi.spyOn(api, 'get').mockResolvedValue({
+		...streaming,
+		messages: [{ ...streaming.messages[0], content: '' }],
+	});
 	const repointed = repointTeamRoom(qc, room, 'new-slug');
 	rerender(
 		<QueryClientProvider client={qc}>
 			<RoomProbe room={repointed} />
 		</QueryClientProvider>,
 	);
-	// No reload: the carried-over entry renders at once under the new key.
+	// No reload: the carried-over entry renders at once under the new key, and
+	// the re-point is not an activation, so nothing refetches it.
+	await act(async () => {});
+	expect(get).not.toHaveBeenCalled();
 	expect(latest.loaded).toBe(true);
 	expect(latest.messages[0]?.content).toBe('Work');
 	act(() => {
