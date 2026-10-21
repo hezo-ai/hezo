@@ -299,3 +299,7 @@ Copyright (C) 2026 [Ramesh Nair](https://hiddentao.com).
 Hezo is licensed under the [GNU General Public License v3.0 or later](./LICENSE.md).
 
 X: [@hezo_ai](https://x.com/hezo_ai)
+
+<p align="center">
+  <a href="https://daytona.io"><img src="assets/readme/daytona-startup-grid.png" alt="Daytona Startup Grid" width="256" /></a>
+</p>
