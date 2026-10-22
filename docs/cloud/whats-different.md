@@ -16,7 +16,7 @@ of what does not apply, and what replaces it.
 | [Concepts](/docs/concepts/projects-and-teams) | Yes, unchanged |
 | [Chat & messaging apps](/docs/chat/overview) | Yes, unchanged |
 | [Security](/docs/security/secret-protection) | Yes, unchanged |
-| [AI models & connections](/docs/ai-models) | Yes, for the model accounts you bring. Your instance also comes with [the Base AI model](#the-base-ai-model) |
+| [AI models & connections](/docs/ai-models) | Yes, for the model accounts you bring. Current plans also include [the Base AI model](#the-base-ai-model) |
 | [MCP API reference](/docs/reference/mcp-api) | Yes, unchanged |
 | [Containers](/docs/containers/overview) | Read it for how sandboxing works. The backend is fixed for you, so the parts about choosing or switching one do not apply |
 | [Budgets & cost control](/docs/concepts/budgets-and-costs) | Yes, and your plan sets the container-hour allowance |
@@ -27,9 +27,11 @@ of what does not apply, and what replaces it.
 
 ## The Base AI model
 
-A self-hosted instance runs only on models you bring. On Hezo Cloud your
-instance also comes with the **Base AI model** already connected, so setup never
-asks you for a model and your agents can work from the first minute.
+A self-hosted instance runs only on models you bring. On a current Hezo Cloud
+plan your instance also comes with the **Base AI model** already connected, so
+setup never asks you for a model and your agents can work from the first minute.
+A plan from before the Base AI model keeps running on the models you connect
+until it moves to a current plan.
 
 - **It is included in your plan, with no limit of its own.** It is not metered
   in tokens and has no separate bill. It only works while your containers are
@@ -38,7 +40,7 @@ asks you for a model and your agents can work from the first minute.
 - **It is listed with your other AI providers**, and it is the default model on
   a new instance. You cannot edit or remove it: we run it, choose the model
   behind it and keep it current.
-- **Your own models work exactly as they do self-hosted.** Connect a provider as
+- **You can still use your own models.** Connect a provider as
   [AI model support](/docs/ai-models) describes, then make it the default, or
   give it to one agent and leave the rest on the Base AI model.
 

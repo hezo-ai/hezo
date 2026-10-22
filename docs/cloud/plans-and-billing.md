@@ -39,9 +39,9 @@ your containers is up, so your container-hours already bound it. See
 on a provider you connected, that provider bills you directly, not us. See
 [AI model support](/docs/ai-models).
 
-**A subscription that started before the Base AI model arrived keeps its price**
-and runs on the model accounts you connected. Moving to one of the current plans
-adds the Base AI model.
+**A plan you started before the Base AI model arrived keeps its price** and runs
+on the model accounts you connected. Moving to one of the current plans adds the
+Base AI model.
 
 ## The free trial
 
