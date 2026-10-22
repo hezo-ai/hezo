@@ -27,27 +27,15 @@ Both reset with your billing period. See
 [Budgets & cost control](/docs/concepts/budgets-and-costs) for the in-app
 ledger, which works the same as it does on a self-hosted instance.
 
-## AI models
-
-**AI inference on the Base AI model is included in every plan, with no limit of
-its own.** Your agents can use it as much as they need while they work. It is
-not metered in tokens and is never billed separately: it only works while one of
-your containers is up, so your container-hours already bound it. See
-[The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
-
-**Your own model accounts are billed by their providers.** When an agent runs
-on a provider you connected, that provider bills you directly, not us. See
+**Your model spend is separate and is not billed by us.** You connect your own
+provider accounts, and they bill you directly. See
 [AI model support](/docs/ai-models).
-
-**A plan you started before the Base AI model arrived keeps its price** and runs
-on the model accounts you connected. Moving to one of the current plans adds the
-Base AI model.
 
 ## The free trial
 
 Every account starts with a **seven-day free trial, and we do not ask for a
 card**. The trial grants a flat ten container-hours and three concurrent
-containers, the same for everyone, and includes the Base AI model.
+containers, the same for everyone.
 
 The clock starts when you take your address, and the trial ends at whichever
 comes first: seven days, or ten container-hours.

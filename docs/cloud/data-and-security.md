@@ -63,26 +63,6 @@ the proxy. A compromised sandbox therefore exposes the prompts and files in that
 sandbox, and the provider key the run was using. Every other secret was never
 there. See [Secret protection & egress](/docs/security/secret-protection).
 
-When an agent runs on the Base AI model, that credential is a key to our model
-service issued to your instance alone. It can only make model requests charged
-to your instance, and we can replace it at any time.
-
-## The Base AI model
-
-When your agents use the [Base AI model](/docs/cloud/whats-different#the-base-ai-model),
-what they send it - the conversation, including any files and tool results in
-it - passes through our model service to a third-party model provider, which
-processes it to write the reply. That provider stores the data it receives
-outside the European Union. Our [privacy policy](https://hezo.ai/privacy/)
-names it.
-
-**Our model service does not keep what your agents send.** It keeps a record of
-how much your instance used.
-
-**If your work should not go to that provider,** connect a model of your own and
-make it the default. The Base AI model is then used only by an agent you point
-at it.
-
 ## How we see you use the app
 
 When you are signed in to your instance, Hezo Cloud counts the pages you open and
