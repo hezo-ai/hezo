@@ -59,6 +59,23 @@ describe('isBlockedEgressAddress', () => {
 		expect(isBlockedEgressAddress('::ffff:8.8.8.8')).toBe(false);
 	});
 
+	it('blocks every other spelling of an IPv6 address that carries a blocked IPv4 one', () => {
+		// `URL` writes `[::ffff:127.0.0.1]` back as `[::ffff:7f00:1]`, so the hex
+		// spelling is what a guarded fetch actually sees.
+		for (const addr of [
+			'::ffff:7f00:1', // mapped, hex
+			'::ffff:a9fe:a9fe', // mapped, cloud metadata
+			'0:0:0:0:0:ffff:a00:1', // mapped, uncompressed
+			'::7f00:1', // compatible
+			'::ffff:0:a9fe:a9fe', // translated
+			'64:ff9b::a9fe:a9fe', // NAT64
+		]) {
+			expect(isBlockedEgressAddress(addr), addr).toBe(true);
+		}
+		expect(isBlockedEgressAddress('::ffff:808:808')).toBe(false); // 8.8.8.8
+		expect(isBlockedEgressAddress('64:ff9b::808:808')).toBe(false);
+	});
+
 	it('allows ordinary public IPv6', () => {
 		expect(isBlockedEgressAddress('2606:4700:4700::1111')).toBe(false);
 	});

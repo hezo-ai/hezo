@@ -11,6 +11,7 @@ import { getWorkspacePath } from '../src/services/workspace';
 import { WebSocketManager } from '../src/services/ws';
 import { createStubDocker, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
 /**
@@ -37,6 +38,9 @@ async function poll(fn: () => Promise<boolean>, timeoutMs = 6000): Promise<void>
 	}
 	throw new Error('poll timed out');
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 describe('CEO chat connector refusal notices', () => {
 	let ctx: ServerTestContext;

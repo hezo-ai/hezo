@@ -8,6 +8,7 @@ import { createOrFetchConnector, getConnector } from '../src/services/connectors
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 import { startFakeMcpServer } from './helpers/fake-mcp-server';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 /**
  * A minimal generic OAuth Authorization Server. Serves the AS-metadata
@@ -106,6 +107,9 @@ let token: string;
 let teamId: string;
 let projectSlug: string;
 let sim: GenericOAuthSim;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

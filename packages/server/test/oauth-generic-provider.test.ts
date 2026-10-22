@@ -7,6 +7,7 @@ import {
 	exchangeCode,
 	refreshAccessToken,
 } from '../src/services/oauth/provider-generic';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 interface ProviderSim {
 	server: Server;
@@ -86,6 +87,9 @@ async function startProviderSim(
 }
 
 let sim: ProviderSim;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	sim = await startProviderSim({ withMetadata: true });

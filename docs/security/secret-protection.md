@@ -114,6 +114,10 @@ through it to reach Hezo's own API, its database, or anything else bound to your
 LAN. The check is made on the address a name actually resolves to, not on the name
 itself.
 
+The same rule applies when Hezo fetches an address for an agent, such as a skill file or a
+connector's server. Each redirect is checked too, so a public address cannot hand the
+request on to your cloud provider's metadata address or to your network.
+
 If an MCP server or a git remote your agents genuinely need lives on your local network,
 start Hezo with `--egress-allow-private-targets` (or
 `egress.allowPrivateTargets`) to lift the restriction.

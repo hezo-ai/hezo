@@ -26,6 +26,7 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 let app: Hono<Env>;
 let db: Db;
@@ -38,6 +39,9 @@ let projectId: string;
 let captainId: string;
 let captainAgentToken: string;
 let fake: FakeMcpServer;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

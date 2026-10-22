@@ -1,3 +1,5 @@
+import { runtimeConfig, setRuntimeConfig } from '@hezo/server/src/config/runtime';
+import type { HezoConfig } from '@hezo/server/src/config/types';
 import { createTestApp, encrypt, seedProjectContainer } from '@hezo/server/test/helpers/app';
 import { TooltipProvider } from '@hezo/ui';
 import { Toaster } from '@hezo/web/components/ui/toast';
@@ -61,6 +63,8 @@ interface TestAppContext {
 
 let activeContext: TestAppContext | null = null;
 let activeQueryClient: QueryClient | null = null;
+/** The egress settings a test started with, restored at teardown. */
+let egressBeforeTest: HezoConfig['egress'] | null = null;
 
 // Captured once, before any test installs its override, so each test's
 // passthrough is the environment's own fetch rather than the previous test's
@@ -139,6 +143,16 @@ beforeEach(async () => {
 	for (const row of (hq as { rows: Array<{ id: string }> }).rows) {
 		await seedProjectContainer(test.db, row.id, 'test-hq-container');
 	}
+
+	// The server's own outbound fetches (a connector probe, a skill file) have to
+	// land on the stand-in network below as well. `guardedFetch` dials sockets
+	// itself unless the operator allows private targets; there is no real network
+	// here for it to guard, so this deployment allows them.
+	egressBeforeTest = runtimeConfig().egress;
+	setRuntimeConfig({
+		...runtimeConfig(),
+		egress: { ...egressBeforeTest, allowPrivateTargets: true },
+	});
 
 	// Reroute fetch through the in-process Hono app. Bypasses the real network
 	// entirely; matches the way the dev Vite proxy forwards /api, /oauth, /mcp,
@@ -221,6 +235,10 @@ afterEach(async () => {
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	globalThis.fetch = tornDownFetch as unknown as typeof globalThis.fetch;
+	if (egressBeforeTest) {
+		setRuntimeConfig({ ...runtimeConfig(), egress: egressBeforeTest });
+		egressBeforeTest = null;
+	}
 	if (activeQueryClient) {
 		activeQueryClient.clear();
 		activeQueryClient = null;

@@ -5453,7 +5453,9 @@ correct - the same run above was sent to a setting that could not be its cause.
 **Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
 network namespace and will dial whatever an authenticated caller names, so it refuses
 targets that resolve to loopback / unspecified / link-local (incl. `169.254.169.254`) /
-RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7` and IPv4-mapped forms of the same.
+RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7`, and every IPv6 form that carries one of
+those IPv4 addresses (mapped, compatible, translated, NAT64). IPv6 is decided on the parsed
+groups, never the spelling: `URL` writes `[::ffff:127.0.0.1]` back as `[::ffff:7f00:1]`.
 Without it, a run holding the proxy token could `CONNECT 127.0.0.1:5432` and reach
 Hezo's own API, its database, or any host-bound daemon; `NO_PROXY` is a client-side hint
 the agent controls, not an enforcement point. Enforcement is by **resolved address**, not
@@ -5481,6 +5483,19 @@ agent JWT for exactly that endpoint, so this grants nothing new, and the port ma
 `egress.allowPrivateTargets`, for an operator whose MCP server or git remote is
 genuinely on the LAN. The proxy's own MITM bridge dials loopback directly (`netConnect`),
 not through this path, so it is unaffected.
+
+**The same guard on the server's own fetches** (`guardedFetch`, `services/egress/guarded-fetch.ts`).
+Some tools make the **server** fetch a URL an agent named, or one a remote server named in
+reply: `fetch_skill_file`, `test_connector`, the connector probe (`discoverConnectorMethods`,
+reached from `add_connector`), and the OAuth discovery, DCR and token calls a connector's
+URL leads to. The server runs on the host, so an unguarded `fetch` there would hand an agent
+`http://169.254.169.254/metadata/v1/user-data` (on a provisioned box, the boot document and
+every credential in it) or anything else on the host's network. `guardedFetch` applies
+`isBlockedEgressAddress` the same way the proxy does (resolve, refuse, dial the checked
+address with `Host` and `servername` from the name), follows redirects by hand so every hop
+is checked, and drops `Authorization` on a cross-origin hop. `allowPrivateTargets` lifts it
+together with the proxy guard. Device-flow endpoints come from the bundled provider registry
+and the in-container MCP CLI already goes through the proxy, so neither uses it.
 
 **Routing to the proxy is env-var convention, not enforcement.** `HTTP(S)_PROXY`/`NO_PROXY`
 are set per run, but the container gets no `NetworkMode` restriction and there are no

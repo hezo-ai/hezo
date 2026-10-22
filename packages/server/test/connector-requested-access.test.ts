@@ -15,6 +15,7 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 import { callMcpTool } from './helpers/mcp-call';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
 /**
@@ -73,6 +74,9 @@ async function callTool(
 ): Promise<unknown> {
 	return await callMcpTool(app, agentToken, name, args);
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

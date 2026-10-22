@@ -1,4 +1,5 @@
 import { logger } from '../../logger';
+import { guardedFetch } from '../egress/guarded-fetch';
 import type { FetchFn } from './provider-generic';
 
 const log = logger.child('oauth-dcr');
@@ -32,7 +33,7 @@ export interface DcrResult {
  */
 export async function registerClient(
 	input: DcrRequest,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<DcrResult> {
 	const body: Record<string, unknown> = {
 		redirect_uris: [input.redirectUri],

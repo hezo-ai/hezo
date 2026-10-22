@@ -1,4 +1,5 @@
 import { logger } from '../../logger';
+import { guardedFetch } from '../egress/guarded-fetch';
 
 const log = logger.child('oauth-generic');
 
@@ -63,7 +64,7 @@ export interface TokenResponse {
  */
 export async function discoverMetadata(
 	resourceUrl: string,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<OAuthMetadata> {
 	const u = new URL(resourceUrl);
 	const base = `${u.protocol}//${u.host}`;
@@ -114,7 +115,7 @@ export function buildAuthorizationUrl(input: AuthCodeStartInput): string {
 
 export async function exchangeCode(
 	input: ExchangeCodeInput,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<TokenResponse> {
 	const params = new URLSearchParams({
 		grant_type: 'authorization_code',
@@ -184,7 +185,7 @@ export interface RefreshInput {
  */
 export async function refreshAccessToken(
 	input: RefreshInput,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<TokenResponse> {
 	const params = new URLSearchParams({
 		grant_type: 'refresh_token',

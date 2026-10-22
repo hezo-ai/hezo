@@ -13,6 +13,7 @@ import { signState } from '../src/services/oauth/state';
 import { clearRefreshFns, refreshExpiringTokens } from '../src/services/oauth/token-resolver';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam } from './helpers/app';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 /**
  * RFC 8707 resource indicators on the token and refresh grants.
@@ -90,6 +91,9 @@ async function startTokenSim(): Promise<TokenSim> {
 		destroy: () => new Promise((resolve) => server.close(() => resolve())),
 	};
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

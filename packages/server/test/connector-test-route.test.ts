@@ -6,6 +6,7 @@ import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
 /**
@@ -70,6 +71,9 @@ async function probeRow(id: string) {
 	);
 	return r.rows[0];
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

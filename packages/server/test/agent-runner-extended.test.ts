@@ -38,6 +38,7 @@ import {
 	createTestTeam,
 	stubEngineSeams,
 } from './helpers/app';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 import { withRunUserStub } from './helpers/run-user-docker';
 import { startTestMcpHttpServer } from './helpers/test-mcp-http-server';
 
@@ -132,6 +133,9 @@ let agentId: string;
 let agentSlug: string | null;
 
 const originalFetch = globalThis.fetch;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

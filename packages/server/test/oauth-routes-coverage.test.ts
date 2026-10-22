@@ -10,6 +10,7 @@ import { createConnection } from '../src/services/oauth/connection-store';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 import { startFakeMcpServer } from './helpers/fake-mcp-server';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 /**
  * Branch-coverage companion for `routes/oauth.ts`. Targets uncovered branches
@@ -89,6 +90,9 @@ let teamId: string;
 let projectSlug: string;
 let sim: GenericOAuthSim;
 let testMasterKeyManager: MasterKeyManager;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
