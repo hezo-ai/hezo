@@ -7,8 +7,8 @@ section: Hezo Cloud
 # Hezo Cloud
 
 **Hezo Cloud is Hezo, run for you.** You get your own always-on instance at
-your own address, with unlimited projects and unlimited agents, and you never
-touch a server. The rest of these docs describe your instance;
+your own address, with unlimited projects, unlimited agents and AI inference
+included, and you never touch a server. The rest of these docs describe your instance;
 [What's different from self-hosting](/docs/cloud/whats-different) is the short
 list of exceptions.
 
@@ -25,6 +25,10 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
   per-agent charge. What a plan sets is how many containers can run at once and
   how many container-hours a month they may use. See
   [Plans, usage & billing](/docs/cloud/plans-and-billing).
+- **Unlimited AI inference on the Base AI model.** Your instance comes with a
+  model already connected, so your agents can start work the moment it is up.
+  It has no token meter and no bill of its own: your plan's container-hours are
+  the only limit. See [The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
 - **A twelve-word recovery phrase that only you hold.** Your own browser
   generates it the first time you open your instance.
 - **Twelve languages**, for the dashboard, our mail and your instance alike.
@@ -44,9 +48,10 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
 
 ## What you bring
 
-- **Your own model accounts.** Connect Anthropic, OpenAI, Google, xAI, Kimi,
-  DeepSeek, Z.ai or OpenRouter, and that spend is billed to you by them. See
-  [AI model support](/docs/ai-models).
+- **Your own model accounts, if you want them.** Sign in with a Claude or
+  ChatGPT subscription, paste an API key from Anthropic, OpenAI, Google, xAI,
+  Kimi, DeepSeek, Z.ai or OpenRouter, or point Hezo at your own model server
+  reachable over the internet. That spend is billed to you by them. See [AI model support](/docs/ai-models).
 - **Your recovery phrase.** We never hold it, and nobody here can recover it
   for you.
 - **Anything your agents need to reach** - repositories, connectors, API

@@ -16,7 +16,7 @@ of what does not apply, and what replaces it.
 | [Concepts](/docs/concepts/projects-and-teams) | Yes, unchanged |
 | [Chat & messaging apps](/docs/chat/overview) | Yes, unchanged |
 | [Security](/docs/security/secret-protection) | Yes, unchanged |
-| [AI models & connections](/docs/ai-models) | Yes, unchanged - you bring your own accounts |
+| [AI models & connections](/docs/ai-models) | Yes, for the model accounts you bring. Your instance also comes with [the Base AI model](#the-base-ai-model) |
 | [MCP API reference](/docs/reference/mcp-api) | Yes, unchanged |
 | [Containers](/docs/containers/overview) | Read it for how sandboxing works. The backend is fixed for you, so the parts about choosing or switching one do not apply |
 | [Budgets & cost control](/docs/concepts/budgets-and-costs) | Yes, and your plan sets the container-hour allowance |
@@ -24,6 +24,26 @@ of what does not apply, and what replaces it.
 | [Installation](/docs/getting-started/installation) | No - there is nothing to install. See [Getting started on Hezo Cloud](/docs/cloud/getting-started) |
 | [Deployment](/docs/deployment/self-hosting), every page | No - we run the machine |
 | [CLI reference](/docs/reference/cli) | No - you have no shell on the machine |
+
+## The Base AI model
+
+A self-hosted instance runs only on models you bring. On Hezo Cloud your
+instance also comes with the **Base AI model** already connected, so setup never
+asks you for a model and your agents can work from the first minute.
+
+- **It is included in your plan, with no limit of its own.** It is not metered
+  in tokens and has no separate bill. It only works while your containers are
+  up, so your container-hours bound it. See
+  [Plans, usage & billing](/docs/cloud/plans-and-billing#ai-models).
+- **It is listed with your other AI providers**, and it is the default model on
+  a new instance. You cannot edit or remove it: we run it, choose the model
+  behind it and keep it current.
+- **Your own models work exactly as they do self-hosted.** Connect a provider as
+  [AI model support](/docs/ai-models) describes, then make it the default, or
+  give it to one agent and leave the rest on the Base AI model.
+
+Where the Base AI model sends your agents' work is covered in
+[Data & security on Hezo Cloud](/docs/cloud/data-and-security#the-base-ai-model).
 
 ## No shell, so no command line
 

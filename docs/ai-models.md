@@ -10,6 +10,11 @@ Hezo is **bring-your-own-model**. You connect your own provider accounts, Hezo s
 the credentials encrypted (see [Master key & encryption](/docs/security/master-key)),
 and your agents run on the models you choose.
 
+On [Hezo Cloud](/docs/cloud/overview) your instance also comes with the **Base AI
+model** already connected and included in your plan. Everything on this page still
+applies when you want to use your own. See
+[The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
+
 ## Supported providers
 
 | Provider | Models | Runtime | Authentication |
