@@ -53,13 +53,12 @@ durable before you continue - a password manager, or paper in a drawer. See
 
 You will be asked for it again if your instance restarts.
 
-## 5. Connect an AI model
+## 5. Meet your team
 
-Your agents run on a model you bring. Paste an API key, or sign in with a
-subscription where the provider supports it. See
-[AI model support](/docs/ai-models) for the providers and where to get a key.
-
-## 6. Meet your team
+There is no AI model to set up. Your instance comes with the Base AI model
+already connected, so your agents can work straight away. If you would rather
+use your own provider account, connect it at any time - see
+[AI model support](/docs/ai-models).
 
 Your home screen opens on the CEO chat. Your brief is already there as your
 first message, and the CEO is answering it: it scopes the work with you and
