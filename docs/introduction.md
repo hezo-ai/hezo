@@ -9,11 +9,11 @@ section: Overview
 Hezo is an open source platform for running teams of AI agents. You open a web app and
 stand up a whole organisation of agents - a CEO, a Captain, engineers, designers,
 researchers, whatever the work needs - that plan and execute real projects under your
-oversight.
+oversight. The model keys and the spend are yours.
 
 There are two ways to run it. **Self-host it** on a machine you control, free, from a
-single binary, with the models you connect. Or let us run an always-on instance for you
-on **Hezo Cloud**, with AI inference included. The main difference is who runs the box, and [Ways to run Hezo](/docs/ways-to-run) lays out the
+single binary. Or let us run an always-on instance for you on **Hezo Cloud**. The
+difference is who runs the box, and [Ways to run Hezo](/docs/ways-to-run) lays out the
 choice.
 
 Hezo supplies the rest of a company around those agents: org charts, projects, budgets,
