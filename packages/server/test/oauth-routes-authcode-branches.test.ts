@@ -18,6 +18,7 @@ import {
 	projectSlugFor,
 } from './helpers/app';
 import { startFakeMcpServer } from './helpers/fake-mcp-server';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 /**
  * Line/branch coverage for the auth-code half of `routes/oauth.ts`:
@@ -120,6 +121,9 @@ let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let sim: LocalSim;
 let bare: LocalSim;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

@@ -3,6 +3,7 @@ import type { Db } from '../src/db/database';
 import { discoverConnectorMethods } from '../src/services/connectors/method-discovery';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
 let ctx: Awaited<ReturnType<typeof createTestApp>>;
@@ -42,6 +43,9 @@ async function seedConnector(extraColumns: Record<string, string> = {}): Promise
 	);
 	return r.rows[0].id;
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	ctx = await createTestApp();

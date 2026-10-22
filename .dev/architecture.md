@@ -5482,6 +5482,19 @@ agent JWT for exactly that endpoint, so this grants nothing new, and the port ma
 genuinely on the LAN. The proxy's own MITM bridge dials loopback directly (`netConnect`),
 not through this path, so it is unaffected.
 
+**The same guard on the server's own fetches** (`guardedFetch`, `services/egress/guarded-fetch.ts`).
+Some tools make the **server** fetch a URL an agent named, or one a remote server named in
+reply: `fetch_skill_file`, `test_connector`, the connector probe (`discoverConnectorMethods`,
+reached from `add_connector`), and the OAuth discovery, DCR and token calls a connector's
+URL leads to. The server runs on the host, so an unguarded `fetch` there would hand an agent
+`http://169.254.169.254/metadata/v1/user-data` (on a provisioned box, the boot document and
+every credential in it) or anything else on the host's network. `guardedFetch` applies
+`isBlockedEgressAddress` the same way the proxy does (resolve, refuse, dial the checked
+address with `Host` and `servername` from the name), follows redirects by hand so every hop
+is checked, and drops `Authorization` on a cross-origin hop. `allowPrivateTargets` lifts it
+together with the proxy guard. Device-flow endpoints come from the bundled provider registry
+and the in-container MCP CLI already goes through the proxy, so neither uses it.
+
 **Routing to the proxy is env-var convention, not enforcement.** `HTTP(S)_PROXY`/`NO_PROXY`
 are set per run, but the container gets no `NetworkMode` restriction and there are no
 firewall rules, so an agent can unset them and egress directly. That is **fail-closed for

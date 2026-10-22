@@ -11,6 +11,7 @@ import {
 import type { ConnectorRunRejection } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 import { startTestMcpHttpServer } from './helpers/test-mcp-http-server';
 
 /**
@@ -101,6 +102,9 @@ function captureErrors(): () => string[] {
 	});
 	return () => seen;
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	ctx = await createTestApp();

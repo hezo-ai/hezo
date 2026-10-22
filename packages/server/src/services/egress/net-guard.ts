@@ -104,18 +104,24 @@ export class BlockedEgressTargetError extends Error {
  * original hostname as `servername` (TLS/SNI and certificate validation) and set
  * the `Host` header from it, since the runtime would otherwise derive `Host`
  * from the address.
+ *
+ * `isBlocked` is the rule applied, {@link isBlockedEgressAddress} unless a test
+ * needs one loopback address reachable and another refused.
  */
-export async function resolveGuardedAddress(host: string): Promise<string> {
+export async function resolveGuardedAddress(
+	host: string,
+	isBlocked: (address: string) => boolean = isBlockedEgressAddress,
+): Promise<string> {
 	const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 	// An IP literal needs no resolution - decide on it directly.
 	if (isIP(bare) !== 0) {
-		if (isBlockedEgressAddress(bare)) throw new BlockedEgressTargetError(host, bare);
+		if (isBlocked(bare)) throw new BlockedEgressTargetError(host, bare);
 		return bare;
 	}
 	const address = await new Promise<string>((resolve, reject) => {
 		dnsLookup(bare, (err, addr) => (err ? reject(err) : resolve(String(addr))));
 	});
-	if (isBlockedEgressAddress(address)) throw new BlockedEgressTargetError(host, address);
+	if (isBlocked(address)) throw new BlockedEgressTargetError(host, address);
 	return address;
 }
 

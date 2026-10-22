@@ -7,10 +7,14 @@ import { registerGenericOAuthRefresh } from '../src/services/oauth/generic-refre
 import { clearRefreshFns, refreshExpiringTokens } from '../src/services/oauth/token-resolver';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 let db: Db;
 let masterKeyManager: MasterKeyManager;
 const realFetch = globalThis.fetch;
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

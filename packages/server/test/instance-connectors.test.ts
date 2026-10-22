@@ -14,6 +14,7 @@ import {
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 let app: Hono<Env>;
 let db: Db;
@@ -34,6 +35,9 @@ async function makeTeam(name: string): Promise<string> {
 	const res = await createTestTeam(db, { name });
 	return (await res.json()).data.id;
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

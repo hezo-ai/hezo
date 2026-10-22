@@ -1,4 +1,5 @@
 import { logger } from '../../logger';
+import { guardedFetch } from '../egress/guarded-fetch';
 import { discoverMetadata, type FetchFn, type OAuthMetadata } from './provider-generic';
 
 const log = logger.child('oauth-prm');
@@ -50,7 +51,7 @@ export function wellKnownPrmUrl(mcpUrl: string): string {
  */
 export async function probeForProtectedResourceMetadata(
 	mcpUrl: string,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<string> {
 	const fallback = wellKnownPrmUrl(mcpUrl);
 	let res: Response;
@@ -84,7 +85,7 @@ export async function probeForProtectedResourceMetadata(
  */
 export async function fetchProtectedResourceMetadata(
 	prmUrl: string,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<ProtectedResourceMetadata> {
 	const res = await fetchFn(prmUrl, { headers: { Accept: 'application/json' } });
 	if (!res.ok) {
@@ -115,7 +116,7 @@ export class PrmUnavailableError extends Error {}
  */
 export async function discoverMcpAuthorization(
 	mcpUrl: string,
-	fetchFn: FetchFn = globalThis.fetch,
+	fetchFn: FetchFn = guardedFetch,
 ): Promise<DiscoveryResult> {
 	const prmUrl = await probeForProtectedResourceMetadata(mcpUrl, fetchFn);
 	let prm: ProtectedResourceMetadata;

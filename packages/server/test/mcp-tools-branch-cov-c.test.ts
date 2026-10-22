@@ -15,6 +15,7 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 import { callMcpTool } from './helpers/mcp-call';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 // Branch-coverage tests for packages/server/src/mcp/tools.ts (part C):
 // project assets, project docs, skills (incl. fetch_skill_file), MCP
@@ -36,6 +37,9 @@ let httpUrl: string; // 200 OK server
 let http401Server: Server;
 let http401Url: string; // 401 + WWW-Authenticate server
 let closedPortUrl: string; // nothing listening
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

@@ -204,6 +204,7 @@ import {
 	setDocumentArchived,
 	upsertDocument,
 } from '../services/documents';
+import { guardedFetch } from '../services/egress/guarded-fetch';
 import {
 	type GoalSuggestionPayload,
 	insertGoalSuggestionApproval,
@@ -4690,7 +4691,7 @@ export function registerTools(
 			url: z
 				.string()
 				.describe(
-					'HTTPS URL of the skill file. Only http/https schemes are allowed; response must be < 256KB; 10s timeout.',
+					'HTTPS URL of the skill file. Only http/https schemes are allowed; loopback, link-local and private addresses are refused unless the operator allows private targets; response must be < 256KB; 10s timeout.',
 				),
 			title: z
 				.string()
@@ -4722,7 +4723,7 @@ export function registerTools(
 			const timeout = setTimeout(() => controller.abort(), 10_000);
 			let res: Response;
 			try {
-				res = await fetch(url, { signal: controller.signal });
+				res = await guardedFetch(url, { signal: controller.signal });
 			} catch (e) {
 				clearTimeout(timeout);
 				return { error: `Fetch failed: ${(e as Error).message}` };
@@ -8119,7 +8120,7 @@ export function registerTools(
 
 			let probeRes: Response;
 			try {
-				probeRes = await fetch(config.url, { method: 'GET', headers });
+				probeRes = await guardedFetch(config.url, { method: 'GET', headers });
 			} catch (e) {
 				return {
 					ok: false,

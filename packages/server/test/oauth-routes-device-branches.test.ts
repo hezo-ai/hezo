@@ -10,6 +10,7 @@ import { signState } from '../src/services/oauth/state';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 import { createGitHubSim, type GitHubSim } from './helpers/github-sim';
+import { allowPrivateEgressTargets } from './helpers/private-targets';
 
 /**
  * Line/branch coverage for the device-flow half of `routes/oauth.ts`:
@@ -111,6 +112,9 @@ async function devicePoll(connector: string, flowId: string): Promise<Response> 
 		body: JSON.stringify({ flow_id: flowId }),
 	});
 }
+
+// The stand-in servers this file starts listen on loopback.
+allowPrivateEgressTargets();
 
 beforeAll(async () => {
 	sim = await createGitHubSim();

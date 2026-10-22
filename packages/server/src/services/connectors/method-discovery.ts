@@ -38,6 +38,7 @@ import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/tran
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { logger } from '../../logger';
+import { guardedFetch } from '../egress/guarded-fetch';
 import { loadSecretValue, refreshConnection, setConnectorAuthError } from '../oauth/token-resolver';
 import { SAAS_CREDENTIALED_SQL, type SaasConnectorConfig } from './connections';
 
@@ -224,7 +225,7 @@ type ProbeOutcome =
  */
 function deadlineBoundFetch(deadline: AbortSignal): FetchLike {
 	return (input, init) =>
-		fetch(input, {
+		guardedFetch(input, {
 			...init,
 			signal: init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline,
 		});

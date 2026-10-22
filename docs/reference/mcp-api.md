@@ -1295,7 +1295,7 @@ Fetch a remote agent skill file (Markdown describing how to use a third-party MC
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `url` | `string` | Yes | HTTPS URL of the skill file. Only http/https schemes are allowed; response must be < 256KB; 10s timeout. |
+| `url` | `string` | Yes | HTTPS URL of the skill file. Only http/https schemes are allowed; loopback, link-local and private addresses are refused unless the operator allows private targets; response must be < 256KB; 10s timeout. |
 | `title` | `string` | No | Human-readable title shown in the team KB. Defaults to the URL pathname. |
 | `scope` | `project` \| `global` | No | 'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'. |
 
