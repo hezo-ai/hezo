@@ -6,6 +6,11 @@ module.exports = {
 	// Telemetry defaults on; a CI run crossing the daily cron window would fire a
 	// real outbound report. Tests never phone home.
 	telemetry: { enabled: false },
+	// The suite's stand-in MCP and OAuth servers listen on loopback, which the
+	// server's own fetches of connector and skill URLs refuse by default. This
+	// deployment's "LAN" is the runner, so it opts in the way a self-hoster with a
+	// LAN MCP server would. Its containers are fake, so no agent egress rides on it.
+	egress: { allowPrivateTargets: true },
 	// The browser suite *is* the deployer of this instance, so it configures it the
 	// way a managed deployment does. Nothing asserts on the "managed by" notice
 	// this puts on the settings page; `managedBy` is required by the schema and is

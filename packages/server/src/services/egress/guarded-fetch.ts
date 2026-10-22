@@ -75,12 +75,15 @@ async function fetchGuarded(
 		request.body === null ? null : new Uint8Array(await request.arrayBuffer());
 
 	for (let hop = 0; ; hop++) {
+		if (signal.aborted) throw abortReason(signal);
 		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 			throw new TypeError(`fetch failed: unsupported scheme ${url.protocol}`);
 		}
 		let address: string;
 		try {
-			address = await resolveGuardedAddress(url.hostname, isBlocked);
+			// The lookup is raced against the signal: a name that never resolves
+			// would otherwise outlast every caller's deadline.
+			address = await untilAborted(resolveGuardedAddress(url.hostname, isBlocked), signal);
 		} catch (e) {
 			if (e instanceof BlockedEgressTargetError) {
 				log.warn('server-side fetch to a private or loopback target refused', {
@@ -140,6 +143,30 @@ function abortReason(signal: AbortSignal): unknown {
 	return signal.reason instanceof Error
 		? signal.reason
 		: new DOMException('This operation was aborted', 'AbortError');
+}
+
+/** `promise`, or the signal's reason as soon as it aborts, whichever comes first. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+	if (signal.aborted) {
+		// Nothing waits on the lookup any more; its outcome must not surface as an
+		// unhandled rejection.
+		promise.catch(() => {});
+		return Promise.reject(abortReason(signal));
+	}
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => reject(abortReason(signal));
+		signal.addEventListener('abort', onAbort, { once: true });
+		promise.then(
+			(value) => {
+				signal.removeEventListener('abort', onAbort);
+				resolve(value);
+			},
+			(error) => {
+				signal.removeEventListener('abort', onAbort);
+				reject(error);
+			},
+		);
+	});
 }
 
 /**

@@ -5453,7 +5453,9 @@ correct - the same run above was sent to a setting that could not be its cause.
 **Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
 network namespace and will dial whatever an authenticated caller names, so it refuses
 targets that resolve to loopback / unspecified / link-local (incl. `169.254.169.254`) /
-RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7` and IPv4-mapped forms of the same.
+RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7`, and every IPv6 form that carries one of
+those IPv4 addresses (mapped, compatible, translated, NAT64). IPv6 is decided on the parsed
+groups, never the spelling: `URL` writes `[::ffff:127.0.0.1]` back as `[::ffff:7f00:1]`.
 Without it, a run holding the proxy token could `CONNECT 127.0.0.1:5432` and reach
 Hezo's own API, its database, or any host-bound daemon; `NO_PROXY` is a client-side hint
 the agent controls, not an enforcement point. Enforcement is by **resolved address**, not

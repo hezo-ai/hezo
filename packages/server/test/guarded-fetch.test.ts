@@ -99,6 +99,24 @@ describe('guardedFetch refuses private and metadata addresses', () => {
 		expect(server.seen).toHaveLength(0);
 	});
 
+	it('refuses loopback written as an IPv4-mapped IPv6 literal', async () => {
+		const server = await serve(echo);
+		const port = new URL(server.origin).port;
+		// `URL` rewrites the host to `[::ffff:7f00:1]`, which a dotted-quad match misses.
+		await expect(guardedFetch(`http://[::ffff:127.0.0.1]:${port}/`)).rejects.toBeInstanceOf(
+			BlockedEgressTargetError,
+		);
+		expect(server.seen).toHaveLength(0);
+	});
+
+	it('gives up on an aborted request without waiting for the name to resolve', async () => {
+		await expect(
+			guardedFetch('http://name-that-is-never-looked-up.invalid/', {
+				signal: AbortSignal.abort(),
+			}),
+		).rejects.toMatchObject({ name: 'AbortError' });
+	});
+
 	it('refuses a redirect that leads to a blocked address, at that hop', async () => {
 		const server = await serve((_req, res) => {
 			res.writeHead(302, { location: 'http://169.254.169.254/metadata/v1/user-data' });

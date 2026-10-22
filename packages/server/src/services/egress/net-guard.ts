@@ -36,25 +36,67 @@ function ipv4Octets(address: string): [number, number, number, number] | null {
 }
 
 /**
+ * The eight 16-bit groups of a valid IPv6 literal, with `::` expanded and a
+ * trailing dotted quad folded into the last two groups.
+ */
+function ipv6Hextets(address: string): number[] | null {
+	let v6 = address;
+	const dotted = v6.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+	if (dotted) {
+		const o = ipv4Octets(dotted[2]);
+		if (!o) return null;
+		v6 = `${dotted[1]}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+	}
+	const halves = v6.split('::');
+	if (halves.length > 2) return null;
+	const groups = (part: string) =>
+		part === ''
+			? []
+			: part
+					.split(':')
+					.map((h) => (/^[0-9a-f]{1,4}$/.test(h) ? Number.parseInt(h, 16) : Number.NaN));
+	const head = groups(halves[0]);
+	const tail = halves.length === 2 ? groups(halves[1]) : [];
+	if ([...head, ...tail].some(Number.isNaN)) return null;
+	const zeros = 8 - head.length - tail.length;
+	if (halves.length === 2 ? zeros < 1 : zeros !== 0) return null;
+	return [...head, ...new Array<number>(halves.length === 2 ? zeros : 0).fill(0), ...tail];
+}
+
+/** The IPv4 address an IPv6 address carries in its low 32 bits, as a dotted quad. */
+function embeddedIpv4(h: number[]): string {
+	return `${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`;
+}
+
+/**
  * True when the address is one the agent has no business reaching through the
  * proxy: loopback, unspecified, link-local (incl. the cloud metadata address
  * 169.254.169.254), private/RFC1918, carrier-grade NAT, and their IPv6
  * equivalents (::1, ::, fe80::/10 link-local, fc00::/7 unique-local), plus
- * IPv4-mapped IPv6 forms of all of the above.
+ * every IPv6 form that carries an IPv4 address: mapped, compatible,
+ * translated and NAT64.
  */
 export function isBlockedEgressAddress(address: string): boolean {
 	const family = isIP(address);
 	if (family === 0) return false;
 
 	if (family === 6) {
-		const v6 = address.toLowerCase().split('%')[0]; // drop any zone index
-		if (v6 === '::1' || v6 === '::') return true;
-		// IPv4-mapped (::ffff:127.0.0.1) and IPv4-compatible forms re-enter the
-		// v4 rules rather than being waved through as "some IPv6 address".
-		const mapped = v6.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
-		if (mapped) return isBlockedEgressAddress(mapped[1]);
-		if (/^fe[89ab]/.test(v6)) return true; // fe80::/10 link-local
-		if (/^f[cd]/.test(v6)) return true; // fc00::/7 unique-local
+		// Decided on the parsed groups, never on the spelling: `URL` writes
+		// `[::ffff:127.0.0.1]` back as `[::ffff:7f00:1]`, and `0:0:0:0:0:ffff:…`
+		// is the same address again.
+		const h = ipv6Hextets(address.toLowerCase().split('%')[0]); // drop any zone index
+		if (!h) return true;
+		const zeroUpTo = (n: number) => h.slice(0, n).every((g) => g === 0);
+		if (zeroUpTo(7) && (h[7] === 0 || h[7] === 1)) return true; // :: and ::1
+		// The IPv4-carrying forms re-enter the v4 rules rather than being waved
+		// through as "some IPv6 address".
+		const carriesIpv4 =
+			(zeroUpTo(5) && (h[5] === 0xffff || h[5] === 0)) || // ::ffff:a.b.c.d mapped, ::a.b.c.d compatible
+			(zeroUpTo(4) && h[4] === 0xffff && h[5] === 0) || // ::ffff:0:a.b.c.d translated
+			(h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((g) => g === 0)); // 64:ff9b::/96 NAT64
+		if (carriesIpv4) return isBlockedEgressAddress(embeddedIpv4(h));
+		if ((h[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+		if ((h[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
 		return false;
 	}
 
