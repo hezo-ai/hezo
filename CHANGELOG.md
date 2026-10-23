@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.73.1 - 2026-10-23
+
+### Bug Fixes
+
+- **server:** refuse private and metadata addresses in server-side fetches ([#1171](https://github.com/hezo-ai/hezo/pull/1171))
+- **web:** close a team chat when the operator leaves its project ([#1169](https://github.com/hezo-ai/hezo/pull/1169))
+
+### Documentation
+
+- **cloud:** describe the Base AI model included in Hezo Cloud plans ([#1172](https://github.com/hezo-ai/hezo/pull/1172))
+- **readme:** add the Daytona Startup Grid logo, linked to daytona.io ([#1170](https://github.com/hezo-ai/hezo/pull/1170))
+
+### Other
+
+- docs(cloud): describe the Base AI model included in Hezo Cloud plans ([#1173](https://github.com/hezo-ai/hezo/pull/1173))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.73.0...0.73.1
+
 ## 0.73.0 - 2026-10-19
 
 ### Features
