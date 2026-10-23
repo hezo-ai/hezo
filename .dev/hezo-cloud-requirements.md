@@ -3,9 +3,10 @@
 **Inbound requirements from the `hezo-ai/cloud` control plane.** Nine tasks, two
 of them optional, plus **H33**, which is a defect in shipped work rather than a
 new ask. Everything here is **additive and inert unless hosted config
-is present** — self-hosted behaviour must stay byte-identical. **H27, H28 and H29
-are the recorded exceptions**: product changes the hosted launch flow asked for
-that alter what a self-hosted instance does too, each stated as such below.
+is present** — self-hosted behaviour must stay byte-identical. **H27, H28, H29
+and H38 are the recorded exceptions**: product changes the hosted launch flow
+asked for that alter what a self-hosted instance does too, each stated as such
+below.
 
 Every claim below was verified against the working tree, not from memory. Where
 something turned out to already exist, that is recorded at the end rather than
@@ -52,6 +53,11 @@ together from H24 on.
 | **H34** | `policy.support` block, owner-only route, shared chat loader | one support contact from the site through the tenant | **done** |
 | **H35** | `policy.analytics` block, owner-only route, shared analytics loader | page views, named clicks and session recordings of the owner's own use | **done** |
 | **H36** | the support chat says where the owner is | the support team sees the screen a person is stuck on | **done** |
+| **H37** | `custodianMasterKey`: the plane holds the phrase; anything but `unlocked` is fatal | a hosted instance that unlocks itself at every boot | **done** |
+| **H38** | `setup()` never overwrites an existing canary | an enrollment never orphaning encrypted data | **done**, changes self-hosted behaviour |
+| **H39** | No phrase screen on a key-holding instance; no password form where an issuer owns sign-in | sign-in straight to the CEO chat | **done** |
+| **H40** | A managed `hezo_cloud` provider, shown as "Base AI model" | every hosted instance working with no model setup | **large** |
+| **H41** | An error family for the model proxy's ceiling refusal, ahead of `rate_limit` | a run that stops at the ceiling rather than retrying into it | small |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -913,6 +919,83 @@ page said, and the plane's sync tool defines them in the inbox. The instance
 reports its gate or route template, project slug and version, never a path. No
 policy change: a release that predates it simply reports nothing. Mechanism and
 rules: architecture § *Support chat*.
+
+
+## H37–H41 — the held phrase and the Base AI model
+
+Hezo Cloud's next launch removes two screens: the plane holds each tenant's
+recovery phrase and the instance unlocks itself at every boot, and every hosted
+instance gets a working model, the **Base AI model**, served through a
+Hezo-run proxy and paid for by Hezo. **H37–H39 are one release (the cloud calls
+it K)**; **H40 and H41 are a later one (M)**. The cloud copy numbers these one
+higher (H38–H42), as it does H35–H37. Everything is inert without hosted config,
+and the self-hosted guidance on the master key is unchanged: a self-hoster still
+holds their own phrase and nothing here lets them store it.
+
+### H37 — `custodianMasterKey` *(done)*
+
+A config key carrying the phrase the plane holds, written to the box's config
+file by the plane at build time.
+
+- **Accepted only beside `policy` or `policyFile`.** A config file without
+  hosted policy refuses it at startup, naming the key, so a self-hosted
+  instance cannot take it.
+- **Refused beside `HEZO_MASTER_KEY` or `--master-key`.** Two sources for one
+  key is a startup error, not a precedence rule.
+- **Parsed at once into the derived key**; the phrase is not kept in memory.
+- **On every boot, after `seedDefaultTeam` and before the `onUnlock`
+  callbacks:** `ensureSuperuserId`, and store the base URL from `webUrl` while
+  none is stored. H40 adds the managed model row to this step.
+- **Any outcome but `unlocked` is a fatal startup error**, naming the outcome.
+  `resolveMasterKeyState` in `startup.ts` catches everything and returns
+  `'unset'`, and an `unset` instance offers enrollment to whoever reaches it
+  first; on a key-holding instance that catch-all must not apply. A first boot
+  enrolls the held key; every later boot must verify against the canary.
+
+### H38 — `setup()` never overwrites an existing canary *(done)*
+
+`MasterKeyManager.setup` writes `master_key_canary` with
+`ON CONFLICT (key) DO UPDATE`, guarded only by the in-memory state. Any path
+that reports `unset` while a canary exists lets an enrollment replace it, and
+everything encrypted under the old key is then unreadable. Insert only when
+absent, and fail the enrollment, naming the existing canary, when one was
+there. This changes self-hosted behaviour only where it was already data loss.
+
+### H39 — no phrase screen on a key-holding instance *(done)*
+
+On an instance holding `custodianMasterKey`, the master-key gate never renders:
+H37's rule means the instance serves only once unlocked, so `/api/status` never
+reports the `unset` or `locked` that draws it. Settings -> Users & access draws
+no password form wherever an issuer owns sign-in, since the server already
+answers `SSO_ONLY` to every password change there. The cloud's own criterion is
+that no plane path ever sends a tenant to the phrase gate; this is the
+instance's half.
+
+### H40 — a managed `hezo_cloud` provider, shown as "Base AI model"
+
+- **Table properties, not a branch:** a `managed` property that the condemn
+  path (`condemnRejectedProviderCredential`), the error copy and the routes
+  read. A refusal from the proxy never condemns the managed key, and the
+  tenant cannot edit or delete it.
+- **The endpoint comes from config**, so the completeness checker follows it.
+- **Model slots are set to the proxy's alias**, and the tenant's proxy key is
+  the run CLI's own model credential: the existing red-line exception, no new
+  one.
+- **A new `ai_provider` enum value** in the next migration, with its
+  preservation test.
+- **Upserted every boot**, made the default only if no default exists, and
+  removed when its config block is removed.
+- Its name in every catalog is "Base AI model"; the underlying model and CLI are
+  never named to the user.
+
+### H41 — an error family for the proxy's ceiling refusal
+
+The proxy refuses a tenant past its spend ceiling with `429` and
+`x-should-retry: false`. `RUNTIME_ERROR_FAMILIES` in `agent-stream-parser.ts`
+reads a bare `429` as `rate_limit`, which is transient: the run is handed back
+and dispatched again after the cooldown, into the same refusal. Add a family of
+its own, matched ahead of `rate_limit`, with a reset-time parser for Claude
+Code's output, so a run stops and says when it can resume.
 
 ---
 

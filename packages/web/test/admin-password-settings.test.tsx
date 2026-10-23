@@ -1,6 +1,28 @@
-import { buildPasswordLoginMessage, derivePasswordKeyPair, signAuthMessage } from '@hezo/shared';
-import { expect, test } from 'vitest';
+import {
+	resetRuntimeConfig,
+	runtimeConfig,
+	setRuntimeConfig,
+} from '@hezo/server/src/config/runtime';
+import type { SsoConfig } from '@hezo/server/src/config/types';
+import {
+	buildPasswordLoginMessage,
+	deriveAuthKeyPair,
+	derivePasswordKeyPair,
+	generateMnemonic,
+	signAuthMessage,
+} from '@hezo/shared';
+import { afterEach, expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
+
+const SSO: SsoConfig = {
+	issuerUrl: 'https://control.example',
+	logoutUrl: 'https://control.example/logout',
+	issuerPublicKey: `k1:${deriveAuthKeyPair(generateMnemonic()).publicKeyHex}`,
+	ownerSubject: '9f1cb2d4-0000-4000-8000-000000000001',
+	audience: 'alice.control.example',
+};
+
+afterEach(() => resetRuntimeConfig());
 
 async function renderPage() {
 	const utils = await renderApp({ initialPath: '/settings/admin-password' });
@@ -90,4 +112,16 @@ test('non-superuser sees the managed message instead of the form', async () => {
 
 	await findByText(/managed by the Admin/i);
 	expect(queryByLabelText('Current password')).toBeNull();
+});
+
+// Signing in belongs to the issuer on an instance that has one, and the server
+// answers SSO_ONLY to every password change there, so the form is not drawn.
+test('the password form is not offered where an issuer owns sign-in', async () => {
+	const { findByRole, queryByRole } = await renderApp({
+		initialPath: '/settings/users',
+		seed: () => setRuntimeConfig({ ...runtimeConfig(), sso: SSO }),
+	});
+
+	await findByRole('heading', { name: 'Users & access' });
+	expect(queryByRole('heading', { name: 'Admin password' })).toBeNull();
 });

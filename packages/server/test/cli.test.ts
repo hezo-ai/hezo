@@ -232,6 +232,39 @@ describe('resolveConfig', () => {
 	it('reads the master key from HEZO_MASTER_KEY, the one setting still on the env', () => {
 		const config = resolveConfig(argv(), { HEZO_MASTER_KEY: PHRASE });
 		expect(config.masterKey?.unlockKeyHex).toBe(deriveUnlockKey(PHRASE));
+		expect(config.masterKeyHeld).toBe(false);
+	});
+
+	describe('a key held by the hosting control plane', () => {
+		const HOSTED = { policyFile: '/etc/hezo/policy.json', custodianMasterKey: PHRASE };
+
+		it('derives the same key material as a one-shot key, and marks the key held', () => {
+			const config = resolveConfig(withConfig(HOSTED), EMPTY_ENV);
+			expect(config.masterKey).toEqual({
+				unlockKeyHex: deriveUnlockKey(PHRASE),
+				publicKeyHex: deriveAuthKeyPair(PHRASE).publicKeyHex,
+			});
+			expect(config.masterKeyHeld).toBe(true);
+		});
+
+		// Two sources for one key, and a startup that quietly chose one could
+		// enroll a key the control plane does not hold.
+		it('is refused beside HEZO_MASTER_KEY', () => {
+			expect(() => resolveConfig(withConfig(HOSTED), { HEZO_MASTER_KEY: PHRASE })).toThrow(
+				/custodianMasterKey[\s\S]*HEZO_MASTER_KEY/,
+			);
+		});
+
+		it('is refused beside --master-key', () => {
+			expect(() => resolveConfig(withConfig(HOSTED, '--master-key', PHRASE), EMPTY_ENV)).toThrow(
+				/custodianMasterKey[\s\S]*--master-key/,
+			);
+		});
+
+		it('is not held on an instance whose file carries none', () => {
+			expect(resolveConfig(argv('--master-key', PHRASE), EMPTY_ENV).masterKeyHeld).toBe(false);
+			expect(resolveConfig(argv(), EMPTY_ENV).masterKeyHeld).toBe(false);
+		});
 	});
 
 	it('handles multiple flags combined', () => {

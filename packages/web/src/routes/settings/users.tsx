@@ -3,6 +3,7 @@ import { ChangePasswordSection } from '../../components/change-password-section'
 import { IconUploadSection } from '../../components/icon-upload-section';
 import { getInitials } from '../../components/ui/avatar';
 import { useMe } from '../../hooks/use-me';
+import { useStatus } from '../../hooks/use-status';
 import {
 	type AdminUser,
 	useRemoveUserIcon,
@@ -44,6 +45,10 @@ function UsersPage() {
 	const { t } = useI18n();
 	const { data: me } = useMe();
 	const { data: users, isLoading } = useUsers();
+	// Signing in belongs to the issuer where one is configured, and the server
+	// refuses a password change there, so the form is not offered.
+	const { data: status } = useStatus();
+	const signsInHere = !status?.sso;
 
 	if (me && !me.is_superuser) {
 		return (
@@ -64,7 +69,7 @@ function UsersPage() {
 				</p>
 			</div>
 
-			<ChangePasswordSection />
+			{signsInHere && <ChangePasswordSection />}
 
 			<section>
 				<h2 className="text-[15px] font-medium mb-1">{t('settings.users')}</h2>

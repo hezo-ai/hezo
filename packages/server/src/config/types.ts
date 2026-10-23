@@ -505,11 +505,20 @@ export interface HezoConfig {
 	reset: boolean;
 	/**
 	 * Derived from the twelve-word master key phrase, for a single non-interactive
-	 * startup. **`HEZO_MASTER_KEY` / `--master-key` only** - never a config-file key.
-	 * The master key is kept in memory only; a copy on disk next to the encrypted
-	 * data would let anyone who reads the host decrypt the vault.
+	 * startup. **`HEZO_MASTER_KEY` / `--master-key`**, or on a hosted instance the
+	 * `custodianMasterKey` its control plane writes (see `masterKeyHeld`). A
+	 * self-hosted config file never carries it: the master key is kept in memory
+	 * only, since a copy on disk next to the encrypted data would let anyone who
+	 * reads the host decrypt the vault.
 	 */
 	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
+	/**
+	 * The hosting control plane holds this instance's master key and wrote it into
+	 * the config file as `custodianMasterKey`, beside the policy it governs the
+	 * instance with. The instance enrolls it on a first boot and unlocks with it on
+	 * every boot after; any outcome but unlocked is a fatal startup error.
+	 */
+	masterKeyHeld: boolean;
 }
 
 /** Expand a leading `~` and make the path absolute. */
@@ -575,4 +584,5 @@ export const DEFAULT_CONFIG: HezoConfig = {
 		preservedBytes: LOG_COMPACTION_PRESERVED_TAIL_BYTES,
 	},
 	reset: false,
+	masterKeyHeld: false,
 };

@@ -13,7 +13,7 @@ import {
 import { detectRemovedEnvVars, formatRemovedEnvWarning } from './config/removed-env';
 import { setRuntimeConfig } from './config/runtime';
 import type { HezoConfig } from './config/types';
-import type { MasterKeyManager } from './crypto/master-key';
+import { HeldMasterKeyError, type MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import type { Db } from './db/database';
 import {
@@ -322,7 +322,8 @@ void (async () => {
 			err instanceof ExternalDbError ||
 			err instanceof ExternalMigrationFailedError ||
 			err instanceof AssetStorageError ||
-			err instanceof SandboxBackendError
+			err instanceof SandboxBackendError ||
+			err instanceof HeldMasterKeyError
 		) {
 			log.error(`\n${err.message}\n`);
 			// Under `Restart=always` this exit is immediately undone, so without a

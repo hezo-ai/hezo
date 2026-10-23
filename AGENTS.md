@@ -313,7 +313,7 @@ Never expose raw secrets, private keys or signing keys via endpoints or logs. Us
 
 ### Never encourage storing the master key on a system
 
-The master key is kept **in memory only, never written to disk** - the invariant that makes encryption at rest meaningful. **Never encourage a user to store it anywhere on a system**: not an env file, a service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces. The env var may be documented as the mechanism for a **single, non-interactive startup**, never as a place to persist the key.
+The master key is kept **in memory only, never written to disk** - the invariant that makes encryption at rest meaningful. **Never encourage a user to store it anywhere on a system**: not an env file, a service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces. The env var may be documented as the mechanism for a **single, non-interactive startup**, never as a place to persist the key. **One exception, hosted only:** `custodianMasterKey`, written by a hosting control plane beside its policy; a self-hosted config file refuses it.
 
 ### Credentials
 

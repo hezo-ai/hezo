@@ -14,7 +14,7 @@ import { logger } from './logger';
 
 const log = logger.child('startup');
 
-import { MasterKeyManager } from './crypto/master-key';
+import { HeldMasterKeyError, MasterKeyManager } from './crypto/master-key';
 import type { Migration } from './db/migrate';
 import { openDatabase } from './db/open';
 import { BASE_SCHEMA } from './db/schema';
@@ -29,7 +29,10 @@ import { supportStatus } from './lib/support-status';
 import {
 	getInstanceBaseUrl,
 	getInstanceLocale,
+	INSTANCE_BASE_URL_KEY,
 	instanceLocaleIsConfigured,
+	normalizeBaseUrl,
+	setSystemMeta,
 } from './lib/system-meta';
 import type { Env } from './lib/types';
 import { generateLlmsTxt } from './mcp/llms-txt';
@@ -268,7 +271,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	registerGenericOAuthRefresh();
 
 	const masterKeyManager = new MasterKeyManager();
-	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
+	const masterKeyState = await resolveMasterKeyState(
+		db,
+		masterKeyManager,
+		config.masterKey,
+		config.masterKeyHeld,
+	);
 
 	// The backend is chosen here from the **stored setting**, which the launch
 	// flag only seeds on a fresh instance - so an operator who switched from the
@@ -498,6 +506,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	} catch (err) {
 		log.error('Failed to post the default model notice:', err);
 	}
+
+	// A key-holding instance has no setup screen to create its admin or capture
+	// its address, so the boot does both. After the default team exists, which the
+	// admin joins, and before the unlock hook below starts anything that addresses
+	// the admin.
+	if (config.masterKeyHeld) await prepareHeldKeyInstance(db, config.webUrl);
 
 	// Before the app serves a request, and regardless of lock state: the API must
 	// never show a run as `running` when the process driving it is gone. Both
@@ -1080,10 +1094,11 @@ async function runSeed(db: Db): Promise<void> {
 	}
 }
 
-async function resolveMasterKeyState(
+export async function resolveMasterKeyState(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
-	masterKey?: { unlockKeyHex: string; publicKeyHex: string },
+	masterKey: { unlockKeyHex: string; publicKeyHex: string } | undefined,
+	held: boolean,
 ): Promise<MasterKeyState> {
 	try {
 		const state = await masterKeyManager.initialize(
@@ -1091,6 +1106,15 @@ async function resolveMasterKeyState(
 			masterKey?.unlockKeyHex,
 			masterKey?.publicKeyHex,
 		);
+		// A held key is enrolled on a first boot and verified on every boot after,
+		// so anything but unlocked means the control plane's key and this database
+		// disagree. No gate exists on such an instance for anyone to unlock it from.
+		if (held && state !== 'unlocked') {
+			throw new HeldMasterKeyError(
+				`and it came up ${state}. The key in the config file is not the one this database ` +
+					'was enrolled with.',
+			);
+		}
 
 		const messages: Record<string, string> = {
 			unlocked: 'Master key verified. Server unlocked.',
@@ -1101,8 +1125,35 @@ async function resolveMasterKeyState(
 		};
 		log.info(messages[state]);
 		return state;
-	} catch {
+	} catch (err) {
+		// The catch-all below leaves an instance `unset`, which offers enrollment to
+		// whoever reaches it first. Never for a held key.
+		if (held) {
+			throw err instanceof HeldMasterKeyError
+				? err
+				: new HeldMasterKeyError('and verifying it failed.', { cause: err });
+		}
 		log.warn('Master key module not available. Skipping key verification.');
 		return 'unset';
+	}
+}
+
+/**
+ * The admin account and the public address, which a setup screen would
+ * otherwise create and capture. Both are idempotent, and the address is only
+ * written while unset, so one the owner later changes in settings is kept.
+ */
+async function prepareHeldKeyInstance(db: Db, webUrl: string): Promise<void> {
+	try {
+		const { ensureSuperuserId } = await import('./services/superuser.js');
+		await ensureSuperuserId(db);
+		const origin = normalizeBaseUrl(webUrl);
+		if (origin && !(await getInstanceBaseUrl(db))) {
+			await setSystemMeta(db, INSTANCE_BASE_URL_KEY, origin);
+		}
+	} catch (err) {
+		throw new HeldMasterKeyError('and creating its admin account or storing its address failed.', {
+			cause: err,
+		});
 	}
 }
