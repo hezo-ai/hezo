@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.74.0 - 2026-10-23
+
+### Features
+
+- **server:** let a hosted instance hold its master key ([#1175](https://github.com/hezo-ai/hezo/pull/1175))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.73.1...0.74.0
+
 ## 0.73.1 - 2026-10-23
 
 ### Bug Fixes
