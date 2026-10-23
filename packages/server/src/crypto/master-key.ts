@@ -9,6 +9,24 @@ const AUTH_PUBLIC_KEY_META = 'auth_public_key';
 
 const log = logger.child('master-key');
 
+/** Rolls an enrollment back when the database already holds a canary. */
+class CanaryAlreadyStored extends Error {}
+
+/**
+ * A key-holding instance that did not come up unlocked, or could not finish
+ * preparing itself to serve its owner. Fatal: there is no gate on such an
+ * instance for anyone to unlock it from, so serving would leave it unusable.
+ */
+export class HeldMasterKeyError extends Error {
+	constructor(what: string, options?: { cause?: unknown }) {
+		super(
+			`This instance's master key is held by its hosting control plane (custodianMasterKey), ${what}`,
+			options,
+		);
+		this.name = 'HeldMasterKeyError';
+	}
+}
+
 export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 
 /**
@@ -74,27 +92,43 @@ export class MasterKeyManager {
 	}
 
 	/**
-	 * Explicit enrollment, only from 'unset': store the auth public key and the
-	 * canary atomically, then unlock. Once a canary exists, unlock() is the only
-	 * way in — there is no implicit re-enrollment.
+	 * Explicit enrollment, only from 'unset': store the canary and the auth public
+	 * key atomically, then unlock. Once a canary exists, unlock() is the only way
+	 * in — there is no implicit re-enrollment.
+	 *
+	 * **The database decides, not the in-memory state.** An existing canary is
+	 * never replaced: a process that reports 'unset' while one is stored would
+	 * otherwise enroll a new key over it, and everything encrypted under the old
+	 * key would become unreadable. Such an enrollment is refused and nothing it
+	 * wrote is kept.
 	 */
 	async setup(db: Db, unlockKeyHex: string, publicKeyHex: string): Promise<boolean> {
 		if (this.state !== 'unset') return false;
 
 		const derivedKey = await deriveKey(unlockKeyHex, CANARY_PURPOSE);
 		const encryptedCanary = encrypt(CANARY_PLAINTEXT, derivedKey);
-		await db.transaction(async (tx) => {
-			await tx.query(
-				`INSERT INTO system_meta (key, value) VALUES ($1, $2)
-				 ON CONFLICT (key) DO UPDATE SET value = $2`,
-				[AUTH_PUBLIC_KEY_META, publicKeyHex],
-			);
-			await tx.query(
-				`INSERT INTO system_meta (key, value) VALUES ('master_key_canary', $1)
-				 ON CONFLICT (key) DO UPDATE SET value = $1`,
-				[encryptedCanary],
-			);
-		});
+		const enrolled = await db
+			.transaction(async (tx) => {
+				const stored = await tx.query(
+					`INSERT INTO system_meta (key, value) VALUES ('master_key_canary', $1)
+					 ON CONFLICT (key) DO NOTHING
+					 RETURNING key`,
+					[encryptedCanary],
+				);
+				if (stored.rows.length === 0) throw new CanaryAlreadyStored();
+				await tx.query(
+					`INSERT INTO system_meta (key, value) VALUES ($1, $2)
+					 ON CONFLICT (key) DO UPDATE SET value = $2`,
+					[AUTH_PUBLIC_KEY_META, publicKeyHex],
+				);
+				return true;
+			})
+			.catch((error: unknown) => {
+				if (!(error instanceof CanaryAlreadyStored)) throw error;
+				log.warn('Refused an enrollment: a master key canary is already stored.');
+				return false;
+			});
+		if (!enrolled) return false;
 
 		this.authPublicKeyHex = publicKeyHex;
 		await this.setUnlocked(unlockKeyHex);

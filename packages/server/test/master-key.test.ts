@@ -158,6 +158,25 @@ describe('MasterKeyManager', () => {
 		expect(await mgr.getAuthPublicKeyHex(db)).toBe('ab'.repeat(32));
 	});
 
+	// The in-memory state says 'unset' for a process that never read the
+	// database, or whose read failed. An enrollment from there must not replace
+	// the stored canary, or everything encrypted under the first key is lost.
+	it('setup() never replaces a canary the database already holds', async () => {
+		const first = generateUnlockKey();
+		const enrolled = new MasterKeyManager();
+		await enrolled.initialize(db);
+		expect(await enrolled.setup(db, first, 'ab'.repeat(32))).toBe(true);
+
+		const unaware = new MasterKeyManager();
+		expect(unaware.getState()).toBe('unset');
+		expect(await unaware.setup(db, generateUnlockKey(), 'cd'.repeat(32))).toBe(false);
+		expect(unaware.getState()).toBe('unset');
+
+		const reader = new MasterKeyManager();
+		expect(await reader.initialize(db, first)).toBe('unlocked');
+		expect(await reader.getAuthPublicKeyHex(db)).toBe('ab'.repeat(32));
+	});
+
 	it('initialize() with both params enrolls a fresh database (CLI/env boot)', async () => {
 		const mgr = new MasterKeyManager();
 		const key = generateUnlockKey();

@@ -122,6 +122,47 @@ describe('loadConfigFile', () => {
 			expect(() => loadConfigFile(path)).toThrow(/HEZO_MASTER_KEY/);
 		});
 
+		describe('custodianMasterKey', () => {
+			const PHRASE =
+				'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+			const POLICY = "{ managedBy: 'Hezo Cloud', pinned: {} }";
+
+			it('is accepted beside the policy a hosting control plane writes', () => {
+				const inline = write(
+					`module.exports = { policy: ${POLICY}, custodianMasterKey: '${PHRASE}' };`,
+				);
+				expect(loadConfigFile(inline).custodianMasterKey).toBe(PHRASE);
+
+				const fromFile = write(
+					`module.exports = { policyFile: '/etc/hezo/policy.json', custodianMasterKey: '${PHRASE}' };`,
+				);
+				expect(loadConfigFile(fromFile).custodianMasterKey).toBe(PHRASE);
+			});
+
+			// A self-hosted file carrying the key would write the master key to disk
+			// beside the data it protects.
+			it('is refused without one, pointing at the self-hosted ways in', () => {
+				const path = write(`module.exports = { custodianMasterKey: '${PHRASE}' };`);
+				expect(() => loadConfigFile(path)).toThrow(/custodianMasterKey[\s\S]*policyFile/);
+				expect(() => loadConfigFile(path)).toThrow(/HEZO_MASTER_KEY/);
+			});
+
+			it('is refused when it is not a master key phrase', () => {
+				const path = write(
+					`module.exports = { policy: ${POLICY}, custodianMasterKey: 'not a phrase' };`,
+				);
+				expect(() => loadConfigFile(path)).toThrow(/custodianMasterKey: must be the 12-word/);
+			});
+
+			it('never repeats the key in what it reports', () => {
+				const path = write(`module.exports = { custodianMasterKey: '${PHRASE}' };`);
+				expect(() => loadConfigFile(path)).toThrow(
+					expect.objectContaining({ message: expect.not.stringContaining('abandon') }),
+				);
+			});
+		});
+
 		it('refuses the removed price refresh schedule, naming why rather than ignoring it', () => {
 			const path = write("module.exports = { jobs: { pricingRefreshCron: '0 0 3 * * *' } };");
 			expect(() => loadConfigFile(path)).toThrow(/jobs\.pricingRefreshCron/);

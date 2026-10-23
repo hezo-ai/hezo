@@ -6,6 +6,7 @@ import {
 	parseLocaleSettingsPatch,
 	parseProjectBrief,
 	SANDBOX_BACKENDS,
+	validateMnemonic,
 } from '@hezo/shared';
 import { z } from 'zod';
 import type { HezoConfig } from './types';
@@ -388,8 +389,32 @@ export const configFileSchema = z
 		policyFile: z.string().min(1).optional(),
 		sso: ssoSchema.optional(),
 		seed: seedSchema.optional(),
+		custodianMasterKey: z.string().optional(),
 	})
-	.strict();
+	.strict()
+	.superRefine((file, ctx) => {
+		if (file.custodianMasterKey === undefined) return;
+		// A hosting control plane writes this key, and only beside the policy it
+		// governs the instance with. Without one this is a self-hosted file, where
+		// the master key belongs to the browser gate or a single startup.
+		if (file.policy === undefined && file.policyFile === undefined) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['custodianMasterKey'],
+				message:
+					'is set by a hosting control plane, beside "policy" or "policyFile", and this file has ' +
+					'neither. Unlock a self-hosted instance from the browser gate, or pass the key to a ' +
+					'single startup with HEZO_MASTER_KEY or --master-key.',
+			});
+		}
+		if (!validateMnemonic(file.custodianMasterKey)) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['custodianMasterKey'],
+				message: 'must be the 12-word master key phrase.',
+			});
+		}
+	});
 
 /** What the config file may set: everything in {@link HezoConfig} bar the rejected keys. */
 export type ConfigFile = z.infer<typeof configFileSchema>;

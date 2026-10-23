@@ -832,13 +832,26 @@ export function resolveConfig(
 	}
 
 	const masterKeyRaw = ((): string | undefined => {
-		// The one setting the config file may not carry, so the env var stays the
-		// way to unlock a single non-interactive startup: a flag would put a
-		// twelve-word key in the process list.
+		// The one setting a self-hosted config file may not carry, so the env var
+		// stays the way to unlock a single non-interactive startup: a flag would put
+		// a twelve-word key in the process list.
 		const e = env.HEZO_MASTER_KEY;
 		if (e !== undefined && e !== '') return e;
 		return str('masterKey');
 	})();
+
+	// A held key and a one-shot key are two sources for one secret, and neither
+	// may quietly win: a startup that unlocked with the wrong one would enroll or
+	// verify against a key its control plane does not hold.
+	const heldKey = file.custodianMasterKey;
+	if (heldKey !== undefined && masterKeyRaw !== undefined) {
+		throw new Error(
+			'This config file carries custodianMasterKey, the master key its hosting control plane ' +
+				'holds, so HEZO_MASTER_KEY and --master-key must not be set as well. Remove the one ' +
+				'given at startup.',
+		);
+	}
+	const masterKeyPhrase = heldKey ?? masterKeyRaw;
 
 	const config: HezoConfig = {
 		port,
@@ -915,7 +928,9 @@ export function resolveConfig(
 		seed: file.seed ?? null,
 
 		reset,
-		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
+		// Parsed here, so the phrase itself goes no further than this function.
+		masterKey: masterKeyPhrase ? parseMasterKey(masterKeyPhrase) : undefined,
+		masterKeyHeld: heldKey !== undefined,
 		configPath,
 	};
 

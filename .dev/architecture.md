@@ -6788,6 +6788,11 @@ sign-in); then `/home`. There is no language step: the master-key gate renders i
 browser's language, the corner switcher can change it, and the setup request records
 whichever is showing - unless the seed already did.
 
+**A key-holding instance (`custodianMasterKey`) never reaches `MasterKeyGate`**: it serves
+only once unlocked, and any other outcome stops startup, so its order begins at
+`SsoRedirect`. Settings -> Users & access draws no password form wherever an issuer owns
+sign-in, since the server answers `SSO_ONLY` to every password change there.
+
 `shellGate` (`lib/shell-gate.ts`) is that order as one pure decision; the root switches on
 it, and the support chat reports the same name.
 
@@ -6822,7 +6827,9 @@ points where the instance can first act on them:
   task for the brief, so such an instance is not sent it again.
 
 The superuser is still created before `masterKeyManager.setup()` on `POST /api/auth/setup`,
-so anything that runs on the unlock hook and addresses the admin finds them.
+so anything that runs on the unlock hook and addresses the admin finds them. A key-holding
+instance has no such request, so its boot creates the superuser before registering the
+unlock hook (§ *Configuration resolution*).
 
 ### Support chat
 
@@ -7053,6 +7060,18 @@ than a generic "unrecognized key":
   argv is visible in the process list.
 - **`reset`** - it renames the embedded `pgdata` aside, which is a one-off action. In a
   persistent file it would wipe the database on **every** restart.
+
+**`custodianMasterKey`, hosted only.** A hosting control plane that holds an instance's
+master key writes it here, and the schema accepts it only beside `policy` or `policyFile`, so
+a self-hosted file still cannot carry a master key. `resolveConfig` parses it into the same
+`masterKey` as `HEZO_MASTER_KEY` and sets `masterKeyHeld`; given beside `HEZO_MASTER_KEY` or
+`--master-key` it refuses to start rather than choosing one. A key-holding instance enrolls
+the key on a first boot and unlocks with it on every boot after. **Any outcome but unlocked is
+a fatal `HeldMasterKeyError`**, never the catch-all that reports `unset`, since an `unset`
+instance offers enrollment to whoever reaches it first and a key-holding one has no gate to
+unlock from. With no setup screen, the boot also creates the admin account and stores the
+instance's address from `webUrl` (only while none is stored), after the default team exists
+and before the unlock hook starts anything that addresses the admin.
 
 **The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
 first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
