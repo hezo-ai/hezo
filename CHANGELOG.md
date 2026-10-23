@@ -9,12 +9,7 @@
 
 ### Documentation
 
-- **cloud:** describe the Base AI model included in Hezo Cloud plans ([#1172](https://github.com/hezo-ai/hezo/pull/1172))
 - **readme:** add the Daytona Startup Grid logo, linked to daytona.io ([#1170](https://github.com/hezo-ai/hezo/pull/1170))
-
-### Other
-
-- docs(cloud): describe the Base AI model included in Hezo Cloud plans ([#1173](https://github.com/hezo-ai/hezo/pull/1173))
 
 **Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.73.0...0.73.1
 
