@@ -3,10 +3,9 @@
 **Inbound requirements from the `hezo-ai/cloud` control plane.** Nine tasks, two
 of them optional, plus **H33**, which is a defect in shipped work rather than a
 new ask. Everything here is **additive and inert unless hosted config
-is present** — self-hosted behaviour must stay byte-identical. **H27, H28, H29
-and H38 are the recorded exceptions**: product changes the hosted launch flow
-asked for that alter what a self-hosted instance does too, each stated as such
-below.
+is present** — self-hosted behaviour must stay byte-identical. **H27, H28, H29,
+H38 and H42 are the recorded exceptions**: product changes Hezo Cloud asked for
+that alter what a self-hosted instance does too, each stated as such below.
 
 Every claim below was verified against the working tree, not from memory. Where
 something turned out to already exist, that is recorded at the end rather than
@@ -58,6 +57,7 @@ together from H24 on.
 | **H39** | No phrase screen on a key-holding instance; no password form where an issuer owns sign-in | sign-in straight to the CEO chat | **done** |
 | **H40** | A managed `hezo_cloud` provider, shown as "Base AI model" | every hosted instance working with no model setup | **large** |
 | **H41** | An error family for the model proxy's ceiling refusal, ahead of `rate_limit` | a run that stops at the ceiling rather than retrying into it | small |
+| **H42** | A completeness check the cache can read | a lower model cost per container-hour; not a launch gate | medium, changes self-hosted behaviour |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -921,15 +921,15 @@ policy change: a release that predates it simply reports nothing. Mechanism and
 rules: architecture § *Support chat*.
 
 
-## H37–H41 — the held phrase and the Base AI model
+## H37–H42 — the held phrase and the Base AI model
 
 Hezo Cloud's next launch removes two screens: the plane holds each tenant's
 recovery phrase and the instance unlocks itself at every boot, and every hosted
 instance gets a working model, the **Base AI model**, served through a
 Hezo-run proxy and paid for by Hezo. **H37–H39 are one release (the cloud calls
-it K)**; **H40 and H41 are a later one (M)**. The cloud copy numbers these one
-higher (H38–H42), as it does H35–H37. Everything is inert without hosted config,
-and the self-hosted guidance on the master key is unchanged: a self-hoster still
+it K)**; **H40–H42 are a later one (M)**. The cloud copy numbers these one
+higher (H38–H43), as it does H35–H37. Everything but H42 is inert without
+hosted config, and the self-hosted guidance on the master key is unchanged: a self-hoster still
 holds their own phrase and nothing here lets them store it.
 
 ### H37 — `custodianMasterKey` *(done)*
@@ -996,6 +996,26 @@ reads a bare `429` as `rate_limit`, which is transient: the run is handed back
 and dispatched again after the cooldown, into the same refusal. Add a family of
 its own, matched ahead of `rate_limit`, with a reset-time parser for Claude
 Code's output, so a run stops and says when it can resume.
+
+### H42 — a completeness check the cache can read
+
+The cloud ran Claude Code's completeness judge through the proxy (cloud
+`.dev/research-built-in-model-pricing.md` §9): one check per run, 24K to 56K
+input tokens each, $0.0075 on average, which is $0.60 of the $2.67 the cloud
+prices a busy container-hour at. Claude Code's prompt hook builds that request
+itself. Early in a session a check reads part of the one before it from cache;
+once the session is long, each check reads only its first 128 tokens, because
+each starts from a different point in the conversation, and is billed almost
+whole at the uncached rate.
+
+- **The ask:** a judge request that keeps one prefix from check to check (the
+  fixed instructions first, then the conversation from its start). One way is
+  the helper script `JUDGE_SPECS` already runs for Codex and Kimi, pointed at
+  the endpoint from config (H40). The rules stay in `STOP_HOOK_RULES`.
+- **It changes self-hosted behaviour.** Judge behaviour follows the runtime,
+  not the provider, so every Claude Code run is judged the new way.
+- **AC:** through the proxy, the second and later checks of a run read most of
+  their input from cache.
 
 ---
 
