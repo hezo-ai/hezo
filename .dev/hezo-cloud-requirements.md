@@ -56,7 +56,7 @@ together from H24 on.
 | **H38** | `setup()` never overwrites an existing canary | an enrollment never orphaning encrypted data | **done**, changes self-hosted behaviour |
 | **H39** | No phrase screen on a key-holding instance; no password form where an issuer owns sign-in | sign-in straight to the CEO chat | **done** |
 | **H40** | A managed `hezo_cloud` provider, shown as "Base AI model" | every hosted instance working with no model setup | **large** |
-| **H41** | An error family for the model proxy's ceiling refusal, ahead of `rate_limit` | a run that stops at the ceiling rather than retrying into it | small |
+| **H41** | An error family for the Base AI model's spend-limit refusal, ahead of `credit` | a run that waits for the limit to reset rather than failing as out of credit | small |
 | **H42** | A completeness check the cache can read | a lower model cost per container-hour; not a launch gate | medium, changes self-hosted behaviour |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
@@ -925,8 +925,8 @@ rules: architecture § *Support chat*.
 
 Hezo Cloud's next launch removes two screens: the plane holds each tenant's
 recovery phrase and the instance unlocks itself at every boot, and every hosted
-instance gets a working model, the **Base AI model**, served through a
-Hezo-run proxy and paid for by Hezo. **H37–H39 are one release (the cloud calls
+instance gets a working model, the **Base AI model**: Claude Code on an open
+model, reached through OpenRouter with one key per tenant and paid for by Hezo. **H37–H39 are one release (the cloud calls
 it K)**; **H40–H42 are a later one (M)**. The cloud copy numbers these one
 higher (H38–H43), as it does H35–H37. Everything but H42 is inert without
 hosted config, and the self-hosted guidance on the master key is unchanged: a self-hoster still
@@ -975,12 +975,23 @@ instance's half.
 
 - **Table properties, not a branch:** a `managed` property that the condemn
   path (`condemnRejectedProviderCredential`), the error copy and the routes
-  read. A refusal from the proxy never condemns the managed key, and the
+  read. A refusal for the managed key never condemns it: the plane disables a
+  held tenant's key, and the catalog probe would then prove it dead. The
   tenant cannot edit or delete it.
-- **The endpoint comes from config**, so the completeness checker follows it.
-- **Model slots are set to the proxy's alias**, and the tenant's proxy key is
-  the run CLI's own model credential: the existing red-line exception, no new
-  one.
+- **A Claude Code provider whose endpoint, model and tenant header come from
+  config.** The endpoint is OpenRouter's Anthropic surface
+  (`https://openrouter.ai/api`), and the tenant's key is the run CLI's own
+  model credential as `ANTHROPIC_AUTH_TOKEN`: the existing red-line exception,
+  no new one. hezo's own `openrouter` provider runs OpenCode, so this is a new
+  entry, not that one.
+- **Every model slot is the configured model, the completeness checker's
+  included.** The tenant's key is locked to one model and refuses any other
+  with `404`, so a checker pinned to a Claude model, as Anthropic's is, leaves
+  every run unchecked. The checker follows the run's model, as it already does
+  for a custom-endpoint provider.
+- **Every request carries a header naming the tenant** (`x-session-id`, through
+  `ANTHROPIC_CUSTOM_HEADERS`), from config. OpenRouter keeps a tenant on one
+  host by it, which is what lets a run read what the run before it cached.
 - **A new `ai_provider` enum value** in the next migration, with its
   preservation test.
 - **Upserted every boot**, made the default only if no default exists, and
@@ -988,20 +999,32 @@ instance's half.
 - Its name in every catalog is "Base AI model"; the underlying model and CLI are
   never named to the user.
 
-### H41 — an error family for the proxy's ceiling refusal
+### H41 — an error family for the Base AI model's spend-limit refusal
 
-The proxy refuses a tenant past its spend ceiling with `429` and
-`x-should-retry: false`. `RUNTIME_ERROR_FAMILIES` in `agent-stream-parser.ts`
-reads a bare `429` as `rate_limit`, which is transient: the run is handed back
-and dispatched again after the cooldown, into the same refusal. Add a family of
-its own, matched ahead of `rate_limit`, with a reset-time parser for Claude
-Code's output, so a run stops and says when it can resume.
+Each tenant's key has a daily dollar limit that no honest tenant meets.
+OpenRouter refuses a key near or past it in two shapes, neither with a retry
+header, and Claude Code prints each as `API Error: <status> <message>` and stops:
+
+- **Before the limit is spent**, a request whose estimate passes what is left:
+  `402` `billing_error`, *"This request requires more credits, or fewer
+  max_tokens. ... adjust the key's daily limit"*, or *"Prompt tokens limit
+  exceeded: ... adjust the key's daily limit"*. No reset time. Claude Code asks
+  for 32,000 output tokens, so a tenant near the limit meets this one first.
+- **Once it is spent:** `403` `permission_error`, *"Key limit exceeded (daily
+  limit). ... resets 2026-10-26T00:00:00.000Z."*
+
+`RUNTIME_ERROR_FAMILIES` in `agent-stream-parser.ts` reads the first as
+`credit`, which is permanent and tells the tenant to top up, and the second as
+`unknown`, also permanent. Add a family of its own, matched ahead of `credit`
+on the key's daily limit, transient until the reset: the time the `403`
+states, or the next 00:00 UTC for the `402`. The run waits for it and says
+when it resumes.
 
 ### H42 — a completeness check the cache can read
 
 The cloud ran Claude Code's completeness judge through the proxy (cloud
 `.dev/research-built-in-model-pricing.md` §9): one check per run, 24K to 56K
-input tokens each, $0.0075 on average, which is $0.60 of the $2.67 the cloud
+input tokens each, $0.0075 on average, which is $0.60 of the $2.76 the cloud
 prices a busy container-hour at. Claude Code's prompt hook builds that request
 itself. Early in a session a check reads part of the one before it from cache;
 once the session is long, each check reads only its first 128 tokens, because
@@ -1014,8 +1037,8 @@ whole at the uncached rate.
   the endpoint from config (H40). The rules stay in `STOP_HOOK_RULES`.
 - **It changes self-hosted behaviour.** Judge behaviour follows the runtime,
   not the provider, so every Claude Code run is judged the new way.
-- **AC:** through the proxy, the second and later checks of a run read most of
-  their input from cache.
+- **AC:** on the Base AI model, the second and later checks of a run read most
+  of their input from cache.
 
 ---
 
