@@ -2,11 +2,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AgentEffort, AgentRuntime, AiProvider } from '@hezo/shared';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { mcpConventionLines } from '../src/mcp/mcp-reference';
 import { registerTools } from '../src/mcp/tools';
+import { combineRunUsage } from '../src/services/agent-runner';
 import {
 	applyEffortToRuntime,
 	type McpDescriptor,
@@ -16,6 +17,7 @@ import {
 } from '../src/services/runtime-adapters';
 import { CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH } from '../src/services/runtime-adapters/claude-code';
 import type { McpInjectionFile } from '../src/services/runtime-adapters/types';
+import type { SandboxFiles } from '../src/services/sandbox/files';
 import {
 	CODEX_JUDGE_HOOK_TIMEOUT_SEC,
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
@@ -120,7 +122,11 @@ describe('claude-code adapter', () => {
 		expect(injection.cliArgs).not.toContain('--mcp-config');
 		expect(injection.cliArgs).not.toContain('--strict-mcp-config');
 		expect(injection.cliArgs).toContain('--settings');
-		expect(injection.files.length).toBe(1);
+		// The settings file and the judge script it runs.
+		expect(injection.files.map((f) => f.hostPath)).toEqual([
+			`${HOME}/settings.json`,
+			`${HOME}/stop-hook-judge.mjs`,
+		]);
 	});
 
 	it('declares a home dir is required for the Stop-hook settings file', () => {
@@ -134,29 +140,32 @@ describe('claude-code adapter', () => {
 		).toThrow(/hostHomeDir/);
 	});
 
-	it('writes settings.json at <home>/settings.json with mode 0o600 and Stop hook config', () => {
+	it('writes settings.json with a Stop hook that runs the judge script written beside it', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
 			hostHomeDir: HOME,
 			containerHomeDir: HOME,
 		});
 
-		expect(injection.files.length).toBe(1);
 		const file = injection.files[0];
 		expect(file.hostPath).toBe(`${HOME}/settings.json`);
 		expect(file.mode).toBe(0o600);
 
 		const settings = JSON.parse(file.contents) as {
-			hooks: { Stop: Array<{ hooks: Array<{ type: string; model: string; prompt: string }> }> };
+			hooks: { Stop: Array<{ hooks: Array<{ type: string; command: string; timeout: number }> }> };
 		};
 		expect(settings.hooks.Stop.length).toBe(1);
-		const hookEntry = settings.hooks.Stop[0].hooks[0];
-		expect(hookEntry.type).toBe('prompt');
-		expect(hookEntry.model.length).toBeGreaterThan(0);
-		expect(hookEntry.prompt).toContain('quality gate');
-		expect(hookEntry.prompt).toContain('$ARGUMENTS');
-		// The emitted prompt must carry the stop_hook_active loop breaker so a persistent
-		// verdict can't spin the same headless exec (parity with the command-script judges).
-		expect(hookEntry.prompt).toContain('stop_hook_active');
+		expect(settings.hooks.Stop[0].hooks[0]).toEqual({
+			type: 'command',
+			command: `node ${HOME}/stop-hook-judge.mjs`,
+			timeout: 120,
+		});
+
+		const script = injection.files[1];
+		expect(script.hostPath).toBe(`${HOME}/stop-hook-judge.mjs`);
+		expect(script.mode).toBe(0o700);
+		expect(script.contents).toContain('quality gate');
+		// The loop breaker, so a persistent verdict can't spin the same headless exec.
+		expect(script.contents).toContain('input.stop_hook_active');
 	});
 
 	it('passes --settings pointing at the container path for the settings file', () => {
@@ -177,10 +186,10 @@ describe('claude-code adapter', () => {
 			provider,
 			runModel,
 		});
-		const settings = JSON.parse(injection.files[0].contents) as {
-			hooks: { Stop: Array<{ hooks: Array<{ model: string }> }> };
-		};
-		return settings.hooks.Stop[0].hooks[0].model;
+		const script = injection.files.find((f) => f.hostPath.endsWith('stop-hook-judge.mjs'));
+		const m = /const JUDGE_MODEL = ("(?:[^"\\]|\\.)*");/.exec(script?.contents ?? '');
+		if (!m) throw new Error('expected the judge script to name its model');
+		return JSON.parse(m[1]) as string;
 	};
 
 	it('picks a Stop-hook judge model the provider upstream actually serves', () => {
@@ -1464,9 +1473,59 @@ describe('runtime adapter behaviour beyond MCP', () => {
 			const declared = Object.values(AgentRuntime).filter(
 				(r) => RUNTIME_ADAPTERS[r].offStreamUsage !== undefined,
 			);
-			expect(new Set(declared)).toEqual(
+			const whole = declared.filter((r) => RUNTIME_ADAPTERS[r].offStreamUsage?.holds === 'whole');
+			expect(new Set(whole)).toEqual(
 				new Set([AgentRuntime.Codex, AgentRuntime.Grok, AgentRuntime.Kimi]),
 			);
+		});
+
+		// Claude Code's stream counts everything the CLI asks of a model, but not the
+		// judge's own `claude -p`, so the judge's checks are read and added on top.
+		it("adds Claude Code's judge checks to its stream rather than replacing it", () => {
+			expect(RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].offStreamUsage?.holds).toBe('extra');
+			const streamed = {
+				inputTokens: 1000,
+				outputTokens: 100,
+				buckets: { inputTokens: 1000, outputTokens: 100 },
+				model: 'run-model',
+			};
+			const judged = {
+				inputTokens: 3040,
+				outputTokens: 20,
+				buckets: { inputTokens: 40, cacheReadTokens: 3000, outputTokens: 20 },
+				model: 'judge-model',
+			};
+			const both = combineRunUsage(AgentRuntime.ClaudeCode, streamed, judged, true);
+			expect(both).toMatchObject({ inputTokens: 4040, outputTokens: 120 });
+			expect(combineRunUsage(AgentRuntime.ClaudeCode, streamed, null, true)).toBe(streamed);
+			// A whole-usage file still stands in for the stream once the run ends.
+			expect(combineRunUsage(AgentRuntime.Codex, streamed, judged, true)).toBe(judged);
+			expect(combineRunUsage(AgentRuntime.Codex, streamed, judged, false)).toBe(streamed);
+		});
+
+		it("reads Claude Code's judge checks from the file the script keeps", async () => {
+			const usage = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].offStreamUsage;
+			const check = (input: number) =>
+				JSON.stringify({
+					type: 'result',
+					modelUsage: {
+						'judge-model': { inputTokens: input, cacheReadInputTokens: 3000, outputTokens: 20 },
+					},
+				});
+			const files = {
+				exists: async (p: string) => p === 'stop-hook-usage.jsonl',
+				read: async () => `${check(40)}\n${check(60)}\n`,
+				remove: vi.fn(async () => {}),
+			} as unknown as SandboxFiles;
+			const read = await usage?.read({ files, onError: () => {} });
+			expect(read).toMatchObject({
+				inputTokens: 6100,
+				outputTokens: 40,
+				buckets: { inputTokens: 100, cacheReadTokens: 6000, outputTokens: 40 },
+				model: 'judge-model',
+			});
+			await usage?.scrub(files);
+			expect(files.remove).toHaveBeenCalledWith('stop-hook-usage.jsonl');
 		});
 	});
 

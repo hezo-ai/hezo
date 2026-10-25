@@ -1093,6 +1093,35 @@ function settleClaudeResult(settled: ClaudeRunTotals, event: ClaudeStreamEvent):
 	settled.output += u.output_tokens ?? 0;
 }
 
+/**
+ * The tokens in a file of Claude Code `result` events, one per line, each the
+ * whole of a session of its own (the completeness judge starts one per check),
+ * so the lines add up. Null when the file holds none.
+ */
+export function claudeResultsUsage(text: string): AgentRunUsage | null {
+	let total: AgentRunUsage | null = null;
+	for (const line of text.split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		let event: ClaudeStreamEvent;
+		try {
+			event = JSON.parse(trimmed) as ClaudeStreamEvent;
+		} catch {
+			continue;
+		}
+		const settled: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+		settleClaudeResult(settled, event);
+		const usage = toRunUsage(Object.keys(event.modelUsage ?? {})[0], {
+			inputTokens: settled.input,
+			cacheCreationTokens: settled.cacheCreation,
+			cacheReadTokens: settled.cacheRead,
+			outputTokens: settled.output,
+		});
+		total = total ? mergeRunUsage(total, usage) : usage;
+	}
+	return total;
+}
+
 function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;

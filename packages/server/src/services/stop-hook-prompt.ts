@@ -4,16 +4,16 @@
  * Claude Code's Stop hook fires when the assistant decides to end its turn; a
  * block keeps the run looping (even in headless `-p` mode) so the gate forces
  * the agent to keep working until its own judgment agrees the task is genuinely
- * complete. Its `type: "prompt"` hook asks the judge whether a "stopping
- * condition" is satisfied and forces an `{ok, reason}` answer, so `ok: false`
- * is the block; the command-script judges answer `{"decision":"block"}`
- * instead. Codex's `Stop` hook shares this block-and-loop shape — only Claude Code supports the
- * elegant `type: "prompt"` sub-LLM call directly; Codex and Kimi Code support
- * `type: "command"` only, so the judge call has to be made by a small Node
- * script Hezo writes alongside the hook config (`buildJudgeScriptForRuntime`).
- * Codex's script asks the CLI itself, in a `codex exec` of its own, so the
- * judge works on whatever credential the run signed in with, a ChatGPT
- * subscription included.
+ * complete. Codex's and Kimi Code's `Stop` hooks share this block-and-loop
+ * shape. Every runtime's judge is a small Node script Hezo writes beside the
+ * hook config (`buildJudgeScriptForRuntime`), sending the fixed rules first and
+ * then the agent's final message alone, so the rules are a prefix every check
+ * shares and a provider's cache can serve. Claude Code's own `type: "prompt"`
+ * hook is not used: it sends a slice of the conversation that starts somewhere
+ * different on every check, so almost none of a long session's checks reads
+ * from cache. The Claude Code and Codex scripts ask the CLI itself, in a
+ * session of its own, so the judge works on whatever credential the run signed
+ * in with, a subscription included.
  *
  * The judge runs inside the container against the team's existing
  * provider credential. No server-side LLM client. The hook is on for every
@@ -43,14 +43,14 @@ export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 // Shared by both ways of running Kimi. On the Claude Code runtime (against
-// Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"` Stop hook
-// judges with it; on Moonshot's own CLI the command-script judge calls their
-// OpenAI-compatible endpoint with it.
+// Moonshot's Anthropic-compatible endpoint) the Claude Code judge falls back to
+// it; on Moonshot's own CLI the judge script calls their OpenAI-compatible
+// endpoint with it.
 export const STOP_HOOK_JUDGE_MODEL_KIMI = KIMI_DEFAULT_MODEL;
 
 /**
- * Judge model for the Claude Code `type:"prompt"` Stop hook, keyed by provider.
- * Claude Code makes the judge call itself against the session's own upstream,
+ * Judge model for a Claude Code run, keyed by provider. The judge's own Claude
+ * Code session makes the call against the run's own upstream,
  * so the model MUST be one that provider's endpoint actually serves. Using the
  * Anthropic id on DeepSeek/Z.ai 404s, so the hook fails open and never blocks —
  * the bug this map fixes. Values mirror each provider's
@@ -110,13 +110,9 @@ export function judgeModelForProvider(
 }
 
 /**
- * The rule body the judge LLM evaluates against. Claude Code's `type:"prompt"`
- * hook appends the raw Stop-hook input JSON as `$ARGUMENTS`; that JSON carries
- * the assistant's final message in its `last_assistant_message` field (alongside
- * `stop_hook_active`), and STOP_HOOK_PROMPT points the judge explicitly at that
- * field so a weaker judge model evaluates the message, not the surrounding
- * metadata. The command-script judges send the rules together with the
- * assistant's final message (see the judge scripts).
+ * The rule body the judge LLM evaluates against. The judge scripts send it,
+ * with {@link STOP_HOOK_DECISION_FORMAT}, as the fixed part of every check, and
+ * the assistant's final message after it.
  */
 export const STOP_HOOK_RULES = `You are a quality gate. The agent is about to stop working on a Hezo task. Review its final message and decide whether the work is truly complete.
 
@@ -140,36 +136,14 @@ Allow the stop only if the work appears genuinely complete, or every unfinished 
 Separately, if the agent has genuinely evaluated the current task, concluded there is no actionable work this turn, and called the report_no_work MCP tool (e.g. a planning task whose sub-tasks are still open, or a thread already fully handled), that is a valid stop — but ONLY when none of the block rules 1-13 above is triggered. report_no_work is not an escape hatch: failing tests, an unfixed acknowledged problem, deferred work, an unanswered thread, an unreported reply, or an unescalated broken integration still blocks the stop regardless of it.`;
 
 /**
- * How a command-script judge answers. The scripts read `decision` off the reply,
- * so this is appended to the rules there. Claude Code's prompt hook forces a
- * different shape of its own, stated in STOP_HOOK_PROMPT, which is why the
- * rules themselves name no output format.
+ * How the judge answers. The judge script reads `decision` off the reply and
+ * appends this to the rules, which name no output format of their own.
  */
 export const STOP_HOOK_DECISION_FORMAT = `Answer with only a JSON object: {"decision":"block","reason":"<what the agent must do next>"} to block the stop, or {"decision":"allow"} to allow it.`;
 
-export const STOP_HOOK_PROMPT = `${STOP_HOOK_RULES}
-
-How to answer: you are asked whether this stopping condition is satisfied. It is satisfied, {"ok": true}, when the rules above allow the stop. It is not satisfied, {"ok": false}, when any block rule applies, and then the "reason" must tell the agent what to do next.
-
-Loop breaker (check this FIRST): the "Stop-hook input" below is the raw Stop-hook input JSON. If it contains "stop_hook_active": true, this turn has ALREADY been continued once by this very hook — the condition is satisfied: answer {"ok": true} immediately, with no further analysis. Blocking again would re-continue the same run and can loop the agent indefinitely on a verdict that is not going to change. (The command-script judges for the other runtimes short-circuit on this same flag.)
-
-The agent's final message — the text you evaluate against the rules above — is the "last_assistant_message" field of the Stop-hook input JSON below. Evaluate THAT message. Every other field (session_id, transcript_path, cwd, permission_mode, hook_event_name) is metadata: ignore it, except "stop_hook_active" for the loop breaker above. In particular, rule 10 turns on what the "last_assistant_message" text itself says — an active @<agent-slug> or @admin mention or a baton-passing handoff there is UNDELIVERED and blocks by default. If "last_assistant_message" is absent or empty, the condition is satisfied: answer {"ok": true}.
-
-Stop-hook input:
-$ARGUMENTS`;
-
-interface ClaudeStopHookEntry {
-	type: 'prompt';
-	prompt: string;
-	timeout: number;
-	model: string;
-	statusMessage: string;
-}
-
 /**
- * A hook that shells out rather than asking a sub-LLM. Used for the doc-write
- * guard, where the decision is a deterministic path match and an LLM would only
- * add latency, cost and the chance of a wrong answer.
+ * A hook that shells out: the doc-write guard, a deterministic path match, and
+ * the completeness judge's script.
  */
 interface ClaudeCommandHookEntry {
 	type: 'command';
@@ -178,7 +152,7 @@ interface ClaudeCommandHookEntry {
 }
 
 interface ClaudeStopHookMatcherGroup {
-	hooks: ClaudeStopHookEntry[];
+	hooks: ClaudeCommandHookEntry[];
 }
 
 interface ClaudeCommandHookMatcherGroup {
@@ -213,8 +187,6 @@ export interface ClaudeCodeSettings {
 }
 
 export function buildClaudeCodeSettings(
-	provider: AiProvider,
-	runModel?: string | null,
 	/**
 	 * MCP tools to withhold, as fully-qualified `mcp__<server>__<tool>` patterns.
 	 * Claude Code's per-server config entry has no tool filter, so the allowlist
@@ -231,18 +203,12 @@ export function buildClaudeCodeSettings(
 	 */
 	docWriteGuardCommand?: string | null,
 	/**
-	 * Whether to emit the completeness judge at all. Defaults to true, so every
-	 * task run keeps it; the CEO chat passes false. See
-	 * {@link McpAdapterContext.stopJudge} for why a chat turn is not a thing this
-	 * judge can rule on.
+	 * The command that runs the completeness judge's script, or null for none:
+	 * the CEO chat has no judge. See {@link McpAdapterContext.stopJudge} for why a
+	 * chat turn is not a thing this judge can rule on.
 	 */
-	stopJudge = true,
+	judgeCommand?: string | null,
 ): ClaudeCodeSettings {
-	// This settings file is only ever written for a Claude Code run, so the
-	// runtime is known — pass it rather than letting the judge fall back to the
-	// provider's default, which for a credential switched onto Claude Code would
-	// be some other CLI and would wrongly pin the judge to a constant.
-	const model = judgeModelForProvider(provider, runModel, AgentRuntime.ClaudeCode);
 	return {
 		...(deniedTools && deniedTools.length > 0 ? { permissions: { deny: [...deniedTools] } } : {}),
 		hooks: {
@@ -262,17 +228,15 @@ export function buildClaudeCodeSettings(
 						],
 					}
 				: {}),
-			...(stopJudge
+			...(judgeCommand
 				? {
 						Stop: [
 							{
 								hooks: [
 									{
-										type: 'prompt' as const,
-										prompt: STOP_HOOK_PROMPT,
-										timeout: 30,
-										model,
-										statusMessage: 'Checking work completeness...',
+										type: 'command' as const,
+										command: judgeCommand,
+										timeout: CLAUDE_CODE_JUDGE_HOOK_TIMEOUT_SEC,
 									},
 								],
 							},
@@ -383,7 +347,14 @@ interface JudgeRuntimeSpec {
 	askFn: string;
 }
 
-function buildJudgeScript(spec: JudgeRuntimeSpec): string {
+/** What every runtime's judge script is named in the per-run home. */
+export const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
+
+/**
+ * @param model the model to judge with, for a runtime whose Stop payload names
+ *   none; in scope in the script as `JUDGE_MODEL`, empty when not given.
+ */
+function buildJudgeScript(spec: JudgeRuntimeSpec, model?: string | null): string {
 	const guard = spec.loopGuardFile;
 	const lookup = spec.sessionLogLookup;
 	// Both extras are emitted as no-op constants when unset, so the script body
@@ -477,8 +448,10 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SYSTEM_PROMPT = ${JSON.stringify(`${STOP_HOOK_RULES}\n\n${STOP_HOOK_DECISION_FORMAT}`)};
+const JUDGE_MODEL = ${JSON.stringify(model?.trim() ?? '')};
 const MESSAGE_FIELDS = ${JSON.stringify(spec.inputFields)};
 const JUDGE_ACTIVE_ENV = ${JSON.stringify(JUDGE_ACTIVE_ENV)};
 ${extrasDecl}
@@ -666,14 +639,117 @@ async function ask(message, input) {
 	}
 }`;
 
+/** How long the Claude Code `Stop` hook may run: long enough for a `claude -p` turn. */
+export const CLAUDE_CODE_JUDGE_HOOK_TIMEOUT_SEC = 120;
+
 /**
- * Judge specs for the runtimes that need a Node command script (their hook
- * runner can't make the sub-LLM call itself). Claude Code is absent - it uses
- * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding another
- * command-hook provider is one entry here, not a new build function.
+ * Where the Claude Code judge records each check's tokens, in the per-run home
+ * beside the script: one `result` record per line, read back by the runtime's
+ * adapter and added to the run's own usage, which its stream cannot see.
+ */
+export const CLAUDE_CODE_JUDGE_USAGE_BASENAME = 'stop-hook-usage.jsonl';
+
+/**
+ * The flags the judge's own `claude -p` runs with, beside its model and system
+ * prompt. No tools, no MCP servers, no skills and no hooks, so the session reads
+ * one message and answers; nothing saved, since nothing resumes it; low effort,
+ * as for Codex's judge. Not `--bare`, which would also drop a subscription
+ * sign-in, so a judge on one would never run. The rest of the run's environment
+ * is inherited: the credential, the endpoint and any request headers, which
+ * keep the judge on the run's own upstream and, for the managed provider, its
+ * own host and cache.
+ */
+const CLAUDE_CODE_JUDGE_ARGS = [
+	'-p',
+	'--output-format',
+	'json',
+	'--tools',
+	'',
+	'--strict-mcp-config',
+	'--disable-slash-commands',
+	'--no-session-persistence',
+	'--settings',
+	JSON.stringify({ disableAllHooks: true }),
+	'--effort',
+	'low',
+];
+
+/**
+ * Claude Code's judge asks the CLI, as Codex's does: an Anthropic subscription
+ * has no API key, and the CLI reaches the run's endpoint with whatever the run
+ * signed in with. The fixed rules are its system prompt and the final message
+ * its one user turn, so every check of a run shares the rules as a prefix the
+ * cache can serve. Its tokens go to the usage file whether or not the check
+ * succeeded, since they were spent either way.
+ */
+const CLAUDE_CODE_ASK_FN = `const CLAUDE_JUDGE_ARGS = ${JSON.stringify(CLAUDE_CODE_JUDGE_ARGS)};
+const CLAUDE_JUDGE_TIMEOUT_MS = ${(CLAUDE_CODE_JUDGE_HOOK_TIMEOUT_SEC - 20) * 1000};
+const CLAUDE_JUDGE_USAGE_FILE = path.join(
+	path.dirname(fileURLToPath(import.meta.url)),
+	${JSON.stringify(CLAUDE_CODE_JUDGE_USAGE_BASENAME)},
+);
+
+function recordJudgeUsage(result) {
+	try {
+		fs.appendFileSync(CLAUDE_JUDGE_USAGE_FILE, JSON.stringify({
+			type: 'result',
+			usage: result.usage || {},
+			modelUsage: result.modelUsage || {},
+		}) + '\\n');
+	} catch { /* the run's count misses one check - never a reason to fail it */ }
+}
+
+async function ask(message) {
+	if (!JUDGE_MODEL) return undefined; // no model to judge with - fail open
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hezo-judge-'));
+	try {
+		const out = await new Promise((resolve) => {
+			// stderr is dropped and stdout kept: the CLI's JSON result is the answer,
+			// and this hook's own stdout is its verdict, which nothing else may write.
+			const child = spawn('claude', ['--model', JUDGE_MODEL, '--system-prompt', SYSTEM_PROMPT,
+				...CLAUDE_JUDGE_ARGS], {
+				cwd: dir,
+				stdio: ['pipe', 'pipe', 'ignore'],
+				env: { ...process.env, [JUDGE_ACTIVE_ENV]: '1' },
+			});
+			let stdout = '';
+			child.stdout.on('data', (chunk) => { stdout += chunk; });
+			const timer = setTimeout(() => child.kill('SIGKILL'), CLAUDE_JUDGE_TIMEOUT_MS);
+			child.on('error', () => { clearTimeout(timer); resolve(undefined); });
+			child.on('close', () => { clearTimeout(timer); resolve(stdout); });
+			child.stdin.on('error', () => {});
+			child.stdin.end("Agent's final response:\\n" + message);
+		});
+		if (!out) return undefined;
+		const result = JSON.parse(out);
+		if (!result || typeof result !== 'object') return undefined;
+		recordJudgeUsage(result);
+		if (result.is_error || typeof result.result !== 'string') return undefined;
+		// A model can wrap the object in a code fence; the verdict is the object.
+		const object = result.result.match(/\\{[\\s\\S]*\\}/);
+		return object ? object[0] : undefined;
+	} catch {
+		return undefined;
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}`;
+
+/**
+ * Judge specs per runtime, each a Node command script the runtime's `Stop` hook
+ * runs. Adding another runtime's judge is one entry here, not a new build
+ * function.
  */
 
 const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
+	// Claude Code `Stop` hook → a `claude -p` of its own, judging
+	// `last_assistant_message` with the judge model the script was built with,
+	// since the payload names none. Claude Code continues the turn on `block`.
+	[AgentRuntime.ClaudeCode]: {
+		blockDecision: 'block',
+		inputFields: ['last_assistant_message'],
+		askFn: CLAUDE_CODE_ASK_FN,
+	},
 	// Codex `Stop` hook → a `codex exec` of its own, judging `last_assistant_message`
 	// with the run's model. Codex continues the turn on `block`.
 	[AgentRuntime.Codex]: {
@@ -749,11 +825,15 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 
 /**
  * Build the judge command script for a runtime, or `null` when that runtime has
- * no command-script judge (Claude Code, which uses the native prompt hook).
+ * no judge. `model` is what a runtime whose Stop payload names no model judges
+ * with (Claude Code, through {@link judgeModelForProvider}).
  */
-export function buildJudgeScriptForRuntime(runtime: AgentRuntime): string | null {
+export function buildJudgeScriptForRuntime(
+	runtime: AgentRuntime,
+	model?: string | null,
+): string | null {
 	const spec = JUDGE_SPECS[runtime];
-	return spec ? buildJudgeScript(spec) : null;
+	return spec ? buildJudgeScript(spec, model) : null;
 }
 
 /**

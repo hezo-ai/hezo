@@ -57,7 +57,7 @@ together from H24 on.
 | **H39** | No phrase screen on a key-holding instance; no password form where an issuer owns sign-in | sign-in straight to the CEO chat | **done** |
 | ~~H40~~ | ~~A managed `hezo_cloud` provider, shown as "Base AI model"~~ | every hosted instance working with no model setup | **done** |
 | ~~H41~~ | ~~An error family for the Base AI model's spend-limit refusal, ahead of `credit`~~ | a run that waits for the limit to reset rather than failing as out of credit | **done**, changes self-hosted behaviour |
-| **H42** | A completeness check the cache can read | a lower model cost per container-hour; not a launch gate | medium, changes self-hosted behaviour |
+| ~~H42~~ | ~~A completeness check the cache can read~~ | a lower model cost per container-hour; not a launch gate | **done**, changes self-hosted behaviour |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -1030,7 +1030,13 @@ on the key's daily limit, transient until the reset: the time the `403`
 states, or the next 00:00 UTC for the `402`. The run waits for it and says
 when it resumes.
 
-### H42 — a completeness check the cache can read
+### H42 — a completeness check the cache can read *(done)*
+
+Built as the judge script Codex and Kimi already run, asking a `claude -p` of its own, and
+sending the rules first and the final message alone rather than the conversation (the owner's
+choice, 2026-10-25): the rules judge the final message, and a check of a few thousand tokens is
+cheap whether or not it hits the cache. Measured on the Base AI model: a second check read 3,840
+of its 4,014 input tokens from cache. `.dev/agent-run-hooks.md` describes it.
 
 The cloud ran Claude Code's completeness judge through the proxy (cloud
 `.dev/research-built-in-model-pricing.md` §9): one check per run, 24K to 56K

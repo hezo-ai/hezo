@@ -250,6 +250,13 @@ export const MAX_OFF_STREAM_USAGE_BYTES = 32 * 1024 * 1024;
  */
 export interface OffStreamUsage {
 	/**
+	 * What the file counts. `whole` is the run's whole usage, for a CLI whose
+	 * stream reports none or none until its end; the file stands in for the
+	 * stream. `extra` is usage the stream cannot see, made by a process the CLI
+	 * started (the completeness judge's own session), added to what it reports.
+	 */
+	readonly holds: 'whole' | 'extra';
+	/**
 	 * The usage the file holds so far. Never removes anything.
 	 *
 	 * Best-effort by contract - null means "no usage to report", which records no

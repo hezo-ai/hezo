@@ -13,7 +13,7 @@ import {
 } from '../doc-write-guard';
 import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import type { SandboxFiles } from '../sandbox/types';
-import { buildJudgeScriptForRuntime } from '../stop-hook-prompt';
+import { buildJudgeScriptForRuntime, JUDGE_SCRIPT_BASENAME } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString } from './toml';
 import {
 	MAX_OFF_STREAM_USAGE_BYTES,
@@ -74,8 +74,6 @@ type KimiServerEntry = KimiHttpEntry | KimiStdioEntry;
 // the Codex adapter already does.
 const MCP_STARTUP_TIMEOUT_MS = 120_000;
 const MCP_TOOL_TIMEOUT_MS = 1_800_000;
-
-const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 
 // Read from the shared table rather than restated, so the runner's decision to
 // keep the system prompt out of the prompt body and this file's name can never
@@ -249,6 +247,7 @@ export const kimiAdapter: RuntimeAdapter = {
 		return value;
 	},
 	offStreamUsage: {
+		holds: 'whole',
 		async read({ files, onError }) {
 			const logPaths = await kimiSessionLogs(files);
 			if (logPaths.length === 0) return null;

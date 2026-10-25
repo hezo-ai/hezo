@@ -5013,13 +5013,18 @@ own model. There is no Google constant - Antigravity ships without a judge. For 
 (`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
 (`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
 only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`)
-needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
-runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
-itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
-and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
-scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
-Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`), each
-spec supplying how the script asks its model. Kimi's calls Moonshot's API with the key the CLI
+needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Every runtime's
+judge is a command script (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that sends the rules
+with `STOP_HOOK_DECISION_FORMAT` first and the agent's final message alone after them, so every
+check of a run shares the rules as a prefix a provider's cache can serve; each spec supplies how
+the script asks its model. Claude Code's starts a `claude -p` of its own with the rules as its
+system prompt and no tools, MCP servers, skills, hooks or saved session, judging with the model
+the script was built with (`judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
+since the Stop payload names none) and inheriting the run's credential, endpoint and request
+headers; it appends each check's `result` to `stop-hook-usage.jsonl`, which the adapter reads as
+extra usage on top of the stream's. The CLI's own `type: "prompt"` hook is not used: it sent a
+slice of the conversation that started somewhere different on each check, so a long session's
+checks read almost nothing from cache. Kimi's calls Moonshot's API with the key the CLI
 uses. Codex's starts a `codex exec` of its own, because a ChatGPT subscription has no API key:
 `--ignore-user-config` leaves out the run's MCP servers and hooks while the sign-in still comes
 from the run's `CODEX_HOME`, `--output-schema` fixes the verdict shape, and the model is the one
@@ -7805,8 +7810,8 @@ the provider's `/v1/messages` so the request bodies could be read directly rathe
 from a model's answer. The main-loop turn - identified by the stub's tool appearing in its tool
 list - carried the canary in a block headed `# MCP Server Instructions` then `## <server-name>`,
 as the `system`-role entry at `messages[1]`, not in the top-level `system` parameter and with no
-`<system-reminder>` wrapper (that wrapper appears only where the Stop-hook judge replays the
-transcript). The control run, identical but with the field omitted, produced the same tool
+`<system-reminder>` wrapper (that wrapper appeared only where the CLI's own prompt-hook
+judge, which Hezo no longer uses, replayed the transcript). The control run, identical but with the field omitted, produced the same tool
 surface with no header and no canary in any of its requests, so `instructions` is what carried
 it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do not carry
 it, which is expected. **The CLI cuts each server's block at 2,048 characters** by default,
