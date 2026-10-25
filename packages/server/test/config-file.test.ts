@@ -168,7 +168,7 @@ describe('loadConfigFile', () => {
 				'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 			const HOSTED = `policy: { managedBy: 'Hezo Cloud', pinned: {} }, custodianMasterKey: '${PHRASE}'`;
 			const MODEL_BLOCK = (extra = '') =>
-				`managedModel: { baseUrl: 'https://models.example/api', model: 'vendor/model', apiKey: 'sk-managed'${extra} }`;
+				`managedModel: { baseUrl: 'https://models.example/api', model: 'vendor/model', apiKey: 'sk-managed', contextTokens: 1048576${extra} }`;
 
 			it('is accepted beside a held master key', () => {
 				const path = write(
@@ -178,8 +178,23 @@ describe('loadConfigFile', () => {
 					baseUrl: 'https://models.example/api',
 					model: 'vendor/model',
 					apiKey: 'sk-managed',
+					contextTokens: 1_048_576,
 					requestHeaders: { 'x-session-id': 'tenant-1' },
 				});
+			});
+
+			// Claude Code guesses a window for a model it does not know, and refuses past the guess.
+			it('is refused without the model’s window, or with one that is not a positive whole number', () => {
+				const block = (window: string) =>
+					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'https://models.example/api', model: 'm', apiKey: 'k'${window} } };`;
+				expect(() => loadConfigFile(write(block('')))).toThrow(/contextTokens/);
+				for (const bad of [
+					', contextTokens: 0',
+					', contextTokens: 1.5',
+					", contextTokens: '1048576'",
+				]) {
+					expect(() => loadConfigFile(write(block(bad))), bad).toThrow(/contextTokens/);
+				}
 			});
 
 			// The row it becomes is encrypted, so only a boot that is sure to unlock can write it.
@@ -194,12 +209,12 @@ describe('loadConfigFile', () => {
 			// A plane running its fleet on one machine points it at a plain-HTTP stand-in.
 			it('takes an http endpoint, and refuses one that is neither http nor https', () => {
 				const plain = write(
-					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'http://models.local:4100/api', model: 'm', apiKey: 'k' } };`,
+					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'http://models.local:4100/api', model: 'm', apiKey: 'k', contextTokens: 1048576 } };`,
 				);
 				expect(loadConfigFile(plain).managedModel?.baseUrl).toBe('http://models.local:4100/api');
 
 				const other = write(
-					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'ftp://models.example/api', model: 'm', apiKey: 'k' } };`,
+					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'ftp://models.example/api', model: 'm', apiKey: 'k', contextTokens: 1048576 } };`,
 				);
 				expect(() => loadConfigFile(other)).toThrow(/baseUrl must be an http: or https: URL/);
 			});

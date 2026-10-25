@@ -535,6 +535,8 @@ export interface ManagedModelConfig {
 	/** The one model the key may ask for, which every model slot names. */
 	model: string;
 	apiKey: string;
+	/** The model's context window in tokens, which Claude Code cannot know on its own. */
+	contextTokens: number;
 	/** Headers every model request carries. */
 	requestHeaders: Readonly<Record<string, string>>;
 }

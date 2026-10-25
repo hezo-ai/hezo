@@ -271,6 +271,7 @@ describe('resolveConfig', () => {
 				baseUrl: 'https://models.example/api',
 				model: 'vendor/model',
 				apiKey: 'sk-managed',
+				contextTokens: 1_048_576,
 			};
 			const config = resolveConfig(withConfig({ ...HOSTED, managedModel }), EMPTY_ENV);
 			expect(config.managedModel).toEqual({ ...managedModel, requestHeaders: {} });

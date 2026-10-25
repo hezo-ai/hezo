@@ -126,6 +126,7 @@ describe('startup with a held master key', () => {
 			baseUrl: 'https://models.example/api',
 			model: 'vendor/model',
 			apiKey: 'sk-managed',
+			contextTokens: 1_048_576,
 			requestHeaders: { 'x-session-id': 'tenant-1' },
 		};
 		const first = await boot(dataDir, { masterKey: keyFor(PHRASE_A), managedModel });

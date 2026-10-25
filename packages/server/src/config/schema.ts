@@ -371,9 +371,13 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 /**
  * The model a hosting control plane provides: the endpoint Claude Code is pointed
- * at, the one model its key may ask for, the key, and the headers every request
- * carries. A header value cannot hold a line break, since the CLI reads the
- * headers one per line.
+ * at, the one model its key may ask for, the key, that model's context window in
+ * tokens, and the headers every request carries. A header value cannot hold a
+ * line break, since the CLI reads the headers one per line.
+ *
+ * The window is required. Claude Code guesses one for a model it does not
+ * recognise, far below what these models take, and refuses any prompt past it
+ * without sending a request.
  *
  * The endpoint may be `http:` as well as `https:`. The plane is the only writer
  * of this block, and a fleet the plane runs on one machine points it at a local
@@ -386,6 +390,7 @@ const managedModelSchema = z
 		}),
 		model: z.string().trim().min(1),
 		apiKey: z.string().trim().min(1),
+		contextTokens: z.int().positive(),
 		requestHeaders: z
 			.record(
 				z.string().regex(HEADER_NAME),

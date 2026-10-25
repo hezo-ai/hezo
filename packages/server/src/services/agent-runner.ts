@@ -419,6 +419,7 @@ export function buildProviderEnv(
 		runModel: runModel?.trim() || null,
 		baseUrl: credential.baseUrl ?? null,
 		requestHeaders: credential.requestHeaders ?? null,
+		contextTokens: credential.contextTokens ?? null,
 	};
 	const out: string[] = [];
 	// What this CLI needs regardless of provider, then the provider's own bag with

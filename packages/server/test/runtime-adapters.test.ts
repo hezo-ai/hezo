@@ -1315,6 +1315,7 @@ describe('runtime adapter behaviour beyond MCP', () => {
 		runModel: null,
 		baseUrl: null,
 		requestHeaders: null,
+		contextTokens: null,
 		...over,
 	});
 

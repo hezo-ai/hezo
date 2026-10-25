@@ -168,6 +168,10 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 				'ANTHROPIC_API_KEY=',
 			);
 		}
+		// The CLI guesses a window for a model it does not recognise, and refuses a
+		// prompt past the guess without sending it. A stated window replaces the
+		// guess, and the CLI compacts against it as it would against its own.
+		if (ctx.contextTokens) out.push(`CLAUDE_CODE_MAX_CONTEXT_TOKENS=${ctx.contextTokens}`);
 		// One `Name: value` per line, the form the CLI reads.
 		const headers = Object.entries(ctx.requestHeaders ?? {});
 		if (headers.length > 0) {

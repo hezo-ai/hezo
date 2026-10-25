@@ -220,6 +220,8 @@ export interface RuntimeEnvContext {
 	baseUrl: string | null;
 	/** Headers every model request on the credential carries; null when it has none. */
 	requestHeaders: Readonly<Record<string, string>> | null;
+	/** The model's context window in tokens, as the credential states it; null when it states none. */
+	contextTokens: number | null;
 }
 
 /** What a runtime needs to contribute argv beyond the per-runtime arg tables. */

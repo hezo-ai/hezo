@@ -4487,7 +4487,11 @@ endpoint rides on the credential (`metadata -> 'base_url'`), and so do its reque
 (`metadata -> 'request_headers'`, `AiProviderCredential.requestHeaders`), which the Claude Code
 adapter sends as `ANTHROPIC_CUSTOM_HEADERS`, one `Name: value` per line; the plane names the
 tenant in one, which keeps the tenant's requests on one host so each reads what the last
-cached. The key is the run CLI's own model credential (`ANTHROPIC_AUTH_TOKEN`), the existing
+cached. Its model's window rides there too (`metadata -> 'context_tokens'`,
+`AiProviderCredential.contextTokens`), and the adapter sends it as
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS`: Claude Code guesses a window for a model it does not
+recognise, refuses a prompt past the guess without sending it, and compacts against the stated
+window as against its own. The key is the run CLI's own model credential (`ANTHROPIC_AUTH_TOKEN`), the existing
 exception to the plaintext rule. The key serves one model and refuses every other, so the
 binding's `runModelEnv` sets every slot (`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`,
 `CLAUDE_CODE_SUBAGENT_MODEL`) to the run's model, and `claudeCodeProviderUsesCustomEndpoint`
@@ -7110,15 +7114,16 @@ unlock from. With no setup screen, the boot also creates the admin account and s
 instance's address from `webUrl` (only while none is stored), after the default team exists
 and before the unlock hook starts anything that addresses the admin.
 
-**`managedModel`, hosted only.** `{ baseUrl, model, apiKey, requestHeaders? }`: the model a
-hosting control plane provides, accepted only beside `custodianMasterKey`, since the row it
-becomes holds an encrypted key and only a held key guarantees the boot is unlocked to write it.
-`baseUrl` must be `http:` or `https:` (a plane running its fleet on one machine points it at a
-local plain-HTTP stand-in), and a header value may not hold a line break, since the CLI reads
-the headers one per line. The same boot step writes it as the managed provider's credential
-(§ 6 *Providers and runtimes*), after the admin and address and before the unlock hook, whose
-seeded brief needs a model to answer it; a failure there is a fatal `HeldMasterKeyError`. A
-boot without the block removes that credential.
+**`managedModel`, hosted only.** `{ baseUrl, model, apiKey, contextTokens, requestHeaders? }`:
+the model a hosting control plane provides, accepted only beside `custodianMasterKey`, since
+the row it becomes holds an encrypted key and only a held key guarantees the boot is unlocked
+to write it. `baseUrl` must be `http:` or `https:` (a plane running its fleet on one machine
+points it at a local plain-HTTP stand-in), `contextTokens` is the model's window as a positive
+integer, and a header value may not hold a line break, since the CLI reads the headers one per
+line. The same boot step writes it as the managed provider's credential (§ 6 *Providers and
+runtimes*), after the admin and address and before the unlock hook, whose seeded brief needs a
+model to answer it; a failure there is a fatal `HeldMasterKeyError`. A boot without the block
+removes that credential.
 
 **The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
 first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
