@@ -6,11 +6,12 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(import.meta.dirname, '../../..');
 
@@ -43,6 +44,37 @@ const ARCHITECTURE = readFileSync(join(REPO_ROOT, '.dev/architecture.md'), 'utf8
 const HOSTED_ARCHITECTURE = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
 const CLOUD_REQUIREMENTS = readFileSync(join(REPO_ROOT, '.dev/hezo-cloud-requirements.md'), 'utf8');
 const GCP_TUTORIAL = readFileSync(join(REPO_ROOT, 'deploy/gcp/tutorial.md'), 'utf8');
+
+/**
+ * A directory to put first on PATH so the config adapter runs against GNU `mv`,
+ * or null where the machine's own `mv` already is GNU's.
+ *
+ * provision.sh runs on Linux and replaces files with `mv -fT`, which BSD `mv`
+ * (macOS) refuses, so there every run of the adapter would fail on the tool rather
+ * than on the script. GNU coreutils installs its `mv` as `gmv` there, and the
+ * harness links it in as `mv`. With neither, the suite cannot run the script as it
+ * ships, and says what to install rather than reporting the tool's refusal.
+ */
+function gnuMvDir(): string | null {
+	if (spawnSync('mv', ['--version'], { encoding: 'utf8' }).stdout?.includes('GNU coreutils')) {
+		return null;
+	}
+	const gmv = spawnSync('sh', ['-c', 'command -v gmv'], { encoding: 'utf8' }).stdout.trim();
+	if (!gmv) {
+		throw new Error(
+			'deploy/provision.sh replaces files with GNU `mv -fT`, which this machine lacks. Run the ' +
+				'suite on Linux, or install GNU coreutils (on macOS: brew install coreutils).',
+		);
+	}
+	const dir = mkdtempSync(join(tmpdir(), 'hezo-gnu-mv-'));
+	symlinkSync(gmv, join(dir, 'mv'));
+	return dir;
+}
+
+const GNU_MV_DIR = gnuMvDir();
+afterAll(() => {
+	if (GNU_MV_DIR) rmSync(GNU_MV_DIR, { recursive: true, force: true });
+});
 
 function shellScripts(dir: string): string[] {
 	const out: string[] = [];
@@ -192,6 +224,7 @@ function withProvision(setup: ProvisionSetup, assertions: (r: ProvisionResult) =
 			encoding: 'utf8',
 			env: {
 				...process.env,
+				...(GNU_MV_DIR ? { PATH: `${GNU_MV_DIR}:${process.env.PATH ?? ''}` } : {}),
 				CONFIG_FILE: paths.configFile,
 				DEPLOY_ENV: paths.deployEnvFile,
 				LEGACY_ENV: paths.legacyFile,
