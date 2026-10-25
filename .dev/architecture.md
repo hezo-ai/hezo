@@ -7113,7 +7113,8 @@ and before the unlock hook starts anything that addresses the admin.
 **`managedModel`, hosted only.** `{ baseUrl, model, apiKey, requestHeaders? }`: the model a
 hosting control plane provides, accepted only beside `custodianMasterKey`, since the row it
 becomes holds an encrypted key and only a held key guarantees the boot is unlocked to write it.
-`baseUrl` must be `https:`, and a header value may not hold a line break, since the CLI reads
+`baseUrl` must be `http:` or `https:` (a plane running its fleet on one machine points it at a
+local plain-HTTP stand-in), and a header value may not hold a line break, since the CLI reads
 the headers one per line. The same boot step writes it as the managed provider's credential
 (§ 6 *Providers and runtimes*), after the admin and address and before the unlock hook, whose
 seeded brief needs a model to answer it; a failure there is a fatal `HeldMasterKeyError`. A
