@@ -34,12 +34,11 @@ describe('generated stop-hook judge scripts', () => {
 	);
 
 	it('covers every runtime that has a command-script judge', () => {
-		// Claude Code uses a native prompt hook (no script); OpenCode, Grok and
-		// Antigravity have no judge at all (none is wired for agy).
-		// Everything else must be exercised below.
+		// OpenCode, Grok and Antigravity have no judge at all (none is wired for
+		// agy). Everything else must be exercised below.
+		expect(runtimesWithScripts).toContain(AgentRuntime.ClaudeCode);
 		expect(runtimesWithScripts).toContain(AgentRuntime.Codex);
 		expect(runtimesWithScripts).toContain(AgentRuntime.Kimi);
-		expect(runtimesWithScripts).not.toContain(AgentRuntime.ClaudeCode);
 		expect(runtimesWithScripts).not.toContain(AgentRuntime.Antigravity);
 	});
 
@@ -238,6 +237,165 @@ process.exitCode = Number(process.env.FAKE_CODEX_EXIT ?? 0);
 		it('does nothing inside a session the judge started', () => {
 			const { stdout, call } = judge(stop, {
 				verdict: { decision: 'block', reason: 'unused' },
+				env: { HEZO_STOP_JUDGE_ACTIVE: '1' },
+			});
+			expect(call).toBeNull();
+			expect(stdout.trim()).toBe('');
+		});
+	});
+
+	describe('claude code judge', () => {
+		// The Claude Code judge asks the CLI in a `claude -p` of its own, so it works
+		// on an Anthropic subscription, which has no API key. A stand-in `claude` on
+		// PATH records what it was asked and answers as `--output-format json` does:
+		// one result object, carrying the verdict text and the session's usage.
+		const FAKE_CLAUDE = `#!/usr/bin/env node
+import fs from 'node:fs';
+let stdin = '';
+for await (const chunk of process.stdin) stdin += chunk;
+fs.writeFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({
+	argv: process.argv.slice(2),
+	stdin,
+	cwd: process.cwd(),
+	judgeActive: process.env.HEZO_STOP_JUDGE_ACTIVE ?? null,
+}));
+process.stdout.write(JSON.stringify({
+	type: 'result',
+	is_error: process.env.FAKE_CLAUDE_ERROR === '1',
+	result: process.env.FAKE_CLAUDE_TEXT ?? '',
+	usage: { input_tokens: 40, cache_read_input_tokens: 3000, output_tokens: 20 },
+	modelUsage: { 'vendor/judge': { inputTokens: 40, cacheReadInputTokens: 3000, outputTokens: 20 } },
+}));
+`;
+
+		const MODEL = 'vendor/judge';
+
+		const judge = (
+			payload: Record<string, unknown>,
+			opts: { text?: string; error?: boolean; model?: string; env?: Record<string, string> } = {},
+		) => {
+			const home = mkdtempSync(join(tmpdir(), 'hezo-claude-judge-'));
+			const bin = join(home, 'bin');
+			mkdirSync(bin);
+			writeFileSync(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+			const log = join(home, 'claude-call.json');
+			const script = join(home, 'judge.mjs');
+			writeFileSync(
+				script,
+				buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode, opts.model ?? MODEL) ?? '',
+				{ mode: 0o700 },
+			);
+			const result = spawnSync(process.execPath, [script], {
+				input: JSON.stringify(payload),
+				encoding: 'utf8',
+				env: {
+					PATH: `${bin}:${process.env.PATH ?? ''}`,
+					FAKE_CLAUDE_LOG: log,
+					...(opts.text === undefined ? {} : { FAKE_CLAUDE_TEXT: opts.text }),
+					...(opts.error ? { FAKE_CLAUDE_ERROR: '1' } : {}),
+					...opts.env,
+				},
+			});
+			const readJson = <T>(path: string): T | null => {
+				try {
+					return JSON.parse(readFileSync(path, 'utf8')) as T;
+				} catch {
+					return null;
+				}
+			};
+			const call = readJson<{
+				argv: string[];
+				stdin: string;
+				cwd: string;
+				judgeActive: string | null;
+			}>(log);
+			let usage: string | null = null;
+			try {
+				usage = readFileSync(join(home, 'stop-hook-usage.jsonl'), 'utf8');
+			} catch {}
+			rmSync(home, { recursive: true, force: true });
+			return { ...result, call, usage };
+		};
+
+		// The payload as Claude Code 2.1.280 sends it to a Stop hook.
+		const stop = {
+			session_id: 's1',
+			transcript_path: '/home/agent/.claude/projects/x/s1.jsonl',
+			cwd: '/workspace/repo',
+			permission_mode: 'bypassPermissions',
+			hook_event_name: 'Stop',
+			stop_hook_active: false,
+			last_assistant_message: 'DONE: the report is written.',
+		};
+
+		it('asks a claude -p of its own with the rules first and the final message alone', () => {
+			const { stdout, status, call } = judge(stop, {
+				text: '{"decision":"block","reason":"Post the report to the task first."}',
+			});
+			expect(status).toBe(0);
+			expect(JSON.parse(stdout)).toEqual({
+				decision: 'block',
+				reason: 'Post the report to the task first.',
+			});
+			const argv = call?.argv ?? [];
+			expect(argv[argv.indexOf('--model') + 1]).toBe(MODEL);
+			expect(argv[argv.indexOf('--system-prompt') + 1]).toContain('quality gate');
+			expect(argv).toContain('-p');
+			expect(argv[argv.indexOf('--tools') + 1]).toBe('');
+			expect(argv).toContain('--strict-mcp-config');
+			expect(argv).toContain('--no-session-persistence');
+			expect(JSON.parse(argv[argv.indexOf('--settings') + 1])).toEqual({ disableAllHooks: true });
+			expect(argv).not.toContain('--bare');
+			// Nothing but the final message: no transcript, no other payload field.
+			expect(call?.stdin).toBe("Agent's final response:\nDONE: the report is written.");
+			// Its own empty folder, so the repo's own files and settings stay out of it.
+			expect(call?.cwd).not.toBe('/workspace/repo');
+			// Marks its own session, so a hook inside it cannot judge the judge.
+			expect(call?.judgeActive).toBe('1');
+		});
+
+		it('records the check in the usage file beside it, one result per check', () => {
+			const { usage } = judge(stop, { text: '{"decision":"allow"}' });
+			const lines = (usage ?? '').trim().split('\n');
+			expect(lines).toHaveLength(1);
+			expect(JSON.parse(lines[0])).toMatchObject({
+				type: 'result',
+				modelUsage: { [MODEL]: { inputTokens: 40, cacheReadInputTokens: 3000, outputTokens: 20 } },
+			});
+		});
+
+		it('reads a verdict the model wrapped in a code fence', () => {
+			const { stdout } = judge(stop, {
+				text: '```json\n{"decision":"block","reason":"Run the tests."}\n```',
+			});
+			expect(JSON.parse(stdout)).toEqual({ decision: 'block', reason: 'Run the tests.' });
+		});
+
+		it('allows the stop when the judge allows it', () => {
+			const { stdout, call } = judge(stop, { text: '{"decision":"allow"}' });
+			expect(call).not.toBeNull();
+			expect(stdout.trim()).toBe('');
+		});
+
+		it('fails open on an error result, still counting its tokens', () => {
+			const { stdout, status, usage } = judge(stop, {
+				text: '{"decision":"block","reason":"unused"}',
+				error: true,
+			});
+			expect(status).toBe(0);
+			expect(stdout.trim()).toBe('');
+			expect(usage).not.toBeNull();
+		});
+
+		it('fails open without starting a session when it was built with no model', () => {
+			const { stdout, call } = judge(stop, { text: '{"decision":"block"}', model: '' });
+			expect(call).toBeNull();
+			expect(stdout.trim()).toBe('');
+		});
+
+		it('does nothing inside a session the judge started', () => {
+			const { stdout, call } = judge(stop, {
+				text: '{"decision":"block","reason":"unused"}',
 				env: { HEZO_STOP_JUDGE_ACTIVE: '1' },
 			});
 			expect(call).toBeNull();

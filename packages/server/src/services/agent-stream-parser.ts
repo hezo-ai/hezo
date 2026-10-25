@@ -19,8 +19,10 @@
  */
 import {
 	AgentRuntime,
+	AI_PROVIDER_INFO,
 	type AiProvider,
 	claudeCodeProviderUsesCustomEndpoint,
+	isManagedAiProvider,
 	type ProviderAllowance,
 	qualifiedMcpToolName,
 	type TokenBuckets,
@@ -244,8 +246,9 @@ export type RuntimeErrorFamily =
  *
  * A table rather than a chain of `if`s so the ordering is explicit rather than
  * implicit in statement order, and so a new family is one row. **The order is
- * load-bearing**: the two terminal families are tested first because they are the
- * more specific match. `429 ... exceeded your current quota` is a billing problem
+ * load-bearing**: a key's daily limit is tested first, because its `402` would
+ * otherwise read as a lack of credit, and then the two terminal families, because
+ * they are the more specific match. `429 ... exceeded your current quota` is a billing problem
  * and must stay terminal, while a bare `429 Too Many Requests` is a pacing
  * problem and clears on its own - the same status code, two different faults,
  * separated by the words around it. `runtime-error-families` in
@@ -263,7 +266,30 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 	match: RegExp;
 	failure: RunFailureClass;
 	describe?: (text: string) => string;
+	/**
+	 * The message for a managed credential, where the tenant can neither top it up
+	 * nor replace it, so the ordinary advice would send them looking for a control
+	 * that does not exist. Absent means the ordinary message reads true there too.
+	 */
+	describeManaged?: (text: string, providerName: string) => string;
+	/** When the refusal says it clears, for the families whose text implies a time. */
+	retryAt?: (text: string, now: Date) => Date | null;
 }[] = [
+	{
+		family: 'usage_limit',
+		// A key's own daily spending limit, spent or about to be. Ahead of `credit`,
+		// which the `402` and its wording would otherwise match: a daily limit resets
+		// on its own, so the work waits for it rather than failing. OpenRouter refuses
+		// in two shapes, both naming the limit - `402` "... adjust the key's daily
+		// limit" while a request's estimate passes what is left, with no reset time,
+		// and `403` "Key limit exceeded (daily limit) ... resets <time>" once it is
+		// spent. A key with a limit that never resets says "total limit" instead, and
+		// stays a `credit` refusal.
+		match: /key's daily limit|key limit exceeded \(daily limit\)/,
+		failure: RunFailureClass.Transient,
+		describe: (text) => `The credential's daily spending limit is reached. (${text})`,
+		retryAt: dailyLimitResetAt,
+	},
 	{
 		family: 'credit',
 		match:
@@ -271,6 +297,8 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 		failure: RunFailureClass.Permanent,
 		describe: (text) =>
 			`AI provider rejected the request for lack of credit/quota — top up or switch the team's provider credential. (${text})`,
+		describeManaged: (text, providerName) =>
+			`${providerName} is out of credit at its provider, which this instance's host tops up. (${text})`,
 	},
 	{
 		family: 'auth',
@@ -279,6 +307,8 @@ const RUNTIME_ERROR_FAMILIES: readonly {
 		failure: RunFailureClass.Permanent,
 		describe: (text) =>
 			`AI provider authentication failed — check the team's provider credential. (${text})`,
+		describeManaged: (text, providerName) =>
+			`${providerName} refused this instance's credential. Its host turns the credential off while the account is on hold or the instance is being changed, and on again after. (${text})`,
 	},
 	{
 		family: 'capacity',
@@ -319,19 +349,45 @@ const RUNTIME_ERROR_FAMILIES: readonly {
  * `run-failure-classification.ts`: a retry is a recovery mechanism for a named,
  * known-transient condition, never a default posture.
  */
-export function classifyRuntimeError(raw: string | undefined | null): RuntimeErrorVerdict | null {
+export function classifyRuntimeError(
+	raw: string | undefined | null,
+	provider?: AiProvider,
+): RuntimeErrorVerdict | null {
 	const text = (raw ?? '').trim();
 	if (!text) return null;
 	const lower = text.toLowerCase();
+	const managedName =
+		provider && isManagedAiProvider(provider) ? AI_PROVIDER_INFO[provider].name : null;
 	for (const family of RUNTIME_ERROR_FAMILIES) {
 		if (!family.match.test(lower)) continue;
+		const retryAt = family.retryAt?.(text, new Date());
 		return {
-			message: family.describe?.(text) ?? text,
+			message:
+				(managedName && family.describeManaged?.(text, managedName)) ||
+				(family.describe?.(text) ?? text),
 			failure: family.failure,
 			family: family.family,
+			...(retryAt ? { retryAt } : {}),
 		};
 	}
 	return { message: text, failure: RunFailureClass.Permanent, family: 'unknown' };
+}
+
+/** The ISO time a spent limit's refusal states, `resets 2026-10-26T00:00:00.000Z`. */
+const LIMIT_RESET_AT = /resets (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/i;
+
+/**
+ * When a key's daily limit resets: the time the refusal states, else the next
+ * 00:00 UTC, where a daily limit always resets. The refusal sent while some of
+ * the limit is left states no time.
+ */
+export function dailyLimitResetAt(text: string, now: Date): Date {
+	const stated = LIMIT_RESET_AT.exec(text)?.[1];
+	if (stated) {
+		const at = new Date(stated);
+		if (!Number.isNaN(at.getTime())) return at;
+	}
+	return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
 }
 
 const CODEX_RETRY_MONTHS = [
@@ -1037,6 +1093,35 @@ function settleClaudeResult(settled: ClaudeRunTotals, event: ClaudeStreamEvent):
 	settled.output += u.output_tokens ?? 0;
 }
 
+/**
+ * The tokens in a file of Claude Code `result` events, one per line, each the
+ * whole of a session of its own (the completeness judge starts one per check),
+ * so the lines add up. Null when the file holds none.
+ */
+export function claudeResultsUsage(text: string): AgentRunUsage | null {
+	let total: AgentRunUsage | null = null;
+	for (const line of text.split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		let event: ClaudeStreamEvent;
+		try {
+			event = JSON.parse(trimmed) as ClaudeStreamEvent;
+		} catch {
+			continue;
+		}
+		const settled: ClaudeRunTotals = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+		settleClaudeResult(settled, event);
+		const usage = toRunUsage(Object.keys(event.modelUsage ?? {})[0], {
+			inputTokens: settled.input,
+			cacheCreationTokens: settled.cacheCreation,
+			cacheReadTokens: settled.cacheRead,
+			outputTokens: settled.output,
+		});
+		total = total ? mergeRunUsage(total, usage) : usage;
+	}
+	return total;
+}
+
 function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
@@ -1227,7 +1312,9 @@ function createClaudeCodeParser(provider?: AiProvider): AgentStreamParser {
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
-			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
+			if (event.is_error) {
+				terminalError = classifyRuntimeError(event.result, provider) ?? terminalError;
+			}
 			out.push(`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output}`);
 			return out;
 		}

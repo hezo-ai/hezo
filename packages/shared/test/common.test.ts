@@ -403,7 +403,7 @@ describe('provider helpers', () => {
 		// worst direction: `x-api-key` refuses an `sk-ant-oat01-…` token whatever its
 		// state, so a probe sent that way would report every subscription credential
 		// dead - including a perfectly good one - and take it out of service.
-		const endpoint = AI_PROVIDER_INFO[AiProvider.Anthropic].verifyEndpoint;
+		const endpoint = AI_PROVIDER_INFO[AiProvider.Anthropic].verifyEndpoint!;
 		const subscription = endpoint.subscriptionHeaders?.('sk-ant-oat01-token');
 		expect(subscription).toEqual({
 			Authorization: 'Bearer sk-ant-oat01-token',
@@ -423,7 +423,7 @@ describe('provider helpers', () => {
 		// Codex's subscription credential is a JSON auth file. An absent row is the
 		// answer - the probe reads it as "cannot ask", never as a rejection - so it
 		// must stay absent rather than gain a plausible-looking bearer.
-		expect(AI_PROVIDER_INFO[AiProvider.OpenAI].verifyEndpoint.subscriptionHeaders).toBeUndefined();
+		expect(AI_PROVIDER_INFO[AiProvider.OpenAI].verifyEndpoint?.subscriptionHeaders).toBeUndefined();
 	});
 
 	it('claudeCodeProviderUsesCustomEndpoint is true only for the third-party Claude Code providers', () => {

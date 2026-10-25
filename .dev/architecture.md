@@ -3319,9 +3319,14 @@ states - one Codex outage produced over 1,200 refused runs in three and a half d
 two-hour give-up turned each lap into a failure followed by a fresh wakeup. Now:
 
 - **The refusal records the hold.** `providerRefusalHandback` calls
-  `holdCredentialForUsageLimit` with the verdict's `retryAt`, which only a runtime's own
-  parser can fill (`parseCodexRetryAt` reads Codex's "try again at" suffix; the agent image
-  sets no zone, so Codex prints UTC, and the minute is rounded up because Codex drops seconds).
+  `holdCredentialForUsageLimit` with the verdict's `retryAt`, which a runtime's own parser or
+  the matched family can fill (`parseCodexRetryAt` reads Codex's "try again at" suffix; the
+  agent image sets no zone, so Codex prints UTC, and the minute is rounded up because Codex
+  drops seconds). **A key's daily spending limit is a spent allowance too**: its row in
+  `RUNTIME_ERROR_FAMILIES` comes ahead of `credit`, whose `402` and wording it would otherwise
+  match, and `dailyLimitResetAt` fills `retryAt` with the reset the refusal states, or the next
+  00:00 UTC for the refusal sent while some of the limit is left, which states none. A limit
+  that never resets ("total limit") stays a `credit` refusal.
   With no stated time the hold is `USAGE_HOLD_UNSTATED_MIN` (30); every hold is floored at
   `USAGE_HOLD_FLOOR_MIN` (5) so a stated time already past cannot release the queue at
   dispatch rate. The refusal that starts a hold files one `fileProviderUsageLimitNotice`, and
@@ -4355,8 +4360,8 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ### Providers and runtimes
 
-**Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
+**Providers → runtimes is one-to-MANY.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio`, `hezo_cloud` — and
 `AgentRuntime` has **six** — `claude_code`, `codex`, `antigravity`, `opencode`, `grok`, `kimi`. The dead `gemini` label is retained in the DB enum for stored rows only. A
 provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
@@ -4378,7 +4383,7 @@ inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthr
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `KIMI_DEFAULT_MODEL`), OpenAI → `codex`,
 Google → `antigravity`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
-(local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
+(local runners, see below), and the managed `hezo_cloud` → `claude_code` (see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
 see below), so it is the one provider that offers a choice. Every other provider offers exactly
 one CLI and the UI omits the picker for it — for Ollama and LM Studio the Advanced disclosure
 then holds only the optional API key.
@@ -4469,6 +4474,32 @@ operator-supplied token stores the runner's sentinel (`ollama` / `lmstudio`) ins
 Claude Code subagent default track the run's selected model — the only workable choice, since
 the models an operator has pulled are unknowable here. Local runs count their tokens like any
 other, so budgets apply to them.
+
+**The managed provider (`hezo_cloud`) is configured by a hosting control plane, never by a
+person.** Its `AI_PROVIDER_INFO` row carries `managed` (read through `isManagedAiProvider`) and
+the name "Base AI model"; the underlying model and CLI are never named to the tenant. Its one
+`ai_provider_configs` row is written from the hosted config's `managedModel` block on every
+boot (§ *Configuration resolution*), by `syncManagedModel` (`services/managed-model.ts`):
+inserted when absent, as the default only where no row is; rewritten only where it differs, so
+an unchanged boot writes nothing, and a changed key starts unheld; removed, through
+`deleteAiProviderConfig` and its default hand-on, when the block is. Like the local runners its
+endpoint rides on the credential (`metadata -> 'base_url'`), and so do its request headers
+(`metadata -> 'request_headers'`, `AiProviderCredential.requestHeaders`), which the Claude Code
+adapter sends as `ANTHROPIC_CUSTOM_HEADERS`, one `Name: value` per line; the plane names the
+tenant in one, which keeps the tenant's requests on one host so each reads what the last
+cached. The key is the run CLI's own model credential (`ANTHROPIC_AUTH_TOKEN`), the existing
+exception to the plaintext rule. The key serves one model and refuses every other, so the
+binding's `runModelEnv` sets every slot (`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`,
+`CLAUDE_CODE_SUBAGENT_MODEL`) to the run's model, and `claudeCodeProviderUsesCustomEndpoint`
+is true so the judge follows it too. `managed` is read in four places:
+`condemnRejectedProviderCredential` returns `not_proven` without probing (the plane turns the
+key off while an account is held or a box is rebuilt, and a probe would then prove a working
+key dead); the routes refuse to add, edit, re-verify or delete it (`MANAGED_PROVIDER`, 409),
+though it may be made the default; `listCredentialModels` lists its one model under the
+provider's name, asking no catalog; and `classifyRuntimeError`, given the provider, swaps the
+credit and auth advice for text that does not send the tenant to a control they lack. The
+settings list draws it with only the default star, and `ADD_PROVIDER_ORDER` (typed
+`AddableAiProvider`) never offers it.
 
 ### Provider config & guided sign-in
 
@@ -4982,13 +5013,18 @@ own model. There is no Google constant - Antigravity ships without a judge. For 
 (`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
 (`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
 only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`)
-needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
-runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
-itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
-and forcing an `{ok, reason}` answer, so `STOP_HOOK_PROMPT` maps `ok: false` to a block where the
-scripts' `STOP_HOOK_DECISION_FORMAT` asks for `decision`);
-Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`), each
-spec supplying how the script asks its model. Kimi's calls Moonshot's API with the key the CLI
+needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Every runtime's
+judge is a command script (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that sends the rules
+with `STOP_HOOK_DECISION_FORMAT` first and the agent's final message alone after them, so every
+check of a run shares the rules as a prefix a provider's cache can serve; each spec supplies how
+the script asks its model. Claude Code's starts a `claude -p` of its own with the rules as its
+system prompt and no tools, MCP servers, skills, hooks or saved session, judging with the model
+the script was built with (`judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`,
+since the Stop payload names none) and inheriting the run's credential, endpoint and request
+headers; it appends each check's `result` to `stop-hook-usage.jsonl`, which the adapter reads as
+extra usage on top of the stream's. The CLI's own `type: "prompt"` hook is not used: it sent a
+slice of the conversation that started somewhere different on each check, so a long session's
+checks read almost nothing from cache. Kimi's calls Moonshot's API with the key the CLI
 uses. Codex's starts a `codex exec` of its own, because a ChatGPT subscription has no API key:
 `--ignore-user-config` leaves out the run's MCP servers and hooks while the sign-in still comes
 from the run's `CODEX_HOME`, `--output-schema` fixes the verdict shape, and the model is the one
@@ -6790,7 +6826,8 @@ whichever is showing - unless the seed already did.
 
 **A key-holding instance (`custodianMasterKey`) never reaches `MasterKeyGate`**: it serves
 only once unlocked, and any other outcome stops startup, so its order begins at
-`SsoRedirect`. Settings -> Users & access draws no password form wherever an issuer owns
+`SsoRedirect`. One whose plane provides a model (`managedModel`) skips the AI-provider step
+too, since the boot has already written that credential. Settings -> Users & access draws no password form wherever an issuer owns
 sign-in, since the server answers `SSO_ONLY` to every password change there.
 
 `shellGate` (`lib/shell-gate.ts`) is that order as one pure decision; the root switches on
@@ -7072,6 +7109,15 @@ instance offers enrollment to whoever reaches it first and a key-holding one has
 unlock from. With no setup screen, the boot also creates the admin account and stores the
 instance's address from `webUrl` (only while none is stored), after the default team exists
 and before the unlock hook starts anything that addresses the admin.
+
+**`managedModel`, hosted only.** `{ baseUrl, model, apiKey, requestHeaders? }`: the model a
+hosting control plane provides, accepted only beside `custodianMasterKey`, since the row it
+becomes holds an encrypted key and only a held key guarantees the boot is unlocked to write it.
+`baseUrl` must be `https:`, and a header value may not hold a line break, since the CLI reads
+the headers one per line. The same boot step writes it as the managed provider's credential
+(§ 6 *Providers and runtimes*), after the admin and address and before the unlock hook, whose
+seeded brief needs a model to answer it; a failure there is a fatal `HeldMasterKeyError`. A
+boot without the block removes that credential.
 
 **The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
 first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
@@ -7764,8 +7810,8 @@ the provider's `/v1/messages` so the request bodies could be read directly rathe
 from a model's answer. The main-loop turn - identified by the stub's tool appearing in its tool
 list - carried the canary in a block headed `# MCP Server Instructions` then `## <server-name>`,
 as the `system`-role entry at `messages[1]`, not in the top-level `system` parameter and with no
-`<system-reminder>` wrapper (that wrapper appears only where the Stop-hook judge replays the
-transcript). The control run, identical but with the field omitted, produced the same tool
+`<system-reminder>` wrapper (that wrapper appeared only where the CLI's own prompt-hook
+judge, which Hezo no longer uses, replayed the transcript). The control run, identical but with the field omitted, produced the same tool
 surface with no header and no canary in any of its requests, so `instructions` is what carried
 it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do not carry
 it, which is expected. **The CLI cuts each server's block at 2,048 characters** by default,

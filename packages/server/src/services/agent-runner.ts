@@ -75,6 +75,7 @@ import { pauseAgentForBudget } from './agent-runtime-status';
 import {
 	type AgentRunUsage,
 	createAgentStreamParser,
+	mergeRunUsage,
 	type RuntimeErrorVerdict,
 } from './agent-stream-parser';
 import {
@@ -417,6 +418,7 @@ export function buildProviderEnv(
 		provider,
 		runModel: runModel?.trim() || null,
 		baseUrl: credential.baseUrl ?? null,
+		requestHeaders: credential.requestHeaders ?? null,
 	};
 	const out: string[] = [];
 	// What this CLI needs regardless of provider, then the provider's own bag with
@@ -428,6 +430,10 @@ export function buildProviderEnv(
 	}
 	for (const [key, value] of Object.entries(binding?.staticEnv ?? {})) {
 		out.push(`${key}=${adapter?.staticEnvValue?.(key, value, envCtx) ?? value}`);
+	}
+	if (envCtx.runModel) {
+		const model = adapter?.modelArg?.(provider, envCtx.runModel) ?? envCtx.runModel;
+		for (const key of binding?.runModelEnv ?? []) out.push(`${key}=${model}`);
 	}
 	out.push(...(adapter?.credentialEnv?.(envCtx) ?? []));
 	const varName = binding?.credentialEnvByAuthMethod[credential.authMethod];
@@ -630,6 +636,25 @@ export async function recoverOffStreamRunUsage(
 	}
 }
 
+/**
+ * A run's usage from its stream and from the file its CLI leaves. A file
+ * holding the run's whole usage stands in for the stream: the stream's figure
+ * wins while the run is live (`fileWins` false) and the file's once it has ended,
+ * since only the file names Codex's model. A file holding extra usage, such as
+ * the completeness judge's own sessions, is added to the stream's.
+ */
+export function combineRunUsage(
+	runtimeType: AgentRuntime,
+	streamed: AgentRunUsage | null,
+	fromFile: AgentRunUsage | null,
+	fileWins: boolean,
+): AgentRunUsage | null {
+	if (RUNTIME_ADAPTERS[runtimeType].offStreamUsage?.holds === 'extra') {
+		return streamed && fromFile ? mergeRunUsage(streamed, fromFile) : (streamed ?? fromFile);
+	}
+	return fileWins ? (fromFile ?? streamed) : (streamed ?? fromFile);
+}
+
 /** How often a run's usage file is read while its CLI runs. */
 export const OFF_STREAM_USAGE_POLL_MS = 60_000;
 
@@ -654,7 +679,9 @@ function pollOffStreamUsage(
 	onError: (msg: string) => void,
 ): { stop(): Promise<void> } {
 	const usage = RUNTIME_ADAPTERS[runtimeType].offStreamUsage;
-	if (!files || !usage) return { stop: async () => {} };
+	// Extra usage is a few checks at the run's very end, which the ceiling never
+	// waits on, so polling it would cost a file read a minute for nothing.
+	if (!files || !usage || usage.holds === 'extra') return { stop: async () => {} };
 	let inFlight: Promise<void> | null = null;
 	let stopped = false;
 	const timer = setInterval(() => {
@@ -2910,7 +2937,7 @@ export async function runAgent(
 				// Surfaced to the log flush so it's persisted crash-safely (see
 				// currentUsage / onFlush above).
 				const streamed = parser.getUsage();
-				currentUsage = streamed ?? polledUsage;
+				currentUsage = combineRunUsage(runtimeType, streamed, polledUsage, false);
 				// A runtime reports its window on its stream or in its usage file.
 				storeAllowance(streamed?.allowance ? streamed : polledUsage);
 			};
@@ -3444,7 +3471,7 @@ export async function runAgent(
 			// `backgroundWorkTerminated` because a destroyed process is the later and
 			// dispositive fact, per the ranking comment below.
 			const refusalVerdict = success ? null : parser.getTerminalVerdict();
-			const refusalUsage = runUsage ?? parser.getUsage();
+			const refusalUsage = combineRunUsage(runtimeType, parser.getUsage(), runUsage, true);
 			if (
 				refusalVerdict?.failure === RunFailureClass.Transient &&
 				(refusalUsage?.inputTokens ?? 0) + (refusalUsage?.outputTokens ?? 0) === 0 &&
@@ -3506,11 +3533,11 @@ export async function runAgent(
 			else if (unexplainedExitError) emit('stderr', `\n[runner] ${unexplainedExitError}\n`);
 
 			// Codex, Grok and Kimi report usage in a file (runUsage); every other
-			// runtime reports it on the stream. The file wins where both exist: for
-			// Codex it is the only source that also names the model. A failed read
-			// falls back to the last figure a poll held, so a run that used tokens is
-			// never recorded as free.
-			const finalUsage = runUsage ?? parser.getUsage() ?? currentUsage;
+			// runtime reports it on the stream, and Claude Code's judge in a file of
+			// its own that adds to it. A failed read falls back to the last figure a
+			// poll held, so a run that used tokens is never recorded as free.
+			const finalUsage =
+				combineRunUsage(runtimeType, parser.getUsage(), runUsage, true) ?? currentUsage;
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(

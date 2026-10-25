@@ -28,6 +28,14 @@ export interface AiProviderCredential {
 	 */
 	baseUrl: string | null;
 	/**
+	 * Headers every model request on this credential carries, read from
+	 * `ai_provider_configs.metadata -> 'request_headers'`. Only a managed provider
+	 * has them: its hosting control plane names the tenant in one, which keeps the
+	 * tenant's requests on one host so each can read what the last one cached.
+	 * Absent means none.
+	 */
+	requestHeaders?: Readonly<Record<string, string>> | null;
+	/**
 	 * The CLI the operator chose for this credential, or null to follow the
 	 * provider default. Carried here for the same reason as `baseUrl`: it is a
 	 * per-credential value, so it cannot be derived from the provider alone.
@@ -42,6 +50,19 @@ export function readConfigBaseUrl(metadata: unknown): string | null {
 	if (!metadata || typeof metadata !== 'object') return null;
 	const raw = (metadata as Record<string, unknown>).base_url;
 	return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+/** Read the stored request headers off a config's jsonb metadata, if it has any. */
+export function readConfigRequestHeaders(
+	metadata: unknown,
+): Readonly<Record<string, string>> | null {
+	if (!metadata || typeof metadata !== 'object') return null;
+	const raw = (metadata as Record<string, unknown>).request_headers;
+	if (!raw || typeof raw !== 'object') return null;
+	const headers = Object.fromEntries(
+		Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+	);
+	return Object.keys(headers).length > 0 ? headers : null;
 }
 
 export interface AiProviderConfig {
@@ -127,6 +148,7 @@ export async function getProviderCredential(
 		value: result.value,
 		authMethod: result.authMethod,
 		baseUrl: result.baseUrl,
+		requestHeaders: result.requestHeaders,
 		runtime: result.runtime,
 	};
 }
@@ -151,6 +173,7 @@ export interface SelectedProviderConfig {
 	authMethod: AiAuthMethod;
 	defaultModel: string | null;
 	baseUrl: string | null;
+	requestHeaders: Readonly<Record<string, string>> | null;
 	/** The operator's stored CLI choice; null follows the provider default. */
 	runtime: AgentRuntime | null;
 	/** {@link runtime} resolved against the provider default - the CLI this row runs on. */
@@ -251,6 +274,7 @@ export async function selectProviderConfig(
 		authMethod: row.auth_method,
 		defaultModel: row.default_model,
 		baseUrl: readConfigBaseUrl(row.metadata),
+		requestHeaders: readConfigRequestHeaders(row.metadata),
 		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
 		resolvedRuntime: row.resolvedRuntime,
 		usageLimitedUntil: toDateOrNull(row.usage_limited_until),
@@ -577,6 +601,7 @@ export async function getProviderCredentialAndModel(
 		authMethod: row.auth_method,
 		defaultModel: row.default_model,
 		baseUrl: readConfigBaseUrl(row.metadata),
+		requestHeaders: readConfigRequestHeaders(row.metadata),
 		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
 	};
 }

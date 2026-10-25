@@ -189,7 +189,7 @@ describe('claude code settings wiring', () => {
 	});
 
 	it('leaves the settings file unchanged when no guard command is supplied', () => {
-		const without = buildClaudeCodeSettings(AiProvider.Anthropic, null, [], null);
+		const without = buildClaudeCodeSettings([], null);
 		expect(without.hooks.PreToolUse).toBeUndefined();
 	});
 });

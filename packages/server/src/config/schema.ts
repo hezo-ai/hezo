@@ -366,6 +366,29 @@ export const seedSchema = z
 	})
 	.strict();
 
+/** An HTTP header name: one or more token characters. */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/**
+ * The model a hosting control plane provides: the endpoint Claude Code is pointed
+ * at, the one model its key may ask for, the key, and the headers every request
+ * carries. A header value cannot hold a line break, since the CLI reads the
+ * headers one per line.
+ */
+const managedModelSchema = z
+	.object({
+		baseUrl: httpsUrl('baseUrl'),
+		model: z.string().trim().min(1),
+		apiKey: z.string().trim().min(1),
+		requestHeaders: z
+			.record(
+				z.string().regex(HEADER_NAME),
+				z.string().regex(/^[^\r\n]*$/, { message: 'must not contain a line break' }),
+			)
+			.optional(),
+	})
+	.strict();
+
 export const configFileSchema = z
 	.object({
 		port: z.int().min(1).max(65535).optional(),
@@ -390,9 +413,21 @@ export const configFileSchema = z
 		sso: ssoSchema.optional(),
 		seed: seedSchema.optional(),
 		custodianMasterKey: z.string().optional(),
+		managedModel: managedModelSchema.optional(),
 	})
 	.strict()
 	.superRefine((file, ctx) => {
+		// The row it becomes holds an encrypted key, so the boot that writes it has to
+		// be unlocked, which only a held master key guarantees.
+		if (file.managedModel !== undefined && file.custodianMasterKey === undefined) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['managedModel'],
+				message:
+					'is set by a hosting control plane, beside "custodianMasterKey", and this file has ' +
+					'none. Add a model in Settings > AI Providers instead.',
+			});
+		}
 		if (file.custodianMasterKey === undefined) return;
 		// A hosting control plane writes this key, and only beside the policy it
 		// governs the instance with. Without one this is a self-hosted file, where

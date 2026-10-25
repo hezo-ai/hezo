@@ -163,6 +163,66 @@ describe('loadConfigFile', () => {
 			});
 		});
 
+		describe('managedModel', () => {
+			const PHRASE =
+				'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+			const HOSTED = `policy: { managedBy: 'Hezo Cloud', pinned: {} }, custodianMasterKey: '${PHRASE}'`;
+			const MODEL_BLOCK = (extra = '') =>
+				`managedModel: { baseUrl: 'https://models.example/api', model: 'vendor/model', apiKey: 'sk-managed'${extra} }`;
+
+			it('is accepted beside a held master key', () => {
+				const path = write(
+					`module.exports = { ${HOSTED}, ${MODEL_BLOCK(", requestHeaders: { 'x-session-id': 'tenant-1' }")} };`,
+				);
+				expect(loadConfigFile(path).managedModel).toEqual({
+					baseUrl: 'https://models.example/api',
+					model: 'vendor/model',
+					apiKey: 'sk-managed',
+					requestHeaders: { 'x-session-id': 'tenant-1' },
+				});
+			});
+
+			// The row it becomes is encrypted, so only a boot that is sure to unlock can write it.
+			it('is refused without a held master key, pointing at the settings page', () => {
+				const path = write(
+					`module.exports = { policy: { managedBy: 'Hezo Cloud', pinned: {} }, ${MODEL_BLOCK()} };`,
+				);
+				expect(() => loadConfigFile(path)).toThrow(/managedModel[\s\S]*custodianMasterKey/);
+				expect(() => loadConfigFile(path)).toThrow(/Settings > AI Providers/);
+			});
+
+			it('is refused with an endpoint that is not https', () => {
+				const path = write(
+					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'http://models.example/api', model: 'm', apiKey: 'k' } };`,
+				);
+				expect(() => loadConfigFile(path)).toThrow(/baseUrl must be an https: URL/);
+			});
+
+			// The CLI reads the headers one per line, so a line break would forge a second header.
+			it('is refused with a header value carrying a line break', () => {
+				const path = write(
+					`module.exports = { ${HOSTED}, ${MODEL_BLOCK(", requestHeaders: { 'x-session-id': 'a\\nx-other: b' }")} };`,
+				);
+				expect(() => loadConfigFile(path)).toThrow(/must not contain a line break/);
+			});
+
+			it('is refused with a header name that is not one', () => {
+				const path = write(
+					`module.exports = { ${HOSTED}, ${MODEL_BLOCK(", requestHeaders: { 'bad name': 'v' }")} };`,
+				);
+				expect(() => loadConfigFile(path)).toThrow(/requestHeaders\.bad name: Invalid key/);
+			});
+
+			it('never repeats the key in what it reports', () => {
+				const path = write(
+					`module.exports = { policy: { managedBy: 'Hezo Cloud', pinned: {} }, ${MODEL_BLOCK()} };`,
+				);
+				expect(() => loadConfigFile(path)).toThrow(
+					expect.objectContaining({ message: expect.not.stringContaining('sk-managed') }),
+				);
+			});
+		});
+
 		it('refuses the removed price refresh schedule, naming why rather than ignoring it', () => {
 			const path = write("module.exports = { jobs: { pricingRefreshCron: '0 0 3 * * *' } };");
 			expect(() => loadConfigFile(path)).toThrow(/jobs\.pricingRefreshCron/);

@@ -519,6 +519,24 @@ export interface HezoConfig {
 	 * every boot after; any outcome but unlocked is a fatal startup error.
 	 */
 	masterKeyHeld: boolean;
+	/**
+	 * The model the hosting control plane provides, written into the config file as
+	 * `managedModel` beside `custodianMasterKey`, or null when it provides none.
+	 * Every boot writes it as the instance's managed provider credential, and a boot
+	 * without it removes that credential.
+	 */
+	managedModel: ManagedModelConfig | null;
+}
+
+/** The hosting control plane's model, as the config file states it. */
+export interface ManagedModelConfig {
+	/** The Anthropic-compatible endpoint Claude Code is pointed at. */
+	baseUrl: string;
+	/** The one model the key may ask for, which every model slot names. */
+	model: string;
+	apiKey: string;
+	/** Headers every model request carries. */
+	requestHeaders: Readonly<Record<string, string>>;
 }
 
 /** Expand a leading `~` and make the path absolute. */
@@ -585,4 +603,5 @@ export const DEFAULT_CONFIG: HezoConfig = {
 	},
 	reset: false,
 	masterKeyHeld: false,
+	managedModel: null,
 };

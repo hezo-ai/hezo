@@ -1951,6 +1951,9 @@ export const AiProvider = {
 	XAi: 'x_ai',
 	Ollama: 'ollama',
 	LmStudio: 'lmstudio',
+	// The model a hosting control plane provides, configured from its config block
+	// rather than by a person. See `AiProviderInfo.managed`.
+	HezoCloud: 'hezo_cloud',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -1982,6 +1985,12 @@ export type AiProviderStatus = (typeof AiProviderStatus)[keyof typeof AiProvider
 export interface ProviderRuntimeBinding {
 	staticEnv?: Readonly<Record<string, string>>;
 	credentialEnvByAuthMethod: Partial<Record<AiAuthMethod, string>>;
+	/**
+	 * Variables set to the run's own model, for an endpoint that serves that one
+	 * model and refuses every other: each slot the CLI would otherwise fill from
+	 * its own defaults names the run's model instead.
+	 */
+	runModelEnv?: readonly string[];
 }
 
 /**
@@ -2196,6 +2205,21 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.ClaudeCode,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
+	// The hosting plane's model, on Claude Code against an Anthropic-compatible
+	// endpoint. Like the local runners, its endpoint rides on the credential, here
+	// written from the hosted config at boot. Its key is locked to one model, so
+	// every slot names the run's model: a session title, a subagent or a slot left
+	// to the CLI's own default would ask for a model the key refuses.
+	[AiProvider.HezoCloud]: {
+		runtime: AgentRuntime.ClaudeCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+		runModelEnv: [
+			'ANTHROPIC_DEFAULT_OPUS_MODEL',
+			'ANTHROPIC_DEFAULT_SONNET_MODEL',
+			'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+			'CLAUDE_CODE_SUBAGENT_MODEL',
+		],
+	},
 };
 
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
@@ -2214,6 +2238,9 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	// are only the fallback for a config that somehow carries no URL.
 	[AiProvider.Ollama]: ['localhost'],
 	[AiProvider.LmStudio]: ['localhost'],
+	// No fixed upstream: the hosted config names the endpoint, and a managed
+	// credential always carries it.
+	[AiProvider.HezoCloud]: [],
 };
 
 /**
@@ -2302,6 +2329,9 @@ export function claudeCodeProviderUsesCustomEndpoint(
 	// inference is free, so tracking the run's model costs nothing, and the pinned
 	// alternative would be a model the operator may not even have pulled.
 	if (isLocalAiProvider(provider)) return true;
+	// A managed provider's endpoint rides on the credential too, and its key serves
+	// one model, so tracking the run's model is the only choice that works.
+	if (isManagedAiProvider(provider)) return true;
 	return Boolean(providerRuntimeBinding(provider, resolved)?.staticEnv?.ANTHROPIC_BASE_URL);
 }
 
@@ -2313,6 +2343,25 @@ export function claudeCodeProviderUsesCustomEndpoint(
  */
 export function isLocalAiProvider(provider: AiProvider): boolean {
 	return Boolean(AI_PROVIDER_INFO[provider]?.local);
+}
+
+/**
+ * True for a provider a hosting control plane configures (see
+ * {@link AiProviderInfo.managed}): nobody adds, edits, verifies or deletes it by
+ * hand, and a refusal never marks its credential invalid.
+ */
+export function isManagedAiProvider(provider: AiProvider): boolean {
+	return Boolean(AI_PROVIDER_INFO[provider]?.managed);
+}
+
+/** The provider a hosting control plane configures. Its info row carries `managed`. */
+export type ManagedAiProvider = typeof AiProvider.HezoCloud;
+
+/** Every provider a person adds by hand: all but the managed one. */
+export type AddableAiProvider = Exclude<AiProvider, ManagedAiProvider>;
+
+export function isAddableAiProvider(provider: AiProvider): provider is AddableAiProvider {
+	return !isManagedAiProvider(provider);
 }
 
 /**
@@ -2564,6 +2613,7 @@ export function providerRuntimeBinding(
 		return {
 			staticEnv: adapter.staticEnv,
 			credentialEnvByAuthMethod: adapter.credentialEnvByAuthMethod,
+			runModelEnv: adapter.runModelEnv,
 		};
 	}
 	return adapter.alternateRuntimes?.[runtime] ?? null;
@@ -3087,7 +3137,18 @@ export interface AiProviderInfo {
 	 * are built from that URL instead (see the ai-providers routes).
 	 */
 	local?: AiProviderLocalInfo;
-	verifyEndpoint: AiProviderVerifyEndpoint;
+	/**
+	 * Present only for a provider a hosting control plane configures. Its one
+	 * credential row is written from the hosted config on every boot and removed
+	 * with that config, so it is never added, edited, verified or deleted by hand.
+	 * The plane can turn its key off (a held account, a box being rebuilt), and a
+	 * catalog probe would then prove a working credential dead, so a refusal never
+	 * condemns it. Its endpoint and model come from the config, so it has no
+	 * catalog to ask.
+	 */
+	managed?: true;
+	/** Absent only for a managed provider, which has no catalog to ask. */
+	verifyEndpoint?: AiProviderVerifyEndpoint;
 }
 
 export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
@@ -3209,6 +3270,13 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 			url: 'http://localhost:1234/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
+	},
+	// Named for what the tenant gets, never for the model or the CLI behind it.
+	[AiProvider.HezoCloud]: {
+		name: 'Base AI model',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: '',
+		managed: true,
 	},
 };
 

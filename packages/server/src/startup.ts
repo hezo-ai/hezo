@@ -9,6 +9,7 @@ import { openAssetStorage } from './assets/open';
 import type { AssetStore } from './assets/store';
 import type { HezoConfig } from './cli';
 import { watchPolicyFile } from './config/policy';
+import type { ManagedModelConfig } from './config/types';
 import type { Db } from './db/database';
 import { logger } from './logger';
 
@@ -511,7 +512,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// its address, so the boot does both. After the default team exists, which the
 	// admin joins, and before the unlock hook below starts anything that addresses
 	// the admin.
-	if (config.masterKeyHeld) await prepareHeldKeyInstance(db, config.webUrl);
+	if (config.masterKeyHeld) {
+		await prepareHeldKeyInstance(db, masterKeyManager, config.webUrl, config.managedModel);
+	}
 
 	// Before the app serves a request, and regardless of lock state: the API must
 	// never show a run as `running` when the process driving it is gone. Both
@@ -1140,10 +1143,17 @@ export async function resolveMasterKeyState(
 
 /**
  * The admin account and the public address, which a setup screen would
- * otherwise create and capture. Both are idempotent, and the address is only
- * written while unset, so one the owner later changes in settings is kept.
+ * otherwise create and capture, and the model its control plane provides, which
+ * the setup screen's model step would otherwise ask for. All are idempotent, and
+ * the address is only written while unset, so one the owner later changes in
+ * settings is kept. Before the unlock hook, whose seeded brief needs the model.
  */
-async function prepareHeldKeyInstance(db: Db, webUrl: string): Promise<void> {
+async function prepareHeldKeyInstance(
+	db: Db,
+	masterKeyManager: MasterKeyManager,
+	webUrl: string,
+	managedModel: ManagedModelConfig | null,
+): Promise<void> {
 	try {
 		const { ensureSuperuserId } = await import('./services/superuser.js');
 		await ensureSuperuserId(db);
@@ -1153,6 +1163,14 @@ async function prepareHeldKeyInstance(db: Db, webUrl: string): Promise<void> {
 		}
 	} catch (err) {
 		throw new HeldMasterKeyError('and creating its admin account or storing its address failed.', {
+			cause: err,
+		});
+	}
+	try {
+		const { syncManagedModel } = await import('./services/managed-model.js');
+		await syncManagedModel(db, masterKeyManager, managedModel);
+	} catch (err) {
+		throw new HeldMasterKeyError('and writing the model it provides (managedModel) failed.', {
 			cause: err,
 		});
 	}

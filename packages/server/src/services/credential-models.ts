@@ -24,11 +24,22 @@
  * there is a database: renewing a sign-in writes one.
  */
 
-import { AiAuthMethod, AiProvider, type AiProviderModel, parseProviderModels } from '@hezo/shared';
+import {
+	AI_PROVIDER_INFO,
+	AiAuthMethod,
+	AiProvider,
+	type AiProviderModel,
+	isManagedAiProvider,
+	parseProviderModels,
+} from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import { logger } from '../logger';
-import { casUpdateAiProviderCredential, getProviderConfigCredential } from './ai-provider-keys';
+import {
+	casUpdateAiProviderCredential,
+	getAiProviderConfig,
+	getProviderConfigCredential,
+} from './ai-provider-keys';
 import { type CatalogFailure, fetchProviderCatalog } from './provider-catalog';
 import { CODEX_CLI_VERSION } from './runtime-adapters/codex';
 import type { CodexAuthBlob } from './subscription-auth';
@@ -253,6 +264,14 @@ export async function listCredentialModels(
 		value: stored.value,
 		baseUrl: stored.baseUrl,
 	};
+	// A managed key is locked to the one model its hosted config names, and that
+	// model is never named to the tenant, so it is listed under the provider's own
+	// name. There is no catalog to ask.
+	if (isManagedAiProvider(credential.provider)) {
+		const model = (await getAiProviderConfig(deps.db, configId))?.default_model;
+		if (!model) return { ok: false, reason: 'unsupported' };
+		return { ok: true, models: [{ id: model, label: AI_PROVIDER_INFO[credential.provider].name }] };
+	}
 	const lister =
 		credential.authMethod === AiAuthMethod.Subscription
 			? SUBSCRIPTION_MODEL_LISTERS[credential.provider]

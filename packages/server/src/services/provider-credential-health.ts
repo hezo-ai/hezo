@@ -20,6 +20,7 @@ import {
 	type AllowancePace,
 	allowancePace,
 	englishCount,
+	isManagedAiProvider,
 	type ProviderAllowance,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
@@ -72,6 +73,9 @@ export async function condemnRejectedProviderCredential(
 	provider: AiProvider,
 	credential: CondemnableCredential,
 ): Promise<CredentialCondemnation> {
+	// Its hosting plane turns a managed key off and on (a held account, a box being
+	// rebuilt), so a refusal proves nothing about it, and only the plane replaces it.
+	if (isManagedAiProvider(provider)) return 'not_proven';
 	const probe = await probeProviderCatalog(
 		provider,
 		credential.value,

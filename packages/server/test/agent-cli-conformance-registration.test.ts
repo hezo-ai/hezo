@@ -18,6 +18,7 @@ import {
 	type ConformanceHarness,
 	type LiveAdapterFixture,
 	type LiveModelProvider,
+	liveManagedBaseUrlEnvVar,
 	liveModelProviders,
 	liveProviderEnvVar,
 	liveProviderSubscriptionEnvVar,
@@ -233,11 +234,20 @@ describe('liveModelProviders', () => {
 	it('covers every supported pairing when every key is supplied', () => {
 		const all = withEnv(
 			Object.fromEntries(
-				ALL_AI_PROVIDERS.map((p) => [
+				ALL_AI_PROVIDERS.flatMap((p) => [
 					// Named through the builder's own helper: a test that re-derived the
 					// spelling would pass while the real variable went unread.
-					liveProviderEnvVar(p),
-					AI_PROVIDER_INFO[p].local ? 'http://host.docker.internal:1234' : 'sk-x',
+					[
+						liveProviderEnvVar(p),
+						AI_PROVIDER_INFO[p].local ? 'http://host.docker.internal:1234' : 'sk-x',
+					],
+					// A managed key runs only beside its endpoint and the one model it serves.
+					...(AI_PROVIDER_INFO[p].managed
+						? [
+								[liveManagedBaseUrlEnvVar(p), 'https://models.example/api'],
+								['HEZO_LIVE_MODEL_BASE_MODEL', 'vendor/model'],
+							]
+						: []),
 				]),
 			),
 			liveModelProviders,
@@ -253,6 +263,26 @@ describe('liveModelProviders', () => {
 				`${entry.provider} on ${entry.runtime}`,
 			).toBe(true);
 		}
+	});
+
+	it('runs a managed key only beside its endpoint and model', () => {
+		const key = { [liveProviderEnvVar(AiProvider.HezoCloud)]: 'sk-managed' };
+		expect(withEnv(key, liveModelProviders)).toEqual([]);
+
+		const [managed] = withEnv(
+			{
+				...key,
+				[liveManagedBaseUrlEnvVar(AiProvider.HezoCloud)]: 'https://models.example/api',
+				HEZO_LIVE_MODEL_BASE_MODEL: 'vendor/model',
+			},
+			liveModelProviders,
+		);
+		expect(managed).toMatchObject({
+			provider: AiProvider.HezoCloud,
+			credential: 'sk-managed',
+			baseUrl: 'https://models.example/api',
+			model: 'vendor/model',
+		});
 	});
 
 	it('gives a local runner its server URL and the documented sentinel', () => {

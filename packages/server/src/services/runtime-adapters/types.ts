@@ -218,6 +218,8 @@ export interface RuntimeEnvContext {
 	runModel: string | null;
 	/** The credential's own endpoint, for a provider whose host is per-install. */
 	baseUrl: string | null;
+	/** Headers every model request on the credential carries; null when it has none. */
+	requestHeaders: Readonly<Record<string, string>> | null;
 }
 
 /** What a runtime needs to contribute argv beyond the per-runtime arg tables. */
@@ -247,6 +249,13 @@ export const MAX_OFF_STREAM_USAGE_BYTES = 32 * 1024 * 1024;
  * and scrubs it only once the run is over.
  */
 export interface OffStreamUsage {
+	/**
+	 * What the file counts. `whole` is the run's whole usage, for a CLI whose
+	 * stream reports none or none until its end; the file stands in for the
+	 * stream. `extra` is usage the stream cannot see, made by a process the CLI
+	 * started (the completeness judge's own session), added to what it reports.
+	 */
+	readonly holds: 'whole' | 'extra';
 	/**
 	 * The usage the file holds so far. Never removes anything.
 	 *

@@ -119,6 +119,7 @@ export const grokAdapter: RuntimeAdapter = {
 		return ['--debug-file', join(ctx.containerHomeDir, GROK_DEBUG_BASENAME)];
 	},
 	offStreamUsage: {
+		holds: 'whole',
 		async read({ files, onError }) {
 			// Read whole: the log repeats a request's usage record, so it is counted by
 			// request id and a tail would drop every request before it. That is why a

@@ -7,8 +7,15 @@ import {
 	claudeCodeProviderUsesCustomEndpoint,
 	qualifiedMcpToolName,
 } from '@hezo/shared';
+import { claudeResultsUsage } from '../agent-stream-parser';
 import { buildDocWriteGuardScript, DOC_WRITE_GUARD_FILENAME } from '../doc-write-guard';
-import { buildClaudeCodeSettings } from '../stop-hook-prompt';
+import {
+	buildClaudeCodeSettings,
+	buildJudgeScriptForRuntime,
+	CLAUDE_CODE_JUDGE_USAGE_BASENAME,
+	JUDGE_SCRIPT_BASENAME,
+	judgeModelForProvider,
+} from '../stop-hook-prompt';
 import type {
 	McpDescriptor,
 	McpHttpDescriptor,
@@ -120,6 +127,24 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 	// "Background tasks still running after 600s; terminating."
 	backgroundTerminationMarker: /Background tasks still running after .*?terminating/i,
 	modelArg: claudeCodeModelArg,
+	// The stream counts every call the CLI makes but none its Stop hook's own
+	// processes make, so the judge's checks are read from the file its script
+	// keeps and added to the run's usage.
+	offStreamUsage: {
+		holds: 'extra',
+		async read({ files, onError }) {
+			try {
+				if (!(await files.exists(CLAUDE_CODE_JUDGE_USAGE_BASENAME))) return null;
+				return claudeResultsUsage(await files.read(CLAUDE_CODE_JUDGE_USAGE_BASENAME));
+			} catch (e) {
+				onError(`failed to read the completeness judge's usage: ${(e as Error).message}`);
+				return null;
+			}
+		},
+		async scrub(files) {
+			await files.remove(CLAUDE_CODE_JUDGE_USAGE_BASENAME);
+		},
+	},
 	staticEnvValue(key, value, ctx) {
 		// On a third-party Anthropic-compatible provider the subagent default should
 		// follow the run's own model rather than a pinned constant, so a provider
@@ -130,17 +155,27 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		return claudeCodeModelArg(ctx.provider, ctx.runModel);
 	},
 	credentialEnv(ctx) {
-		// A locally-hosted provider's endpoint is per-install, so it rides on the
-		// credential instead of a static table.
-		if (!ctx.baseUrl) return [];
-		return [
-			`ANTHROPIC_BASE_URL=${ctx.baseUrl}`,
-			// These runners authenticate, when they authenticate at all, from
-			// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
-			// present, so a key inherited from the host environment would silently win
-			// and be sent to the operator's own server. Blank it explicitly.
-			'ANTHROPIC_API_KEY=',
-		];
+		const out: string[] = [];
+		// A locally-hosted or managed provider's endpoint is per-install, so it rides
+		// on the credential instead of a static table.
+		if (ctx.baseUrl) {
+			out.push(
+				`ANTHROPIC_BASE_URL=${ctx.baseUrl}`,
+				// These endpoints authenticate, when they authenticate at all, from
+				// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
+				// present, so a key inherited from the host environment would silently win
+				// and be sent to someone else's server. Blank it explicitly.
+				'ANTHROPIC_API_KEY=',
+			);
+		}
+		// One `Name: value` per line, the form the CLI reads.
+		const headers = Object.entries(ctx.requestHeaders ?? {});
+		if (headers.length > 0) {
+			out.push(
+				`ANTHROPIC_CUSTOM_HEADERS=${headers.map(([name, value]) => `${name}: ${value}`).join('\n')}`,
+			);
+		}
+		return out;
 	},
 	build(descriptors: readonly McpDescriptor[], ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {
@@ -169,19 +204,19 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		const guardContainerPath = join(ctx.containerHomeDir, DOC_WRITE_GUARD_FILENAME);
 		const guardCommand = docSlugs.length > 0 ? `node ${guardContainerPath}` : null;
 
+		// The completeness judge, unless this invocation has none (`stopJudge`,
+		// false for the CEO chat). The doc-write guard above is emitted either way:
+		// it is a deterministic path match, unaffected by the judge.
+		const stopJudge = ctx.stopJudge !== false;
+		const judgeHostPath = join(ctx.hostHomeDir, JUDGE_SCRIPT_BASENAME);
+		const judgeCommand = stopJudge
+			? `node ${join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME)}`
+			: null;
+
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		// The doc-write guard above is emitted either way: it is a deterministic
-		// path match, unaffected by whether this invocation gets a completeness
-		// judge (`stopJudge`, false for the CEO chat).
 		const settingsContents = `${JSON.stringify(
-			buildClaudeCodeSettings(
-				ctx.provider ?? AiProvider.Anthropic,
-				ctx.runModel,
-				deniedTools,
-				guardCommand,
-				ctx.stopJudge !== false,
-			),
+			buildClaudeCodeSettings(deniedTools, guardCommand, judgeCommand),
 			null,
 			2,
 		)}\n`;
@@ -204,6 +239,22 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 				// Executed via `node <path>`, so it needs to be readable, not +x.
 				mode: 0o600,
 				contents: buildDocWriteGuardScript(docSlugs),
+			});
+		}
+		if (stopJudge) {
+			// The payload names no model, so the script carries the one to judge with.
+			// This settings file is only written for a Claude Code run, so the runtime
+			// is known: passing it keeps a credential switched onto Claude Code from
+			// being judged as its provider's default CLI would be.
+			const model = judgeModelForProvider(
+				ctx.provider ?? AiProvider.Anthropic,
+				ctx.runModel,
+				AgentRuntime.ClaudeCode,
+			);
+			files.push({
+				hostPath: judgeHostPath,
+				mode: 0o700,
+				contents: buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode, model) ?? '',
 			});
 		}
 

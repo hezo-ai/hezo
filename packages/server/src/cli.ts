@@ -931,6 +931,10 @@ export function resolveConfig(
 		// Parsed here, so the phrase itself goes no further than this function.
 		masterKey: masterKeyPhrase ? parseMasterKey(masterKeyPhrase) : undefined,
 		masterKeyHeld: heldKey !== undefined,
+		// File-only, like the held key it sits beside: the plane writes both.
+		managedModel: file.managedModel
+			? { ...file.managedModel, requestHeaders: file.managedModel.requestHeaders ?? {} }
+			: null,
 		configPath,
 	};
 

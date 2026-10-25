@@ -6,7 +6,9 @@ import {
 	AiProviderStatus,
 	ALL_AI_PROVIDERS,
 	AuthType,
+	isAddableAiProvider,
 	isAgentRuntime,
+	isManagedAiProvider,
 	providerRuntimes,
 	providerSupportsRuntime,
 	type SubscriptionLoginFailure,
@@ -46,6 +48,23 @@ import { releaseUsageHeldWakeups } from '../services/wakeup';
 const log = logger.child('routes');
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
+
+/**
+ * The refusal for any hand change to a managed credential, which its hosting
+ * plane writes on every boot: an edit would be undone at the next restart, and a
+ * deletion would take away the model the instance was given. Null for any other
+ * credential, or one that does not exist, which the route then answers itself.
+ */
+async function refuseManagedConfig(c: Context<Env>, configId: string): Promise<Response | null> {
+	const config = await getAiProviderConfig(c.get('db'), configId);
+	if (!config || !isManagedAiProvider(config.provider)) return null;
+	return err(
+		c,
+		'MANAGED_PROVIDER',
+		`${AI_PROVIDER_INFO[config.provider].name} is provided and kept up to date by this instance's host, so it cannot be changed here.`,
+		409,
+	);
+}
 
 /**
  * A credential stored, repaired, re-verified or made the default, or a deleted
@@ -258,11 +277,15 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		default_model?: string | null;
 	}>();
 
-	if (!body.provider || !VALID_PROVIDERS.has(body.provider)) {
+	if (
+		!body.provider ||
+		!VALID_PROVIDERS.has(body.provider) ||
+		isManagedAiProvider(body.provider as AiProvider)
+	) {
 		return err(
 			c,
 			'INVALID_PROVIDER',
-			`Provider must be one of: ${[...VALID_PROVIDERS].join(', ')}`,
+			`Provider must be one of: ${ALL_AI_PROVIDERS.filter(isAddableAiProvider).join(', ')}`,
 			400,
 		);
 	}
@@ -345,6 +368,8 @@ aiProvidersRoutes.delete('/ai-providers/:configId', async (c) => {
 
 	const db = c.get('db');
 	const configId = c.req.param('configId');
+	const managed = await refuseManagedConfig(c, configId);
+	if (managed) return managed;
 
 	const deleted = await deleteAiProviderConfig(db, configId);
 	if (!deleted) {
@@ -386,6 +411,8 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	if (!masterKeyManager.getKey()) {
 		return err(c, 'LOCKED', 'Server must be unlocked', 401);
 	}
+	const managed = await refuseManagedConfig(c, configId);
+	if (managed) return managed;
 
 	const cred = await getProviderConfigCredential(db, masterKeyManager, configId);
 	if (!cred) {
@@ -480,6 +507,8 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		base_url?: string;
 		allowance_daily_share_percent?: number | null;
 	}>();
+	const managed = await refuseManagedConfig(c, configId);
+	if (managed) return managed;
 	const hasLabel = 'label' in body;
 	const hasModel = 'default_model' in body;
 	const hasRuntime = 'runtime' in body;

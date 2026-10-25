@@ -7,7 +7,11 @@ import {
 	mergeRunUsage,
 } from '../agent-stream-parser';
 import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
-import { buildCodexJudgeScript, CODEX_JUDGE_HOOK_TIMEOUT_SEC } from '../stop-hook-prompt';
+import {
+	buildCodexJudgeScript,
+	CODEX_JUDGE_HOOK_TIMEOUT_SEC,
+	JUDGE_SCRIPT_BASENAME,
+} from '../stop-hook-prompt';
 import { CODEX_FEATURES_OFF } from './codex-features';
 import {
 	bearerEnvVarName,
@@ -33,8 +37,6 @@ function renderStopHookBlock(judgeScriptContainerPath: string): string {
 		`timeout = ${CODEX_JUDGE_HOOK_TIMEOUT_SEC}`,
 	].join('\n');
 }
-
-const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 
 // Codex runs a hook from user config only once its hash is saved as trusted,
 // and drops an untrusted one without a word on stderr or the stream
@@ -160,6 +162,7 @@ export const codexAdapter: RuntimeAdapter = {
 		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 	}),
 	offStreamUsage: {
+		holds: 'whole',
 		async read({ files, onError }) {
 			// Codex names no model on its `exec --json` stream and reports usage only on
 			// the one terminal turn event, so a run killed before that event records
