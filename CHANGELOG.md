@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.75.1 - 2026-10-25
+
+### Bug Fixes
+
+- **server:** accept an http managed model endpoint ([#1180](https://github.com/hezo-ai/hezo/pull/1180))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.75.0...0.75.1
+
 ## 0.75.0 - 2026-10-25
 
 ### Features
