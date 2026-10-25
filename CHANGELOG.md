@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.75.0 - 2026-10-25
+
+### Features
+
+- **server:** the managed Base AI model, a daily-limit pause and a cacheable completeness check ([#1178](https://github.com/hezo-ai/hezo/pull/1178))
+
+### Documentation
+
+- **cloud:** ask for a cacheable completeness check and the Base AI model on OpenRouter ([#1177](https://github.com/hezo-ai/hezo/pull/1177))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.74.0...0.75.0
+
 ## 0.74.0 - 2026-10-23
 
 ### Features
