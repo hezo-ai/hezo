@@ -926,8 +926,8 @@ rules: architecture § *Support chat*.
 Hezo Cloud's next launch removes two screens: the plane holds each tenant's
 recovery phrase and the instance unlocks itself at every boot, and every hosted
 instance gets a working model, the **Base AI model**: Claude Code on an open
-model, reached through OpenRouter with one key per tenant and paid for by Hezo. **H37–H39 are one release (the cloud calls
-it K)**; **H40–H42 are a later one (M)**. The cloud copy numbers these one
+model, reached through OpenRouter with one key per tenant and paid for by Hezo.
+**H37–H39 are one release (the cloud calls it K)**; **H40–H42 are a later one (M)**. The cloud copy numbers these one
 higher (H38–H43), as it does H35–H37. Everything but H42 is inert without
 hosted config, and the self-hosted guidance on the master key is unchanged: a self-hoster still
 holds their own phrase and nothing here lets them store it.
