@@ -265,6 +265,17 @@ describe('resolveConfig', () => {
 			expect(resolveConfig(argv('--master-key', PHRASE), EMPTY_ENV).masterKeyHeld).toBe(false);
 			expect(resolveConfig(argv(), EMPTY_ENV).masterKeyHeld).toBe(false);
 		});
+
+		it('carries the model it provides, with no headers when the file names none', () => {
+			const managedModel = {
+				baseUrl: 'https://models.example/api',
+				model: 'vendor/model',
+				apiKey: 'sk-managed',
+			};
+			const config = resolveConfig(withConfig({ ...HOSTED, managedModel }), EMPTY_ENV);
+			expect(config.managedModel).toEqual({ ...managedModel, requestHeaders: {} });
+			expect(resolveConfig(withConfig(HOSTED), EMPTY_ENV).managedModel).toBeNull();
+		});
 	});
 
 	it('handles multiple flags combined', () => {

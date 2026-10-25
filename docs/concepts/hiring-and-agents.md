@@ -133,7 +133,8 @@ info icon to see the reason. See
 [how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
 
 The model provider can also turn a run away before the agent gets a turn, because the model
-is at capacity, the request was rate limited, or a subscription's usage allowance is spent.
+is at capacity, the request was rate limited, a subscription's usage allowance is spent, or an
+API key has reached its daily spending limit.
 The run consumed nothing, so Hezo treats it the same way: the run is recorded as cancelled
 and the work goes back on the queue.
 
@@ -152,6 +153,9 @@ and the time. To resume sooner, for example after adding credits, press **Run no
 waiting task. If that run gets through, the rest of the work on that credential resumes
 with it. Replacing the credential in Settings > AI Providers also ends the pause. When the
 provider gives no reset time, Hezo tries a single run every half hour until one gets through.
+
+A key's daily spending limit, which OpenRouter lets you set on a key, pauses the credential in
+the same way. The pause lasts until the limit resets at 00:00 UTC.
 
 When the pause ends, the waiting work does not all start at once. It resumes oldest first,
 one run every 30 seconds, so a few runs can show whether the allowance is really back

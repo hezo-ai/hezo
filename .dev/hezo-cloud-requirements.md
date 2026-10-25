@@ -4,7 +4,7 @@
 of them optional, plus **H33**, which is a defect in shipped work rather than a
 new ask. Everything here is **additive and inert unless hosted config
 is present** — self-hosted behaviour must stay byte-identical. **H27, H28, H29,
-H38 and H42 are the recorded exceptions**: product changes Hezo Cloud asked for
+H38, H41 and H42 are the recorded exceptions**: product changes Hezo Cloud asked for
 that alter what a self-hosted instance does too, each stated as such below.
 
 Every claim below was verified against the working tree, not from memory. Where
@@ -55,8 +55,8 @@ together from H24 on.
 | **H37** | `custodianMasterKey`: the plane holds the phrase; anything but `unlocked` is fatal | a hosted instance that unlocks itself at every boot | **done** |
 | **H38** | `setup()` never overwrites an existing canary | an enrollment never orphaning encrypted data | **done**, changes self-hosted behaviour |
 | **H39** | No phrase screen on a key-holding instance; no password form where an issuer owns sign-in | sign-in straight to the CEO chat | **done** |
-| **H40** | A managed `hezo_cloud` provider, shown as "Base AI model" | every hosted instance working with no model setup | **large** |
-| **H41** | An error family for the Base AI model's spend-limit refusal, ahead of `credit` | a run that waits for the limit to reset rather than failing as out of credit | small |
+| ~~H40~~ | ~~A managed `hezo_cloud` provider, shown as "Base AI model"~~ | every hosted instance working with no model setup | **done** |
+| ~~H41~~ | ~~An error family for the Base AI model's spend-limit refusal, ahead of `credit`~~ | a run that waits for the limit to reset rather than failing as out of credit | **done**, changes self-hosted behaviour |
 | **H42** | A completeness check the cache can read | a lower model cost per container-hour; not a launch gate | medium, changes self-hosted behaviour |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
@@ -928,7 +928,7 @@ recovery phrase and the instance unlocks itself at every boot, and every hosted
 instance gets a working model, the **Base AI model**: Claude Code on an open
 model, reached through OpenRouter with one key per tenant and paid for by Hezo.
 **H37–H39 are one release (the cloud calls it K)**; **H40–H42 are a later one (M)**. The cloud copy numbers these one
-higher (H38–H43), as it does H35–H37. Everything but H42 is inert without
+higher (H38–H43), as it does H35–H37. Everything but H41 and H42 is inert without
 hosted config, and the self-hosted guidance on the master key is unchanged: a self-hoster still
 holds their own phrase and nothing here lets them store it.
 
@@ -971,7 +971,11 @@ answers `SSO_ONLY` to every password change there. The cloud's own criterion is
 that no plane path ever sends a tenant to the phrase gate; this is the
 instance's half.
 
-### H40 — a managed `hezo_cloud` provider, shown as "Base AI model"
+### H40 — a managed `hezo_cloud` provider, shown as "Base AI model" *(done)*
+
+The config block is `managedModel: { baseUrl, model, apiKey, requestHeaders? }`, accepted only
+beside `custodianMasterKey`; the tenant header is one of `requestHeaders`. `.dev/architecture.md`
+§ 6 describes the result.
 
 - **Table properties, not a branch:** a `managed` property that the condemn
   path (`condemnRejectedProviderCredential`), the error copy and the routes
@@ -999,7 +1003,13 @@ instance's half.
 - Its name in every catalog is "Base AI model"; the underlying model and CLI are
   never named to the user.
 
-### H41 — an error family for the Base AI model's spend-limit refusal
+### H41 — an error family for the Base AI model's spend-limit refusal *(done)*
+
+Built as a row of the existing `usage_limit` family rather than a family of its own: a daily
+limit is a spent allowance with a reset, which is exactly what that family's credential hold
+waits out, so the runner needed no new branch. **It changes self-hosted behaviour**: any
+key whose daily limit OpenRouter refuses in these words now waits for the reset, a
+self-hoster's own OpenRouter key included, where it used to fail as out of credit.
 
 Each tenant's key has a daily dollar limit that no honest tenant meets.
 OpenRouter refuses a key near or past it in two shapes, neither with a retry

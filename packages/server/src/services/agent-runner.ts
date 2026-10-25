@@ -417,6 +417,7 @@ export function buildProviderEnv(
 		provider,
 		runModel: runModel?.trim() || null,
 		baseUrl: credential.baseUrl ?? null,
+		requestHeaders: credential.requestHeaders ?? null,
 	};
 	const out: string[] = [];
 	// What this CLI needs regardless of provider, then the provider's own bag with
@@ -428,6 +429,10 @@ export function buildProviderEnv(
 	}
 	for (const [key, value] of Object.entries(binding?.staticEnv ?? {})) {
 		out.push(`${key}=${adapter?.staticEnvValue?.(key, value, envCtx) ?? value}`);
+	}
+	if (envCtx.runModel) {
+		const model = adapter?.modelArg?.(provider, envCtx.runModel) ?? envCtx.runModel;
+		for (const key of binding?.runModelEnv ?? []) out.push(`${key}=${model}`);
 	}
 	out.push(...(adapter?.credentialEnv?.(envCtx) ?? []));
 	const varName = binding?.credentialEnvByAuthMethod[credential.authMethod];

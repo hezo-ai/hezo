@@ -223,6 +223,9 @@ const LIVE_PROVIDER_ENV: Record<AiProvider, { slug: string; model?: string }> = 
 	// The local runners take a server URL in place of a key - see `baseUrl`.
 	[AiProvider.Ollama]: { slug: 'OLLAMA' },
 	[AiProvider.LmStudio]: { slug: 'LMSTUDIO' },
+	// A managed credential needs its endpoint beside the key, and its model is the
+	// one the key is locked to - see {@link liveManagedBaseUrlEnvVar}.
+	[AiProvider.HezoCloud]: { slug: 'BASE_MODEL' },
 };
 
 /**
@@ -245,6 +248,14 @@ export function liveProviderEnvVar(provider: AiProvider): string {
  * put it in. Anthropic's is a bare token, but it reads from a file too: one rule
  * for all three beats a per-provider exception.
  */
+/**
+ * The env var carrying a managed provider's endpoint, which its key needs beside
+ * it: the hosted config supplies both, so a live run has to as well.
+ */
+export function liveManagedBaseUrlEnvVar(provider: AiProvider): string {
+	return `HEZO_${LIVE_PROVIDER_ENV[provider].slug}_BASE_URL`;
+}
+
 export function liveProviderSubscriptionEnvVar(provider: AiProvider): string {
 	return `HEZO_${LIVE_PROVIDER_ENV[provider].slug}_SUBSCRIPTION_FILE`;
 }
@@ -296,7 +307,10 @@ export function liveModelProviders(): LiveModelProvider[] {
 		const base = { name: info.name, provider, ...(model ? { model } : {}) };
 
 		const key = process.env[liveProviderEnvVar(provider)]?.trim();
-		if (key) {
+		const managedBaseUrl = info.managed
+			? process.env[liveManagedBaseUrlEnvVar(provider)]?.trim()
+			: undefined;
+		if (key && (!info.managed || (managedBaseUrl && model))) {
 			for (const runtime of providerRuntimes(provider)) {
 				out.push({
 					...base,
@@ -307,6 +321,7 @@ export function liveModelProviders(): LiveModelProvider[] {
 					// sentinel, exactly as the create route stores it.
 					credential: info.local ? info.local.authTokenSentinel : key,
 					...(info.local ? { baseUrl: key } : {}),
+					...(managedBaseUrl ? { baseUrl: managedBaseUrl } : {}),
 				});
 			}
 		}

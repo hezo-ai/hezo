@@ -1305,6 +1305,7 @@ describe('runtime adapter behaviour beyond MCP', () => {
 		provider: AiProvider.Anthropic,
 		runModel: null,
 		baseUrl: null,
+		requestHeaders: null,
 		...over,
 	});
 

@@ -6,6 +6,7 @@ import {
 	AiProviderStatus,
 	credentialSerializesRuns,
 	effectiveRuntime,
+	isManagedAiProvider,
 } from '@hezo/shared';
 import { Loader2, Pencil, Plus, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -95,6 +96,11 @@ export function AiProvidersSection() {
 			header: 'Provider',
 			render: (c) => {
 				const info = AI_PROVIDER_INFO[c.provider as AiProvider];
+				// A managed provider is named for what the tenant gets, never for the CLI
+				// behind it.
+				if (isManagedAiProvider(c.provider as AiProvider)) {
+					return <span className="text-[13px]">{info.name}</span>;
+				}
 				// The label comes from the RESOLVED runtime rather than the provider's
 				// default, so a switched credential reads correctly instead of showing
 				// what it would have run on before the switch.
@@ -129,11 +135,13 @@ export function AiProvidersSection() {
 			key: 'auth',
 			header: 'Auth',
 			hideOnMobile: true,
-			render: (c) => (
-				<Badge color="neutral">
-					{c.auth_method === AiAuthMethod.Subscription ? 'Subscription' : 'API Key'}
-				</Badge>
-			),
+			// A managed credential is not a key the tenant holds, so it shows no kind.
+			render: (c) =>
+				isManagedAiProvider(c.provider as AiProvider) ? null : (
+					<Badge color="neutral">
+						{c.auth_method === AiAuthMethod.Subscription ? 'Subscription' : 'API Key'}
+					</Badge>
+				),
 		},
 		{
 			key: 'status',
@@ -156,12 +164,17 @@ export function AiProvidersSection() {
 			key: 'model',
 			header: t('settings.provider.model.label'),
 			hideOnMobile: true,
-			render: (c) => <DefaultModelSelector config={c} />,
+			// A managed key runs one model, which is never named to the tenant.
+			render: (c) =>
+				isManagedAiProvider(c.provider as AiProvider) ? null : <DefaultModelSelector config={c} />,
 		},
 		{
 			key: 'actions',
 			header: '',
 			render: (c) => {
+				// Its hosting plane writes a managed credential on every boot, so the only
+				// choice left here is whether it is the default.
+				const managed = isManagedAiProvider(c.provider as AiProvider);
 				return (
 					<span className="flex items-center gap-2 justify-end">
 						{verifiedOk[c.id] && (
@@ -175,16 +188,18 @@ export function AiProvidersSection() {
 								/>
 							</Tooltip>
 						)}
-						<Tooltip content={t('settings.provider.edit')}>
-							<button
-								type="button"
-								onClick={() => setEditing(c)}
-								aria-label={t('settings.provider.editFor', { name: c.label })}
-								className="text-text-3 hover:text-text-1"
-							>
-								<Pencil className="w-3.5 h-3.5" />
-							</button>
-						</Tooltip>
+						{!managed && (
+							<Tooltip content={t('settings.provider.edit')}>
+								<button
+									type="button"
+									onClick={() => setEditing(c)}
+									aria-label={t('settings.provider.editFor', { name: c.label })}
+									className="text-text-3 hover:text-text-1"
+								>
+									<Pencil className="w-3.5 h-3.5" />
+								</button>
+							</Tooltip>
+						)}
 						{!c.is_default && (
 							<Tooltip content="Set as default">
 								<button
@@ -198,31 +213,35 @@ export function AiProvidersSection() {
 								</button>
 							</Tooltip>
 						)}
-						<Tooltip content="Verify">
-							<button
-								type="button"
-								onClick={() => handleVerify(c.id)}
-								disabled={verifyingId === c.id}
-								aria-label={`Verify ${c.label}`}
-								className="text-text-3 hover:text-text-1 disabled:opacity-50"
-							>
-								{verifyingId === c.id ? (
-									<Loader2 className="w-3.5 h-3.5 animate-spin" />
-								) : (
-									<ShieldCheck className="w-3.5 h-3.5" />
-								)}
-							</button>
-						</Tooltip>
-						<Tooltip content="Remove">
-							<button
-								type="button"
-								onClick={() => deleteProvider.mutate(c.id)}
-								aria-label={`Remove ${c.label}`}
-								className="text-text-3 hover:text-danger"
-							>
-								<Trash2 className="w-3.5 h-3.5" />
-							</button>
-						</Tooltip>
+						{!managed && (
+							<Tooltip content="Verify">
+								<button
+									type="button"
+									onClick={() => handleVerify(c.id)}
+									disabled={verifyingId === c.id}
+									aria-label={`Verify ${c.label}`}
+									className="text-text-3 hover:text-text-1 disabled:opacity-50"
+								>
+									{verifyingId === c.id ? (
+										<Loader2 className="w-3.5 h-3.5 animate-spin" />
+									) : (
+										<ShieldCheck className="w-3.5 h-3.5" />
+									)}
+								</button>
+							</Tooltip>
+						)}
+						{!managed && (
+							<Tooltip content="Remove">
+								<button
+									type="button"
+									onClick={() => deleteProvider.mutate(c.id)}
+									aria-label={`Remove ${c.label}`}
+									className="text-text-3 hover:text-danger"
+								>
+									<Trash2 className="w-3.5 h-3.5" />
+								</button>
+							</Tooltip>
+						)}
 					</span>
 				);
 			},

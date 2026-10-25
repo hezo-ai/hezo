@@ -130,17 +130,27 @@ export const claudeCodeAdapter: RuntimeAdapter = {
 		return claudeCodeModelArg(ctx.provider, ctx.runModel);
 	},
 	credentialEnv(ctx) {
-		// A locally-hosted provider's endpoint is per-install, so it rides on the
-		// credential instead of a static table.
-		if (!ctx.baseUrl) return [];
-		return [
-			`ANTHROPIC_BASE_URL=${ctx.baseUrl}`,
-			// These runners authenticate, when they authenticate at all, from
-			// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
-			// present, so a key inherited from the host environment would silently win
-			// and be sent to the operator's own server. Blank it explicitly.
-			'ANTHROPIC_API_KEY=',
-		];
+		const out: string[] = [];
+		// A locally-hosted or managed provider's endpoint is per-install, so it rides
+		// on the credential instead of a static table.
+		if (ctx.baseUrl) {
+			out.push(
+				`ANTHROPIC_BASE_URL=${ctx.baseUrl}`,
+				// These endpoints authenticate, when they authenticate at all, from
+				// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
+				// present, so a key inherited from the host environment would silently win
+				// and be sent to someone else's server. Blank it explicitly.
+				'ANTHROPIC_API_KEY=',
+			);
+		}
+		// One `Name: value` per line, the form the CLI reads.
+		const headers = Object.entries(ctx.requestHeaders ?? {});
+		if (headers.length > 0) {
+			out.push(
+				`ANTHROPIC_CUSTOM_HEADERS=${headers.map(([name, value]) => `${name}: ${value}`).join('\n')}`,
+			);
+		}
+		return out;
 	},
 	build(descriptors: readonly McpDescriptor[], ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {

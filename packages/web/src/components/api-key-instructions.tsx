@@ -1,4 +1,4 @@
-import { AiProvider } from '@hezo/shared';
+import { type AddableAiProvider, AiProvider, isAddableAiProvider } from '@hezo/shared';
 import { Trans } from '../lib/i18n';
 import {
 	InstructionsBox,
@@ -34,9 +34,10 @@ const KIMI_KEY_INSTRUCTIONS: ProviderInstructionContent = {
 /**
  * Per-provider "how to get an API key" walkthroughs, each linking to the
  * provider's own key console. Deliberately a full record (not Partial): adding
- * a provider without its key instructions should fail the typecheck.
+ * a provider without its key instructions should fail the typecheck. The managed
+ * provider is configured by its hosting plane, so nobody fetches a key for it.
  */
-export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent> = {
+export const API_KEY_INSTRUCTIONS: Record<AddableAiProvider, ProviderInstructionContent> = {
 	[AiProvider.Anthropic]: {
 		title: 'How to get your Anthropic API key',
 		steps: [
@@ -254,5 +255,6 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 
 /** The gray, provider-specific "how to get your API key" box. */
 export function ApiKeyInstructions({ provider }: { provider: AiProvider }) {
+	if (!isAddableAiProvider(provider)) return null;
 	return <InstructionsBox content={API_KEY_INSTRUCTIONS[provider]} />;
 }

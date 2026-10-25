@@ -1,4 +1,5 @@
 import {
+	type AddableAiProvider,
 	type AgentRuntime,
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
@@ -28,11 +29,12 @@ import { Input } from './ui/input';
 // Display order mirrors the catalogue order used elsewhere in the app. Shared by
 // every surface that renders the provider card grid (onboarding + settings), so
 // a provider missing here is unreachable in the UI even though the API accepts
-// it — keep it in sync with the AiProvider enum.
+// it — keep it in sync with the AiProvider enum. The managed provider is the
+// exception: a hosting plane configures it, so it is never offered here.
 //
 // Hosted providers first, then the self-hosted runners, which are a different
 // kind of choice: the operator supplies a server URL instead of a key.
-export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
+export const ADD_PROVIDER_ORDER: readonly AddableAiProvider[] = [
 	AiProvider.DeepSeek,
 	AiProvider.ZAi,
 	AiProvider.Anthropic,

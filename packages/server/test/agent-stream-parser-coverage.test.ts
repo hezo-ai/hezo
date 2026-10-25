@@ -1,8 +1,9 @@
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	classifyRuntimeError,
 	createAgentStreamParser,
+	dailyLimitResetAt,
 	parseCodexRetryAt,
 } from '../src/services/agent-stream-parser';
 import { RunFailureClass } from '../src/services/run-failure-classification';
@@ -104,6 +105,63 @@ describe('classifyRuntimeError', () => {
 		expect(classifyRuntimeError('429 Too Many Requests')?.family).toBe('rate_limit');
 		expect(classifyRuntimeError('usage limit reached')?.family).toBe('usage_limit');
 		expect(classifyRuntimeError('something else entirely')?.family).toBe('unknown');
+	});
+
+	describe("a key's daily spending limit", () => {
+		// Recorded from OpenRouter on a key with a daily limit (2026-10-25), as Claude
+		// Code prints them: before the limit is spent a request whose estimate passes
+		// what is left, and once it is spent every request.
+		const KEY_URL = 'https://openrouter.ai/workspaces/default/keys/5bca2791';
+		const AFFORD = `API Error: 402 {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 32000 tokens, but can only afford 333. To increase, visit ${KEY_URL} and adjust the key's daily limit","code":402}}`;
+		const PROMPT = `API Error: 402 {"error":{"message":"Prompt tokens limit exceeded: 1504 > 1333. To increase, visit ${KEY_URL} and adjust the key's daily limit","code":402}}`;
+		const SPENT = `API Error: 403 {"error":{"message":"Key limit exceeded (daily limit). Manage it using ${KEY_URL} $0.00 of $0.00 used; resets 2026-10-26T00:00:00.000Z.","code":403}}`;
+
+		it('waits for the reset rather than reading as a lack of credit', () => {
+			for (const raw of [AFFORD, PROMPT, SPENT]) {
+				const verdict = classifyRuntimeError(raw);
+				expect(verdict?.family, raw).toBe('usage_limit');
+				expect(verdict?.failure).toBe(RunFailureClass.Transient);
+				expect(verdict?.message).toContain('daily spending limit');
+				expect(verdict?.message).toContain(raw);
+			}
+		});
+
+		it('resumes at the time a spent limit states', () => {
+			expect(classifyRuntimeError(SPENT)?.retryAt?.toISOString()).toBe('2026-10-26T00:00:00.000Z');
+		});
+
+		it('resumes at the next 00:00 UTC when the refusal states no time', () => {
+			const now = new Date('2026-10-25T13:45:00Z');
+			expect(dailyLimitResetAt(AFFORD, now).toISOString()).toBe('2026-10-26T00:00:00.000Z');
+			const verdict = classifyRuntimeError(PROMPT);
+			expect(verdict?.retryAt?.getUTCHours()).toBe(0);
+			expect(verdict?.retryAt && verdict.retryAt.getTime() > Date.now()).toBe(true);
+		});
+
+		// A limit that never resets cannot be waited out.
+		it('leaves a total limit as a lack of credit', () => {
+			const total = `API Error: 402 {"error":{"message":"Prompt tokens limit exceeded: 20700 > 9523. To increase, visit ${KEY_URL} and adjust the key's total limit","code":402}}`;
+			const verdict = classifyRuntimeError(total);
+			expect(verdict?.family).toBe('credit');
+			expect(verdict?.failure).toBe(RunFailureClass.Permanent);
+		});
+	});
+
+	it('tells a managed credential nothing about topping up or replacing it', () => {
+		const credit = classifyRuntimeError('HTTP 402 Payment Required', AiProvider.HezoCloud);
+		expect(credit?.family).toBe('credit');
+		expect(credit?.message).toContain('Base AI model is out of credit');
+		expect(credit?.message).not.toContain('switch');
+
+		const auth = classifyRuntimeError('HTTP 401 Unauthorized', AiProvider.HezoCloud);
+		expect(auth?.family).toBe('auth');
+		expect(auth?.message).toContain("Base AI model refused this instance's credential");
+		expect(auth?.message).not.toContain('check the team');
+
+		// Any other provider keeps the advice it can act on.
+		expect(classifyRuntimeError('HTTP 401 Unauthorized', AiProvider.DeepSeek)?.message).toContain(
+			"check the team's provider credential",
+		);
 	});
 
 	it('does not treat a provider catch-all as transient', () => {

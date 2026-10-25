@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
+import { AiProvider, deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
 import { HeldMasterKeyError, MasterKeyManager } from '../src/crypto/master-key';
@@ -9,6 +9,7 @@ import { createMemoryDb } from '../src/db/client';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { waitForBackground } from '../src/lib/background';
 import { getInstanceBaseUrl, INSTANCE_BASE_URL_KEY, setSystemMeta } from '../src/lib/system-meta';
+import { getAiProviderStatus, selectProviderConfig } from '../src/services/ai-provider-keys';
 import { getSuperuserId } from '../src/services/superuser';
 import { getRunSocketDir } from '../src/services/workspace';
 import {
@@ -115,6 +116,29 @@ describe('startup with a held master key', () => {
 		expect(again.masterKeyState).toBe('unlocked');
 		expect(await getSuperuserId(again.db)).toBe(admin);
 		expect(await getInstanceBaseUrl(again.db)).toBe('https://hezo.example.com');
+	}, 120_000);
+
+	// The setup screen's model step is gone on a hosted instance, so the boot is
+	// what gives it a model, before the unlock hook sends the seeded brief to it.
+	it('writes the model its control plane provides, and removes it once the plane stops', async () => {
+		const dataDir = freshDataDir();
+		const managedModel = {
+			baseUrl: 'https://models.example/api',
+			model: 'vendor/model',
+			apiKey: 'sk-managed',
+			requestHeaders: { 'x-session-id': 'tenant-1' },
+		};
+		const first = await boot(dataDir, { masterKey: keyFor(PHRASE_A), managedModel });
+		expect(await getAiProviderStatus(first.db)).toEqual({
+			configured: true,
+			providers: [AiProvider.HezoCloud],
+		});
+		const selected = await selectProviderConfig(first.db, AiProvider.HezoCloud);
+		expect(selected).toMatchObject({ label: 'Base AI model', defaultModel: 'vendor/model' });
+		await shutdown();
+
+		const again = await boot(dataDir, { masterKey: keyFor(PHRASE_A), managedModel: null });
+		expect(await getAiProviderStatus(again.db)).toEqual({ configured: false, providers: [] });
 	}, 120_000);
 });
 

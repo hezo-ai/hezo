@@ -218,6 +218,8 @@ export interface RuntimeEnvContext {
 	runModel: string | null;
 	/** The credential's own endpoint, for a provider whose host is per-install. */
 	baseUrl: string | null;
+	/** Headers every model request on the credential carries; null when it has none. */
+	requestHeaders: Readonly<Record<string, string>> | null;
 }
 
 /** What a runtime needs to contribute argv beyond the per-runtime arg tables. */

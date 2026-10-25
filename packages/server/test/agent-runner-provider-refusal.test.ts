@@ -614,6 +614,57 @@ async function paceNotices(): Promise<string[]> {
 	return r.rows.map((row) => row.message);
 }
 
+// A key's daily spending limit, as OpenRouter refuses a spent one and Claude
+// Code reports it. The limit resets on its own, so the work waits for the time
+// the refusal states instead of failing as a lack of credit.
+describe('runAgent on a spent daily limit', () => {
+	let claudeConfigId: string;
+
+	beforeAll(async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider: 'deepseek', api_key: 'sk-daily', label: 'daily-limit' }),
+		});
+		globalThis.fetch = originalFetch;
+		claudeConfigId = (await res.json()).data.id;
+	});
+
+	it('hands the work back until the stated reset and holds the credential', async () => {
+		const resetAt = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+		resetAt.setUTCHours(0, 0, 0, 0);
+		const refusal = `API Error: 403 {"error":{"message":"Key limit exceeded (daily limit). Manage it using https://openrouter.ai/workspaces/default/keys/abc $0.00 of $0.00 used; resets ${resetAt.toISOString()}.","code":403}}`;
+		const task = {
+			...(await makeTask('Refused on a spent daily limit')),
+			runtime_type: 'claude_code' as const,
+		};
+
+		const result = await runAgent(
+			deps(
+				refusalDocker([
+					{ type: 'result', subtype: 'success', is_error: true, result: refusal, num_turns: 1 },
+				]),
+			),
+			agent(),
+			task,
+			project(),
+		);
+
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.ProviderUsageLimit);
+		expect(result.requeue?.notBefore?.getTime()).toBe(resetAt.getTime());
+		const row = await runRow(result.heartbeatRunId as string);
+		expect(row.status).toBe('cancelled');
+		expect(row.error).toContain('daily spending limit');
+		const held = await db.query<{ usage_limited_until: Date | null }>(
+			'SELECT usage_limited_until FROM ai_provider_configs WHERE id = $1',
+			[claudeConfigId],
+		);
+		expect(held.rows[0].usage_limited_until?.getTime()).toBe(resetAt.getTime());
+	});
+});
+
 describe('runAgent allowance pace', () => {
 	beforeEach(async () => {
 		await db.query('UPDATE ai_provider_configs SET usage_limited_until = NULL');
