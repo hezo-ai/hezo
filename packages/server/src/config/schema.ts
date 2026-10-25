@@ -374,10 +374,16 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
  * at, the one model its key may ask for, the key, and the headers every request
  * carries. A header value cannot hold a line break, since the CLI reads the
  * headers one per line.
+ *
+ * The endpoint may be `http:` as well as `https:`. The plane is the only writer
+ * of this block, and a fleet the plane runs on one machine points it at a local
+ * stand-in no agent container could trust a certificate from.
  */
 const managedModelSchema = z
 	.object({
-		baseUrl: httpsUrl('baseUrl'),
+		baseUrl: z.url().refine((value) => /^https?:\/\//.test(value), {
+			message: 'baseUrl must be an http: or https: URL',
+		}),
 		model: z.string().trim().min(1),
 		apiKey: z.string().trim().min(1),
 		requestHeaders: z

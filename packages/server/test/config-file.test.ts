@@ -191,11 +191,17 @@ describe('loadConfigFile', () => {
 				expect(() => loadConfigFile(path)).toThrow(/Settings > AI Providers/);
 			});
 
-			it('is refused with an endpoint that is not https', () => {
-				const path = write(
-					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'http://models.example/api', model: 'm', apiKey: 'k' } };`,
+			// A plane running its fleet on one machine points it at a plain-HTTP stand-in.
+			it('takes an http endpoint, and refuses one that is neither http nor https', () => {
+				const plain = write(
+					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'http://models.local:4100/api', model: 'm', apiKey: 'k' } };`,
 				);
-				expect(() => loadConfigFile(path)).toThrow(/baseUrl must be an https: URL/);
+				expect(loadConfigFile(plain).managedModel?.baseUrl).toBe('http://models.local:4100/api');
+
+				const other = write(
+					`module.exports = { ${HOSTED}, managedModel: { baseUrl: 'ftp://models.example/api', model: 'm', apiKey: 'k' } };`,
+				);
+				expect(() => loadConfigFile(other)).toThrow(/baseUrl must be an http: or https: URL/);
 			});
 
 			// The CLI reads the headers one per line, so a line break would forge a second header.
