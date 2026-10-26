@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.75.2 - 2026-10-26
+
+### Bug Fixes
+
+- **server:** tell Claude Code the managed model's context window ([#1182](https://github.com/hezo-ai/hezo/pull/1182))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.75.1...0.75.2
+
 ## 0.75.1 - 2026-10-25
 
 ### Bug Fixes
