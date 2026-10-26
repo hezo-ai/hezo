@@ -17,7 +17,8 @@
 
 <p align="center">
   <strong>Run teams of AI agents like an organisation - sandboxed, with budget caps
-  and your own model keys. Open source, and hosted if you'd rather not run it.</strong>
+  and the models you choose. Open source, and hosted with AI included if you'd rather
+  not run it.</strong>
 </p>
 
 <p align="center">
@@ -52,7 +53,7 @@ manage goals and projects, not twenty terminal tabs.
 
 Because those agents run real, often AI-written code, Hezo is **secure by design**: agents
 never hold the real value of a secret you store, everything sensitive is encrypted behind a
-key only you hold, and every project runs sandboxed in its own container.
+master key, and every project runs sandboxed in its own container.
 
 ## Quickstart
 
@@ -230,10 +231,11 @@ for the full picture.
   <img src="assets/readme/secret-flow.gif" alt="A placeholder leaves the agent container, the proxy checks the allowlist and substitutes the real key, and anything else is blocked" width="470" />
 </p>
 
-Your model accounts and your spend are yours on either path.
-[Self-host it](./docs/deployment/self-hosting.md) and the machine and the data are
-yours too; on [Hezo Cloud](./docs/cloud/overview.md) we run the box and still never
-hold your recovery phrase.
+[Self-host it](./docs/deployment/self-hosting.md) and the models you connect, the
+machine, the data and the master key are all yours. On
+[Hezo Cloud](./docs/cloud/overview.md) we run the box and include AI inference on the
+Base AI model, and any model account you connect is still billed to you by its
+provider.
 
 ## Works with your models
 

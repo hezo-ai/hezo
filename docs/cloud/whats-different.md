@@ -16,7 +16,7 @@ of what does not apply, and what replaces it.
 | [Concepts](/docs/concepts/projects-and-teams) | Yes, unchanged |
 | [Chat & messaging apps](/docs/chat/overview) | Yes, unchanged |
 | [Security](/docs/security/secret-protection) | Yes, unchanged |
-| [AI models & connections](/docs/ai-models) | Yes, unchanged - you bring your own accounts |
+| [AI models & connections](/docs/ai-models) | Yes, for the model accounts you bring. Hezo Cloud also includes [the Base AI model](#the-base-ai-model) |
 | [MCP API reference](/docs/reference/mcp-api) | Yes, unchanged |
 | [Containers](/docs/containers/overview) | Read it for how sandboxing works. The backend is fixed for you, so the parts about choosing or switching one do not apply |
 | [Budgets & cost control](/docs/concepts/budgets-and-costs) | Yes, and your plan sets the container-hour allowance |
@@ -25,14 +25,35 @@ of what does not apply, and what replaces it.
 | [Deployment](/docs/deployment/self-hosting), every page | No - we run the machine |
 | [CLI reference](/docs/reference/cli) | No - you have no shell on the machine |
 
+## The Base AI model
+
+A self-hosted instance runs only on models you bring. On Hezo Cloud your
+instance also comes with the **Base AI model** already connected, so setup never
+asks you for a model and your agents can work from the first minute.
+
+- **It is included in your plan.** It is not metered in tokens and has no
+  separate bill. It only works while your containers are up, so your
+  container-hours bound it, with a daily safety limit set well above what they
+  can use. See
+  [Plans, usage & billing](/docs/cloud/plans-and-billing#ai-models).
+- **It is listed with your other AI providers**, and it is the default model on
+  a new instance. You cannot edit or remove it: we run it and choose the model
+  behind it, and we may change that model.
+- **You can still use your own models.** Connect a provider as
+  [AI model support](/docs/ai-models) describes, then make it the default, or
+  give it to one agent and leave the rest on the Base AI model.
+
+Where the Base AI model sends your agents' work is covered in
+[Data & security on Hezo Cloud](/docs/cloud/data-and-security#the-base-ai-model).
+
 ## No shell, so no command line
 
 Everything the `hezo` command does is done for you or from the web app,
 backups included.
 
 **Your data is looked after for you.** The database is backed up daily with
-point-in-time recovery, your files are versioned, and a lost machine is rebuilt
-from a snapshot with no data loss.
+point-in-time recovery, and a lost machine is rebuilt from a snapshot with no
+data loss. Uploaded files have no separate backup.
 
 **Taking a backup into your own hands is a self-hosted thing**, since it is the
 `hezo` command that does it. If you want an archive you hold yourself, or to
@@ -62,12 +83,14 @@ anyone signing up starts current.
 ## Signing in, and unlocking
 
 **Signing in** is by emailed link. There is no password to set, change or
-reset. Your dashboard signs you in to your instance without ever being able to
-unlock it.
+reset.
 
-**Unlocking** is your twelve-word recovery phrase, entered at your instance.
-Your instance comes back unlocked after an ordinary update. It comes back
-**locked** after a restart it did not plan, and asks you for the phrase.
+**Unlocking is done for you.** Hezo Cloud keeps your instance's recovery phrase,
+encrypted, and hands it to your instance each time it starts, so it comes back
+unlocked after an update or a restart without asking you. You can download the
+phrase from your dashboard after signing in again by email. A self-hosted
+instance asks for its phrase instead - see
+[Master key & encryption](/docs/security/master-key).
 
 ## Usage analytics
 

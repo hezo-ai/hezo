@@ -13,25 +13,19 @@ can and cannot see, and what happens to your data when you leave.
 The product-wide guarantees are unchanged and are documented under
 [Security](/docs/security/secret-protection). What follows is what hosting adds.
 
-## Your recovery phrase, and the limit of what it proves
+## Your recovery phrase
 
-Your twelve-word recovery phrase is generated **in your own browser** and
-posted straight to your instance. It never passes through our dashboard, and we
-never store it.
+Everything sensitive your instance holds - your stored credentials and the rest
+of your vault - is encrypted behind its twelve-word recovery phrase. **Hezo Cloud
+creates that phrase and keeps it for you, encrypted.** Your instance is handed it
+each time it starts, so it unlocks itself and never asks you for it. As the
+owner, you can download a copy from your dashboard after signing in again by
+email.
 
-**We cannot decrypt what that phrase protects, and nobody here can recover it
-for you.** If you lose it, the data it protects is gone - there is deliberately
-no backdoor.
-
-That claim is narrower than it sounds. It means we cannot read what Hezo
-encrypted under your phrase: your stored credentials and the rest of your
-vault. **It is not a claim that your data is invisible to us.** We operate the
-database your instance writes to, so as the operator we are technically able to
-read rows in it, the way any hosting provider can. What is beyond us is the
-encrypted material.
-
-If you need a setup where the operator genuinely cannot reach any of it, that
-is self-hosting, and it is free. See [Ways to run Hezo](/docs/ways-to-run).
+How we hold it, and what we can and cannot read, is set out in our
+[privacy policy](https://hezo.ai/privacy/#security). If you would rather hold the
+only key yourself, that is self-hosting, and it is free. See
+[Ways to run Hezo](/docs/ways-to-run).
 
 ## One instance, one machine
 
@@ -62,6 +56,27 @@ the agent's own tool authenticates to the provider directly rather than through
 the proxy. A compromised sandbox therefore exposes the prompts and files in that
 sandbox, and the provider key the run was using. Every other secret was never
 there. See [Secret protection & egress](/docs/security/secret-protection).
+
+When an agent runs on the Base AI model, that credential is a key issued to your
+instance alone. It reaches only the Base AI model, has a daily spending limit,
+and we can replace it at any time.
+
+## The Base AI model
+
+When your agents use the [Base AI model](/docs/cloud/whats-different#the-base-ai-model),
+what they send it - the conversation, including any files and tool results in
+it - goes to the model router we use and the host that runs the model for it,
+in the United States, which process it to write the reply. Our
+[privacy policy](https://hezo.ai/privacy/#sharing) covers both.
+
+**Neither keeps what your agents send, or the replies.** The router keeps a
+record of each request - its time, its size and its cost, never what it said -
+for as long as its own policy says it needs it. We keep a daily total of how
+much your instance used.
+
+**If your work should not go to those providers,** connect a model of your own
+and make it the default. The Base AI model is then used only by an agent you point
+at it.
 
 ## How we see you use the app
 

@@ -7,10 +7,12 @@ section: Security
 # The master key & encryption at rest
 
 Everything sensitive Hezo holds - model API keys, OAuth tokens, signing keys, and other
-secrets - is **encrypted at rest**. The key that protects it all is the **master key**,
-and only you hold it.
+secrets - is **encrypted at rest**. The key that protects it all is the **master key**.
+On a self-hosted instance only you hold it; on Hezo Cloud we keep it for you, as
+[Data & security on Hezo Cloud](/docs/cloud/data-and-security#your-recovery-phrase)
+describes.
 
-## A twelve-word key only you hold
+## A twelve-word key
 
 On first run, Hezo generates a **twelve-word master key** and shows it to you once. From
 it, Hezo derives the key used to encrypt and decrypt your vault using strong,
@@ -40,9 +42,10 @@ environment variable to that one invocation (see
 [Self-hosting on a VPS](/docs/deployment/vps)) - but don't persist the phrase to disk
 to do it (see [Keep it off the server](#keep-it-off-the-server) below).
 
-On [Hezo Cloud](/docs/cloud/overview) the gate screen is the only way in: your own browser
-generates the phrase and it never reaches us, so **we hold no copy and cannot
-recover it for you**. See
+On [Hezo Cloud](/docs/cloud/overview) there is no gate screen: Hezo Cloud creates the phrase,
+keeps it for you encrypted, and hands it to your instance each time it starts, so
+the instance unlocks itself. You can download a copy from your dashboard after
+signing in again by email. See
 [Data & security on Hezo Cloud](/docs/cloud/data-and-security).
 
 ## Keep it off the server

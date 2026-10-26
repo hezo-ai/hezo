@@ -354,7 +354,7 @@ the chat.
 ### Single sign-on from a control plane
 
 Where a control plane provisions and manages instances, it can sign its users in
-without holding anything that could decrypt their data. Set an `sso` block and an
+to them through an issuer it runs. Set an `sso` block and an
 unidentified visitor is sent to the issuer to sign in; leave it out and the whole
 mechanism is absent, which is what an ordinary instance wants.
 
