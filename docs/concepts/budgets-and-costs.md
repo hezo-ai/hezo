@@ -114,6 +114,10 @@ Agents run inside containers, and a container costs money for as long as it is u
 not only while an agent is mid-run. The **Hours** tab measures that directly, from a
 ledger of when each container was running.
 
+A project's Hours tab shows that project's hours only, and says so at the top. HQ's
+Hours tab shows every project's hours, split by project, and that total is what the
+hours allowance counts. Admins get a link from each project's tab to HQ's.
+
 An hour is counted from the moment a container starts being **built**, not from when
 it is ready: on a managed backend the build (image resolve, clone, package install)
 is the longest part of a cold start, and it is billed like any other minute. Counting

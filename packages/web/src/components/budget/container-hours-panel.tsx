@@ -1,4 +1,5 @@
-import { HoursBucket } from '@hezo/shared';
+import { HoursBucket, HQ_PROJECT_SLUG } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import { BarChart3, Clock } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -8,8 +9,10 @@ import {
 	useInstanceContainerHours,
 	useProjectContainerHours,
 } from '../../hooks/use-container-hours';
+import { useMe } from '../../hooks/use-me';
+import { useProject } from '../../hooks/use-projects';
 import { formatDuration, hoursSpent, secondsToHours } from '../../lib/format-duration';
-import { useI18n } from '../../lib/i18n';
+import { Trans, useI18n } from '../../lib/i18n';
 import { formatBucketLabel } from '../charts/chart-format';
 import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
 import { ManagedSetting } from '../settings/managed-setting';
@@ -214,6 +217,7 @@ export function ProjectContainerHoursPanel({ projectId }: { projectId: string })
 
 	return (
 		<div className="flex flex-col gap-6">
+			<ProjectHoursScope projectId={projectId} />
 			{totals && <HoursTiles totals={totals} />}
 			<HoursChart
 				bucket={bucket}
@@ -224,6 +228,48 @@ export function ProjectContainerHoursPanel({ projectId }: { projectId: string })
 				testId="container-hours-chart"
 			/>
 		</div>
+	);
+}
+
+/**
+ * Whose hours the tab shows, and where every project's are.
+ *
+ * The allowance counts every project on the instance, so one project's figure
+ * read alone looks like headroom that may already be spent elsewhere. The
+ * all-projects view is HQ's Hours tab, which reads a superuser-only route, so
+ * the link is the superuser's alone and everyone else is told only whose hours
+ * these are.
+ */
+function ProjectHoursScope({ projectId }: { projectId: string }) {
+	const { t } = useI18n();
+	const { data: project } = useProject(projectId);
+	const { data: me } = useMe();
+	if (!project) return null;
+
+	const name = <span className="font-medium text-text-1">{project.name}</span>;
+	return (
+		<p className="text-[13px] text-text-2" data-testid="container-hours-scope">
+			{me?.is_superuser ? (
+				<Trans
+					k="budget.hours.scope.projectWithLink"
+					vars={{
+						project: name,
+						link: (
+							<Link
+								to="/projects/$projectId/budget/hours"
+								params={{ projectId: HQ_PROJECT_SLUG }}
+								className="underline underline-offset-2 hover:text-text-1"
+								data-testid="container-hours-all-projects"
+							>
+								{t('budget.hours.scope.allProjects')}
+							</Link>
+						),
+					}}
+				/>
+			) : (
+				<Trans k="budget.hours.scope.project" vars={{ project: name }} />
+			)}
+		</p>
 	);
 }
 

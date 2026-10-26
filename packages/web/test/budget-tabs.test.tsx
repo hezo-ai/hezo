@@ -1,4 +1,5 @@
 import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
@@ -122,6 +123,68 @@ test('the Hours tab says so plainly when no container has run', async () => {
 	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
 
 	expect(await findByText('No container time recorded yet.')).toBeTruthy();
+});
+
+/**
+ * A project's Hours tab says whose hours these are, because the allowance they
+ * count against is instance-wide: one project's figure alone reads as headroom
+ * other projects may already have spent.
+ */
+test("a project's Hours tab names the project and links a superuser to every project's hours", async () => {
+	let slug = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Budget Scope' });
+			slug = project.slug;
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
+
+	const scope = await findByTestId('container-hours-scope');
+	expect(scope.textContent).toBe('These are the hours used by Budget Scope. View for all projects');
+	const link = await findByTestId('container-hours-all-projects');
+	expect(link.getAttribute('href')).toBe(`/projects/${HQ_PROJECT_SLUG}/budget/hours`);
+});
+
+test('a non-superuser is told whose hours these are, with no link to a view they cannot open', async () => {
+	let slug = '';
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Budget Member' });
+			slug = project.slug;
+			await ctx.db.query('UPDATE users SET is_superuser = false');
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
+
+	const scope = await findByTestId('container-hours-scope');
+	expect(scope.textContent).toBe('These are the hours used by Budget Member.');
+	expect(queryByTestId('container-hours-all-projects')).toBeNull();
+});
+
+test("HQ's Hours tab, which already shows every project, carries no such line", async () => {
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Budget Elsewhere' });
+			await seedUptime(project.id, 30);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/budget/hours',
+		params: { projectId: HQ_PROJECT_SLUG },
+	});
+
+	await findByTestId('container-hours-tiles');
+	expect(queryByTestId('container-hours-scope')).toBeNull();
 });
 
 test("the Spend tab carries each agent's run time beside its spend", async () => {
