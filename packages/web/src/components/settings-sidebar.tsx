@@ -1,6 +1,7 @@
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { openSupportChat } from '@hezo/ui';
 import { Link, useLocation } from '@tanstack/react-router';
-import { ChevronDown, ExternalLink, LogOut, MessageCircle } from 'lucide-react';
+import { ChevronDown, Clock, ExternalLink, LogOut, MessageCircle } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useInstanceSettings } from '../hooks/use-instance-settings';
@@ -155,14 +156,21 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
  * The support row renders only for a caller the server hands the channel to,
  * which is the instance owner. It opens the chat in place, so it takes
  * `onAction` to close a menu that would otherwise stay open behind it.
+ *
+ * **Beside the plan, the hours it is spent on.** A deployment that fixes the
+ * hours an instance gets is one whose superuser needs to see where they went,
+ * and the only view of every project's hours is HQ's Hours tab, which nothing
+ * else in Settings points to. Superuser-only, like that view.
  */
 function PolicyGroup({ hosted, onAction }: { hosted: boolean; onAction?: () => void }) {
 	const { t } = useI18n();
 	const { data: settings } = useInstanceSettings();
 	const { data: support } = useSupport(hosted);
+	const { data: me } = useMe();
 	const policy = settings?.policy;
 	const manageUrl = policy?.manage_url?.startsWith('https://') ? policy.manage_url : null;
-	if (!policy || (!manageUrl && !support)) return null;
+	const hours = me?.is_superuser === true;
+	if (!policy || (!manageUrl && !support && !hours)) return null;
 
 	return (
 		<div className={groupClass} data-testid="settings-policy-group">
@@ -178,6 +186,17 @@ function PolicyGroup({ hosted, onAction }: { hosted: boolean; onAction?: () => v
 					<span className="flex-1">{t('settings.managed.planAndLimits')}</span>
 					<ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
 				</a>
+			)}
+			{hours && (
+				<Link
+					to="/projects/$projectId/budget/hours"
+					params={{ projectId: HQ_PROJECT_SLUG }}
+					className={`${itemClass(false)} flex items-center gap-2`}
+					data-testid="settings-hours-by-project"
+				>
+					<span className="flex-1">{t('settings.managed.hoursByProject')}</span>
+					<Clock className="h-3 w-3 shrink-0" aria-hidden />
+				</Link>
 			)}
 			{support && (
 				<button
