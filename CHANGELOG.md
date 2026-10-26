@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.75.3 - 2026-10-26
+
+### Documentation
+
+- **cloud:** the Base AI model and a held recovery phrase on Hezo Cloud ([#1184](https://github.com/hezo-ai/hezo/pull/1184))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.75.2...0.75.3
+
 ## 0.75.2 - 2026-10-26
 
 ### Bug Fixes
