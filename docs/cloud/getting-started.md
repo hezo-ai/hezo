@@ -40,26 +40,14 @@ after an account is deleted. Choose one you will still want in a year.
 Your instance is built the moment you take the address, and takes a few minutes
 to come up. We email you when it is ready.
 
-## 4. Save your recovery phrase
+## 4. Meet your team
 
-The first time you open your instance it gives you a **twelve-word recovery
-phrase**. Everything sensitive your instance holds is encrypted behind
-it.
-
-That phrase is generated in your browser and never reaches us. **We do not hold
-a copy, and nobody here can recover it for you.** Write it down somewhere
-durable before you continue - a password manager, or paper in a drawer. See
-[Master key & encryption](/docs/security/master-key) for what it protects.
-
-You will be asked for it again if your instance restarts.
-
-## 5. Connect an AI model
-
-Your agents run on a model you bring. Paste an API key, or sign in with a
-subscription where the provider supports it. See
-[AI model support](/docs/ai-models) for the providers and where to get a key.
-
-## 6. Meet your team
+There is no AI model and no recovery phrase to set up. Your instance comes with
+the Base AI model already connected, so your agents can work straight away, and
+it unlocks itself: we keep its recovery phrase for you, encrypted. You can
+download a copy from your dashboard after signing in again by email. If you would rather
+use your own provider account, connect it at any time - see
+[AI model support](/docs/ai-models).
 
 Your home screen opens on the CEO chat. Your brief is already there as your
 first message, and the CEO is answering it: it scopes the work with you and

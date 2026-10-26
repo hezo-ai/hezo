@@ -27,15 +27,25 @@ Both reset with your billing period. See
 [Budgets & cost control](/docs/concepts/budgets-and-costs) for the in-app
 ledger, which works the same as it does on a self-hosted instance.
 
-**Your model spend is separate and is not billed by us.** You connect your own
-provider accounts, and they bill you directly. See
+## AI models
+
+**AI inference on the Base AI model is included in every plan.** It is not
+metered in tokens and is never billed separately: it only works while one of
+your containers is up, so your container-hours already bound it. Each instance
+also has a daily safety limit on it, set well above what its plan's hours can
+use; if an instance reaches it, the Base AI model pauses until the next day
+begins (UTC). See
+[The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
+
+**Your own model accounts are billed by their providers.** When an agent runs
+on a provider you connected, that provider bills you directly, not us. See
 [AI model support](/docs/ai-models).
 
 ## The free trial
 
 Every account starts with a **seven-day free trial, and we do not ask for a
 card**. The trial grants a flat ten container-hours and three concurrent
-containers, the same for everyone.
+containers, the same for everyone, and includes the Base AI model.
 
 The clock starts when you take your address, and the trial ends at whichever
 comes first: seven days, or ten container-hours.
@@ -88,7 +98,7 @@ inside that window brings everything straight back.
 
 **Then it is shut down.** After the hold, the instance itself is removed, but
 **your database and your files are kept**. Subscribing again rebuilds the
-instance and you unlock it with the recovery phrase you already have.
+instance, which unlocks itself with the recovery phrase we keep for it.
 
 Cancelling is different from either: you keep the service until the end of the
 period you have paid for.

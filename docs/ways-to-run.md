@@ -28,8 +28,9 @@ trial. Start at [Hezo Cloud](/docs/cloud/overview).
 | Updates | You take them when you want, or leave auto-update off | You take them when you want |
 | Shell access to the box | Yours | We run the machine, so everything the `hezo` command does is done for you or from the web app |
 | Database and file storage | Embedded by default, or bring your own | Managed for you |
-| Who holds the recovery phrase | You | You. We never hold it |
-| What it costs | Nothing. You pay your model providers | A monthly or annual plan, plus your model providers. See [hezo.ai/pricing](https://hezo.ai/pricing/) |
+| Who holds the recovery phrase | You | We keep it for you, encrypted, so your instance unlocks itself. You can download a copy |
+| AI models | The ones you connect | The Base AI model, included, plus any you connect |
+| What it costs | Nothing. You pay your model providers | A monthly or annual plan, with AI inference on the Base AI model included. Any model provider you connect bills you. See [hezo.ai/pricing](https://hezo.ai/pricing/) |
 
 ## Which one to pick
 
@@ -40,8 +41,9 @@ things yourself. You need a machine that stays on, and a few minutes to set up
 HTTPS and backups.
 
 **Hezo Cloud** if you would rather not run a server at all, if you want an
-always-on instance without leaving a laptop open, or if keeping a box patched
-is not how you want to spend your time.
+always-on instance without leaving a laptop open, if you would rather start
+without setting up a model provider, or if keeping a box patched is not how you
+want to spend your time.
 
 ## Next
 
