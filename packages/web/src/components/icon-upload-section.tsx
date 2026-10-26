@@ -2,9 +2,11 @@ import { isAllowedProjectIconInputMime } from '@hezo/shared';
 import { ImagePlus, Loader2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from '../hooks/use-toast';
+import { useI18n } from '../lib/i18n';
 import { normalizeProjectIcon } from '../lib/normalize-image';
 import { Avatar } from './ui/avatar';
 import { Button } from './ui/button';
+import { ConfirmDialog } from './ui/confirm-dialog';
 
 interface Preview {
 	blob: Blob;
@@ -18,6 +20,8 @@ interface IconUploadSectionProps {
 	helpText: string;
 	/** Fallback initials shown when there is no image. */
 	initials: string;
+	/** Whose image this is (a project or a person), named in the remove confirmation. */
+	ownerName: string;
 	/** Current signed icon URL, or null/undefined when unset. */
 	currentIconUrl?: string | null;
 	/** Built-in default shown in the preview when no custom icon is set (e.g. the
@@ -41,13 +45,15 @@ interface IconUploadSectionProps {
  * an initials fallback), lets the user pick an image, previews the
  * center-cropped square before saving, and removes an existing image. The picked
  * file is normalized to a ≤512×512 PNG client-side (`normalizeProjectIcon`)
- * before it is handed to `onUpload`. Data fetching/mutations live in the caller;
- * this component owns only the pick → preview → save/remove interaction.
+ * before it is handed to `onUpload`. Removing asks for confirmation first. Data
+ * fetching/mutations live in the caller; this component owns only the
+ * pick → preview → save/remove interaction.
  */
 export function IconUploadSection({
 	label,
 	helpText,
 	initials,
+	ownerName,
 	currentIconUrl,
 	fallbackImageUrl,
 	onUpload,
@@ -56,9 +62,11 @@ export function IconUploadSection({
 	isRemoving,
 	testIdPrefix,
 }: IconUploadSectionProps) {
+	const { t } = useI18n();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [preview, setPreview] = useState<Preview | null>(null);
 	const [processing, setProcessing] = useState(false);
+	const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false);
 
 	const busy = processing || isUploading || isRemoving;
 
@@ -164,7 +172,7 @@ export function IconUploadSection({
 									<Button
 										size="sm"
 										variant="destructive"
-										onClick={handleRemove}
+										onClick={() => setConfirmRemoveOpen(true)}
 										disabled={busy}
 										data-testid={`${testIdPrefix}-remove`}
 									>
@@ -177,6 +185,16 @@ export function IconUploadSection({
 					<p className="text-xs text-text-3">{helpText}</p>
 				</div>
 			</div>
+			<ConfirmDialog
+				open={confirmRemoveOpen}
+				onOpenChange={setConfirmRemoveOpen}
+				title={t('icon.remove.title', { name: ownerName })}
+				description={t('icon.remove.description')}
+				confirmLabel={t('common.remove')}
+				variant="danger"
+				loading={isRemoving}
+				onConfirm={handleRemove}
+			/>
 		</section>
 	);
 }

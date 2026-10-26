@@ -224,6 +224,7 @@ test('designated repo shows a lock with no delete affordance; extras stay deleta
 	expect(screen.queryByTestId('repo-delete-main-repo')).toBeNull();
 
 	await user.click(await screen.findByTestId('repo-delete-extra-repo'));
+	await user.click(await screen.findByTestId('confirm-dialog-confirm'));
 	await waitFor(() => expect(screen.queryByText(`${ghOwner}/extra-repo`)).toBeNull(), {
 		timeout: 10_000,
 	});

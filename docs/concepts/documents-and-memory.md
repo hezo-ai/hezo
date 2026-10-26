@@ -136,8 +136,9 @@ ways to comment:
   clicking it highlights the entire line and attaches your comment to it.
 
 Each comment shows as an icon in the right margin, level with its highlighted text. Click a
-highlight or its icon to **edit or delete** that comment. The review controls are grouped
-together into their own **review toolbar** above the document - set apart from the document's
+highlight or its icon to **edit or delete** that comment; Hezo asks you to confirm a delete
+first. The review controls are grouped together into their own **review toolbar** above the
+document - set apart from the document's
 own edit and delete actions so the two don't get mixed up. Both the toolbar and those edit and
 delete actions **stay pinned to the top while you scroll**, so they're always in reach in a long
 document. The toolbar shows a comment count - **click the count to jump to the first comment** -

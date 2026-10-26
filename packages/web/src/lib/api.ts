@@ -13,6 +13,11 @@ export class ApiError extends Error {
 	}
 }
 
+/** The server answered that the resource does not exist. */
+export function isNotFound(e: unknown): boolean {
+	return e instanceof ApiError && e.status === 404;
+}
+
 export interface PaginationMeta {
 	page: number;
 	per_page: number;

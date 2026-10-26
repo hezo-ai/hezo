@@ -7,7 +7,10 @@
 // realistic GitHub OAuth connection + repos against the real backend is heavy and
 // orthogonal to what this component renders. Component tier — no real layout/WS.
 
-import { afterEach, expect, test } from 'vitest';
+import { api } from '@hezo/web/lib/api';
+import { screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
 
@@ -15,6 +18,7 @@ let restoreFetch: (() => void) | null = null;
 afterEach(() => {
 	restoreFetch?.();
 	restoreFetch = null;
+	vi.restoreAllMocks();
 });
 
 interface MockRepo {
@@ -171,6 +175,29 @@ test('connected with repos lists each repo with a web link; designated is locked
 	// Non-designated → delete button present, no lock.
 	expect(r.queryByTestId('repo-delete-lib')).not.toBeNull();
 	expect(r.queryByTestId('repo-locked-lib')).toBeNull();
+});
+
+test('removing a repo asks first, naming it, and only then sends the delete', async () => {
+	const r = await renderSettings({
+		connection: { id: 'conn-1', provider_account_label: 'octocat' },
+		scopeSufficient: true,
+		repos: [
+			{ id: 'r1', repo_identifier: 'octocat/web-app', host_type: 'github', is_designated: true },
+			{ id: 'r2', repo_identifier: 'octocat/lib', host_type: 'github', is_designated: false },
+		],
+	});
+	await r.findByTestId('repo-delete-lib', undefined, { timeout: 20_000 });
+	const send = vi.spyOn(api, 'delete');
+
+	await expectDeleteAsksFirst({
+		user: r.user,
+		trigger: () => r.getByTestId('repo-delete-lib'),
+		send,
+		names: 'Remove octocat/lib?',
+	});
+
+	expect(send).toHaveBeenCalledWith(`/api/projects/${r.seeded.projectSlug}/repos/r2`);
+	await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
 });
 
 test('a non-github host repo renders the identifier as plain text (no web link)', async () => {

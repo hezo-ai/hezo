@@ -67,6 +67,7 @@ vitest runs under Node, the server runs under Bun, and vitest can't be flipped t
 - Each test gets a fresh PGlite + Hono in `beforeEach`, but module-level singletons (`api`, the queryClient) still leak across specs — keep setup contained.
 - **Reset a module-level store, or stop a library timer, in `render.tsx`'s `afterEach`**, which runs before the tree unmounts. A store left alone draws its state into the next test; a timer that outlives the file fails the whole run with `document is not defined`.
 - Radix dialogs/popovers render into a portal — query `document.body`, not `container`.
+- **A delete control is driven through `expectDeleteAsksFirst`** (`helpers/confirm-delete.ts`), given a spy on the request it sends: the click opens a confirmation naming the thing and sends nothing, Cancel sends nothing, and only the danger-styled Confirm sends. Assert what the delete did afterwards.
 - Auto-wait with `findBy*` / `waitFor`. jest-dom matchers aren't loaded, so read `disabled` off the element rather than `expect(...).toBeDisabled()`.
 
 ### When to write Playwright vs component

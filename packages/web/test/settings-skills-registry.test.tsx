@@ -2,20 +2,23 @@
 // routes/settings/skills.tsx — the parts the existing instance-skills /
 // settings-skills specs don't reach: saving a token, the configured search form,
 // rendering + installing a result, the no-results and error states, and the
-// list-row delete confirm. Component tier (no real layout / WS). The token is set
+// confirmations in front of the list-row delete and the token clear. Component tier (no real layout / WS). The token is set
 // for real via the API (PUT /api/skills/registry/token) so the panel renders its
 // *configured* search form; only the search / install responses are fetch-mocked,
 // because those reach the external skills.sh service server-side.
 
 import type { RegistrySkillSearchResult } from '@hezo/shared';
+import { api } from '@hezo/web/lib/api';
 import { waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
 
 let restoreFetch: (() => void) | null = null;
 afterEach(() => {
 	restoreFetch?.();
 	restoreFetch = null;
+	vi.restoreAllMocks();
 });
 
 function result(overrides: Partial<RegistrySkillSearchResult>): RegistrySkillSearchResult {
@@ -210,7 +213,7 @@ test('a configured search with no results shows the empty-results message', asyn
 	await r.findByText(/No results for/);
 });
 
-test('the Clear token control resets the panel back to the token prompt', async () => {
+test('the Clear token control asks first, then resets the panel back to the token prompt', async () => {
 	const r = await renderApp({
 		initialPath: '/settings/skills',
 		seed: async () => {
@@ -222,7 +225,12 @@ test('the Clear token control resets the panel back to the token prompt', async 
 	// Configured form is showing.
 	await r.findByLabelText('Search skills.sh', undefined, { timeout: 15_000 });
 
-	await r.user.click(await r.findByRole('button', { name: 'Clear token' }));
+	await expectDeleteAsksFirst({
+		user: r.user,
+		trigger: () => r.getByRole('button', { name: 'Clear token' }),
+		send: vi.spyOn(api, 'put'),
+		names: 'Clear the skills.sh token?',
+	});
 	// Clearing the token flips the panel back to the "paste a token" prompt.
 	await r.findByLabelText('skills.sh API token');
 });
@@ -241,7 +249,7 @@ test('a non-superuser sees the "managed by the Admin" notice instead of the skil
 	expect(r.queryByTestId('toggle-search')).toBeNull();
 });
 
-test('confirming the delete dialog removes a skill from the list', async () => {
+test('deleting a skill asks first, then removes it from the list', async () => {
 	const r = await renderApp({
 		initialPath: '/settings/skills',
 		seed: async (ctx) => {
@@ -255,37 +263,11 @@ test('confirming the delete dialog removes a skill from the list', async () => {
 
 	await r.findByText('Disposable Skill');
 
-	// The row delete uses window.confirm; accept it.
-	const originalConfirm = window.confirm;
-	window.confirm = () => true;
-	try {
-		await r.user.click(await r.findByLabelText('Delete Disposable Skill'));
-		await waitFor(() => expect(r.queryByText('Disposable Skill')).toBeNull());
-	} finally {
-		window.confirm = originalConfirm;
-	}
-});
-
-test('declining the delete confirm keeps the skill in the list', async () => {
-	const r = await renderApp({
-		initialPath: '/settings/skills',
-		seed: async (ctx) => {
-			await ctx.apiBase('/api/skills', {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: 'Keep Me Skill', content: '# body' }),
-			});
-		},
+	await expectDeleteAsksFirst({
+		user: r.user,
+		trigger: () => r.getByLabelText('Delete Disposable Skill'),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Delete skill "Disposable Skill"?',
 	});
-
-	await r.findByText('Keep Me Skill');
-
-	const originalConfirm = window.confirm;
-	window.confirm = () => false;
-	try {
-		await r.user.click(await r.findByLabelText('Delete Keep Me Skill'));
-		await waitFor(() => expect(r.queryByText('Keep Me Skill')).not.toBeNull());
-	} finally {
-		window.confirm = originalConfirm;
-	}
+	await waitFor(() => expect(r.queryByText('Disposable Skill')).toBeNull());
 });

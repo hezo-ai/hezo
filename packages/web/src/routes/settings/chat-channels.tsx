@@ -3,10 +3,12 @@ import { Loader2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { ChatboxSection } from '../../components/chatbox-section';
 import { Button } from '../../components/ui/button';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
 	type ChatChannelConfigView,
+	type ChatIdentityLink,
 	useChatChannels,
 	useChatIdentities,
 } from '../../hooks/use-chat-channels';
@@ -401,7 +403,9 @@ function ChannelForm({
 
 function IdentitiesSection() {
 	const { data: me } = useMe();
+	const { t } = useI18n();
 	const { identities, linkIdentity, unlinkIdentity } = useChatIdentities();
+	const [pendingUnlink, setPendingUnlink] = useState<ChatIdentityLink | null>(null);
 	const [channel, setChannel] = useState('telegram');
 	const [externalId, setExternalId] = useState('');
 	const [handle, setHandle] = useState('');
@@ -495,7 +499,7 @@ function IdentitiesSection() {
 								type="button"
 								aria-label="Unlink identity"
 								data-testid={`identity-remove-${i.id}`}
-								onClick={() => unlinkIdentity(i.id)}
+								onClick={() => setPendingUnlink(i)}
 								className="flex h-8 w-8 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-danger"
 							>
 								<Trash2 className="h-4 w-4" />
@@ -504,6 +508,25 @@ function IdentitiesSection() {
 					))}
 				</ul>
 			)}
+			<ConfirmDialog
+				open={pendingUnlink !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingUnlink(null);
+				}}
+				title={
+					pendingUnlink
+						? t('chat.identity.unlink.title', {
+								name: pendingUnlink.external_handle || pendingUnlink.external_user_id,
+							})
+						: ''
+				}
+				description={t('chat.identity.unlink.description')}
+				confirmLabel={t('chat.identity.unlink.confirm')}
+				variant="danger"
+				onConfirm={async () => {
+					if (pendingUnlink) await unlinkIdentity(pendingUnlink.id);
+				}}
+			/>
 		</section>
 	);
 }

@@ -1,6 +1,8 @@
 import { NEVER_RECORD_CLASS } from '@hezo/ui';
+import { api } from '@hezo/web/lib/api';
 import { fireEvent, waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
 import {
 	archiveSeededAsset,
@@ -17,6 +19,8 @@ import {
 // left-pane rendering, the document-style anchored review flow on text assets,
 // whole-asset comments on non-text assets via the right panel, archived
 // read-only mode, and the asset-flavored "Action this review" handoff.
+
+afterEach(() => vi.restoreAllMocks());
 
 const MD_CONTENT = [
 	'# Launch Post',
@@ -183,8 +187,13 @@ test('an image takes whole-asset comments from the panel composer, with edit and
 		expect((await assetReviewRows())[0].comment).toBe('Center the logo');
 	});
 
-	// Delete empties the review.
-	await user.click(await findByTestId('asset-review-delete'));
+	// Delete asks first, then empties the review.
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => findByTestId('asset-review-delete'),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Center the logo',
+	});
 	await waitFor(async () => {
 		expect((await assetReviewRows()).length).toBe(0);
 	});

@@ -92,7 +92,6 @@ export function useChatIdentities() {
 	const unlink = useMutation({
 		mutationFn: (id: string) => api.delete(`/api/chat/identities/${id}`),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: identitiesKey() }),
-		onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to unlink identity'),
 	});
 	return {
 		identities: query.data?.identities ?? [],

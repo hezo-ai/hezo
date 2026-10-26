@@ -13,6 +13,7 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { DeleteSkillDialog } from '../../components/delete-skill-dialog';
 import { RevisionHistoryDialog } from '../../components/document-review/revision-history-dialog';
 import { ViewingRevisionBanner } from '../../components/document-review/viewing-revision-banner';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
@@ -85,6 +86,7 @@ function InstanceSkillsPage() {
 	const [editingId, setEditingId] = useState<string | null>(null);
 	// Independently of editing, `viewingId` drives the read-only view modal.
 	const [viewingId, setViewingId] = useState<string | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 	const [createScope, setCreateScope] = useState<string>(ALL_PROJECTS);
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
@@ -403,10 +405,7 @@ function InstanceSkillsPage() {
 								scopeOptions={scopeOptions}
 								onView={() => setViewingId(s.id)}
 								onEdit={() => openEdit(s.id)}
-								onDelete={() => {
-									if (confirm(t('settings.skills.confirmDelete', { name: s.name })))
-										deleteSkill.mutate(s.id);
-								}}
+								onDelete={() => setPendingDelete(s)}
 							/>
 						))}
 						<InfiniteScrollSentinel
@@ -423,6 +422,12 @@ function InstanceSkillsPage() {
 	return (
 		<div className="max-w-[900px]">
 			{content_}
+			<DeleteSkillDialog
+				skill={pendingDelete}
+				onClose={() => setPendingDelete(null)}
+				onDelete={(id) => deleteSkill.mutateAsync(id)}
+				deleting={deleteSkill.isPending}
+			/>
 			<SkillViewDialog
 				open={viewingId !== null}
 				onOpenChange={(o) => !o && setViewingId(null)}
@@ -622,6 +627,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 	const [queryInput, setQueryInput] = useState('');
 	const [submitted, setSubmitted] = useState('');
 	const [installingId, setInstallingId] = useState<string | null>(null);
+	const [confirmClearToken, setConfirmClearToken] = useState(false);
 
 	const search = useSearchRegistrySkills(submitted);
 	const configured = tokenStatus?.configured ?? false;
@@ -692,7 +698,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 							type="button"
 							variant="ghost"
 							size="sm"
-							onClick={() => setToken.mutate('')}
+							onClick={() => setConfirmClearToken(true)}
 							title={t('settings.skills.registry.clearTokenTitle')}
 						>
 							{t('settings.skills.registry.clearToken')}
@@ -765,6 +771,18 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 					)}
 				</div>
 			)}
+			<ConfirmDialog
+				open={confirmClearToken}
+				onOpenChange={setConfirmClearToken}
+				title={t('settings.skills.registry.clearTokenConfirm.title')}
+				description={t('settings.skills.registry.clearTokenConfirm.body')}
+				confirmLabel={t('settings.skills.registry.clearToken')}
+				variant="danger"
+				loading={setToken.isPending}
+				onConfirm={async () => {
+					await setToken.mutateAsync('');
+				}}
+			/>
 		</InPlaceForm>
 	);
 }

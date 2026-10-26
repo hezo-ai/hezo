@@ -1,7 +1,11 @@
+import { api } from '@hezo/web/lib/api';
 import { waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+
+afterEach(() => vi.restoreAllMocks());
 
 test('Blocked By row links to the blocking task', async () => {
 	let ctx: {
@@ -113,4 +117,48 @@ test('Blocked By row shows the running dot when the blocker has an active run', 
 	await waitFor(() => {
 		expect(row.querySelector('[data-testid="task-running-dot"]')).not.toBeNull();
 	});
+});
+
+test('removing a Blocked By link asks first, then drops the row', async () => {
+	let ctx!: { projectSlug: string; blockerIdentifier: string; blockedIdentifier: string };
+	const { findByRole, findByTestId, getByRole, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase }) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Unblocking Project' });
+			const blocker = await seedTask(ws, project, { title: 'Upstream blocker' });
+			const blocked = await seedTask(ws, project, { title: 'Downstream blocked' });
+			const dep = await apiBase(
+				`/api/projects/${ws.internalSlug}/tasks/${blocked.id}/dependencies`,
+				{
+					method: 'POST',
+					headers: ws.headers,
+					body: JSON.stringify({ blocked_by_task_id: blocker.id }),
+				},
+			);
+			if (!dep.ok) throw new Error(`dependency seed failed: ${dep.status}`);
+			ctx = {
+				projectSlug: project.slug,
+				blockerIdentifier: blocker.identifier,
+				blockedIdentifier: blocked.identifier,
+			};
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx.projectSlug, taskId: ctx.blockedIdentifier.toLowerCase() },
+	});
+	await findByRole('heading', { name: 'Downstream blocked' });
+	await findByTestId('blocked-by-item');
+
+	const label = `Remove the dependency on ${ctx.blockerIdentifier}`;
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByRole('button', { name: label }),
+		send: vi.spyOn(api, 'delete'),
+		names: `${label}?`,
+	});
+
+	await waitFor(() => expect(queryByTestId('blocked-by-item')).toBeNull());
 });

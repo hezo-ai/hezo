@@ -1,7 +1,11 @@
+import { api } from '@hezo/web/lib/api';
 import { waitFor, within } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
+
+afterEach(() => vi.restoreAllMocks());
 
 async function seedSkill(
 	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
@@ -177,4 +181,35 @@ test('project skill revision history previews a past version and restores it', a
 	await waitFor(() =>
 		expect((getByLabelText('Skill content') as HTMLTextAreaElement).value).toBe('Project body v1'),
 	);
+});
+
+test('deleting a project skill asks first, then removes it', async () => {
+	let projectSlug = '';
+	const { findByText, getByLabelText, queryByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Skill Delete Proj' });
+			projectSlug = project.slug;
+			await seedSkill(ctx, {
+				name: 'Short Lived Skill',
+				content: '# project',
+				project_id: project.id,
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/skills',
+		params: { projectId: projectSlug },
+	});
+	await findByText('Short Lived Skill');
+
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByLabelText('Delete Short Lived Skill'),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Delete skill "Short Lived Skill"?',
+	});
+	await waitFor(() => expect(queryByText('Short Lived Skill')).toBeNull());
 });

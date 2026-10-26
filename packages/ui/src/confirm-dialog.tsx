@@ -138,8 +138,13 @@ export function ConfirmDialog({
 							<X className="h-4 w-4" aria-hidden />
 						</button>
 					</AlertDialog.Cancel>
-					<AlertDialog.Title className="text-base font-semibold mb-2">{title}</AlertDialog.Title>
-					<AlertDialog.Description className="text-[13px] text-text-2 mb-5 leading-relaxed">
+					{/* A title often names the thing it acts on - a file, a key, a label - and
+					    one unbroken name must wrap rather than widen the dialog past a phone
+					    screen. The right padding keeps the first line clear of the close button. */}
+					<AlertDialog.Title className="text-base font-semibold mb-2 pr-8 break-words">
+						{title}
+					</AlertDialog.Title>
+					<AlertDialog.Description className="text-[13px] text-text-2 mb-5 leading-relaxed break-words">
 						{description}
 					</AlertDialog.Description>
 					{children && <div className="flex flex-col gap-2 mb-3">{children}</div>}

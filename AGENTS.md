@@ -294,6 +294,8 @@ Browser URLs use slugs; internal identifiers use UUIDs. Query keys and route par
 
 **All UI must be mobile-first and responsive.** Build the mobile layout first, then enhance upward - never the reverse. Desktop-only or fixed-width components are not acceptable. Mobile is single-column with a drawer and stacked fields; tablet brings back the rail and two-column grids; desktop adds the full sidebar and all table columns. Every UI change must work at all three, and every browser test for one must verify the mobile layout.
 
+**Every control that deletes anything opens `ConfirmDialog` first** - danger-styled, naming what it deletes, and saying when that cannot be undone.
+
 ## Database transactions
 
 Wrap any multi-write sequence that must succeed or fail together in a transaction. Prefer transactions over row locks for read-modify-write flows.

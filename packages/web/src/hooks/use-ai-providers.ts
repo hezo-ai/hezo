@@ -1,6 +1,6 @@
 import type { AgentRuntime, AiProviderModel, SubscriptionLoginFailure } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, isNotFound } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 
@@ -36,10 +36,17 @@ export interface AiProviderStatus {
 const providersKey = ['ai-providers'] as const;
 const statusKey = ['ai-providers', 'status'] as const;
 
+/** Refetch every view of the providers; resolves once the mounted ones have refetched. */
+function refreshAll(): Promise<unknown> {
+	return Promise.all([
+		queryClient.invalidateQueries({ queryKey: providersKey }),
+		queryClient.invalidateQueries({ queryKey: statusKey }),
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
+	]);
+}
+
 function invalidateAll() {
-	queryClient.invalidateQueries({ queryKey: providersKey });
-	queryClient.invalidateQueries({ queryKey: statusKey });
-	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+	void refreshAll();
 }
 
 export function useAiProviders() {
@@ -75,8 +82,18 @@ export function useCreateAiProvider() {
 
 export function useDeleteAiProvider() {
 	return useMutation({
-		mutationFn: (configId: string) => api.delete(`/api/ai-providers/${configId}`),
-		onSuccess: invalidateAll,
+		// A config that is already gone is the outcome the caller asked for - an
+		// earlier click or another tab removed it - so it resolves like a delete.
+		mutationFn: async (configId: string) => {
+			try {
+				await api.delete(`/api/ai-providers/${configId}`);
+			} catch (e) {
+				if (!isNotFound(e)) throw e;
+			}
+		},
+		// Refetched on failure too, since the server's state is then unknown. Returned
+		// so the caller's mutation settles only once the list on screen has caught up.
+		onSettled: refreshAll,
 	});
 }
 

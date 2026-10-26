@@ -26,6 +26,7 @@ function UserRow({ user }: { user: AdminUser }) {
 				label="Avatar"
 				helpText="Your profile picture. Square images work best; we crop to a square and resize to 512×512. Leave unset to show your initials."
 				initials={getInitials(user.display_name || 'Admin')}
+				ownerName={user.display_name || 'Admin'}
 				currentIconUrl={user.icon_url}
 				onUpload={(blob) => upload.mutateAsync(blob)}
 				onRemove={() => remove.mutateAsync()}

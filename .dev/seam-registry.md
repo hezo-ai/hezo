@@ -95,9 +95,11 @@ rather than here, is how a codebase ends up with two of everything.
 | A semantic tone's colours, on any shape | `tone.ts` (`@hezo/ui`): `toneTintClassName`, `toneSolidClassName`, `toneDotClassName`, keyed by `Tone`. `Badge` draws the pill, `Callout` the block of prose; a third shape composes from the same rows. Never restate a `bg-*-soft`/`text-*-soft-fg` pair at a call site, and never add a fourth table without a shape that needs it |
 | A control's touch target, or the touch-density opt-in | `density.ts` (`@hezo/ui`): `hitAreaClassName` for an isolated control (the host supplies its own `relative`/`absolute`; never on a row that stacks against another, whose pseudo-element would steal the neighbour's tap), `touchMinHeightClassName` for a stacked or in-flow control, `touchCellHeightClassName` for a clickable row's cells. The consumer sets `data-density="touch"` on `<html>`, once - never a `pointer-coarse:` branch, a context, or a per-call-site `min-h` |
 | An optimistic mutation | `useOptimisticMutation` (`hooks/use-optimistic-mutation.ts`) |
+| Telling a web request's 404 apart from its other failures | `isNotFound` (`packages/web/src/lib/api.ts`) - never a cast to `ApiError` and a status compare at the call site |
 | A server test context | `createTestContext()` (`test/helpers/context.ts`) |
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
 | A component test | `renderApp()` + `seed*()` (`packages/web/test/helpers/`) |
+| A component test of a delete control | `expectDeleteAsksFirst` (`packages/web/test/helpers/confirm-delete.ts`) |
 | Calling an MCP tool from a server test | `callMcpTool` / `callMcpToolContent` (`test/helpers/mcp-call.ts`) - never a per-file copy of the JSON-RPC request |
 | A complete test double | `createStubDocker()` (`test/helpers/app.ts`) - never a hand-rolled partial |
 | Seeding container uptime a calendar-window reader will bill | `seedUptimeStretch()` / `seedMonthToDateSeconds()` (`test/helpers/uptime.ts`) - web tests reach them through `@hezo/server/test/helpers/uptime` |

@@ -20,6 +20,7 @@ import {
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../hooks/use-oauth-connections';
+import type { Repo } from '../hooks/use-projects';
 import { useCreateRepo, useDeleteRepo, useRepos } from '../hooks/use-repos';
 import { repoWebUrl } from '../lib/github';
 import { Trans, useI18n } from '../lib/i18n';
@@ -52,6 +53,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 	// this the one disconnect surface that stayed silent about its own blast
 	// radius while sitting directly above the evidence.
 	const [disconnectOpen, setDisconnectOpen] = useState(false);
+	const [pendingRepoRemoval, setPendingRepoRemoval] = useState<Repo | null>(null);
 
 	const githubConnection = connections.find((c) => c.provider === 'github') ?? null;
 	const githubConnector = connectors.find((c) => c.name === 'github') ?? null;
@@ -335,7 +337,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 											) : (
 												<button
 													type="button"
-													onClick={() => deleteRepo.mutate(r.id)}
+													onClick={() => setPendingRepoRemoval(r)}
 													className="text-text-3 hover:text-danger"
 													aria-label={`Remove repo ${repoName}`}
 													data-testid={`repo-delete-${repoName}`}
@@ -397,6 +399,24 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 					)
 				)}
 			</div>
+			<ConfirmDialog
+				open={pendingRepoRemoval !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingRepoRemoval(null);
+				}}
+				title={
+					pendingRepoRemoval
+						? t('repos.remove.title', { name: pendingRepoRemoval.repo_identifier })
+						: ''
+				}
+				description={t('repos.remove.description')}
+				confirmLabel={t('common.remove')}
+				variant="danger"
+				loading={deleteRepo.isPending}
+				onConfirm={async () => {
+					if (pendingRepoRemoval) await deleteRepo.mutateAsync(pendingRepoRemoval.id);
+				}}
+			/>
 		</section>
 	);
 }

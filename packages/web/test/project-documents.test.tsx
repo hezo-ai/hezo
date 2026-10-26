@@ -66,6 +66,8 @@ test('can create, view, edit, and delete a project document', async () => {
 	await findByTestId('doc-archived-banner');
 
 	await user.click(await findByRole('button', { name: 'Delete document' }));
+	// The confirmation names the document it deletes.
+	await findByText(`Delete ${filename}?`);
 	await user.click(await findByTestId('confirm-dialog-confirm'));
 
 	// After deletion, the doc list entry is gone.

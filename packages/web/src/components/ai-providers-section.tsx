@@ -26,6 +26,7 @@ import { EditAiProviderDialog } from './edit-ai-provider-dialog';
 import { ModelPicker } from './model-picker';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { ConfirmDialog } from './ui/confirm-dialog';
 import { type Column, DataTable } from './ui/data-table';
 import { InfoTooltip } from './ui/info-tooltip';
 import { Tooltip } from './ui/tooltip';
@@ -45,6 +46,7 @@ export function AiProvidersSection() {
 	// Verify that returned instantly having checked nothing.
 	const [verifiedOk, setVerifiedOk] = useState<Record<string, boolean>>({});
 	const [verifyingId, setVerifyingId] = useState<string | null>(null);
+	const [pendingRemove, setPendingRemove] = useState<AiProviderConfig | null>(null);
 
 	const rows = configs ?? [];
 
@@ -65,6 +67,14 @@ export function AiProvidersSection() {
 			toast.error(e instanceof Error ? e.message : 'Could not verify key');
 		} finally {
 			setVerifyingId(null);
+		}
+	}
+
+	async function handleRemove(config: AiProviderConfig) {
+		try {
+			await deleteProvider.mutateAsync(config.id);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : t('settings.provider.remove.failed'));
 		}
 	}
 
@@ -234,7 +244,7 @@ export function AiProvidersSection() {
 							<Tooltip content="Remove">
 								<button
 									type="button"
-									onClick={() => deleteProvider.mutate(c.id)}
+									onClick={() => setPendingRemove(c)}
 									aria-label={`Remove ${c.label}`}
 									className="text-text-3 hover:text-danger"
 								>
@@ -271,6 +281,22 @@ export function AiProvidersSection() {
 			)}
 
 			<AddAiProviderDialog open={addOpen} onOpenChange={setAddOpen} />
+			<ConfirmDialog
+				open={pendingRemove !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingRemove(null);
+				}}
+				title={
+					pendingRemove ? t('settings.provider.remove.title', { name: pendingRemove.label }) : ''
+				}
+				description={t('settings.provider.remove.description')}
+				confirmLabel={t('common.remove')}
+				variant="danger"
+				loading={deleteProvider.isPending}
+				onConfirm={async () => {
+					if (pendingRemove) await handleRemove(pendingRemove);
+				}}
+			/>
 			{editing && (
 				<EditAiProviderDialog
 					config={editing}
