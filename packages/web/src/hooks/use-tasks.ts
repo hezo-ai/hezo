@@ -325,6 +325,5 @@ export function useRemoveDependency(projectId: string, taskId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.taskDependencies(projectId, taskId),
 			}),
-		onError: () => toast.error('Failed to remove dependency'),
 	});
 }

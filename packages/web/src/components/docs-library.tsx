@@ -209,6 +209,8 @@ export function DocsLibrary({
 
 	const showNewForm = isCreating && !!newForm;
 	const selectedItem = selectedKey ? items.find((it) => it.key === selectedKey) : undefined;
+	const selectedName =
+		typeof selectedItem?.label === 'string' ? selectedItem.label : (selectedKey ?? '');
 	const showRightPane = showNewForm || selectedKey;
 	const popOutUrl = selectedKey && getPopOutUrl ? getPopOutUrl(selectedKey) : null;
 	// The collapse only applies while a document is open — its toolbar hosts the
@@ -648,8 +650,8 @@ export function DocsLibrary({
 			<ConfirmDialog
 				open={deleteOpen}
 				onOpenChange={setDeleteOpen}
-				title="Delete this document?"
-				description="The document will be permanently removed."
+				title={t('docs.delete.title', { name: selectedName })}
+				description={t('docs.delete.description')}
 				confirmLabel={t('common.delete')}
 				variant="danger"
 				onConfirm={handleConfirmDelete}

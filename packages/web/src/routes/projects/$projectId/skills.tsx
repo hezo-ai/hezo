@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { BookOpen, ExternalLink, Eye, History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { DeleteSkillDialog } from '../../../components/delete-skill-dialog';
 import { RevisionHistoryDialog } from '../../../components/document-review/revision-history-dialog';
 import { ViewingRevisionBanner } from '../../../components/document-review/viewing-revision-banner';
 import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
@@ -40,6 +41,7 @@ function ProjectSkillsPage() {
 	const [editingId, setEditingId] = useState<string | null>(null);
 	// Independently of editing, `viewingId` drives the read-only view modal.
 	const [viewingId, setViewingId] = useState<string | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [content, setContent] = useState('');
@@ -278,9 +280,7 @@ function ProjectSkillsPage() {
 									</button>
 									<button
 										type="button"
-										onClick={() => {
-											if (confirm(`Delete skill "${s.name}"?`)) deleteSkill.mutate(s.id);
-										}}
+										onClick={() => setPendingDelete(s)}
 										aria-label={`Delete ${s.name}`}
 										className="text-text-3 hover:text-danger"
 									>
@@ -359,6 +359,12 @@ function ProjectSkillsPage() {
 				onOpenChange={(o) => !o && setViewingId(null)}
 				skill={viewingSkill?.id === viewingId ? viewingSkill : undefined}
 				fallbackName={skills.find((s) => s.id === viewingId)?.name}
+			/>
+			<DeleteSkillDialog
+				skill={pendingDelete}
+				onClose={() => setPendingDelete(null)}
+				onDelete={(id) => deleteSkill.mutateAsync(id)}
+				deleting={deleteSkill.isPending}
 			/>
 		</div>
 	);

@@ -1,13 +1,15 @@
 // Coverage for components/project-icon-section.tsx: the pick → normalize →
-// preview → save/cancel flow plus remove and the error toasts. happy-dom can't
+// preview → save/cancel flow plus the confirmed remove and the error toasts. happy-dom can't
 // decode or rasterize images, so the browser decode/canvas boundary is stubbed
 // (createImageBitmap + a fake <canvas>) while the upload itself runs against
 // the real PUT/DELETE /api/projects/:slug/icon routes — the fake canvas encodes
 // to a structurally-valid 512×512 PNG header so the server accepts it.
 
+import { api } from '@hezo/web/lib/api';
 import { fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { toast } from '../src/hooks/use-toast';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededProject, seedProject, seedWorkspace } from './helpers/seed';
 
@@ -198,7 +200,7 @@ test('a server-rejected upload keeps the preview and toasts the failure', async 
 
 	await user.click(await findByTestId('project-icon-save'));
 
-	await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('Failed to upload icon'));
+	await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('Failed to upload image'));
 	// The preview (and its Save affordance) survives so the user can retry/cancel.
 	expect(getByTestId('project-icon-save')).toBeTruthy();
 });
@@ -226,19 +228,25 @@ test('a failed remove keeps the icon and toasts the failure', async () => {
 	}) as typeof globalThis.fetch;
 
 	await user.click(remove);
+	await user.click(await findByTestId('confirm-dialog-confirm'));
 
-	await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('Failed to remove icon'));
+	await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('Failed to remove image'));
 	// The icon is still set, so Remove stays available.
 	expect(getByTestId('project-icon-remove')).toBeTruthy();
 });
 
-test('Remove deletes the existing icon and returns to the initials fallback', async () => {
+test('Remove asks first, then deletes the existing icon and returns to the initials fallback', async () => {
 	stubImagePipeline();
-	const { findByTestId, queryByTestId, user } = await renderSettings(true);
+	const { findByTestId, getByTestId, queryByTestId, user } = await renderSettings(true);
 
 	// Existing icon → Remove is offered.
-	const remove = await findByTestId('project-icon-remove', undefined, { timeout: 15_000 });
-	await user.click(remove);
+	await findByTestId('project-icon-remove', undefined, { timeout: 15_000 });
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByTestId('project-icon-remove'),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Remove the image for Icon Flow?',
+	});
 
 	// Icon gone: Remove disappears and the first-run Upload label returns.
 	await waitFor(() => expect(queryByTestId('project-icon-remove')).toBeNull());

@@ -17,6 +17,7 @@ import {
 } from '../../lib/doc-review-selection';
 import type { ReviewAnnotation } from '../../lib/rehype-review-highlights';
 import { Button } from '../ui/button';
+import { DeleteReviewCommentDialog } from './delete-review-comment-dialog';
 
 /**
  * The slice of a review comment the surface needs. Structurally satisfied by
@@ -108,6 +109,7 @@ export function ReviewSurface({
 	const [selection, setSelection] = useState<SelectionState | null>(null);
 	const [hoverLine, setHoverLine] = useState<HoverLineState | null>(null);
 	const [iconLayout, setIconLayout] = useState<IconEntry[]>([]);
+	const [pendingDelete, setPendingDelete] = useState<SurfaceComment | null>(null);
 	const isDesktopEditor = useMediaQuery('(min-width: 640px)');
 	// Hover-a-line is pointless on touch devices (no hover): text selection is
 	// the mobile affordance. Gate on "not coarse" rather than "fine" so pointer
@@ -272,9 +274,8 @@ export function ReviewSurface({
 		}
 	}
 
-	function handleDelete() {
-		if (!activeId) return;
-		onDelete(activeId);
+	function confirmDelete(commentId: string) {
+		onDelete(commentId);
 		onActiveIdChange(null);
 	}
 
@@ -372,10 +373,15 @@ export function ReviewSurface({
 					desktop={isDesktopEditor}
 					saving={saving}
 					onSave={handleSave}
-					onDelete={draft ? undefined : handleDelete}
+					onDelete={draft || !activeComment ? undefined : () => setPendingDelete(activeComment)}
 					onClose={closeEditor}
 				/>
 			)}
+			<DeleteReviewCommentDialog
+				comment={pendingDelete}
+				onClose={() => setPendingDelete(null)}
+				onDelete={confirmDelete}
+			/>
 		</div>
 	);
 }

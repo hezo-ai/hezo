@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { AssetReviewComment } from '../../hooks/use-asset-review';
 import { toast } from '../../hooks/use-toast';
 import { ActionReviewDialog } from '../document-review/action-review-dialog';
+import { DeleteReviewCommentDialog } from '../document-review/delete-review-comment-dialog';
 import { buildAssetReviewHandoff } from '../document-review/review-handoff';
 import { ReviewHelp } from '../document-review/review-help';
 import { Button } from '../ui/button';
@@ -61,6 +62,7 @@ export function AssetReviewPanel({
 	const [composerText, setComposerText] = useState('');
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [editingText, setEditingText] = useState('');
+	const [pendingDelete, setPendingDelete] = useState<AssetReviewComment | null>(null);
 	const count = comments?.length ?? 0;
 
 	function reveal(comment: AssetReviewComment) {
@@ -286,7 +288,7 @@ export function AssetReviewPanel({
 													aria-label="Delete comment"
 													data-testid="asset-review-delete"
 													className={ICON_BUTTON_CLASSES}
-													onClick={() => onDelete(c.id)}
+													onClick={() => setPendingDelete(c)}
 												>
 													<Trash2 className="h-3.5 w-3.5" />
 												</button>
@@ -319,6 +321,11 @@ export function AssetReviewPanel({
 				onConfirm={async () => {
 					await onClearAll();
 				}}
+			/>
+			<DeleteReviewCommentDialog
+				comment={pendingDelete}
+				onClose={() => setPendingDelete(null)}
+				onDelete={onDelete}
 			/>
 		</div>
 	);

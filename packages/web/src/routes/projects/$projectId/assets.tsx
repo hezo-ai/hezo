@@ -790,7 +790,9 @@ function ProjectAssetsPage() {
 				onOpenChange={(open) => {
 					if (!open) setPendingDelete(null);
 				}}
-				title={t('assets.delete.title')}
+				title={
+					pendingDelete ? t('assets.delete.title', { name: pendingDelete.original_filename }) : ''
+				}
 				description={
 					deleteCount > 0
 						? plural('assets.delete.attached', deleteCount, { count: deleteCount })

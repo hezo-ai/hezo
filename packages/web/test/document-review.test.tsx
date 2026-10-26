@@ -1,5 +1,7 @@
+import { api } from '@hezo/web/lib/api';
 import { fireEvent, waitFor } from '@testing-library/react';
-import { expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
 import {
 	type SeededProject,
@@ -14,6 +16,8 @@ import {
 // rendering from seeded comments, the margin-icon editor flows, clear-review,
 // the action-this-review handoff dialog, the help dialog, and the two creation
 // paths (text selection → pill, hover-a-line → ghost icon).
+
+afterEach(() => vi.restoreAllMocks());
 
 function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
@@ -208,7 +212,7 @@ test('clicking a margin icon opens the editor and saving updates the comment', a
 	expect(container.querySelector('[data-testid="review-editor"]')).toBeNull();
 });
 
-test('clicking a highlight opens the editor and delete removes the highlight', async () => {
+test('clicking a highlight opens the editor, and delete asks first before removing the highlight', async () => {
 	const { container, findByTestId, user } = await setupDocumentsPage({
 		comments: [{ quote: 'target text', comment: 'To be deleted' }],
 	});
@@ -217,7 +221,12 @@ test('clicking a highlight opens the editor and delete removes the highlight', a
 		expect(container.querySelectorAll('mark[data-review-id]').length).toBe(1);
 	});
 	await user.click(container.querySelector('mark[data-review-id]') as HTMLElement);
-	await user.click(await findByTestId('review-editor-delete'));
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => findByTestId('review-editor-delete'),
+		send: vi.spyOn(api, 'delete'),
+		names: 'To be deleted',
+	});
 
 	await waitFor(async () => {
 		expect(container.querySelectorAll('mark[data-review-id]').length).toBe(0);

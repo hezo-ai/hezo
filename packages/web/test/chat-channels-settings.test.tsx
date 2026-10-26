@@ -1,5 +1,10 @@
-import { expect, test } from 'vitest';
+import { api } from '@hezo/web/lib/api';
+import { waitFor } from '@testing-library/react';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
+
+afterEach(() => vi.restoreAllMocks());
 
 // The chat-channels settings page is backed by the admin REST routes (no
 // ChatSessionManager needed). Drives the Telegram config + identity allowlist
@@ -110,4 +115,26 @@ test('configures the Discord bot: token, mode toggles, discord identities', asyn
 	const list = await findByTestId('identity-list');
 	expect(list.textContent).toContain('99887766554433');
 	expect(list.textContent?.toLowerCase()).toContain('discord');
+});
+
+test('unlinking an identity asks first, then removes it from the allowlist', async () => {
+	const { findByTestId, getByTestId, queryByTestId, user } = await renderApp({
+		initialPath: '/settings/chat-channels',
+	});
+
+	await user.type(await findByTestId('identity-external-id'), '5151');
+	await user.type(getByTestId('identity-handle'), '@leaving');
+	await user.click(getByTestId('identity-add'));
+	const list = await findByTestId('identity-list');
+	const row = list.querySelector('[data-testid^="identity-remove-"]') as HTMLElement;
+	const removeId = row.getAttribute('data-testid') as string;
+
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByTestId(removeId),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Unlink @leaving?',
+	});
+
+	await waitFor(() => expect(queryByTestId('identity-list')).toBeNull());
 });

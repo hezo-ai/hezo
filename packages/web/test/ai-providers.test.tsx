@@ -5,15 +5,21 @@ import {
 	setCredentialSerializationRulesForTest,
 } from '@hezo/shared';
 import { NEVER_RECORD_CLASS } from '@hezo/ui';
+import { toast } from '@hezo/web/hooks/use-toast';
+import { api } from '@hezo/web/lib/api';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { fireEvent, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { getTestContext, renderApp } from './helpers/render';
 
 // No credential serialises its runs by default; the two tests that assert the
 // "one agent at a time" UI opt a Codex subscription in through a rule, then this
 // restores the empty default so no other test sees a serialising credential.
-afterEach(() => setCredentialSerializationRulesForTest([]));
+afterEach(() => {
+	setCredentialSerializationRulesForTest([]);
+	vi.restoreAllMocks();
+});
 
 interface ProviderListResponse {
 	data: Array<{ id: string }>;
@@ -1256,4 +1262,116 @@ test('Verify withholds the tick for a credential it could not check', async () =
 	await findByText(/cannot be checked/, undefined, { timeout: 15_000 });
 	// And no claim is made on the row: the tick is the thing that lied.
 	expect(queryByTestId(/^credential-verified-/)).toBeNull();
+});
+
+/**
+ * A second key beside the harness's default, so removing it never raises the
+ * setup gate the remove specs would otherwise land on.
+ */
+async function seedRemovableProvider(label: string): Promise<string> {
+	const res = await postProvider({
+		provider: 'openai',
+		api_key: 'sk-remove-test',
+		label,
+		auth_method: 'api_key',
+	});
+	expect(res.status).toBe(201);
+	return ((await res.json()) as { data: { id: string } }).data.id;
+}
+
+async function storedProviderIds(): Promise<string[]> {
+	const { apiBase, token } = getTestContext();
+	const res = await apiBase('/api/ai-providers', { headers: { Authorization: `Bearer ${token}` } });
+	return ((await res.json()) as ProviderListResponse).data.map((c) => c.id);
+}
+
+test('Remove asks first: cancelling sends nothing, confirming deletes and drops the row', async () => {
+	let id = '';
+	const r = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			id = await seedRemovableProvider('doomed-key');
+		},
+	});
+	const sendDelete = vi.spyOn(api, 'delete');
+	await r.findByRole('button', { name: 'Remove doomed-key' }, { timeout: 15_000 });
+
+	await expectDeleteAsksFirst({
+		user: r.user,
+		trigger: () => r.getByRole('button', { name: 'Remove doomed-key' }),
+		send: sendDelete,
+		names: 'Remove the doomed-key provider?',
+	});
+
+	// The row leaves the list on screen, not just the database.
+	await waitFor(() => expect(r.queryByText('doomed-key')).toBeNull());
+	expect(sendDelete).toHaveBeenCalledWith(`/api/ai-providers/${id}`);
+	expect(await storedProviderIds()).not.toContain(id);
+	expect(r.queryByRole('alertdialog')).toBeNull();
+});
+
+test('a provider already removed elsewhere refreshes the list and shows no error', async () => {
+	let id = '';
+	const r = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			id = await seedRemovableProvider('ghost-key');
+		},
+	});
+	const showError = vi.spyOn(toast, 'error');
+
+	await r.user.click(
+		await r.findByRole('button', { name: 'Remove ghost-key' }, { timeout: 15_000 }),
+	);
+	await r.findByRole('alertdialog');
+
+	// Gone behind the page's back - an earlier click, or another tab - while the
+	// list still shows it.
+	const { apiBase, token } = getTestContext();
+	const gone = await apiBase(`/api/ai-providers/${id}`, {
+		method: 'DELETE',
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	expect(gone.status).toBe(200);
+	r.getByText('ghost-key');
+
+	await r.user.click(r.getByTestId('confirm-dialog-confirm'));
+
+	await waitFor(() => expect(r.queryByText('ghost-key')).toBeNull());
+	expect(r.queryByRole('alertdialog')).toBeNull();
+	expect(r.queryByRole('alert')).toBeNull();
+	expect(showError).not.toHaveBeenCalled();
+});
+
+test('a remove the server refuses shows its error and keeps the row', async () => {
+	let id = '';
+	const r = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			id = await seedRemovableProvider('stuck-key');
+		},
+	});
+	const showError = vi.spyOn(toast, 'error');
+	const passthrough = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url =
+			typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
+		const method = (input instanceof Request ? input.method : init?.method) ?? 'GET';
+		if (method === 'DELETE' && url.endsWith(`/api/ai-providers/${id}`)) {
+			return new Response(
+				JSON.stringify({ error: { code: 'BOOM', message: 'The provider store is busy' } }),
+				{ status: 500, headers: { 'Content-Type': 'application/json' } },
+			);
+		}
+		return passthrough(input as RequestInfo, init);
+	}) as typeof globalThis.fetch;
+
+	await r.user.click(
+		await r.findByRole('button', { name: 'Remove stuck-key' }, { timeout: 15_000 }),
+	);
+	await r.user.click(await r.findByTestId('confirm-dialog-confirm'));
+
+	await waitFor(() => expect(showError).toHaveBeenCalledWith('The provider store is busy'));
+	r.getByText('stuck-key');
+	expect(await storedProviderIds()).toContain(id);
 });

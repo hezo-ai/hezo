@@ -5,6 +5,7 @@ import { Check, Copy, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { type Column, DataTable } from '../../components/ui/data-table';
 import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
@@ -20,6 +21,26 @@ import {
 } from '../../hooks/use-api-keys';
 import { useMe } from '../../hooks/use-me';
 import { copyToClipboard } from '../../lib/clipboard';
+import { type MessageKey, useI18n } from '../../lib/i18n';
+
+/** Both delete the key: a pending one is a request turned down, an approved one is revoked. */
+type KeyRemoval = 'reject' | 'revoke';
+
+const REMOVAL_COPY: Record<
+	KeyRemoval,
+	{ title: MessageKey; description: MessageKey; confirm: MessageKey }
+> = {
+	reject: {
+		title: 'apiKeys.reject.title',
+		description: 'apiKeys.reject.description',
+		confirm: 'apiKeys.reject.confirm',
+	},
+	revoke: {
+		title: 'apiKeys.revoke.title',
+		description: 'apiKeys.revoke.description',
+		confirm: 'apiKeys.revoke.confirm',
+	},
+};
 
 function clientLabel(info: Record<string, unknown>): string | null {
 	const name = typeof info.name === 'string' ? info.name : null;
@@ -29,6 +50,7 @@ function clientLabel(info: Record<string, unknown>): string | null {
 }
 
 function ApiKeysPage() {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const { data: rows = [] } = useApiKeys();
 	const create = useCreateApiKey();
@@ -38,6 +60,9 @@ function ApiKeysPage() {
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
 	const [newKey, setNewKey] = useState<string | null>(null);
+	const [pendingRemoval, setPendingRemoval] = useState<{ key: ApiKey; kind: KeyRemoval } | null>(
+		null,
+	);
 
 	const pending = rows.filter((r) => r.status === ApiKeyStatus.Pending);
 	const active = rows.filter((r) => r.status === ApiKeyStatus.Approved);
@@ -95,11 +120,7 @@ function ApiKeysPage() {
 						variant="ghost"
 						className="text-danger"
 						disabled={busy}
-						onClick={() => {
-							if (confirm(`Reject the access request from "${r.name}"?`)) {
-								remove.mutate(r.id);
-							}
-						}}
+						onClick={() => setPendingRemoval({ key: r, kind: 'reject' })}
 					>
 						<X className="w-3 h-3" /> Reject
 					</Button>
@@ -141,15 +162,7 @@ function ApiKeysPage() {
 							variant="ghost"
 							className="text-danger"
 							disabled={busy}
-							onClick={() => {
-								if (
-									confirm(
-										`Revoke "${r.name}"? Its token stops working immediately and it loses all access to this instance.`,
-									)
-								) {
-									remove.mutate(r.id);
-								}
-							}}
+							onClick={() => setPendingRemoval({ key: r, kind: 'revoke' })}
 						>
 							<Trash2 className="w-3.5 h-3.5" /> Revoke
 						</Button>
@@ -256,7 +269,31 @@ function ApiKeysPage() {
 			</>
 		);
 
-	return <div className="max-w-[900px]">{content}</div>;
+	const removalCopy = pendingRemoval ? REMOVAL_COPY[pendingRemoval.kind] : null;
+
+	return (
+		<div className="max-w-[900px]">
+			{content}
+			<ConfirmDialog
+				open={pendingRemoval !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingRemoval(null);
+				}}
+				title={
+					pendingRemoval && removalCopy
+						? t(removalCopy.title, { name: pendingRemoval.key.name })
+						: ''
+				}
+				description={removalCopy ? t(removalCopy.description) : ''}
+				confirmLabel={removalCopy ? t(removalCopy.confirm) : undefined}
+				variant="danger"
+				loading={remove.isPending}
+				onConfirm={async () => {
+					if (pendingRemoval) await remove.mutateAsync(pendingRemoval.key.id);
+				}}
+			/>
+		</div>
+	);
 }
 
 export const Route = createFileRoute('/settings/api-keys')({

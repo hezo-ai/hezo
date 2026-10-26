@@ -1,7 +1,11 @@
 import { NEVER_RECORD_CLASS } from '@hezo/ui';
+import { api } from '@hezo/web/lib/api';
 import { waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { renderApp } from './helpers/render';
+
+afterEach(() => vi.restoreAllMocks());
 
 type SeedCtx = {
 	token: string;
@@ -50,19 +54,43 @@ test('lists pending + active keys and approving moves a row to Active', async ()
 	await findByText('alpha-pending');
 });
 
-test('revoke removes an active key', async () => {
-	window.confirm = () => true;
-	const { findByText, getByRole, queryByText } = await renderApp({
+test('revoke asks first, then removes an active key', async () => {
+	const { findByText, getByRole, queryByText, user } = await renderApp({
 		initialPath: '/settings/api-keys',
 		seed: async (ctx) => {
 			await registerApproved(ctx as SeedCtx, 'gamma-online');
 		},
 	});
-
 	await findByText('gamma-online');
-	getByRole('button', { name: 'Revoke' }).click();
+
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByRole('button', { name: 'Revoke' }),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Revoke gamma-online?',
+	});
 
 	await waitFor(() => expect(queryByText('gamma-online')).toBeNull());
+});
+
+test('rejecting a pending request asks first, then removes it', async () => {
+	const { findByText, getByRole, queryByText, user } = await renderApp({
+		initialPath: '/settings/api-keys',
+		seed: async (ctx) => {
+			await register(ctx as SeedCtx, 'delta-pending');
+		},
+	});
+	await findByText('delta-pending');
+
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByRole('button', { name: 'Reject' }),
+		send: vi.spyOn(api, 'delete'),
+		names: 'Reject the request from delta-pending?',
+	});
+
+	await waitFor(() => expect(queryByText('delta-pending')).toBeNull());
+	expect(queryByText('Pending approval')).toBeNull();
 });
 
 test('an admin can mint a new key and see it once', async () => {

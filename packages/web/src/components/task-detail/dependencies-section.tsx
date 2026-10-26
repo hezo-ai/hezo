@@ -1,12 +1,15 @@
 import { Link } from '@tanstack/react-router';
 import { Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import {
 	type TaskDependency,
 	useRemoveDependency,
 	useTaskDependencies,
 } from '../../hooks/use-tasks';
+import { useI18n } from '../../lib/i18n';
 import { TaskRunDot } from '../task-run-dot';
 import { TaskStatusBadge } from '../task-status-badge';
+import { ConfirmDialog } from '../ui/confirm-dialog';
 
 interface DependenciesSectionProps {
 	projectId: string;
@@ -15,12 +18,15 @@ interface DependenciesSectionProps {
 
 /**
  * "Blocked By" list — every dependency the task is waiting on, with a trash
- * button to clear the link. Hidden when the task has no dependencies; the
- * route file unconditionally renders this component and lets it decide.
+ * button that asks before it clears the link. Hidden when the task has no
+ * dependencies; the route file unconditionally renders this component and lets
+ * it decide.
  */
 export function DependenciesSection({ projectId, taskId }: DependenciesSectionProps) {
 	const { data: deps } = useTaskDependencies(projectId, taskId);
 	const removeDep = useRemoveDependency(projectId, taskId);
+	const { t } = useI18n();
+	const [pendingRemoval, setPendingRemoval] = useState<TaskDependency | null>(null);
 
 	if (!deps || deps.length === 0) return null;
 
@@ -49,7 +55,8 @@ export function DependenciesSection({ projectId, taskId }: DependenciesSectionPr
 						</Link>
 						<button
 							type="button"
-							onClick={() => removeDep.mutate(d.id)}
+							onClick={() => setPendingRemoval(d)}
+							aria-label={t('tasks.dependency.remove.label', { task: d.blocked_by_identifier })}
 							className="text-text-3 hover:text-danger"
 						>
 							<Trash2 className="w-3 h-3" />
@@ -57,6 +64,30 @@ export function DependenciesSection({ projectId, taskId }: DependenciesSectionPr
 					</div>
 				))}
 			</div>
+			<ConfirmDialog
+				open={pendingRemoval !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingRemoval(null);
+				}}
+				title={
+					pendingRemoval
+						? t('tasks.dependency.remove.title', { task: pendingRemoval.blocked_by_identifier })
+						: ''
+				}
+				description={
+					pendingRemoval
+						? t('tasks.dependency.remove.description', {
+								task: pendingRemoval.blocked_by_identifier,
+							})
+						: ''
+				}
+				confirmLabel={t('common.remove')}
+				variant="danger"
+				loading={removeDep.isPending}
+				onConfirm={async () => {
+					if (pendingRemoval) await removeDep.mutateAsync(pendingRemoval.id);
+				}}
+			/>
 		</div>
 	);
 }

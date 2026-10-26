@@ -167,6 +167,8 @@ test('an asset is archived first, then deleted from the Archived view', async ()
 
 	// The hard delete lives on archived cards; ConfirmDialog is a portal.
 	await user.click(await findByTestId('asset-delete'));
+	// The confirmation names the file it deletes.
+	await findByText('Delete remove-me.png?');
 	await user.click(getByRole('button', { name: 'Delete' }));
 
 	await waitFor(() => expect(queryByText('remove-me.png')).toBeNull());

@@ -3,8 +3,10 @@
 // PUT/DELETE /api/users/:userId/icon routes. happy-dom can't decode/rasterize
 // images, so the decode/canvas boundary is stubbed with a valid 512×512 PNG.
 
-import { fireEvent } from '@testing-library/react';
+import { api } from '@hezo/web/lib/api';
+import { fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
+import { expectDeleteAsksFirst } from './helpers/confirm-delete';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
@@ -78,9 +80,9 @@ test('lists the admin user and exposes the avatar control', async () => {
 	expect((await findByTestId('user-icon-upload')).textContent).toContain('Upload image');
 });
 
-test('uploading the admin avatar swaps to Replace/Remove', async () => {
+test('uploading the admin avatar swaps to Replace/Remove, and Remove asks first', async () => {
 	stubImagePipeline();
-	const { findByTestId, queryByTestId, user } = await renderUsersPage();
+	const { findByTestId, getByTestId, queryByTestId, user } = await renderUsersPage();
 
 	const input = await findByTestId('user-icon-input', undefined, { timeout: 15_000 });
 	fireEvent.change(input, {
@@ -96,4 +98,13 @@ test('uploading the admin avatar swaps to Replace/Remove', async () => {
 	await findByTestId('user-icon-remove', undefined, { timeout: 15_000 });
 	expect(queryByTestId('user-icon-save')).toBeNull();
 	expect((await findByTestId('user-icon-upload')).textContent).toContain('Replace image');
+
+	// The confirmation names whose avatar it removes.
+	await expectDeleteAsksFirst({
+		user,
+		trigger: () => getByTestId('user-icon-remove'),
+		send: vi.spyOn(api, 'delete'),
+		names: /^Remove the image for \S.*\?$/,
+	});
+	await waitFor(() => expect(queryByTestId('user-icon-remove')).toBeNull());
 });
