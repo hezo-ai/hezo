@@ -23,9 +23,11 @@ container running for one hour is one container-hour; five containers running
 for twelve minutes is also one. Time is metered while a container is up, so an
 idle team costs nothing.
 
-Both reset with your billing period. See
-[Budgets & cost control](/docs/concepts/budgets-and-costs) for the in-app
-ledger, which works the same as it does on a self-hosted instance.
+Both reset with your billing period. Your first period counts from the moment
+you subscribe, so hours your trial used earlier that day do not come out of it.
+See [Budgets & cost control](/docs/concepts/budgets-and-costs) for the in-app
+ledger, which works the same as it does on a self-hosted instance. To see where
+the hours went, open **Hours by project** in the Settings menu.
 
 ## AI models
 
@@ -44,11 +46,11 @@ on a provider you connected, that provider bills you directly, not us. See
 ## The free trial
 
 Every account starts with a **seven-day free trial, and we do not ask for a
-card**. The trial grants a flat ten container-hours and three concurrent
+card**. The trial grants a flat three container-hours and three concurrent
 containers, the same for everyone, and includes the Base AI model.
 
-The clock starts when you take your address, and the trial ends at whichever
-comes first: seven days, or ten container-hours.
+The clock starts when your instance is first ready, and the trial ends at
+whichever comes first: seven days, or three container-hours.
 
 **You do not pick a plan to start the trial.** You pick one when you subscribe,
 which is the right order - container-hours are hard to predict before you have

@@ -902,6 +902,7 @@
 	"settings.logOut": "Wyloguj się",
 	"settings.managed.by": "Ustawione przez {managedBy}",
 	"settings.managed.contactSupport": "Skontaktuj się z pomocą techniczną",
+	"settings.managed.hoursByProject": "Godziny według projektów",
 	"settings.managed.manage": "Zarządzaj",
 	"settings.managed.planAndLimits": "Plan i limity",
 	"settings.provider.advanced": "Zaawansowane",
