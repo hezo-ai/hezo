@@ -188,6 +188,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
 | `policy.pinned.containerHoursAnchorDay` | - | The day of the month that allowance resets on, `1`-`31`. Unset, it resets on the 1st. |
+| `policy.pinned.containerHoursSince` | - | The moment hours start counting from, as an ISO 8601 timestamp with its offset. A window that began earlier counts only from that moment. Later windows start on the anchor day as usual. |
 | `policy.pinned.backend` | - | Fixes which container backend runs agent containers (`docker` or `daytona`). |
 | `policyFile` | - | Path to a JSON file holding the `policy` block. The file wins over an inline block, and is re-read when it changes. |
 
@@ -212,6 +213,11 @@ cover the period it is charged for rather than a calendar month cutting across
 it. An anchor day a short month does not have, such as the 31st in February,
 resets on that month's last day and returns to the anchor the month after; it
 never walks backwards.
+
+**Pin `containerHoursSince` when billing starts at the moment someone buys.**
+The first window then counts only from that moment, so hours spent earlier the
+same day, before the purchase, are not charged to the first paid period. Windows
+after it are unaffected.
 
 **`pinned.backend` is the exception: it takes effect on restart.** The engine
 containers run on is chosen once at startup, so re-pinning it while the instance

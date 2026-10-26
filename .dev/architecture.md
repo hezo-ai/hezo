@@ -933,7 +933,10 @@ the meter must read the same window, and once did not**: the admission path move
 anchor while `containerHoursTotals` stayed on `date_trunc('month')`, so a tenant anchored
 on the 20th was refused a container while the Budget page's bar read a third full. The
 totals now carry `window_start` and `window_end` beside the sums, and a test asserts the
-two reads agree rather than asserting a figure.
+two reads agree rather than asserting a figure. **`policy.pinned.containerHoursSince` holds a
+window's start back to an instant**, never its end: a control plane billing from the
+moment someone bought pins that moment, so the first window does not count the hours spent
+earlier on the day of purchase. Both reads take it through the same `@hezo/shared` helpers.
 
 ### Docs, skills & assets
 

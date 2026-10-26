@@ -260,3 +260,39 @@ describe('previousContainerHoursWindowStart', () => {
 		);
 	});
 });
+
+/**
+ * **A pinned instant moves where a window starts counting, never where it ends.**
+ * A deployer that bills from the moment someone bought pins that moment: the
+ * first window counts from it, and every window after opens on the anchor.
+ */
+describe('a window held back to a pinned instant', () => {
+	const at = (iso: string) => new Date(iso);
+	const bought = at('2026-10-20T14:30:00Z');
+
+	it('counts the first window from the instant, not from midnight on the anchor day', () => {
+		const { start, end } = containerHoursWindow(20, at('2026-10-26T00:00:00Z'), bought);
+		expect(start.toISOString()).toBe(bought.toISOString());
+		expect(end.toISOString()).toBe('2026-11-20T00:00:00.000Z');
+	});
+
+	it('leaves every later window on the anchor', () => {
+		expect(containerHoursWindowStart(20, at('2026-11-25T00:00:00Z'), bought).toISOString()).toBe(
+			'2026-11-20T00:00:00.000Z',
+		);
+	});
+
+	// Nothing before the instant counts, so the first window has nothing before it.
+	it('reads the window before the first as empty', () => {
+		const now = at('2026-10-26T00:00:00Z');
+		expect(previousContainerHoursWindowStart(20, now, bought).toISOString()).toBe(
+			bought.toISOString(),
+		);
+	});
+
+	it('starts the window before the second at the instant', () => {
+		expect(
+			previousContainerHoursWindowStart(20, at('2026-11-25T00:00:00Z'), bought).toISOString(),
+		).toBe(bought.toISOString());
+	});
+});

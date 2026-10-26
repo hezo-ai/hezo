@@ -295,6 +295,15 @@ export interface PolicyConfig {
 		 * charged for rather than a calendar month cutting across it.
 		 */
 		containerHoursAnchorDay?: number;
+		/**
+		 * The instant hours start counting from, as an ISO 8601 timestamp.
+		 *
+		 * A window that opened before it counts only from it; every window after
+		 * opens on the anchor as usual. A control plane that bills from the moment
+		 * someone bought pins that moment here, so hours spent earlier the same day,
+		 * before the purchase, are not charged to the first paid period.
+		 */
+		containerHoursSince?: string;
 		/** Which container backend runs agent containers. A name, not a number. */
 		backend?: SandboxBackend;
 	};
