@@ -70,6 +70,17 @@ function overlapsWindow(alias: string, from: string, to: string): string {
 	return `${alias}.started_at < ${to} AND COALESCE(${alias}.ended_at, now()) > ${from}`;
 }
 
+/**
+ * The instant a deployer pinned counting to start from, if it pinned one.
+ *
+ * Read beside the anchor wherever the window is, so the gate and the meter
+ * hold back the same start.
+ */
+function countedSince(): Date | undefined {
+	const since = pinnedSetting('containerHoursSince');
+	return since === undefined ? undefined : new Date(since);
+}
+
 /** One bucket of the hours series. */
 export interface ContainerHoursBucket {
 	bucket: string;
@@ -206,8 +217,9 @@ export async function containerHoursTotals(
 	// in a month that has no 31st - is arithmetic `date_trunc` cannot express.
 	const now = new Date();
 	const anchor = pinnedSetting('containerHoursAnchorDay');
-	const { start, end } = containerHoursWindow(anchor, now);
-	const prevStart = previousContainerHoursWindowStart(anchor, now);
+	const since = countedSince();
+	const { start, end } = containerHoursWindow(anchor, now, since);
+	const prevStart = previousContainerHoursWindowStart(anchor, now, since);
 
 	const scope = projectId === null ? '' : 'AND e.project_id = $3';
 	const day = `date_trunc('day', now() AT TIME ZONE 'UTC')`;
@@ -266,6 +278,7 @@ export async function currentWindowContainerSeconds(db: Db): Promise<number> {
 	const start = containerHoursWindowStart(
 		pinnedSetting('containerHoursAnchorDay'),
 		new Date(),
+		countedSince(),
 	).toISOString();
 	const res = await db.query<{ seconds: number }>(
 		`SELECT COALESCE(SUM(${clippedSeconds('e', '$1::timestamptz', 'now()')}), 0)::int AS seconds

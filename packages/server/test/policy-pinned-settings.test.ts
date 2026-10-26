@@ -241,6 +241,22 @@ describe('the policy file', () => {
 		).not.toThrow();
 	});
 
+	// **An instant, with its offset.** A bare date or a local time is a start
+	// that means something different on every machine reading it.
+	it('pins where hours start counting as an ISO timestamp, and refuses anything else', () => {
+		expect(
+			policySchema.parse({
+				managedBy: 'Acme',
+				pinned: { containerHoursSince: '2026-10-20T14:30:00.000Z' },
+			}).pinned.containerHoursSince,
+		).toBe('2026-10-20T14:30:00.000Z');
+		for (const containerHoursSince of ['2026-10-20', '2026-10-20T14:30:00', 'yesterday', 1]) {
+			expect(() =>
+				policySchema.parse({ managedBy: 'Acme', pinned: { containerHoursSince } }),
+			).toThrow();
+		}
+	});
+
 	it('rejects an unknown pinnable key rather than ignoring it', () => {
 		// `.strict()` throughout: a deployment that misspells a key must find out,
 		// not discover later that the setting was never pinned.

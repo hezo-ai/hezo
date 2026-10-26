@@ -254,6 +254,9 @@ export const policySchema = z
 					.min(CONTAINER_HOURS_ANCHOR_MIN_DAY)
 					.max(CONTAINER_HOURS_ANCHOR_MAX_DAY)
 					.optional(),
+				// An instant rather than a day: what it marks is a purchase, not a
+				// date that recurs.
+				containerHoursSince: z.iso.datetime({ offset: true }).optional(),
 				// Not a number, unlike its neighbours. A deployment whose containers
 				// run somewhere the instance's own host cannot provide has to be able
 				// to say so: leaving this to the operator lets them switch onto a

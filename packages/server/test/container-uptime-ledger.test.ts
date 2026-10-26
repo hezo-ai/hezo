@@ -636,6 +636,29 @@ describe('an anchored container-hours window', () => {
 		expect(new Date(totals.window_end).getTime()).toBeGreaterThan(now.getTime());
 	});
 
+	// **Counting held back to the moment someone bought.** Hours spent earlier
+	// that day, before the purchase, are not charged to the first paid window,
+	// on the gate or on the page.
+	it('counts from a pinned instant inside the window, on the gate and the page alike', async () => {
+		const anchorDay = new Date(Date.now() - 24 * 60 * 60 * 1000).getUTCDate();
+		await db.query(
+			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
+			 VALUES (NULL, 'c-before-purchase', now() - interval '3 hours', now() - interval '2 hours', 'docker'),
+			        (NULL, 'c-after-purchase', now() - interval '1 hour', now(), 'docker')`,
+		);
+		const bought = new Date(Date.now() - 90 * 60 * 1000);
+
+		setPolicy({
+			managedBy: 'Acme Cloud',
+			pinned: { containerHoursAnchorDay: anchorDay, containerHoursSince: bought.toISOString() },
+		});
+
+		expect(await currentWindowContainerSeconds(db)).toBe(3600);
+		const totals = await containerHoursTotals(db, null);
+		expect(totals.window_seconds).toBe(3600);
+		expect(totals.window_start).toBe(bought.toISOString());
+	});
+
 	it('carries the window bounds even with nothing anchored', async () => {
 		setPolicy({ managedBy: 'Acme Cloud', pinned: {} });
 

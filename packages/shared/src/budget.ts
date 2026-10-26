@@ -203,7 +203,24 @@ function occurrenceInMonth(year: number, month: number, day: number): Date {
  * month at the full price of it. The anchor is a day rather than a date so it
  * survives being pinned once and read for ever.
  */
-export function containerHoursWindowStart(anchorDay: number | undefined, now: Date): Date {
+export function containerHoursWindowStart(
+	anchorDay: number | undefined,
+	now: Date,
+	since?: Date,
+): Date {
+	const natural = anchoredWindowStart(anchorDay, now);
+	return since !== undefined && since.getTime() > natural.getTime() ? since : natural;
+}
+
+/**
+ * The window's start from the anchor alone, before any `since` holds it back.
+ *
+ * **`since` moves where a window starts counting, never where it ends.** A
+ * deployer that bills from the moment someone bought pins that instant; the
+ * first window then counts from it rather than from midnight on the anchor day,
+ * and every window after it opens on the anchor as before.
+ */
+function anchoredWindowStart(anchorDay: number | undefined, now: Date): Date {
 	const year = now.getUTCFullYear();
 	const month = now.getUTCMonth();
 	if (anchorDay === undefined) return new Date(Date.UTC(year, month, 1));
@@ -244,14 +261,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export function containerHoursWindow(
 	anchorDay: number | undefined,
 	now: Date,
+	since?: Date,
 ): { start: Date; end: Date } {
-	const start = containerHoursWindowStart(anchorDay, now);
+	const anchored = anchoredWindowStart(anchorDay, now);
 	return {
-		start,
-		end: containerHoursWindowStart(
-			anchorDay,
-			new Date(start.getTime() + MONTH_STRIDE_DAYS * DAY_MS),
-		),
+		start: containerHoursWindowStart(anchorDay, now, since),
+		end: anchoredWindowStart(anchorDay, new Date(anchored.getTime() + MONTH_STRIDE_DAYS * DAY_MS)),
 	};
 }
 
@@ -262,9 +277,20 @@ export function containerHoursWindow(
  * before it - so the same clamped helper answers it, rather than a second copy
  * of the month arithmetic that could disagree with the first.
  */
-export function previousContainerHoursWindowStart(anchorDay: number | undefined, now: Date): Date {
-	const start = containerHoursWindowStart(anchorDay, now);
-	return containerHoursWindowStart(anchorDay, new Date(start.getTime() - 1));
+export function previousContainerHoursWindowStart(
+	anchorDay: number | undefined,
+	now: Date,
+	since?: Date,
+): Date {
+	const start = containerHoursWindowStart(anchorDay, now, since);
+	const previous = containerHoursWindowStart(
+		anchorDay,
+		new Date(anchoredWindowStart(anchorDay, now).getTime() - 1),
+		since,
+	);
+	// Nothing before `since` is counted, so a window that has none before it
+	// reads as empty rather than as the hours that preceded it.
+	return previous.getTime() < start.getTime() ? previous : start;
 }
 
 /**
