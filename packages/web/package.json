@@ -1,6 +1,6 @@
 {
 	"name": "@hezo/web",
-	"version": "0.75.4",
+	"version": "0.76.0",
 	"private": true,
 	"type": "module",
 	"scripts": {

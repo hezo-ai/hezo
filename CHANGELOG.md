@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.0 - 2026-10-26
+
+### Features
+
+- **web:** put every project's hours beside the plan in a managed Settings menu ([#1190](https://github.com/hezo-ai/hezo/pull/1190))
+- **server:** count a container-hours window from a pinned instant ([#1189](https://github.com/hezo-ai/hezo/pull/1189))
+- **web:** link each project's Hours tab to the all-projects view ([#1188](https://github.com/hezo-ai/hezo/pull/1188))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.75.4...0.76.0
+
 ## 0.75.4 - 2026-10-26
 
 ### Bug Fixes
