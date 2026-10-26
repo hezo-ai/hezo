@@ -16,6 +16,7 @@ import { withTransaction } from '../lib/sql';
 import {
 	deleteAiProviderConfig,
 	readConfigBaseUrl,
+	readConfigContextTokens,
 	readConfigRequestHeaders,
 } from './ai-provider-keys';
 
@@ -33,11 +34,12 @@ interface ManagedRow {
 	metadata: Record<string, unknown> | null;
 }
 
-/** The metadata a managed row carries: its endpoint and its request headers. */
+/** The metadata a managed row carries: its endpoint, its model's window and its request headers. */
 function managedMetadata(managed: ManagedModelConfig): Record<string, unknown> {
+	const metadata = { base_url: managed.baseUrl, context_tokens: managed.contextTokens };
 	return Object.keys(managed.requestHeaders).length > 0
-		? { base_url: managed.baseUrl, request_headers: managed.requestHeaders }
-		: { base_url: managed.baseUrl };
+		? { ...metadata, request_headers: managed.requestHeaders }
+		: metadata;
 }
 
 function sameHeaders(
@@ -112,6 +114,7 @@ export async function syncManagedModel(
 		row.default_model === managed.model &&
 		row.runtime === null &&
 		readConfigBaseUrl(row.metadata) === managed.baseUrl &&
+		readConfigContextTokens(row.metadata) === managed.contextTokens &&
 		sameHeaders(readConfigRequestHeaders(row.metadata), managed.requestHeaders) &&
 		Object.keys(row.metadata ?? {}).length === Object.keys(managedMetadata(managed)).length;
 	if (unchanged) return;

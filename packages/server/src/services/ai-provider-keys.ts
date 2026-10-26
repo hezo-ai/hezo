@@ -36,6 +36,13 @@ export interface AiProviderCredential {
 	 */
 	requestHeaders?: Readonly<Record<string, string>> | null;
 	/**
+	 * The model's context window in tokens, read from
+	 * `ai_provider_configs.metadata -> 'context_tokens'`. Only a managed provider
+	 * has one: its hosting control plane states it, since the CLI cannot know the
+	 * window of a model it does not recognise. Absent means the CLI's own.
+	 */
+	contextTokens?: number | null;
+	/**
 	 * The CLI the operator chose for this credential, or null to follow the
 	 * provider default. Carried here for the same reason as `baseUrl`: it is a
 	 * per-credential value, so it cannot be derived from the provider alone.
@@ -50,6 +57,13 @@ export function readConfigBaseUrl(metadata: unknown): string | null {
 	if (!metadata || typeof metadata !== 'object') return null;
 	const raw = (metadata as Record<string, unknown>).base_url;
 	return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+/** Read the stored context window off a config's jsonb metadata, if it has one. */
+export function readConfigContextTokens(metadata: unknown): number | null {
+	if (!metadata || typeof metadata !== 'object') return null;
+	const raw = (metadata as Record<string, unknown>).context_tokens;
+	return Number.isInteger(raw) && (raw as number) > 0 ? (raw as number) : null;
 }
 
 /** Read the stored request headers off a config's jsonb metadata, if it has any. */
@@ -149,6 +163,7 @@ export async function getProviderCredential(
 		authMethod: result.authMethod,
 		baseUrl: result.baseUrl,
 		requestHeaders: result.requestHeaders,
+		contextTokens: result.contextTokens,
 		runtime: result.runtime,
 	};
 }
@@ -602,6 +617,7 @@ export async function getProviderCredentialAndModel(
 		defaultModel: row.default_model,
 		baseUrl: readConfigBaseUrl(row.metadata),
 		requestHeaders: readConfigRequestHeaders(row.metadata),
+		contextTokens: readConfigContextTokens(row.metadata),
 		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
 	};
 }

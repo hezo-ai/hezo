@@ -973,9 +973,9 @@ instance's half.
 
 ### H40 — a managed `hezo_cloud` provider, shown as "Base AI model" *(done)*
 
-The config block is `managedModel: { baseUrl, model, apiKey, requestHeaders? }`, accepted only
-beside `custodianMasterKey`; the tenant header is one of `requestHeaders`. `.dev/architecture.md`
-§ 6 describes the result.
+The config block is `managedModel: { baseUrl, model, apiKey, contextTokens, requestHeaders? }`,
+accepted only beside `custodianMasterKey`; the tenant header is one of `requestHeaders`.
+`.dev/architecture.md` § 6 describes the result.
 
 - **Table properties, not a branch:** a `managed` property that the condemn
   path (`condemnRejectedProviderCredential`), the error copy and the routes
@@ -996,6 +996,10 @@ beside `custodianMasterKey`; the tenant header is one of `requestHeaders`. `.dev
 - **Every request carries a header naming the tenant** (`x-session-id`, through
   `ANTHROPIC_CUSTOM_HEADERS`), from config. OpenRouter keeps a tenant on one
   host by it, which is what lets a run read what the run before it cached.
+- **The model's window comes from config** (`contextTokens`), and reaches
+  Claude Code as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. Claude Code guesses a window
+  for a model it does not recognise and refuses a prompt past the guess without
+  sending it, so a first turn on a large team failed before any request.
 - **A new `ai_provider` enum value** in the next migration, with its
   preservation test.
 - **Upserted every boot**, made the default only if no default exists, and

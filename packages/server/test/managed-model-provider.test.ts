@@ -17,7 +17,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { buildProviderEnv } from '../src/services/agent-runner';
-import { selectProviderConfig } from '../src/services/ai-provider-keys';
+import { getProviderCredential, selectProviderConfig } from '../src/services/ai-provider-keys';
 import { syncManagedModel } from '../src/services/managed-model';
 import { condemnRejectedProviderCredential } from '../src/services/provider-credential-health';
 import { judgeModelForProvider } from '../src/services/stop-hook-prompt';
@@ -30,6 +30,7 @@ const MANAGED: ManagedModelConfig = {
 	baseUrl: 'https://models.example/api',
 	model: MODEL,
 	apiKey: 'sk-managed-1',
+	contextTokens: 1_048_576,
 	requestHeaders: { 'x-session-id': 'tenant-1' },
 };
 
@@ -61,6 +62,7 @@ describe('buildProviderEnv for the managed provider', () => {
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: MANAGED.baseUrl,
 			requestHeaders: MANAGED.requestHeaders,
+			contextTokens: MANAGED.contextTokens,
 			runtime: null,
 		},
 		MODEL,
@@ -81,6 +83,11 @@ describe('buildProviderEnv for the managed provider', () => {
 		]) {
 			expect(env).toContain(`${slot}=${MODEL}`);
 		}
+	});
+
+	// Claude Code refuses a prompt past the window it guesses for a model it does not know.
+	it('states the model’s window, so Claude Code works to it rather than to a guess', () => {
+		expect(env).toContain('CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576');
 	});
 
 	it('sends the tenant header on every request', () => {
@@ -110,6 +117,7 @@ describe('buildProviderEnv for the managed provider', () => {
 		);
 		expect(deepseek).toContain('ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro');
 		expect(deepseek.some((e) => e.startsWith('ANTHROPIC_CUSTOM_HEADERS='))).toBe(false);
+		expect(deepseek.some((e) => e.startsWith('CLAUDE_CODE_MAX_CONTEXT_TOKENS='))).toBe(false);
 	});
 });
 
@@ -161,13 +169,19 @@ describe('syncManagedModel', () => {
 			label: 'Base AI model',
 			is_default: true,
 			default_model: MODEL,
-			metadata: { base_url: MANAGED.baseUrl, request_headers: MANAGED.requestHeaders },
+			metadata: {
+				base_url: MANAGED.baseUrl,
+				context_tokens: MANAGED.contextTokens,
+				request_headers: MANAGED.requestHeaders,
+			},
 		});
 		expect(keyOf(row)).toBe('sk-managed-1');
 
 		const selected = await selectProviderConfig(db, AiProvider.HezoCloud, AgentRuntime.ClaudeCode);
 		expect(selected?.baseUrl).toBe(MANAGED.baseUrl);
 		expect(selected?.requestHeaders).toEqual(MANAGED.requestHeaders);
+		const credential = await getProviderCredential(db, masterKeyManager, AiProvider.HezoCloud);
+		expect(credential?.contextTokens).toBe(MANAGED.contextTokens);
 	});
 
 	it('leaves a default the tenant chose', async () => {
@@ -189,7 +203,7 @@ describe('syncManagedModel', () => {
 		expect(after.encrypted_credential).toBe(before.encrypted_credential);
 	});
 
-	it('takes a new key, endpoint, model and headers, and lifts the old key hold', async () => {
+	it('takes a new key, endpoint, model, window and headers, and lifts the old key hold', async () => {
 		await syncManagedModel(db, masterKeyManager, MANAGED);
 		await db.query(
 			`UPDATE ai_provider_configs SET usage_limited_until = now() + interval '1 hour'
@@ -199,13 +213,24 @@ describe('syncManagedModel', () => {
 			baseUrl: 'https://other.example/api',
 			model: 'vendor/next-model',
 			apiKey: 'sk-managed-2',
+			contextTokens: 262_144,
 			requestHeaders: {},
 		});
 		const [row] = await managedRows();
 		expect(keyOf(row)).toBe('sk-managed-2');
 		expect(row.default_model).toBe('vendor/next-model');
-		expect(row.metadata).toEqual({ base_url: 'https://other.example/api' });
+		expect(row.metadata).toEqual({
+			base_url: 'https://other.example/api',
+			context_tokens: 262_144,
+		});
 		expect(row.usage_limited_until).toBeNull();
+	});
+
+	it('rewrites the row when only the window moves', async () => {
+		await syncManagedModel(db, masterKeyManager, MANAGED);
+		await syncManagedModel(db, masterKeyManager, { ...MANAGED, contextTokens: 524_288 });
+		const [row] = await managedRows();
+		expect(row.metadata.context_tokens).toBe(524_288);
 	});
 
 	it('keeps a hold when only the model moves, since the key is the same', async () => {
