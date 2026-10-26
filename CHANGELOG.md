@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.75.4 - 2026-10-26
+
+### Bug Fixes
+
+- **web:** confirm every delete, and fix the AI-provider remove ([#1186](https://github.com/hezo-ai/hezo/pull/1186))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.75.3...0.75.4
+
 ## 0.75.3 - 2026-10-26
 
 ### Documentation
