@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.77.0 - 2026-10-27
+
+### Features
+
+- **server:** hold project container sizes under a pinned default ([#1192](https://github.com/hezo-ai/hezo/pull/1192))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.76.0...0.77.0
+
 ## 0.76.0 - 2026-10-26
 
 ### Features
