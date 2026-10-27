@@ -59,6 +59,7 @@ together from H24 on.
 | ~~H41~~ | ~~An error family for the Base AI model's spend-limit refusal, ahead of `credit`~~ | a run that waits for the limit to reset rather than failing as out of credit | **done**, changes self-hosted behaviour |
 | ~~H42~~ | ~~A completeness check the cache can read~~ | a lower model cost per container-hour; not a launch gate | **done**, changes self-hosted behaviour |
 | ~~H44~~ | ~~`policy.pinned.containerHoursSince`: count a window from an instant~~ | a first paid window that does not charge the trial hours spent earlier on the day of purchase | **done** |
+| ~~H45~~ | ~~A pinned per-container RAM cap or disk size is a ceiling on project overrides~~ | every container the size the plan prices, whatever a project sets | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.

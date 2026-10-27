@@ -24,6 +24,7 @@ import {
 	getDefaultRamCapPerContainerGb,
 	getMaxContainerMemoryGbSetting,
 	getMonthlyContainerHours,
+	getProjectContainerDiskGb,
 	isPinned,
 	MAX_CONTAINER_MEMORY_GB_KEY,
 	setMonthlyContainerHours,
@@ -31,12 +32,16 @@ import {
 } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import {
+	projectContainerMemoryGb,
+	sumProjectContainerMemoryGb,
+} from '../src/services/run-concurrency';
+import {
 	getSandboxBackendSetting,
 	getStoredSandboxBackend,
 	setStoredSandboxBackend,
 } from '../src/services/sandbox/backend-store';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestTeam, projectSlugForTeamSlug } from './helpers/app';
 
 let app: Hono<Env>;
 let db: Db;
@@ -147,6 +152,102 @@ describe('PATCH /instance-settings', () => {
 		const res = await patch({ default_container_disk_gb: 10 });
 		expect(res.status).toBe(200);
 		expect(await getDefaultContainerDiskGb(db)).toBe(10);
+	});
+});
+
+/**
+ * **A pinned per-container figure is a ceiling for the projects under it.** A
+ * project's override replaces the instance default, so without this a deployment
+ * that pins 2 GB containers would provision whatever size a project names. Less is
+ * still a project's to choose.
+ */
+describe('a pinned per-container figure as a ceiling', () => {
+	let projectId: string;
+	let projectSlug: string;
+
+	beforeAll(async () => {
+		const team = await createTestTeam(db, { name: 'Ceiling Co' });
+		projectSlug = await projectSlugForTeamSlug(db, (await team.json()).data.slug);
+		const row = await db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [
+			projectSlug,
+		]);
+		projectId = row.rows[0]!.id;
+	});
+
+	afterEach(async () => {
+		await db.query(
+			'UPDATE projects SET memory_limit_gib = NULL, container_disk_gb = NULL WHERE id = $1',
+			[projectId],
+		);
+	});
+
+	const patch = (body: Record<string, unknown>) =>
+		app.request(`/api/projects/${projectSlug}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+
+	it('holds a larger project override down to the pinned figure', async () => {
+		await db.query(
+			'UPDATE projects SET memory_limit_gib = 8, container_disk_gb = 50 WHERE id = $1',
+			[projectId],
+		);
+		pin({ defaultRamCapPerContainerGb: 2, defaultContainerDiskGb: 5 });
+
+		expect(await projectContainerMemoryGb(db, projectId)).toBe(2);
+		expect(await getProjectContainerDiskGb(db, projectId)).toBe(5);
+		expect(await sumProjectContainerMemoryGb(db, [projectId, projectId])).toBe(4);
+	});
+
+	it('keeps a smaller project override', async () => {
+		await db.query(
+			'UPDATE projects SET memory_limit_gib = 1, container_disk_gb = 3 WHERE id = $1',
+			[projectId],
+		);
+		pin({ defaultRamCapPerContainerGb: 2, defaultContainerDiskGb: 5 });
+
+		expect(await projectContainerMemoryGb(db, projectId)).toBe(1);
+		expect(await getProjectContainerDiskGb(db, projectId)).toBe(3);
+	});
+
+	it('leaves an unpinned instance’s overrides as they are', async () => {
+		await db.query(
+			'UPDATE projects SET memory_limit_gib = 8, container_disk_gb = 50 WHERE id = $1',
+			[projectId],
+		);
+
+		expect(await projectContainerMemoryGb(db, projectId)).toBe(8);
+		expect(await getProjectContainerDiskGb(db, projectId)).toBe(50);
+	});
+
+	it('refuses a project write above the ceiling with 409, naming who set it', async () => {
+		pin({ defaultRamCapPerContainerGb: 2, defaultContainerDiskGb: 5 }, 'Acme Cloud');
+
+		const memory = await patch({ memory_limit_gib: 4 });
+		expect(memory.status).toBe(409);
+		expect((await memory.json()).error.message).toBe(
+			'memory_limit_gib is capped at 2 GB by Acme Cloud.',
+		);
+		const disk = await patch({ container_disk_gb: 20 });
+		expect(disk.status).toBe(409);
+		expect((await disk.json()).error.message).toBe(
+			'container_disk_gb is capped at 5 GB by Acme Cloud.',
+		);
+
+		// Nothing was written by either refusal.
+		const row = await db.query<{
+			memory_limit_gib: number | null;
+			container_disk_gb: number | null;
+		}>('SELECT memory_limit_gib, container_disk_gb FROM projects WHERE id = $1', [projectId]);
+		expect(row.rows[0]).toEqual({ memory_limit_gib: null, container_disk_gb: null });
+	});
+
+	it('accepts a project write at or below the ceiling, and clearing one', async () => {
+		pin({ defaultRamCapPerContainerGb: 2, defaultContainerDiskGb: 5 });
+
+		expect((await patch({ memory_limit_gib: 2, container_disk_gb: 3 })).status).toBe(200);
+		expect((await patch({ memory_limit_gib: null, container_disk_gb: null })).status).toBe(200);
 	});
 });
 

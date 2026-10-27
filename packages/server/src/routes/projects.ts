@@ -32,7 +32,12 @@ import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-ur
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams, utcWindowStartSql } from '../lib/sql';
-import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
+import {
+	getDefaultContainerDiskGb,
+	getDefaultRamCapPerContainerGb,
+	getMaxContainerMemoryGb,
+	pinnedCeiling,
+} from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
@@ -547,6 +552,20 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		// forever with nothing naming the cause. Refuse where it is set instead -
 		// the same reason the Daytona adapter refuses a request above its ceiling
 		// rather than quietly allocating less.
+		// **A pinned default is a ceiling**, refused rather than quietly lowered:
+		// the same 409 a pinned instance setting answers with, naming who set it.
+		const ramCeiling = pinnedCeiling(
+			'defaultRamCapPerContainerGb',
+			await getDefaultRamCapPerContainerGb(db),
+		);
+		if (body.memory_limit_gib !== null && ramCeiling && body.memory_limit_gib > ramCeiling.figure) {
+			return err(
+				c,
+				'CONFLICT',
+				`memory_limit_gib is capped at ${ramCeiling.figure} GB by ${ramCeiling.managedBy}.`,
+				409,
+			);
+		}
 		if (body.memory_limit_gib !== null) {
 			// **The task budget, not the configured total.** The total holds one
 			// container's worth back for the assistant chat, so a project cap between
@@ -588,6 +607,22 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 				`container_disk_gb must be an integer between ${CONTAINER_DISK_GB_MIN} and ` +
 					`${CONTAINER_DISK_GB_MAX}, or null`,
 				400,
+			);
+		}
+		const diskCeiling = pinnedCeiling(
+			'defaultContainerDiskGb',
+			await getDefaultContainerDiskGb(db),
+		);
+		if (
+			body.container_disk_gb !== null &&
+			diskCeiling &&
+			body.container_disk_gb > diskCeiling.figure
+		) {
+			return err(
+				c,
+				'CONFLICT',
+				`container_disk_gb is capped at ${diskCeiling.figure} GB by ${diskCeiling.managedBy}.`,
+				409,
 			);
 		}
 		// No instance-budget check, unlike the memory cap: Hezo does not pool disk.

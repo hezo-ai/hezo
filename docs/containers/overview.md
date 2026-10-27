@@ -225,7 +225,8 @@ consume:
   more than one project is holding idle containers, the one holding the most gives one up
   first.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
-  default). A project that needs more can override it on its own Containers page. A
+  default). A project that needs more can override it on its own Containers page, unless
+  your deployment fixes the cap: then a project can ask for less but not more. A
   container over its cap is stopped, or has its biggest process killed by the kernel,
   rather than taking down anything else. When the kernel does the killing, the run it was
   serving is reported as failed with an error naming the signal and this cap, so a run
@@ -238,7 +239,8 @@ consume:
   the setting now says.
 - **Disk per container** - how much disk each container is given for its checkouts,
   dependencies and build output (5 GB by default). Like the RAM cap, a project that needs
-  more can override it on its own Containers page. A container that fills most of its
+  more can override it on its own Containers page, and a deployment that fixes the size
+  caps it the same way. A container that fills most of its
   allocation is replaced rather than reused, so a run never runs out of space partway
   through. This only allocates anything where the container service gives each container
   its own filesystem: on [local Docker](/docs/containers/local-docker) a container's

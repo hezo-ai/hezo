@@ -184,8 +184,8 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.managedBy` | - | Who fixed these settings, as shown to the operator. Required when `policy` is set. |
 | `policy.manageUrl` | - | Where to change them. Must be `https:`. Omit it to lock the settings with no link. |
 | `policy.pinned.maxContainerMemoryGb` | - | Fixes the global container memory budget. |
-| `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. |
-| `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
+| `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. It is also the most any project may set for itself. |
+| `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. It is also the most any project may set for itself. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
 | `policy.pinned.containerHoursAnchorDay` | - | The day of the month that allowance resets on, `1`-`31`. Unset, it resets on the 1st. |
 | `policy.pinned.containerHoursSince` | - | The moment hours start counting from, as an ISO 8601 timestamp with its offset. A window that began earlier counts only from that moment. Later windows start on the anchor day as usual. |
