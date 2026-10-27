@@ -2040,7 +2040,10 @@ marker kill and teardown. Four findings are worth carrying:
   failure surfaces as a provisioning error on the project, flagged by the error banner. What the
   operator *can* do about it is the per-container disk allocation, which is now a setting
   (`default_container_disk_gb`, default 5 GB) with a per-project override
-  (`projects.container_disk_gb`) rather than the flat 10 GB the adapter used to hardcode -
+  (`projects.container_disk_gb`) rather than the flat 10 GB the adapter used to hardcode.
+  **A pinned default is a ceiling on both overrides** (`projectContainerFigure`): a project
+  may ask for less, a write above it answers 409 naming the deployer, and an override already
+  above it is held to it wherever the figure is read -
   so `quota_disk_gb / allocation` is a number they control. The pool's recycle threshold is
   derived from the same figure (`poolDiskCeilingBytes`) and recorded per member
   (`container_pool_members.disk_ceiling_bytes`) at provision, so a container is always

@@ -11,6 +11,8 @@ import {
 	getDefaultRamCapPerContainerGb,
 	getMaxContainerMemoryGb,
 	getMonthlyContainerHours,
+	isPinned,
+	projectContainerFigure,
 } from '../lib/system-meta';
 import { currentWindowContainerSeconds } from './container-hours';
 
@@ -249,6 +251,7 @@ export async function getActiveContainers(
 		db,
 		new Set([...running.rows, ...reclaimable.rows].map((r) => r.project_id)),
 	);
+	const pinnedCap = isPinned('defaultRamCapPerContainerGb');
 	let usedMemoryGb = 0;
 	for (const row of running.rows) {
 		// What the container was actually built to hold, where that is recorded. A
@@ -260,7 +263,7 @@ export async function getActiveContainers(
 		// the fallback for a container whose allocation was never recorded.
 		usedMemoryGb +=
 			row.memory_bytes === null
-				? (overrides.get(row.project_id) ?? defaultCapGb)
+				? projectContainerFigure(overrides.get(row.project_id), defaultCapGb, pinnedCap)
 				: Number(row.memory_bytes) / 1024 ** 3;
 	}
 	// Resolved exactly as `usedMemoryGb` above, and it has to be: this is a subset
@@ -270,7 +273,7 @@ export async function getActiveContainers(
 	for (const row of reclaimable.rows) {
 		const gb =
 			row.memory_bytes === null
-				? (overrides.get(row.project_id) ?? defaultCapGb)
+				? projectContainerFigure(overrides.get(row.project_id), defaultCapGb, pinnedCap)
 				: Number(row.memory_bytes) / 1024 ** 3;
 		reclaimableMemoryGbByProject.set(
 			row.project_id,
@@ -352,14 +355,15 @@ export async function sumProjectContainerMemoryGb(
 	if (projectIds.length === 0) return 0;
 	const overrides = await loadProjectMemoryCaps(db, new Set(projectIds));
 	const fallback = await getDefaultRamCapPerContainerGb(db);
+	const pinned = isPinned('defaultRamCapPerContainerGb');
 	let total = 0;
-	for (const id of projectIds) total += overrides.get(id) ?? fallback;
+	for (const id of projectIds) total += projectContainerFigure(overrides.get(id), fallback, pinned);
 	return total;
 }
 
 /**
  * This project's per-container memory cap, in GB: the project's override, else
- * the instance default.
+ * the instance default, and never above a pinned default.
  *
  * Two meanings, one figure - what one more container here would consume against
  * the capacity budget, and the ceiling a container is actually provisioned with.
@@ -369,7 +373,11 @@ export async function projectContainerMemoryGb(db: Db, projectId: string): Promi
 		`SELECT memory_limit_gib FROM projects WHERE id = $1`,
 		[projectId],
 	);
-	return res.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
+	return projectContainerFigure(
+		res.rows[0]?.memory_limit_gib,
+		await getDefaultRamCapPerContainerGb(db),
+		isPinned('defaultRamCapPerContainerGb'),
+	);
 }
 
 /**

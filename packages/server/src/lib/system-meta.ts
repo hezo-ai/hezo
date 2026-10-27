@@ -331,16 +331,51 @@ export async function setDefaultTaskView(db: Db, value: TaskView): Promise<TaskV
 }
 
 /**
+ * A project's own per-container figure, held under the instance's where a
+ * deployer pinned the instance's.
+ *
+ * **A pin is a ceiling for the projects under it**, or it fixes nothing: a
+ * project's override replaces the instance default, so a deployment that pins
+ * 2 GB containers would otherwise provision whatever size a project names. A
+ * project may still ask for less. Unpinned, the override wins as it always has.
+ */
+export function projectContainerFigure(
+	override: number | null | undefined,
+	instanceFigure: number,
+	pinned: boolean,
+): number {
+	if (override === null || override === undefined) return instanceFigure;
+	return pinned ? Math.min(override, instanceFigure) : override;
+}
+
+/**
+ * A pinned instance figure as a ceiling a project's write is refused above, with
+ * the deployer that set it for the refusal to name. Nothing while unpinned.
+ */
+export function pinnedCeiling(
+	key: PinnableSetting,
+	figure: number,
+): { figure: number; managedBy: string } | undefined {
+	const policy = runtimeConfig().policy;
+	if (!policy || !isPinned(key)) return undefined;
+	return { figure, managedBy: policy.managedBy };
+}
+
+/**
  * The disk a given project's containers get, in GB: its own override, else the
- * instance default. One query, so a caller never has to remember the precedence.
+ * instance default, and never above a pinned default. One query, so a caller
+ * never has to remember the precedence.
  */
 export async function getProjectContainerDiskGb(db: Db, projectId: string): Promise<number> {
 	const row = await db.query<{ container_disk_gb: number | null }>(
 		'SELECT container_disk_gb FROM projects WHERE id = $1',
 		[projectId],
 	);
-	const override = row.rows[0]?.container_disk_gb;
-	return override ?? (await getDefaultContainerDiskGb(db));
+	return projectContainerFigure(
+		row.rows[0]?.container_disk_gb,
+		await getDefaultContainerDiskGb(db),
+		isPinned('defaultContainerDiskGb'),
+	);
 }
 
 // The container idle window is no longer an operator setting - it is the

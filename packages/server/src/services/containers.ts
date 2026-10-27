@@ -27,7 +27,12 @@ import { forEachConcurrent } from '../lib/concurrency';
 import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
 import { ref } from '../lib/log-ref';
 import { stripNulBytes, terminalStatusParams } from '../lib/sql';
-import { getDefaultRamCapPerContainerGb, getProjectContainerDiskGb } from '../lib/system-meta';
+import {
+	getDefaultRamCapPerContainerGb,
+	getProjectContainerDiskGb,
+	isPinned,
+	projectContainerFigure,
+} from '../lib/system-meta';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import { type ContainerLogStreamer, containerStreamId } from './container-logs';
@@ -2429,8 +2434,10 @@ export async function syncAllContainerStatuses(
 	);
 
 	// Effective per-container ceiling: the project override, else the
-	// instance-wide default — read once per pass, not once per project.
+	// instance-wide default, never above a pinned one — read once per pass, not
+	// once per project.
 	const defaultRamCapGib = await getDefaultRamCapPerContainerGb(db);
+	const pinnedRamCap = isPinned('defaultRamCapPerContainerGb');
 
 	const transitions: ContainerTransition[] = [];
 	const now = Date.now();
@@ -2462,7 +2469,7 @@ export async function syncAllContainerStatuses(
 				project.slug,
 				project.team_id,
 				project.container_id,
-				project.memory_limit_gib ?? defaultRamCapGib,
+				projectContainerFigure(project.memory_limit_gib, defaultRamCapGib, pinnedRamCap),
 			);
 			if (overrideStatus !== null) {
 				newStatus = overrideStatus;
