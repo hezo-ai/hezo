@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.78.0 - 2026-10-29
+
+### Features
+
+- **ui:** let MultiSelect search what the caller supplies and show tags ([#1194](https://github.com/hezo-ai/hezo/pull/1194))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.77.0...0.78.0
+
 ## 0.77.0 - 2026-10-27
 
 ### Features
