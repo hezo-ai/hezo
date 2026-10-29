@@ -220,6 +220,8 @@ test('every stacked control takes the touch floor', async () => {
 				value={['open']}
 				onChange={() => {}}
 				testId="multi"
+				searchable
+				display="tags"
 			/>
 			<SearchableSelect
 				options={[{ value: 'a', label: 'Alpha' }]}
@@ -254,7 +256,9 @@ test('every stacked control takes the touch floor', async () => {
 	}
 
 	expect(screen.getByTestId('multi').className).toContain(FLOOR);
+	expect(screen.getByRole('button', { name: 'Remove Open' }).className).toContain(FLOOR);
 	await user.click(screen.getByTestId('multi'));
+	expect((await screen.findByTestId('multi-search')).className).toContain(FLOOR);
 	for (const item of await screen.findAllByRole('menuitemcheckbox')) {
 		expect(item.className).toContain(FLOOR);
 	}
