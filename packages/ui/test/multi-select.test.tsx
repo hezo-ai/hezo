@@ -203,3 +203,18 @@ test('says when the list opens and closes', async () => {
 
 	expect(seen).toEqual([true, false]);
 });
+
+// Picking the first value adds the tags; it must not close the list being picked from.
+test('keeps the list open while the first values are picked in the tags display', async () => {
+	const user = userEvent.setup();
+	render(<Kept display="tags" />);
+
+	await open(user);
+	await user.click(await screen.findByRole('menuitemcheckbox', { name: /Apple/ }));
+	await user.click(screen.getByRole('menuitemcheckbox', { name: /Banana/ }));
+
+	expect(screen.getAllByRole('menuitemcheckbox', { checked: true })).toHaveLength(2);
+	expect(within(screen.getByRole('list', { name: 'Fruit' })).getAllByRole('button')).toHaveLength(
+		2,
+	);
+});

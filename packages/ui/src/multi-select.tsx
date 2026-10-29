@@ -270,29 +270,34 @@ export function MultiSelect({
 		</Popover.Root>
 	);
 
-	if (display === 'summary' || value.length === 0) return select;
+	if (display === 'summary') return select;
 
+	// **The same tree whether or not anything is chosen.** Wrapping the trigger
+	// only once a value exists would mount a fresh popover under the first pick
+	// and close the list in the reader's hand.
 	return (
 		<div className="flex flex-col items-start gap-1.5 min-w-0">
 			{select}
-			<ul aria-label={label} className="flex flex-wrap gap-1.5 min-w-0">
-				{value.map((v) => {
-					const name = known.get(v) ?? v;
-					return (
-						<li key={v} className="min-w-0">
-							<button
-								type="button"
-								aria-label={removeLabel(name)}
-								onClick={() => onChange(value.filter((x) => x !== v))}
-								className={`inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-surface-2 py-0.5 pl-2.5 pr-1.5 text-xs text-text-1 hover:bg-surface-3 cursor-pointer ${touchMinHeightClassName}`}
-							>
-								<span className="truncate">{name}</span>
-								<X className="w-3 h-3 shrink-0 text-text-3" aria-hidden />
-							</button>
-						</li>
-					);
-				})}
-			</ul>
+			{value.length > 0 && (
+				<ul aria-label={label} className="flex flex-wrap gap-1.5 min-w-0">
+					{value.map((v) => {
+						const name = known.get(v) ?? v;
+						return (
+							<li key={v} className="min-w-0">
+								<button
+									type="button"
+									aria-label={removeLabel(name)}
+									onClick={() => onChange(value.filter((x) => x !== v))}
+									className={`inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-surface-2 py-0.5 pl-2.5 pr-1.5 text-xs text-text-1 hover:bg-surface-3 cursor-pointer ${touchMinHeightClassName}`}
+								>
+									<span className="truncate">{name}</span>
+									<X className="w-3 h-3 shrink-0 text-text-3" aria-hidden />
+								</button>
+							</li>
+						);
+					})}
+				</ul>
+			)}
 		</div>
 	);
 }
