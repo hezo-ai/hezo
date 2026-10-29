@@ -68,6 +68,8 @@ export interface MultiSelectProps {
 	display?: 'summary' | 'tags';
 	/** Names a tag's remove control, from the label of what it removes. */
 	removeLabel?: (label: string) => string;
+	/** Told when the list opens and closes, so a caller can fetch only while it is open. */
+	onOpenChange?: (open: boolean) => void;
 	className?: string;
 	testId?: string;
 }
@@ -101,6 +103,7 @@ export function MultiSelect({
 	selectedOptions = [],
 	display = 'summary',
 	removeLabel = (name) => `Remove ${name}`,
+	onOpenChange,
 	className = '',
 	testId,
 }: MultiSelectProps) {
@@ -147,6 +150,7 @@ export function MultiSelect({
 			onOpenChange={(open) => {
 				// A term left from the last visit would open the list already narrowed.
 				if (!open && term) search('');
+				onOpenChange?.(open);
 			}}
 		>
 			<Popover.Trigger asChild>

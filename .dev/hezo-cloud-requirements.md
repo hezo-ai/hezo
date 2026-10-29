@@ -1076,7 +1076,9 @@ All of it optional, and a caller passing none of it renders as before:
 - **`searchable`** draws a search box above the options. Without
   `onSearchChange` the select filters `options` itself, by label and
   description; with it, matching is the caller's, which reports each term and
-  draws `options` as given. The term clears when the list closes.
+  draws `options` as given. The term clears when the list closes, and
+  `onOpenChange` says when it opens and closes, so a caller fetches only while
+  it is open.
 - **`loading`, `errorLabel`, `hint`** say the options are on their way, why
   they failed, and anything else, such as that more matched than are shown.
 - **`selectedOptions`** names chosen values the current `options` no longer

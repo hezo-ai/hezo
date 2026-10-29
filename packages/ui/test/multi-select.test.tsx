@@ -190,3 +190,16 @@ test('clears the search when the list closes, and tells a caller that searches',
 	await open(user);
 	expect(((await screen.findByRole('searchbox')) as HTMLInputElement).value).toBe('');
 });
+
+// A caller searching a list that lives elsewhere asks only while it is open.
+test('says when the list opens and closes', async () => {
+	const user = userEvent.setup();
+	const seen: boolean[] = [];
+	render(<Kept onOpenChange={(open) => seen.push(open)} />);
+
+	await open(user);
+	await screen.findByRole('menu');
+	await user.keyboard('{Escape}');
+
+	expect(seen).toEqual([true, false]);
+});
