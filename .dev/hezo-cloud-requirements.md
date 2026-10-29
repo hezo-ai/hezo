@@ -60,6 +60,7 @@ together from H24 on.
 | ~~H42~~ | ~~A completeness check the cache can read~~ | a lower model cost per container-hour; not a launch gate | **done**, changes self-hosted behaviour |
 | ~~H44~~ | ~~`policy.pinned.containerHoursSince`: count a window from an instant~~ | a first paid window that does not charge the trial hours spent earlier on the day of purchase | **done** |
 | ~~H45~~ | ~~A pinned per-container RAM cap or disk size is a ceiling on project overrides~~ | every container the size the plan prices, whatever a project sets | **done** |
+| ~~H46~~ | ~~`MultiSelect` searches what the caller supplies, and shows the chosen as tags~~ | the operator's one-off email picking people out of every account | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -1063,6 +1064,30 @@ whole at the uncached rate.
   of their input from cache.
 
 ---
+
+## H46 — `MultiSelect` searches what the caller supplies *(done)*
+
+The control plane's operator writes a one-off email to people picked from every
+account, and the accounts are a paged list the plane searches. `MultiSelect`
+filtered nothing and took its options whole; `SearchableSelect` picks one.
+
+All of it optional, and a caller passing none of it renders as before:
+
+- **`searchable`** draws a search box above the options. Without
+  `onSearchChange` the select filters `options` itself, by label and
+  description; with it, matching is the caller's, which reports each term and
+  draws `options` as given. The term clears when the list closes.
+- **`loading`, `errorLabel`, `hint`** say the options are on their way, why
+  they failed, and anything else, such as that more matched than are shown.
+- **`selectedOptions`** names chosen values the current `options` no longer
+  hold, on the trigger and on each tag. A value nothing names stays off the
+  trigger, as it always has.
+- **`display="tags"`** draws each chosen value as a tag that removes it, named
+  by `removeLabel`. Every tag takes the touch floor.
+- **`MultiSelectOption.description`** is a second line under the label.
+
+The web wrapper supplies the new strings (`common.search`,
+`common.removeNamed`, `common.loading`) in every catalog.
 
 ## Already satisfied upstream — do not build these
 
