@@ -19,6 +19,23 @@ async function seedGoalRow(
 	);
 }
 
+/**
+ * The goals card once its goals have loaded. The card shows its empty state
+ * while the request is in flight, so waiting for the card alone can read that.
+ */
+async function loadedGoalsCard(): Promise<Element> {
+	return waitFor(
+		() => {
+			const card = document.body.querySelector('[data-testid="dashboard-goals"]');
+			if (!card?.querySelector('[data-testid="dashboard-goal-slot"]')) {
+				throw new Error('the goals card has not shown its goals yet');
+			}
+			return card;
+		},
+		{ timeout: 15_000 },
+	);
+}
+
 /** Create a task through the API and force it into a non-default status. */
 async function seedTaskWithStatus(
 	projectSlug: string,
@@ -222,7 +239,7 @@ test('the page bands run metrics, summary, live agents, then the two columns', a
 
 test('the goals card caps its slots, ranks worst health first, and links to the rest', async () => {
 	const ref = { slug: '' };
-	const { findByTestId, router } = await renderApp({
+	const { router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -244,8 +261,7 @@ test('the goals card caps its slots, ranks worst health first, and links to the 
 		params: { projectId: ref.slug },
 	});
 
-	await findByTestId('dashboard-goals', undefined, { timeout: 15_000 });
-	const card = document.body.querySelector('[data-testid="dashboard-goals"]')!;
+	const card = await loadedGoalsCard();
 
 	// Four slots, one of which is spent on the overflow link, so three goals render.
 	const slots = Array.from(card.querySelectorAll('[data-testid="dashboard-goal-slot"]'));
@@ -264,7 +280,7 @@ test('the goals card caps its slots, ranks worst health first, and links to the 
 
 test('a project sitting on the cap renders every goal and no overflow row', async () => {
 	const ref = { slug: '' };
-	const { findByTestId, queryByTestId, router } = await renderApp({
+	const { queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -281,8 +297,7 @@ test('a project sitting on the cap renders every goal and no overflow row', asyn
 		params: { projectId: ref.slug },
 	});
 
-	await findByTestId('dashboard-goals', undefined, { timeout: 15_000 });
-	const card = document.body.querySelector('[data-testid="dashboard-goals"]')!;
+	const card = await loadedGoalsCard();
 	expect(card.querySelectorAll('[data-testid="dashboard-goal-slot"]')).toHaveLength(4);
 	expect(queryByTestId('dashboard-goals-more')).toBeNull();
 });
