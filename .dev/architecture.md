@@ -6916,9 +6916,11 @@ wrote back. The first rides the public status; the second stays behind the owner
   identity the page did not have — after `resetSupportChat`, or when signing in on a page
   that opened the chat anonymously, so a conversation begun at a gate becomes that
   person's rather than being stranded beside a second one. `setSupportChatBubble` shows or
-  hides the launcher after load, because whether the corner is free changes without a
-  reload. `openSupportChat` before ready is
-  held until ready. Every `window.$chatwoot` call is guarded and absorbs throws. The locale
+  hides the launcher, because whether the corner is free changes without a reload. The
+  widget reads its settings once, at start, and draws the launcher only as it reports
+  ready, so a call before ready writes `hideMessageBubble` for a widget not yet started
+  and is applied again on `chatwoot:ready`; a toggle sent earlier reaches nothing.
+  `openSupportChat` before ready is held until ready. Every `window.$chatwoot` call is guarded and absorbs throws. The locale
   arrives as a BCP 47 tag and is converted to the widget's form (`pt-BR` → `pt_BR`,
   `zh-Hans` → `zh_CN`).
 - **Tenant web.** `useSupport` (`hooks/use-support.ts`) asks only when `/api/status`
