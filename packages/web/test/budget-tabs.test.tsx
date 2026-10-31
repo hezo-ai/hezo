@@ -1,6 +1,7 @@
-import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
+import { seedUptimeStretch } from '@hezo/server/test/helpers/uptime';
 import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { expect, test } from 'vitest';
+import { formatDuration } from '../src/lib/format-duration';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
 
@@ -14,16 +15,20 @@ import { seedProject, seedWorkspace } from './helpers/seed';
  */
 
 /**
- * `minutes` of closed container time banked so far this month.
+ * One closed stretch of `minutes` ending now, cut to the month so far. Returns
+ * the seconds it really banked, which falls short of `minutes` only in the
+ * first hours of a month.
  *
- * Not one interval `minutes` long: the tiles below read a month-to-date figure,
- * and on the first hour of a month a stretch that far back is mostly last
- * month's - which is what the meter would rightly report, leaving every fixed
- * expectation here short.
+ * Ending now rather than at the month's start: the Day chart covers the last
+ * 30 days, so a stretch on the 1st falls outside it on the 31st.
  */
-async function seedUptime(projectId: string, minutes: number): Promise<void> {
+async function seedUptime(projectId: string, minutes: number): Promise<number> {
 	const { db } = getTestContext();
-	await seedMonthToDateSeconds(db, minutes * 60, { projectId });
+	return seedUptimeStretch(db, {
+		containers: [`ctr-${crypto.randomUUID()}`],
+		minutes,
+		projectId,
+	});
 }
 
 /** Insert a finished run of `minutes`, for the per-agent figure on the Spend tab. */
@@ -65,23 +70,25 @@ test('the budget index opens on the Budget tab, with only that tab selected', as
 
 test('the Hours tab reports container uptime as one shared series', async () => {
 	let slug = '';
+	let banked = 0;
 	const { findByTestId, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Budget Hours' });
 			slug = project.slug;
-			await seedUptime(project.id, 90);
-			await seedUptime(project.id, 30);
+			banked += await seedUptime(project.id, 90);
+			banked += await seedUptime(project.id, 30);
 		},
 	});
 
 	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
 
-	// 90m + 30m = 2h on the month tile. Containers are shared by task runs and
-	// chat turns alike, so there is no per-workload split to call out.
+	// 90m + 30m = 2h on the period tile, bar the first hours of a month.
+	// Containers are shared by task runs and chat turns alike, so there is no
+	// per-workload split to call out.
 	const tiles = await findByTestId('container-hours-tiles');
-	expect(tiles.textContent).toContain('2h');
+	expect(tiles.textContent).toContain(formatDuration(banked));
 	await findByTestId('container-hours-chart');
 	expect(await findByText('Container hours per bucket')).toBeTruthy();
 });

@@ -11,6 +11,7 @@ import { useSupport } from '../hooks/use-support';
 import { logout } from '../lib/auth';
 import { type MessageKey, useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
+import { manageHref } from './settings/managed-setting';
 
 interface NavItem {
 	to: string;
@@ -147,11 +148,8 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
  * group. Core ships the rows; the label, the destination and the channel are
  * config, so nothing here names any particular deployment.
  *
- * The link is validated as `https:` at parse and again here: React does not
- * reliably block a `javascript:` href, and the string is operator-authored. No
- * query params and no token - the URL lands in access logs and in browser
- * history, and a top-level navigation already carries whatever session the
- * destination uses.
+ * The link is validated by `manageHref`, the same check every link out to the
+ * deployment goes through.
  *
  * The support row renders only for a caller the server hands the channel to,
  * which is the instance owner. It opens the chat in place, so it takes
@@ -168,7 +166,7 @@ function PolicyGroup({ hosted, onAction }: { hosted: boolean; onAction?: () => v
 	const { data: support } = useSupport(hosted);
 	const { data: me } = useMe();
 	const policy = settings?.policy;
-	const manageUrl = policy?.manage_url?.startsWith('https://') ? policy.manage_url : null;
+	const manageUrl = manageHref(policy);
 	const hours = me?.is_superuser === true;
 	if (!policy || (!manageUrl && !support && !hours)) return null;
 

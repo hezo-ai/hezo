@@ -4,6 +4,53 @@ import { useInstanceSettings } from '../../hooks/use-instance-settings';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 
 /**
+ * Where `manage_url` may be followed, or null when it may not.
+ *
+ * Validated as `https:` at parse and again here - React does not reliably block
+ * a `javascript:` href, and this string is operator-authored. No query params and
+ * no token: the URL lands in access logs and in browser history, and a top-level
+ * navigation already carries the session cookie.
+ */
+export function manageHref(
+	policy: { manage_url: string | null } | null | undefined,
+): string | null {
+	const url = policy?.manage_url;
+	return url?.startsWith('https://') ? url : null;
+}
+
+/**
+ * The link out to `manage_url`, opened in a new tab.
+ *
+ * **Named by the setting, not by the deployment.** The generic word is right for
+ * a limit somebody else fixed; a control a tenant can only move by buying
+ * something says so instead. Still one destination, and no deployment named
+ * anywhere.
+ */
+export function ManageLink({
+	href,
+	label,
+	testId,
+}: {
+	href: string;
+	label: MessageKey;
+	testId: string;
+}) {
+	const { t } = useI18n();
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="inline-flex items-center gap-1 text-accent hover:underline"
+			data-testid={testId}
+		>
+			{t(label)}
+			<ExternalLink className="h-3 w-3" aria-hidden />
+		</a>
+	);
+}
+
+/**
  * Rendering for a setting fixed by whoever deployed this instance.
  *
  * **Core never learns any deployment's name.** It renders `managed_by` and links
@@ -21,20 +68,14 @@ export function ManagedSettingNotice({
 	manageLabel = 'settings.managed.manage',
 }: {
 	pinned: boolean;
-	/**
-	 * What the link out is called.
-	 *
-	 * **Named by the setting, not by the deployment.** The generic word is right
-	 * for a limit somebody else fixed; a control a tenant can only move by buying
-	 * something says so instead. Still one link to `manage_url`, still no
-	 * deployment named anywhere.
-	 */
+	/** What the link out is called - see `ManageLink`. */
 	manageLabel?: MessageKey;
 }) {
 	const { t } = useI18n();
 	const { data: settings } = useInstanceSettings();
 	const policy = settings?.policy;
 	if (!pinned || !policy) return null;
+	const href = manageHref(policy);
 
 	return (
 		<p
@@ -43,22 +84,7 @@ export function ManagedSettingNotice({
 		>
 			<Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
 			<span>{t('settings.managed.by', { managedBy: policy.managed_by })}</span>
-			{/* Validated at parse as https:, and again here - React does not reliably
-			    block a `javascript:` href, and this string is operator-authored. No
-			    query params and no token: the URL lands in access logs and in browser
-			    history, and a top-level navigation already carries the session cookie. */}
-			{policy.manage_url?.startsWith('https://') && (
-				<a
-					href={policy.manage_url}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="inline-flex items-center gap-1 text-accent hover:underline"
-					data-testid="managed-setting-link"
-				>
-					{t(manageLabel)}
-					<ExternalLink className="h-3 w-3" aria-hidden />
-				</a>
-			)}
+			{href && <ManageLink href={href} label={manageLabel} testId="managed-setting-link" />}
 		</p>
 	);
 }

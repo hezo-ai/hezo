@@ -163,4 +163,5 @@ tab names the period it is measuring and the date the allowance comes back, so
 you never have to work out which one you are on.
 
 Where the allowance is fixed by whoever runs your instance, the Budget page says
-so and links to where it can be changed.
+so and links to where it can be changed. The same link, **Buy more hours**, sits
+beside the date the allowance resets.
