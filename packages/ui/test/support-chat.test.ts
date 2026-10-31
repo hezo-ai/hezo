@@ -405,6 +405,25 @@ test('shows and hides the launcher after the widget has loaded', async () => {
 	expect(fake.toggleBubbleVisibility).toHaveBeenLastCalledWith('show');
 });
 
+test('a launcher hidden before the widget starts is hidden in its settings', () => {
+	chat.installSupportChat({ ...OPTIONS, hideBubble: false });
+
+	chat.setSupportChatBubble(false);
+	expect(testWindow.chatwootSettings).toMatchObject({ hideMessageBubble: true });
+});
+
+test('a launcher hidden while the widget loads is hidden once it is ready', async () => {
+	chat.installSupportChat({ ...OPTIONS, hideBubble: false });
+	await loaded();
+
+	// The widget has started from settings that showed the launcher, and draws it
+	// only as it reports ready: anything said to it before then reaches nothing.
+	chat.setSupportChatBubble(false);
+	fake.toggleBubbleVisibility.mockClear();
+	ready();
+	expect(fake.toggleBubbleVisibility).toHaveBeenLastCalledWith('hide');
+});
+
 test('keeps where the person is to itself until the chat opens', async () => {
 	await readyChat();
 	chat.setSupportChatContext(CONTEXT);

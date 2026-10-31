@@ -151,12 +151,18 @@ test('the owner gets the row, an identified widget, and a reset on sign-out', as
 
 	expect(widgetScript()?.getAttribute('integrity')).toBe('sha384-abc');
 	await expect.poll(() => testWindow.$chatwoot).toBe(chatwoot);
+	// The identity is in before the widget reports ready, which is the order a
+	// real page load takes. The widget draws its launcher only as it reports
+	// ready, so whatever it was told about the launcher before then is dropped.
+	chatwoot.toggleBubbleVisibility.mockClear();
 	window.dispatchEvent(new Event('chatwoot:ready'));
 	expect(chatwoot.setUser).toHaveBeenCalledWith('contact-1', {
 		name: 'alice',
 		email: 'alice@example.com',
 		identifier_hash: 'f'.repeat(64),
 	});
+	// The shell's chat dock owns that corner, and the chat opens from the row.
+	expect(chatwoot.toggleBubbleVisibility).toHaveBeenLastCalledWith('hide');
 
 	await user.click(row);
 	expect(chatwoot.toggle).toHaveBeenCalledWith('open');
