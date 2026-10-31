@@ -15,7 +15,7 @@ import { formatDuration, hoursSpent, secondsToHours } from '../../lib/format-dur
 import { Trans, useI18n } from '../../lib/i18n';
 import { formatBucketLabel } from '../charts/chart-format';
 import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
-import { ManagedSetting } from '../settings/managed-setting';
+import { ManagedSetting, ManageLink, manageHref } from '../settings/managed-setting';
 import { BudgetBar } from '../ui/budget-bar';
 import { SectionHeader } from '../ui/section-header';
 import { SegmentedControl } from '../ui/segmented-control';
@@ -85,11 +85,25 @@ function Tile({ title, value, meta }: { title: string; value: string; meta: stri
  * window a deployment may anchor to a billing day, so a page that assumed a
  * calendar month drew a figure the gate disagreed with, and named a reset date
  * that was not the one coming.
+ *
+ * **Beside the reset date, the way out of waiting for it.** Where the deployment
+ * fixed the allowance, the only way to more hours before the reset is to buy them
+ * or change plan, and `buyHoursHref` is where that happens.
  */
-function AllowanceHero({ totals, capHours }: { totals: ContainerHoursTotals; capHours: number }) {
+function AllowanceHero({
+	totals,
+	capHours,
+	buyHoursHref,
+}: {
+	totals: ContainerHoursTotals;
+	capHours: number;
+	buyHoursHref: string | null;
+}) {
 	const { t, formatDate } = useI18n();
 	const usedHours = totals.window_seconds / 3600;
 	const remaining = Math.max(0, capHours - usedHours);
+	const hours = remaining.toFixed(1);
+	const date = formatDate(totals.window_end);
 	return (
 		<div
 			data-testid="container-hours-allowance"
@@ -105,11 +119,25 @@ function AllowanceHero({ totals, capHours }: { totals: ContainerHoursTotals; cap
 				</span>
 			</div>
 			<BudgetBar used={totals.window_seconds} total={capHours * 3600} />
-			<span className="text-[11.5px] text-text-3">
-				{t('budget.hours.allowance.remaining', {
-					hours: remaining.toFixed(1),
-					date: formatDate(totals.window_end),
-				})}
+			<span className="text-[11.5px] text-text-3" data-testid="container-hours-remaining">
+				{buyHoursHref ? (
+					<Trans
+						k="budget.hours.allowance.remainingWithLink"
+						vars={{
+							hours,
+							date,
+							link: (
+								<ManageLink
+									href={buyHoursHref}
+									label="budget.hours.allowance.buy"
+									testId="container-hours-buy"
+								/>
+							),
+						}}
+					/>
+				) : (
+					t('budget.hours.allowance.remaining', { hours, date })
+				)}
 			</span>
 		</div>
 	);
@@ -283,11 +311,16 @@ export function InstanceContainerHoursPanel() {
 	const { data, isLoading } = useInstanceContainerHours(bucket);
 	const totals = data?.totals;
 	const capHours = data?.monthly_hours ?? 0;
+	// Only a pinned allowance is moved by buying: one the operator set is edited
+	// in the control below.
+	const buyHoursHref = data?.monthly_hours_pinned ? manageHref(data.policy) : null;
 
 	return (
 		<div className="flex flex-col gap-6">
 			{totals && <HoursTiles totals={totals} />}
-			{totals && capHours > 0 && <AllowanceHero totals={totals} capHours={capHours} />}
+			{totals && capHours > 0 && (
+				<AllowanceHero totals={totals} capHours={capHours} buyHoursHref={buyHoursHref} />
+			)}
 			<HoursChart
 				bucket={bucket}
 				setBucket={setBucket}
