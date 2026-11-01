@@ -95,6 +95,8 @@ interface SupportChatState {
 	colorScheme: SupportChatColorScheme;
 	/** True once the widget has reported ready; its API stays usable across a reset. */
 	ready: boolean;
+	/** Whether the launcher bubble should show, applied again whenever the widget reports ready. */
+	bubble: boolean;
 	/** A request to open that arrived before the widget could act on it. */
 	openWhenReady: boolean;
 	/** Whether the chat panel is open, which is the only time the context is sent. */
@@ -242,18 +244,21 @@ function holdForMerge(): void {
 }
 
 /**
- * Apply everything that waited for the widget: the identity, then any locale or
- * scheme change made while it loaded, then an early request to open.
+ * Apply everything that waited for the widget: the identity, then any locale,
+ * scheme or launcher change made while it loaded, then an early request to open.
  */
 function onReady(): void {
 	if (!state) return;
 	state.ready = true;
-	const { identity, locale, colorScheme } = state;
+	const { identity, locale, colorScheme, bubble } = state;
 	if (identity) identify(identity);
 	withChatwoot((chatwoot) => {
 		chatwoot.setLocale(locale);
 		chatwoot.setColorScheme(colorScheme);
 	});
+	// The widget draws the launcher as it reports ready, so a show or hide asked
+	// for while it loaded had nothing to act on until now.
+	withChatwoot((chatwoot) => chatwoot.toggleBubbleVisibility(bubble ? 'show' : 'hide'));
 	if (state.openWhenReady) {
 		state.openWhenReady = false;
 		withChatwoot((chatwoot) => chatwoot.toggle('open'));
@@ -290,6 +295,7 @@ export function installSupportChat(options: SupportChatOptions): void {
 		locale,
 		colorScheme: options.colorScheme,
 		ready: false,
+		bubble: !options.hideBubble,
 		openWhenReady: false,
 		open: false,
 		context: null,
@@ -322,16 +328,26 @@ export function installSupportChat(options: SupportChatOptions): void {
 }
 
 /**
- * Show or hide the launcher bubble after the widget is loaded.
+ * Show or hide the launcher bubble, now or as soon as the widget draws it.
  *
  * `hideBubble` decides this at install, and installing happens once per page —
  * but whether the corner is free can change without a reload. Signing in draws
  * a shell that claims it, and the chat moves to that shell's own menu entry.
+ *
+ * **A change made while the widget loads is kept, not dropped.** The widget
+ * reads its settings once, when it starts, and draws the launcher only as it
+ * reports ready; a toggle before then reaches nothing. So the wish is written
+ * into the settings, for a widget that has not started, and applied on ready.
  * Does nothing before install.
  */
 export function setSupportChatBubble(visible: boolean): void {
 	if (!state) return;
-	withChatwoot((chatwoot) => chatwoot.toggleBubbleVisibility(visible ? 'show' : 'hide'));
+	state.bubble = visible;
+	const settings = host().chatwootSettings;
+	if (settings) settings.hideMessageBubble = !visible;
+	if (state.ready) {
+		withChatwoot((chatwoot) => chatwoot.toggleBubbleVisibility(visible ? 'show' : 'hide'));
+	}
 }
 
 /** Open the chat, now or as soon as the widget is ready. Does nothing before install. */
