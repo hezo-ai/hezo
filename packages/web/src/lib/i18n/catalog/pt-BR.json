@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Conversa fechada",
 	"chat.hoursExhausted.banner": "As horas de contêiner acabaram, então nenhuma resposta que precise de um contêiner novo vai iniciar. Volta a funcionar na virada do mês ou quando um administrador aumentar a cota.",
 	"chat.hoursExhausted.bannerAdmin": "As horas de contêiner acabaram, então nenhuma resposta que precise de um contêiner novo vai iniciar. Volta a funcionar na virada do mês ou quando você aumentar a cota em {link}.",
+	"chat.hoursExhausted.bannerBuy": "As horas de contêiner acabaram, então nenhuma resposta que precise de um contêiner novo vai iniciar. Volta a funcionar quando a cota reiniciar. {link}",
 	"chat.hoursExhausted.linkLabel": "Horas",
 	"chat.identity.unlink.confirm": "Desvincular",
 	"chat.identity.unlink.description": "Esta conta não vai mais poder mandar mensagens ao CEO. Você pode vinculá-la de novo quando quiser.",

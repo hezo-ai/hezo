@@ -378,6 +378,29 @@ test('a tooltip renders the thing it describes', () => {
 	expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
 });
 
+// Radix announces a tooltip through a hidden copy of what it shows, so a link in
+// the content would otherwise appear twice, once where no sighted user sees it.
+test('a tooltip holding a link announces its label and draws the link once', () => {
+	render(
+		<TooltipProvider>
+			<Tooltip
+				open
+				ariaLabel="Hours are spent"
+				content={
+					<span>
+						Hours are spent <a href="https://example.com/billing">Buy more hours</a>
+					</span>
+				}
+			>
+				<button type="button">Run now</button>
+			</Tooltip>
+		</TooltipProvider>,
+	);
+
+	expect(screen.getByRole('tooltip').textContent).toBe('Hours are spent');
+	expect(screen.getAllByRole('link', { name: 'Buy more hours' })).toHaveLength(1);
+});
+
 // A tooltip left uncontrolled opens on hover and focus but never on a tap, and
 // this trigger is the only route to what it holds.
 test('an info tooltip opens on a tap, not only on hover', async () => {

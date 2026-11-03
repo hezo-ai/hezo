@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Conversación cerrada",
 	"chat.hoursExhausted.banner": "Las horas de contenedor se han agotado, así que no arrancará ninguna respuesta que necesite un contenedor nuevo. Volverá a funcionar al cambiar de mes o cuando un administrador amplíe la asignación.",
 	"chat.hoursExhausted.bannerAdmin": "Las horas de contenedor se han agotado, así que no arrancará ninguna respuesta que necesite un contenedor nuevo. Volverá a funcionar al cambiar de mes o cuando amplíes la asignación en {link}.",
+	"chat.hoursExhausted.bannerBuy": "Las horas de contenedor se han agotado, así que no arrancará ninguna respuesta que necesite un contenedor nuevo. Volverá a funcionar cuando se reinicie la asignación. {link}",
 	"chat.hoursExhausted.linkLabel": "Horas",
 	"chat.identity.unlink.confirm": "Desvincular",
 	"chat.identity.unlink.description": "Esta cuenta ya no podrá escribir al CEO. Puedes volver a vincularla en cualquier momento.",

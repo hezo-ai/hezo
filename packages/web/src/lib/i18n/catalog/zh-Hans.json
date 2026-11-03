@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "已关闭的对话",
 	"chat.hoursExhausted.banner": "容器时长已用尽，需要新容器的回复不会启动。等到下个月开始，或者管理员调高额度后即可恢复。",
 	"chat.hoursExhausted.bannerAdmin": "容器时长已用尽，需要新容器的回复不会启动。等到下个月开始，或者你在{link}调高额度后即可恢复。",
+	"chat.hoursExhausted.bannerBuy": "容器时长已用尽，需要新容器的回复不会启动。额度重置后即可恢复。{link}",
 	"chat.hoursExhausted.linkLabel": "时长",
 	"chat.identity.unlink.confirm": "取消关联",
 	"chat.identity.unlink.description": "此账户将无法再给 CEO 发消息。您可以随时重新关联。",

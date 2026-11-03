@@ -53,6 +53,14 @@ export interface TooltipProps {
 	 */
 	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
+	/**
+	 * What a screen reader announces in place of `content`.
+	 *
+	 * Radix announces the tooltip through a hidden copy of `content`, so a
+	 * tooltip holding a link would put a second, invisible link on the page.
+	 * Give one whenever `content` is more than text.
+	 */
+	ariaLabel?: string;
 }
 
 export function Tooltip({
@@ -63,6 +71,7 @@ export function Tooltip({
 	contentClassName,
 	open,
 	onOpenChange,
+	ariaLabel,
 }: TooltipProps) {
 	return (
 		<TooltipPrimitive.Root open={open} onOpenChange={onOpenChange} delayDuration={delayDuration}>
@@ -71,6 +80,7 @@ export function Tooltip({
 				<TooltipPrimitive.Content
 					side={side}
 					sideOffset={6}
+					aria-label={ariaLabel}
 					className={`${TOOLTIP_Z} max-w-xs rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] leading-snug text-text-1 shadow-md ${contentClassName ?? ''}`}
 				>
 					{content}

@@ -27,6 +27,7 @@ import {
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { ChatLaunch } from '../../contexts/chat-launch-context';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
+import { useBuyHoursHref } from '../../hooks/use-buy-hours-href';
 import {
 	type ChatConversationSummary,
 	type ChatConvertedTaskRef,
@@ -53,6 +54,7 @@ import {
 } from '../file-attachments';
 import { MarkdownProse } from '../markdown-prose';
 import { RunLinkedText } from '../run-linked-text';
+import { ManageLink } from '../settings/managed-setting';
 import { Tooltip } from '../ui/tooltip';
 import { ConvertMessageDialog } from './convert-message-dialog';
 
@@ -172,6 +174,8 @@ export function ChatSurface({
 	// Only HQ can raise the allowance, so only a superuser is offered the link.
 	// The probe is the app-wide cached one; this adds no request.
 	const isSuperuser = useMe().data?.is_superuser === true;
+	// Where the deployment fixed the allowance, HQ cannot raise it: buying can.
+	const buyHref = useBuyHoursHref();
 	// The room's own project scopes labels and uploads; the CEO scope is HQ.
 	const isProjectRoom = room.kind === 'agent' || room.kind === 'group';
 	const roomProjectSlug = isProjectRoom ? room.projectSlug : null;
@@ -560,9 +564,24 @@ export function ChatSurface({
 								    a container already warm still runs, so the composer stays
 								    open and this warns instead of locking it. The allowance is
 								    instance-wide and only HQ can raise it, so the link is the
-								    superuser's alone - the rest are told who to ask. */}
+								    superuser's alone - the rest are told who to ask. Where the
+								    deployment fixed it, HQ cannot move it either, and the link
+								    goes to where more hours are bought instead. */}
 								<span>
-									{isSuperuser ? (
+									{buyHref ? (
+										<Trans
+											k="chat.hoursExhausted.bannerBuy"
+											vars={{
+												link: (
+													<ManageLink
+														href={buyHref}
+														label="budget.hours.allowance.buy"
+														testId="chat-hours-buy"
+													/>
+												),
+											}}
+										/>
+									) : isSuperuser ? (
 										<Trans
 											k="chat.hoursExhausted.bannerAdmin"
 											vars={{

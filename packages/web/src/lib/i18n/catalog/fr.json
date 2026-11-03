@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Conversation fermée",
 	"chat.hoursExhausted.banner": "Les heures de conteneur sont épuisées : aucune réponse nécessitant un nouveau conteneur ne démarrera. Cela repartira au changement de mois ou quand un administrateur augmentera le quota.",
 	"chat.hoursExhausted.bannerAdmin": "Les heures de conteneur sont épuisées : aucune réponse nécessitant un nouveau conteneur ne démarrera. Cela repartira au changement de mois ou quand vous augmenterez le quota dans {link}.",
+	"chat.hoursExhausted.bannerBuy": "Les heures de conteneur sont épuisées : aucune réponse nécessitant un nouveau conteneur ne démarrera. Cela repartira à la remise à zéro du quota. {link}",
 	"chat.hoursExhausted.linkLabel": "Heures",
 	"chat.identity.unlink.confirm": "Dissocier",
 	"chat.identity.unlink.description": "Ce compte ne pourra plus écrire au CEO. Vous pouvez l'associer à nouveau à tout moment.",

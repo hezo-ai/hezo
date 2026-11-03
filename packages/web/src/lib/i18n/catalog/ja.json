@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "終了した会話",
 	"chat.hoursExhausted.banner": "コンテナ時間を使い切りました。新しいコンテナが必要な返信は開始しません。月が変わるか、管理者が上限を引き上げると再開します。",
 	"chat.hoursExhausted.bannerAdmin": "コンテナ時間を使い切りました。新しいコンテナが必要な返信は開始しません。月が変わるか、{link}で上限を引き上げると再開します。",
+	"chat.hoursExhausted.bannerBuy": "コンテナ時間を使い切りました。新しいコンテナが必要な返信は開始しません。上限がリセットされると再開します。{link}",
 	"chat.hoursExhausted.linkLabel": "時間",
 	"chat.identity.unlink.confirm": "リンクを解除",
 	"chat.identity.unlink.description": "このアカウントからは CEO にメッセージを送れなくなります。いつでもリンクし直せます。",

@@ -1,7 +1,16 @@
+import { resetRuntimeConfig, setPolicy } from '@hezo/server/src/config/runtime';
+import { setMonthlyContainerHours } from '@hezo/server/src/lib/system-meta';
+import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
 import { waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+
+afterEach(() => {
+	// The policy is process-wide runtime config, so a case that sets one would
+	// manage every case after it.
+	resetRuntimeConfig();
+});
 
 test('task sidebar lists a queued agent and cancels it via the confirm dialog', async () => {
 	const seeded = { projectSlug: '', taskId: '', wakeupId: '', queuedAgentTitle: '' };
@@ -264,4 +273,91 @@ test('disables the play button with a reason when the task already has a run', a
 		expect(playBtn.getAttribute('aria-disabled')).toBe('true');
 	});
 	expect(playBtn.getAttribute('aria-label')).toMatch(/in progress/i);
+});
+
+// A spent allowance is the one wait buying can end. Where the deployment fixed
+// the allowance, the disabled button's tip carries the link to buy more, and a
+// tap opens the tip, since a phone has no hover to open it with.
+const MANAGE_URL = 'https://control.example/account#billing';
+
+/** A queued agent on an instance whose hours are spent; returns its Run now button. */
+async function queuedOnSpentHours(opts: { managed: boolean }) {
+	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
+	const app = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			if (opts.managed) {
+				setPolicy({
+					managedBy: 'Acme Cloud',
+					manageUrl: MANAGE_URL,
+					pinned: { monthlyContainerHours: 10 },
+				});
+			} else {
+				await setMonthlyContainerHours(ctx.db, 10);
+			}
+			await seedMonthToDateSeconds(ctx.db, 10 * 3600);
+
+			const ws = await seedWorkspace();
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const queuedAgent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Spent Hours Demo' });
+			const task = await seedTask(ws, project, {
+				title: 'Spent Hours Task',
+				assignee_id: captain.id,
+			});
+			const r = await ctx.db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+				 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status,
+				         jsonb_build_object('task_id', $3::text))
+				 RETURNING id`,
+				[queuedAgent.id, ws.team.id, task.id],
+			);
+
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.wakeupId = r.rows[0].id;
+		},
+	});
+
+	await app.router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const playBtn = (await app.findByTestId(`run-queued-wakeup-${seeded.wakeupId}`, undefined, {
+		timeout: 15_000,
+	})) as HTMLButtonElement;
+	await waitFor(() => {
+		expect(playBtn.getAttribute('aria-label')).toMatch(/container-hours allowance/i);
+	});
+	expect(playBtn.getAttribute('aria-disabled')).toBe('true');
+	return { ...app, playBtn, wakeupId: seeded.wakeupId };
+}
+
+test('run-now blocked by hours the deployment fixed links to buying more in its tip', async () => {
+	const { playBtn, wakeupId, user, findByTestId, findByRole } = await queuedOnSpentHours({
+		managed: true,
+	});
+
+	await user.click(playBtn);
+
+	const link = await findByTestId(`run-queued-wakeup-buy-hours-${wakeupId}`);
+	expect(link.textContent).toBe('Buy more hours');
+	expect(link.getAttribute('href')).toBe(MANAGE_URL);
+	expect(link.getAttribute('target')).toBe('_blank');
+	expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+	// Screen readers hear the reason alone, not a second copy of the link.
+	expect((await findByRole('tooltip')).textContent).toMatch(/container-hours allowance/i);
+});
+
+test('run-now blocked by hours on a self-hosted instance has no link in its tip', async () => {
+	const { playBtn, wakeupId, user, findByRole, queryByTestId } = await queuedOnSpentHours({
+		managed: false,
+	});
+
+	await user.click(playBtn);
+
+	// The tap opens the tip, so the absence below is not the tip being shut.
+	expect((await findByRole('tooltip')).textContent).toMatch(/container-hours allowance/i);
+	expect(queryByTestId(`run-queued-wakeup-buy-hours-${wakeupId}`)).toBeNull();
 });

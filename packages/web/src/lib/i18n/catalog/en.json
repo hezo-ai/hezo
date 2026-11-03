@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Closed conversation",
 	"chat.hoursExhausted.banner": "Container hours are spent, so a reply that needs a new container will not start. It works again when the month turns, or when an admin raises the allowance.",
 	"chat.hoursExhausted.bannerAdmin": "Container hours are spent, so a reply that needs a new container will not start. It works again when the month turns, or when you raise the allowance in {link}.",
+	"chat.hoursExhausted.bannerBuy": "Container hours are spent, so a reply that needs a new container will not start. It works again when the allowance resets. {link}",
 	"chat.hoursExhausted.linkLabel": "Hours",
 	"chat.identity.unlink.confirm": "Unlink",
 	"chat.identity.unlink.description": "This account can no longer message the CEO. You can link it again at any time.",

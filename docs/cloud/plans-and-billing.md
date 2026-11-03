@@ -68,9 +68,9 @@ many packs a period may buy on its own.
 **Or move up a plan**, which is usually better value than repeated packs.
 
 You can do either from your instance: on HQ's **Hours** tab (under **Team &
-Budget**), **Buy more hours** beside the reset date opens your billing page. The
-same link is on the notice you get when you start a run after your hours have run
-out.
+Budget**), **Buy more hours** beside the reset date opens your billing page. Once
+your hours run out, the same link is also on the notice you get when you start a
+run, in the tip on a disabled **Run now** button, and in the chat's warning.
 
 Nothing is charged above your plan without you asking for it. If you run out of
 hours and have no packs, no new container starts until the period rolls over or

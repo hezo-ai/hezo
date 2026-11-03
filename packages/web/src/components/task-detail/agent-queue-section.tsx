@@ -1,12 +1,14 @@
 import { Loader2, Play, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
+import { useBuyHoursHref } from '../../hooks/use-buy-hours-href';
 import { useCancelQueuedWakeup } from '../../hooks/use-cancel-queued-wakeup';
 import type { ExecutionLock } from '../../hooks/use-execution-locks';
 import type { QueuedDispatchState, QueuedWakeup } from '../../hooks/use-queued-wakeups';
 import { useRunQueuedWakeup } from '../../hooks/use-run-queued-wakeup';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
+import { ManageLink } from '../settings/managed-setting';
 import { TerminateRunButton } from '../terminate-run-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
@@ -217,6 +219,13 @@ function QueuedAgentRow({
 	const runMutation = useRunQueuedWakeup({ projectId, taskId });
 	const blockReasonKey = runNowBlockReason(wakeup, dispatch);
 	const blockReason = blockReasonKey ? t(blockReasonKey) : null;
+	// A spent allowance is the one wait buying can end, so its tip carries the way
+	// to buy - where buying is how hours are raised and this viewer can do it.
+	const buyHref = useBuyHoursHref();
+	const tipBuyHref = blockReasonKey === 'tasks.runNow.blocked.hoursExhausted' ? buyHref : null;
+	// Controlled so a tap opens it: Radix tooltips open on hover and focus only,
+	// and on a phone the tip is the one place the reason and its link appear.
+	const [tipOpen, setTipOpen] = useState(false);
 
 	return (
 		<div
@@ -235,13 +244,35 @@ function QueuedAgentRow({
 				{blockReason ? (
 					// aria-disabled (not the native `disabled` attribute) keeps the button
 					// emitting pointer events so the Radix tooltip still shows the reason.
-					<Tooltip content={blockReason}>
+					<Tooltip
+						content={
+							tipBuyHref ? (
+								<span className="flex flex-col items-start gap-1">
+									<span>{blockReason}</span>
+									<ManageLink
+										href={tipBuyHref}
+										label="budget.hours.allowance.buy"
+										testId={`run-queued-wakeup-buy-hours-${wakeup.id}`}
+									/>
+								</span>
+							) : (
+								blockReason
+							)
+						}
+						ariaLabel={blockReason}
+						open={tipOpen}
+						onOpenChange={setTipOpen}
+					>
 						<button
 							type="button"
 							aria-disabled="true"
 							aria-label={`Run now unavailable: ${blockReason}`}
 							data-testid={`run-queued-wakeup-${wakeup.id}`}
-							onClick={(e) => e.preventDefault()}
+							// Preventing the default also stops Radix closing the tip on click.
+							onClick={(e) => {
+								e.preventDefault();
+								setTipOpen(true);
+							}}
 							className="inline-flex items-center justify-center h-6 w-6 text-success opacity-40 cursor-not-allowed rounded-md"
 						>
 							<Play className="w-3.5 h-3.5" />

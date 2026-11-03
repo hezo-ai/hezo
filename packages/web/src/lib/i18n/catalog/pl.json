@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Rozmowa zamknięta",
 	"chat.hoursExhausted.banner": "Godziny kontenerów zostały wyczerpane, więc odpowiedź wymagająca nowego kontenera nie ruszy. Zadziała ponownie po zmianie miesiąca albo gdy administrator zwiększy limit.",
 	"chat.hoursExhausted.bannerAdmin": "Godziny kontenerów zostały wyczerpane, więc odpowiedź wymagająca nowego kontenera nie ruszy. Zadziała ponownie po zmianie miesiąca albo gdy zwiększysz limit w {link}.",
+	"chat.hoursExhausted.bannerBuy": "Godziny kontenerów zostały wyczerpane, więc odpowiedź wymagająca nowego kontenera nie ruszy. Zadziała ponownie po odnowieniu limitu. {link}",
 	"chat.hoursExhausted.linkLabel": "Godziny",
 	"chat.identity.unlink.confirm": "Odłącz",
 	"chat.identity.unlink.description": "To konto nie będzie już mogło pisać do CEO. W każdej chwili możesz połączyć je ponownie.",
