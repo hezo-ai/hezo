@@ -334,30 +334,71 @@ async function queuedOnSpentHours(opts: { managed: boolean }) {
 	return { ...app, playBtn, wakeupId: seeded.wakeupId };
 }
 
-test('run-now blocked by hours the deployment fixed links to buying more in its tip', async () => {
-	const { playBtn, wakeupId, user, findByTestId, findByRole } = await queuedOnSpentHours({
-		managed: true,
-	});
+test('a press on run-now blocked by fixed hours opens a tip whose link takes the click', async () => {
+	const { playBtn, wakeupId, user, findByTestId } = await queuedOnSpentHours({ managed: true });
 
 	await user.click(playBtn);
 
+	const tip = await findByTestId(`run-queued-wakeup-tip-${wakeupId}`);
+	expect(tip.textContent).toMatch(/container-hours allowance/i);
 	const link = await findByTestId(`run-queued-wakeup-buy-hours-${wakeupId}`);
+	expect(tip.contains(link)).toBe(true);
 	expect(link.textContent).toBe('Buy more hours');
 	expect(link.getAttribute('href')).toBe(MANAGE_URL);
 	expect(link.getAttribute('target')).toBe('_blank');
 	expect(link.getAttribute('rel')).toBe('noopener noreferrer');
-	// Screen readers hear the reason alone, not a second copy of the link.
-	expect((await findByRole('tooltip')).textContent).toMatch(/container-hours allowance/i);
+
+	// The click has to reach the link: a tooltip closed on the trigger's blur and
+	// took the link with it before the press landed. Navigation is stopped here,
+	// after the click has arrived, so the test opens no window.
+	const clicked: string[] = [];
+	const record = (e: MouseEvent) => {
+		const anchor = (e.target as Element | null)?.closest('a');
+		if (anchor) clicked.push(anchor.getAttribute('href') ?? '');
+		e.preventDefault();
+	};
+	document.addEventListener('click', record, true);
+	try {
+		await user.click(link);
+	} finally {
+		document.removeEventListener('click', record, true);
+	}
+	expect(clicked).toEqual([MANAGE_URL]);
+});
+
+test('a keyboard reaches the buy link: Enter opens the tip, Tab lands on the link', async () => {
+	const { playBtn, wakeupId, user, findByTestId } = await queuedOnSpentHours({ managed: true });
+
+	playBtn.focus();
+	await user.keyboard('{Enter}');
+	const link = await findByTestId(`run-queued-wakeup-buy-hours-${wakeupId}`);
+
+	await user.tab();
+	expect(document.activeElement).toBe(link);
+});
+
+test('hovering run-now opens the tip without taking focus', async () => {
+	const { playBtn, wakeupId, user, findByTestId } = await queuedOnSpentHours({ managed: true });
+	const before = document.activeElement;
+
+	await user.hover(playBtn);
+
+	const tip = await findByTestId(`run-queued-wakeup-tip-${wakeupId}`);
+	expect(
+		tip.querySelector(`[data-testid="run-queued-wakeup-buy-hours-${wakeupId}"]`),
+	).not.toBeNull();
+	expect(document.activeElement).toBe(before);
 });
 
 test('run-now blocked by hours on a self-hosted instance has no link in its tip', async () => {
-	const { playBtn, wakeupId, user, findByRole, queryByTestId } = await queuedOnSpentHours({
+	const { playBtn, wakeupId, user, findByTestId, queryByTestId } = await queuedOnSpentHours({
 		managed: false,
 	});
 
 	await user.click(playBtn);
 
-	// The tap opens the tip, so the absence below is not the tip being shut.
-	expect((await findByRole('tooltip')).textContent).toMatch(/container-hours allowance/i);
+	// The press opens the tip, so the absence below is not the tip being shut.
+	const tip = await findByTestId(`run-queued-wakeup-tip-${wakeupId}`);
+	expect(tip.textContent).toMatch(/container-hours allowance/i);
 	expect(queryByTestId(`run-queued-wakeup-buy-hours-${wakeupId}`)).toBeNull();
 });
