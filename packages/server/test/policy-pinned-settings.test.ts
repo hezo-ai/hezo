@@ -290,6 +290,14 @@ describe('GET /instance-settings', () => {
 		const data = await payload();
 		expect(data.policy).toBeNull();
 		expect(data.max_container_memory_gb_pinned).toBe(false);
+		expect(data.monthly_hours_pinned).toBe(false);
+	});
+
+	it('reports a pinned hours allowance, which every page reads to offer buying more', async () => {
+		pin({ monthlyContainerHours: 100 }, 'Acme Cloud', 'https://example.com/plan');
+		const data = await payload();
+		expect(data.monthly_hours_pinned).toBe(true);
+		expect(data.max_container_memory_gb_pinned).toBe(false);
 	});
 
 	it('reports which keys are pinned, and who to ask', async () => {

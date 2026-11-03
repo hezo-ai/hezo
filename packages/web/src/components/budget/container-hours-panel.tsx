@@ -13,9 +13,10 @@ import { useMe } from '../../hooks/use-me';
 import { useProject } from '../../hooks/use-projects';
 import { formatDuration, hoursSpent, secondsToHours } from '../../lib/format-duration';
 import { Trans, useI18n } from '../../lib/i18n';
+import { buyHoursHref } from '../../lib/manage-href';
 import { formatBucketLabel } from '../charts/chart-format';
 import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
-import { ManagedSetting, ManageLink, manageHref } from '../settings/managed-setting';
+import { ManagedSetting, ManageLink } from '../settings/managed-setting';
 import { BudgetBar } from '../ui/budget-bar';
 import { SectionHeader } from '../ui/section-header';
 import { SegmentedControl } from '../ui/segmented-control';
@@ -311,15 +312,13 @@ export function InstanceContainerHoursPanel() {
 	const { data, isLoading } = useInstanceContainerHours(bucket);
 	const totals = data?.totals;
 	const capHours = data?.monthly_hours ?? 0;
-	// Only a pinned allowance is moved by buying: one the operator set is edited
-	// in the control below.
-	const buyHoursHref = data?.monthly_hours_pinned ? manageHref(data.policy) : null;
+	const buyHref = buyHoursHref(data);
 
 	return (
 		<div className="flex flex-col gap-6">
 			{totals && <HoursTiles totals={totals} />}
 			{totals && capHours > 0 && (
-				<AllowanceHero totals={totals} capHours={capHours} buyHoursHref={buyHoursHref} />
+				<AllowanceHero totals={totals} capHours={capHours} buyHoursHref={buyHref} />
 			)}
 			<HoursChart
 				bucket={bucket}

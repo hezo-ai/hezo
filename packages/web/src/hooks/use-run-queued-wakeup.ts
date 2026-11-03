@@ -1,9 +1,9 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { useI18n } from '../lib/i18n';
-import { type ManualDispatchResult, manualDispatchNoticeKey } from '../lib/manual-dispatch';
+import type { ManualDispatchResult } from '../lib/manual-dispatch';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import { useManualDispatchNotice } from './use-manual-dispatch-notice';
 import { toast } from './use-toast';
 
 interface RunQueuedWakeupArgs {
@@ -12,7 +12,7 @@ interface RunQueuedWakeupArgs {
 }
 
 export function useRunQueuedWakeup({ projectId, taskId }: RunQueuedWakeupArgs) {
-	const { t } = useI18n();
+	const announce = useManualDispatchNotice();
 	return useMutation({
 		mutationFn: (wakeupId: string) =>
 			api.post<ManualDispatchResult>(
@@ -22,8 +22,7 @@ export function useRunQueuedWakeup({ projectId, taskId }: RunQueuedWakeupArgs) {
 		onSuccess: (data) => {
 			// Not started: either a wait (the row is still queued) or a hold the
 			// presser cannot lift. Say which it is.
-			const notice = manualDispatchNoticeKey(data);
-			if (notice) toast.info(t(notice));
+			announce(data);
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.taskQueuedWakeups(projectId, taskId),
 			});

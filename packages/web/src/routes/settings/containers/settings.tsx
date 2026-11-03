@@ -267,12 +267,17 @@ function ContainerBackendSection() {
 	const { data: info } = useSandboxBackendInfo(true);
 	if (info === undefined) return null;
 	return (
-		<section className="border border-border rounded-md p-4 bg-surface mb-4">
+		<section
+			className="border border-border rounded-md p-4 bg-surface mb-4"
+			data-testid="container-backend-section"
+		>
 			<h2 className="text-[13px] font-medium mb-1">{t('containers.backend.sectionLabel')}</h2>
 			<p className="text-[13px] text-text-2 mb-2.5 max-w-[680px]">
 				{t('containers.backend.sectionHelp')}
 			</p>
-			<BackendSwitcher info={info} />
+			<ManagedSetting pinned={info.backend_pinned}>
+				<BackendSwitcher info={info} />
+			</ManagedSetting>
 		</section>
 	);
 }

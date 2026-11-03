@@ -2,10 +2,15 @@ import { useSyncExternalStore } from 'react';
 
 export interface ToastLink {
 	label: string;
-	/** In-app path (used as the anchor's href, so it survives middle-click). */
+	/**
+	 * In-app path (used as the anchor's href, so it survives middle-click), or,
+	 * with `external`, an already-validated `https:` URL.
+	 */
 	href: string;
 	/** SPA navigation for a plain click; without it the anchor navigates natively. */
 	onNavigate?: () => void;
+	/** Leaves the app: opens in a new tab, marked as such. */
+	external?: boolean;
 }
 
 export interface Toast {
@@ -42,9 +47,12 @@ export const toast = {
 	error(message: string) {
 		return push({ variant: 'error', message });
 	},
-	/** A neutral, non-alarming notice (e.g. "nothing to do") — styled distinctly from errors. */
-	info(message: string) {
-		return push({ variant: 'info', message });
+	/**
+	 * A neutral, non-alarming notice (e.g. "nothing to do") — styled distinctly
+	 * from errors. A link is for the one step that ends what the notice reports.
+	 */
+	info(message: string, opts?: { link?: ToastLink }) {
+		return push({ variant: 'info', message, link: opts?.link });
 	},
 	/**
 	 * Confirmation of an action whose result lives on a DIFFERENT page, carrying

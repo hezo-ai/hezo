@@ -1,3 +1,4 @@
+import { resetRuntimeConfig, setPolicy } from '@hezo/server/src/config/runtime';
 import { setMonthlyContainerHours } from '@hezo/server/src/lib/system-meta';
 import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
 import { NEVER_RECORD_CLASS } from '@hezo/ui';
@@ -74,6 +75,29 @@ test('a spent hours allowance warns in the composer, without locking it', async 
 		expect((getByTestId('chat-input') as HTMLTextAreaElement).disabled).toBe(false);
 	} finally {
 		await setMonthlyContainerHours(db, 0);
+	}
+});
+
+test('a spent allowance the deployment fixed links the banner to buying more hours', async () => {
+	// HQ cannot raise an allowance the deployment fixed, so the admin is sent to
+	// where more hours are bought rather than to a control that is locked.
+	const { db } = getTestContext();
+	const manageUrl = 'https://control.example/account#billing';
+	setPolicy({ managedBy: 'Acme Cloud', manageUrl, pinned: { monthlyContainerHours: 10 } });
+	await seedMonthToDateSeconds(db, 10 * 3600);
+	try {
+		const { findByTestId } = await renderApp({ initialPath: '/home' });
+		(await findByTestId('app-header-chat')).click();
+
+		const banner = await findByTestId('chat-hours-banner');
+		expect(banner.textContent).toContain('It works again when the allowance resets.');
+		const link = await findByTestId('chat-hours-buy');
+		expect(banner.contains(link)).toBe(true);
+		expect(link.getAttribute('href')).toBe(manageUrl);
+		expect(link.getAttribute('target')).toBe('_blank');
+		expect(banner.querySelector('a[href*="/budget/hours"]')).toBeNull();
+	} finally {
+		resetRuntimeConfig();
 	}
 });
 

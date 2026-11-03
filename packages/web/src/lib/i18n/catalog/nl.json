@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Gesloten gesprek",
 	"chat.hoursExhausted.banner": "De containeruren zijn op, dus een antwoord dat een nieuwe container nodig heeft start niet. Het werkt weer bij de maandwissel of zodra een beheerder het tegoed verhoogt.",
 	"chat.hoursExhausted.bannerAdmin": "De containeruren zijn op, dus een antwoord dat een nieuwe container nodig heeft start niet. Het werkt weer bij de maandwissel of zodra je het tegoed verhoogt bij {link}.",
+	"chat.hoursExhausted.bannerBuy": "De containeruren zijn op, dus een antwoord dat een nieuwe container nodig heeft start niet. Het werkt weer zodra het tegoed wordt hersteld. {link}",
 	"chat.hoursExhausted.linkLabel": "Uren",
 	"chat.identity.unlink.confirm": "Ontkoppelen",
 	"chat.identity.unlink.description": "Dit account kan de CEO dan geen berichten meer sturen. Je kunt het altijd opnieuw koppelen.",

@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Stängd konversation",
 	"chat.hoursExhausted.banner": "Containertimmarna är slut, så ett svar som behöver en ny container startar inte. Det fungerar igen när månaden vänder eller när en administratör höjer utrymmet.",
 	"chat.hoursExhausted.bannerAdmin": "Containertimmarna är slut, så ett svar som behöver en ny container startar inte. Det fungerar igen när månaden vänder eller när du höjer utrymmet under {link}.",
+	"chat.hoursExhausted.bannerBuy": "Containertimmarna är slut, så ett svar som behöver en ny container startar inte. Det fungerar igen när utrymmet nollställs. {link}",
 	"chat.hoursExhausted.linkLabel": "Timmar",
 	"chat.identity.unlink.confirm": "Koppla bort",
 	"chat.identity.unlink.description": "Det här kontot kan inte längre skicka meddelanden till CEO. Du kan koppla det igen när som helst.",

@@ -314,6 +314,7 @@
 	"chat.history.composerPlaceholder": "Geschlossene Unterhaltung",
 	"chat.hoursExhausted.banner": "Das Container-Stundenkontingent ist aufgebraucht, deshalb startet keine Antwort, die einen neuen Container braucht. Es geht wieder, wenn der Monat wechselt oder ein Admin das Kontingent erhöht.",
 	"chat.hoursExhausted.bannerAdmin": "Das Container-Stundenkontingent ist aufgebraucht, deshalb startet keine Antwort, die einen neuen Container braucht. Es geht wieder, wenn der Monat wechselt oder Sie das Kontingent unter {link} erhöhen.",
+	"chat.hoursExhausted.bannerBuy": "Das Container-Stundenkontingent ist aufgebraucht, deshalb startet keine Antwort, die einen neuen Container braucht. Es geht wieder, wenn das Kontingent zurückgesetzt wird. {link}",
 	"chat.hoursExhausted.linkLabel": "Stunden",
 	"chat.identity.unlink.confirm": "Verknüpfung aufheben",
 	"chat.identity.unlink.description": "Dieses Konto kann dem CEO dann keine Nachrichten mehr senden. Sie können es jederzeit wieder verknüpfen.",

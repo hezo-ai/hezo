@@ -1,5 +1,5 @@
 import * as RadixToast from '@radix-ui/react-toast';
-import { Loader2, WifiOff, X } from 'lucide-react';
+import { ExternalLink, Loader2, WifiOff, X } from 'lucide-react';
 import { dismissConnectionOffline, useConnectionStatus } from '../../hooks/use-connection-status';
 import { toast, useToasts } from '../../hooks/use-toast';
 import { useI18n } from '../../lib/i18n';
@@ -101,7 +101,8 @@ export function Toaster() {
 							<a
 								href={item.link.href}
 								data-testid="toast-link"
-								className="mt-1 inline-block text-[13px] font-medium text-accent-soft-fg hover:underline"
+								className="mt-1 inline-flex items-center gap-1 text-[13px] font-medium text-accent-soft-fg hover:underline"
+								{...(item.link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
 								onClick={(e) => {
 									if (item.link?.onNavigate && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
 										e.preventDefault();
@@ -111,6 +112,7 @@ export function Toaster() {
 								}}
 							>
 								{item.link.label}
+								{item.link.external && <ExternalLink className="h-3 w-3" aria-hidden="true" />}
 							</a>
 						)}
 					</div>

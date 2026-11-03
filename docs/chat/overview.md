@@ -175,7 +175,8 @@ When the container-hours allowance is spent, the composer says so before you typ
 reply that needs a new container will not start until the month turns or the allowance
 is raised. The composer stays open, because a reply that lands on a container already
 running still goes through. Admins get a link straight to the Hours tab, where the
-allowance is set.
+allowance is set. Where whoever runs your instance fixed the allowance, the link is
+**Buy more hours** instead and opens the page where more are bought.
 See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 
 ## How conversations work across chat apps

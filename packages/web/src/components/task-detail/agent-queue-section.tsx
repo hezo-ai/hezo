@@ -1,12 +1,16 @@
+import { TOOLTIP_Z } from '@hezo/ui';
+import * as Popover from '@radix-ui/react-popover';
 import { Loader2, Play, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { type PointerEvent, useEffect, useRef, useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
+import { useBuyHoursHref } from '../../hooks/use-buy-hours-href';
 import { useCancelQueuedWakeup } from '../../hooks/use-cancel-queued-wakeup';
 import type { ExecutionLock } from '../../hooks/use-execution-locks';
 import type { QueuedDispatchState, QueuedWakeup } from '../../hooks/use-queued-wakeups';
 import { useRunQueuedWakeup } from '../../hooks/use-run-queued-wakeup';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
+import { ManageLink } from '../settings/managed-setting';
 import { TerminateRunButton } from '../terminate-run-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
@@ -198,6 +202,123 @@ function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState):
 	return null;
 }
 
+/** How long a pointer rests on, or away from, the button before its tip opens or closes. */
+const TIP_HOVER_DELAY_MS = 150;
+
+/**
+ * Run now while something holds the run back: why, and - for a spent allowance
+ * the viewer can buy their way out of - where to buy.
+ *
+ * **A popover, not a tooltip**, because the tip can hold a link. A tooltip closes
+ * when its trigger loses focus, so focus moving to the link closed it: a keyboard
+ * could never reach the link, and a click could lose it mid-press. Hovering
+ * opens it as a tooltip would, leaving focus where it was. A press (click, tap,
+ * Enter) opens it as a place to act - focus moves in, so Tab reaches the link -
+ * and it stays until dismissed. A tap is the only way in on a phone.
+ *
+ * `aria-disabled` rather than `disabled`, so the button still takes the press
+ * and the pointer that open the tip.
+ */
+function BlockedRunNowButton({
+	wakeupId,
+	reason,
+	buyHref,
+}: {
+	wakeupId: string;
+	reason: string;
+	buyHref: string | null;
+}) {
+	const [open, setOpen] = useState(false);
+	const openedByHover = useRef(false);
+	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const clearTimer = () => {
+		if (timer.current) clearTimeout(timer.current);
+		timer.current = null;
+	};
+	// A pending open or close must not fire on a row that has left the queue.
+	useEffect(
+		() => () => {
+			if (timer.current) clearTimeout(timer.current);
+		},
+		[],
+	);
+
+	const hoverTo = (next: boolean) => {
+		clearTimer();
+		timer.current = setTimeout(() => {
+			timer.current = null;
+			setOpen(next);
+		}, TIP_HOVER_DELAY_MS);
+	};
+	const onPointerEnter = (e: PointerEvent) => {
+		if (e.pointerType !== 'mouse') return;
+		if (!open) openedByHover.current = true;
+		hoverTo(true);
+	};
+	// Leaving the button for the tip cancels the close, so the pointer can cross.
+	const onPointerLeave = (e: PointerEvent) => {
+		if (e.pointerType === 'mouse' && openedByHover.current) hoverTo(false);
+	};
+
+	return (
+		<Popover.Root
+			open={open}
+			onOpenChange={(next) => {
+				clearTimer();
+				openedByHover.current = false;
+				setOpen(next);
+			}}
+		>
+			<Popover.Trigger asChild>
+				<button
+					type="button"
+					aria-disabled="true"
+					aria-label={`Run now unavailable: ${reason}`}
+					data-testid={`run-queued-wakeup-${wakeupId}`}
+					onPointerEnter={onPointerEnter}
+					onPointerLeave={onPointerLeave}
+					onClick={(e) => {
+						// Handled here rather than by Radix's toggle: a press on a tip the
+						// hover opened keeps it open, as one that now stays.
+						e.preventDefault();
+						clearTimer();
+						const wasPressed = open && !openedByHover.current;
+						openedByHover.current = false;
+						setOpen(!wasPressed);
+					}}
+					className="inline-flex items-center justify-center h-6 w-6 text-success opacity-40 cursor-not-allowed rounded-md"
+				>
+					<Play className="w-3.5 h-3.5" />
+				</button>
+			</Popover.Trigger>
+			<Popover.Portal>
+				<Popover.Content
+					side="top"
+					sideOffset={6}
+					// Hover leaves focus where it was; only a press moves it in.
+					onOpenAutoFocus={(e) => {
+						if (openedByHover.current) e.preventDefault();
+					}}
+					onPointerEnter={onPointerEnter}
+					onPointerLeave={onPointerLeave}
+					data-testid={`run-queued-wakeup-tip-${wakeupId}`}
+					className={`${TOOLTIP_Z} flex max-w-xs flex-col items-start gap-1 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] leading-snug text-text-1 shadow-md outline-none`}
+				>
+					<span>{reason}</span>
+					{buyHref && (
+						<ManageLink
+							href={buyHref}
+							label="budget.hours.allowance.buy"
+							testId={`run-queued-wakeup-buy-hours-${wakeupId}`}
+						/>
+					)}
+				</Popover.Content>
+			</Popover.Portal>
+		</Popover.Root>
+	);
+}
+
 function QueuedAgentRow({
 	projectId,
 	taskId,
@@ -217,6 +338,10 @@ function QueuedAgentRow({
 	const runMutation = useRunQueuedWakeup({ projectId, taskId });
 	const blockReasonKey = runNowBlockReason(wakeup, dispatch);
 	const blockReason = blockReasonKey ? t(blockReasonKey) : null;
+	// A spent allowance is the one wait buying can end, so its tip carries the way
+	// to buy - where buying is how hours are raised and this viewer can do it.
+	const buyHref = useBuyHoursHref();
+	const tipBuyHref = blockReasonKey === 'tasks.runNow.blocked.hoursExhausted' ? buyHref : null;
 
 	return (
 		<div
@@ -233,20 +358,7 @@ function QueuedAgentRow({
 			/>
 			<div className="flex items-center gap-1 shrink-0">
 				{blockReason ? (
-					// aria-disabled (not the native `disabled` attribute) keeps the button
-					// emitting pointer events so the Radix tooltip still shows the reason.
-					<Tooltip content={blockReason}>
-						<button
-							type="button"
-							aria-disabled="true"
-							aria-label={`Run now unavailable: ${blockReason}`}
-							data-testid={`run-queued-wakeup-${wakeup.id}`}
-							onClick={(e) => e.preventDefault()}
-							className="inline-flex items-center justify-center h-6 w-6 text-success opacity-40 cursor-not-allowed rounded-md"
-						>
-							<Play className="w-3.5 h-3.5" />
-						</button>
-					</Tooltip>
+					<BlockedRunNowButton wakeupId={wakeup.id} reason={blockReason} buyHref={tipBuyHref} />
 				) : (
 					<Tooltip content="Run now">
 						<button
