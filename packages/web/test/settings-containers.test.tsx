@@ -1,11 +1,18 @@
+import { resetRuntimeConfig, setPolicy } from '@hezo/server/src/config/runtime';
 import { setHostMemoryForTest } from '@hezo/server/src/lib/host-memory';
+import { SandboxBackend } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
 const GIB = 1024 ** 3;
 
-afterEach(() => setHostMemoryForTest(null));
+afterEach(() => {
+	setHostMemoryForTest(null);
+	// The policy is process-wide runtime config, so a case that pins would pin
+	// every case after it.
+	resetRuntimeConfig();
+});
 
 test('concurrency settings page shows the computed default, saves, and resets to automatic', async () => {
 	// The incident's reference host: ~2GB RAM + 6GB swap → 8GB, less the 1GB
@@ -124,6 +131,40 @@ test('the service panel names the current service and offers the rest behind Cha
 	expect(local.textContent).toContain('Local container service');
 	expect(local.textContent).toContain('Docker-compatible');
 	await findByTestId('backend-change-option-daytona');
+});
+
+test('a container service the deployment fixed is locked, and says who fixed it', async () => {
+	// The server refuses the switch with a 409 either way. Without the lock the
+	// page offered Change, walked the operator through the warning, and only then
+	// said no.
+	const { findByTestId } = await renderApp({
+		initialPath: '/settings/containers/settings',
+		seed: async () => {
+			setPolicy({
+				managedBy: 'Acme Cloud',
+				manageUrl: 'https://control.example/account#billing',
+				pinned: { backend: SandboxBackend.Docker },
+			});
+		},
+	});
+
+	const section = await findByTestId('container-backend-section');
+	const locked = await findByTestId('managed-setting');
+	expect(section.contains(locked)).toBe(true);
+	// The current service stays readable; the control to change it is inert.
+	const change = await findByTestId('backend-change');
+	expect(change.closest('[inert]')).not.toBeNull();
+	expect(section.textContent).toContain('Local container service');
+	expect((await findByTestId('managed-setting-notice')).textContent).toContain('Acme Cloud');
+});
+
+test('a container service nobody fixed stays changeable', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/settings/containers/settings' });
+
+	const section = await findByTestId('container-backend-section');
+	const change = await findByTestId('backend-change');
+	expect(change.closest('[inert]')).toBeNull();
+	expect(section.querySelector('[data-testid="managed-setting"]')).toBeNull();
 });
 
 test('switching the container service warns with real numbers and needs a key', async () => {

@@ -134,6 +134,9 @@ credentials. Switching to a managed service asks for that provider's API key, wh
 stored encrypted in the secrets vault and used only by Hezo to reach the provider. It
 never enters an agent container.
 
+If whoever deployed your instance has fixed the container service, the setting is
+locked: it shows which service is in use and who fixed it, and offers no switch.
+
 The key field is offered every time you switch to a managed service, including when a key
 is already saved. Leave it blank to keep the saved one, or enter a new one to replace it -
 which is how you correct a key that has expired or been revoked.
