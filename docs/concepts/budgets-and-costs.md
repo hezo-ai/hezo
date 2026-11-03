@@ -164,4 +164,6 @@ you never have to work out which one you are on.
 
 Where the allowance is fixed by whoever runs your instance, the Budget page says
 so and links to where it can be changed. The same link, **Buy more hours**, sits
-beside the date the allowance resets.
+beside the date the allowance resets. It is also on the notice you get when you
+press **Run now** or **Retry** after the allowance is spent, if you are the
+instance's admin.

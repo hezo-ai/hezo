@@ -2,21 +2,7 @@ import { ExternalLink, Lock } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useInstanceSettings } from '../../hooks/use-instance-settings';
 import { type MessageKey, useI18n } from '../../lib/i18n';
-
-/**
- * Where `manage_url` may be followed, or null when it may not.
- *
- * Validated as `https:` at parse and again here - React does not reliably block
- * a `javascript:` href, and this string is operator-authored. No query params and
- * no token: the URL lands in access logs and in browser history, and a top-level
- * navigation already carries the session cookie.
- */
-export function manageHref(
-	policy: { manage_url: string | null } | null | undefined,
-): string | null {
-	const url = policy?.manage_url;
-	return url?.startsWith('https://') ? url : null;
-}
+import { manageHref } from '../../lib/manage-href';
 
 /**
  * The link out to `manage_url`, opened in a new tab.

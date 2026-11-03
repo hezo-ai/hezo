@@ -1,5 +1,6 @@
+import { resetRuntimeConfig, setPolicy } from '@hezo/server/src/config/runtime';
 import { screen, waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { getTestContext, renderApp, taskHeadingQuery } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 import { expandEventGroups } from './helpers/thread';
@@ -10,6 +11,12 @@ import { expandEventGroups } from './helpers/thread';
 // own status (fetched per run) decides failed vs succeeded.
 
 const FAILED_RUN_ID = 'cccc0000-0000-0000-0000-000000000111';
+
+afterEach(() => {
+	// The policy is process-wide runtime config, so a case that sets one would
+	// manage every case after it.
+	resetRuntimeConfig();
+});
 const LATER_RUN_ID = 'cccc0000-0000-0000-0000-000000000222';
 
 type Agent = { id: string; slug: string };
@@ -106,6 +113,10 @@ async function setup(opts: {
 	containerFailed?: boolean;
 	/** What the retry route answers with. Defaults to an immediate dispatch. */
 	retryResponse?: Record<string, unknown>;
+	/** The deployment policy the instance runs under; none is an ordinary self-hosted one. */
+	policy?: Parameters<typeof setPolicy>[0];
+	/** Report the caller to the UI as a non-superuser, while the DB user stays one. */
+	notSuperuser?: boolean;
 }) {
 	const {
 		seeded,
@@ -115,10 +126,13 @@ async function setup(opts: {
 		taskOverride,
 		containerFailed = false,
 		retryResponse = { dispatched: true },
+		policy,
+		notSuperuser = false,
 	} = opts;
 	return renderApp({
 		initialPath: '/',
 		seed: async () => {
+			if (policy) setPolicy(policy);
 			const ws = await seedWorkspace();
 			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'Run Retry Project' });
@@ -153,6 +167,13 @@ async function setup(opts: {
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = typeof input === 'string' ? input : (input as Request).url;
 				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+
+				if (notSuperuser && new URL(url, 'http://localhost').pathname === '/api/me') {
+					return new Response(JSON.stringify({ data: { type: 'admin', is_superuser: false } }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
 
 				if (method === 'GET' && /\/api\/projects\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
 					return new Response(JSON.stringify({ data: commentList }), {
@@ -488,4 +509,95 @@ test('a retry queued at the container limit reads as a notice, not an error', as
 		.filter((t): t is string => !!t);
 	expect(titles).toContain('Heads up');
 	expect(titles).not.toContain('Something went wrong');
+});
+
+// A retry queued behind a spent container-hours allowance waits for the reset.
+// Where the deployment fixed the allowance, buying more hours is the other way
+// out, so the notice links to where they are bought - for the superuser, who
+// is the one who can buy them.
+const MANAGE_URL = 'https://control.example/account#billing';
+const SPENT_HOURS = {
+	queued: true,
+	wakeup_id: 'eeee0000-0000-0000-0000-000000000222',
+	reason: 'hours_exhausted',
+};
+
+/** Press Retry on a failed run, and return the links the spent-hours notice carries. */
+async function retryIntoSpentHours(
+	opts: Pick<Parameters<typeof setup>[0], 'policy' | 'notSuperuser'>,
+) {
+	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const retryCalls: string[] = [];
+	const { findByTestId, user, router } = await setup({
+		seeded,
+		retryCalls,
+		comments: ({ task, agent }) => [
+			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
+		],
+		runs: ({ task, agent, teamId }) => ({
+			[FAILED_RUN_ID]: runResponse(FAILED_RUN_ID, agent, teamId, task.id, 'failed'),
+		}),
+		taskOverride: { last_run_status: 'failed', last_run_id: FAILED_RUN_ID },
+		retryResponse: SPENT_HOURS,
+		...opts,
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const retryButton = (await findByTestId('retry-failed-run', undefined, {
+		timeout: 20_000,
+	})) as HTMLButtonElement;
+	await waitFor(() => expect(retryButton.disabled).toBe(false), { timeout: 20_000 });
+	await user.click(retryButton);
+	await waitFor(() => expect(retryCalls).toEqual([FAILED_RUN_ID]));
+
+	// Radix renders a second announcement copy of each toast, so read the link
+	// beside each copy of this notice's own text.
+	const notices = await screen.findAllByText(/used its container-hours allowance/);
+	return notices
+		.map((n) => n.parentElement?.querySelector<HTMLAnchorElement>('[data-testid="toast-link"]'))
+		.filter((a): a is HTMLAnchorElement => !!a);
+}
+
+test('a retry waiting on hours the deployment fixed links to buying more, in a new tab', async () => {
+	const links = await retryIntoSpentHours({
+		policy: {
+			managedBy: 'Acme Cloud',
+			manageUrl: MANAGE_URL,
+			pinned: { monthlyContainerHours: 10 },
+		},
+	});
+
+	expect(links.length).toBeGreaterThan(0);
+	const link = links[0];
+	expect(link.textContent).toBe('Buy more hours');
+	expect(link.getAttribute('href')).toBe(MANAGE_URL);
+	expect(link.getAttribute('target')).toBe('_blank');
+	expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+});
+
+test('a self-hosted instance has nowhere to buy hours, so the notice carries no link', async () => {
+	expect(await retryIntoSpentHours({})).toEqual([]);
+});
+
+test('an allowance the operator set is raised on the Hours tab, not bought, so no link', async () => {
+	const links = await retryIntoSpentHours({
+		policy: { managedBy: 'Acme Cloud', manageUrl: MANAGE_URL, pinned: {} },
+	});
+	expect(links).toEqual([]);
+});
+
+test('only the superuser is offered the link, since only they can buy hours', async () => {
+	const links = await retryIntoSpentHours({
+		policy: {
+			managedBy: 'Acme Cloud',
+			manageUrl: MANAGE_URL,
+			pinned: { monthlyContainerHours: 10 },
+		},
+		notSuperuser: true,
+	});
+	expect(links).toEqual([]);
 });

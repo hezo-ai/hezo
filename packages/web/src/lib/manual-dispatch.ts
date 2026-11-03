@@ -1,3 +1,4 @@
+import { WakeupSkipReason } from '@hezo/shared';
 import type { MessageKey } from './i18n';
 
 /**
@@ -50,4 +51,12 @@ export function manualDispatchNoticeKey(data: ManualDispatchResult): MessageKey 
 	if (data.held) return heldDispatchMessageKey(data.reason);
 	if (data.queued) return queuedDispatchMessageKey(data.reason);
 	return null;
+}
+
+/**
+ * Whether the run is waiting on a spent container-hours allowance - the one
+ * wait that buying something can end.
+ */
+export function queuedOnSpentHours(data: ManualDispatchResult): boolean {
+	return !data.held && data.queued === true && data.reason === WakeupSkipReason.HoursExhausted;
 }

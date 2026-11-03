@@ -96,6 +96,10 @@ async function instanceSettingsPayload(db: Db, engine: ContainerEngine) {
 		max_container_memory_gb_pinned: isPinned('maxContainerMemoryGb'),
 		default_ram_cap_per_container_gb_pinned: isPinned('defaultRamCapPerContainerGb'),
 		default_container_disk_gb_pinned: isPinned('defaultContainerDiskGb'),
+		// The hours allowance is edited on its own superuser-only route, but this
+		// is the read every page already holds, so a notice anywhere can say where
+		// more hours are bought without fetching the hours series for one flag.
+		monthly_hours_pinned: isPinned('monthlyContainerHours'),
 		// Who fixed them and where to change them. Null when nothing is pinned,
 		// which is every self-hosted instance that has not opted in.
 		policy: policyBanner(),

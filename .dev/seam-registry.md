@@ -77,6 +77,7 @@ rather than here, is how a codebase ends up with two of everything.
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
 | "Did the deployer fix this setting, rather than the operator?" | `pinnedSetting` / `isPinned` (`lib/system-meta.ts`), which every pinnable getter routes through - never a direct `runtimeConfig().policy` read at a call site, and never a branch on `managedBy` |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
+| A link out to the deployment, or to where more container-hours are bought | `manageHref` / `buyHoursHref` (`web/src/lib/manage-href.ts`) - the one `https:` check on `manage_url`, and the one "is buying how hours are raised here" rule |
 | Reading token usage - totals, per agent, per day | `services/usage-read.ts` (`parseUsageFilters`, `usageTotals`, `usageByAgent`, `usageByDay`) - `GET /usage` and the `get_usage` tool read the same columns through it |
 | Recording token usage | `recordUsage` (`services/budget.ts`) - the one writer of `usage_entries`; it broadcasts to the owning team so the Budget page refreshes |
 | A token count in text the server writes (a notice, a log line) | `englishCount` (`@hezo/shared`) - the web formats counts through the reader's number format instead |

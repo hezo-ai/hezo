@@ -38,6 +38,8 @@ export interface InstanceSettings {
 	max_container_memory_gb_pinned: boolean;
 	default_ram_cap_per_container_gb_pinned: boolean;
 	default_container_disk_gb_pinned: boolean;
+	/** The monthly container-hours allowance, edited on HQ's Hours tab rather than here. */
+	monthly_hours_pinned: boolean;
 	/**
 	 * Who fixed them and where to change them, or null on an instance where
 	 * nothing is pinned - which is every ordinary self-hosted one.

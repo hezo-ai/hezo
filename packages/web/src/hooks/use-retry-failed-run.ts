@@ -1,9 +1,9 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { useI18n } from '../lib/i18n';
-import { type ManualDispatchResult, manualDispatchNoticeKey } from '../lib/manual-dispatch';
+import type { ManualDispatchResult } from '../lib/manual-dispatch';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import { useManualDispatchNotice } from './use-manual-dispatch-notice';
 import { toast } from './use-toast';
 
 interface RetryFailedRunArgs {
@@ -12,7 +12,7 @@ interface RetryFailedRunArgs {
 }
 
 export function useRetryFailedRun({ projectId, taskId }: RetryFailedRunArgs) {
-	const { t } = useI18n();
+	const announce = useManualDispatchNotice();
 	return useMutation({
 		mutationFn: (runId: string) =>
 			api.post<ManualDispatchResult>(
@@ -24,8 +24,7 @@ export function useRetryFailedRun({ projectId, taskId }: RetryFailedRunArgs) {
 			// a neutral notice, never the error toast, which said the run had failed
 			// while it was on its way. The invalidations run either way so the
 			// queued-agents row appears with the notice rather than at the next poll.
-			const notice = manualDispatchNoticeKey(data);
-			if (notice) toast.info(t(notice));
+			announce(data);
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.taskQueuedWakeups(projectId, taskId),
 			});

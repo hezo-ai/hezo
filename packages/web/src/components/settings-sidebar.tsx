@@ -10,8 +10,8 @@ import { useStatus } from '../hooks/use-status';
 import { useSupport } from '../hooks/use-support';
 import { logout } from '../lib/auth';
 import { type MessageKey, useI18n } from '../lib/i18n';
+import { manageHref } from '../lib/manage-href';
 import { queryClient } from '../lib/query-client';
-import { manageHref } from './settings/managed-setting';
 
 interface NavItem {
 	to: string;
