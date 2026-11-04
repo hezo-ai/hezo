@@ -249,6 +249,10 @@ export const policySchema = z
 				// A deployment can therefore pin "no hours limit" as deliberately as
 				// it pins a number.
 				monthlyContainerHours: z.int().min(0).optional(),
+				// A share of the figure above, never an addition to it: the instance
+				// is capped against the total either way, and this only says how much
+				// of it does not come back when the period turns.
+				purchasedContainerHours: z.int().min(0).optional(),
 				containerHoursAnchorDay: z
 					.int()
 					.min(CONTAINER_HOURS_ANCHOR_MIN_DAY)
@@ -263,7 +267,25 @@ export const policySchema = z
 				// runtime that is not there and break every run.
 				backend: z.enum(SANDBOX_BACKENDS).optional(),
 			})
-			.strict(),
+			.strict()
+			.superRefine((pinned, ctx) => {
+				if (pinned.purchasedContainerHours === undefined) return;
+				// Refused rather than clamped: a split that does not add up would
+				// render a per-period figure the plane never sold.
+				if (pinned.monthlyContainerHours === undefined) {
+					ctx.addIssue({
+						code: 'custom',
+						path: ['purchasedContainerHours'],
+						message: 'is a share of "monthlyContainerHours", and that is not pinned.',
+					});
+				} else if (pinned.purchasedContainerHours > pinned.monthlyContainerHours) {
+					ctx.addIssue({
+						code: 'custom',
+						path: ['purchasedContainerHours'],
+						message: `is ${pinned.purchasedContainerHours}, more than the ${pinned.monthlyContainerHours} pinned as "monthlyContainerHours" it is a share of.`,
+					});
+				}
+			}),
 		support: z.object({ chatwoot: chatwootSupportSchema }).strict().optional(),
 		analytics: z.object({ umami: umamiAnalyticsSchema }).strict().optional(),
 	})

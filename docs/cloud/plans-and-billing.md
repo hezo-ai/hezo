@@ -61,7 +61,9 @@ that plan is the one waiting for you when you subscribe.
 ## When you need more hours
 
 **Buy a pack.** Hour packs are a one-off purchase that sits behind your plan's
-own hours and is spent only once those run out. Hours you buy never expire.
+own hours and is spent only once those run out. Hours you buy never expire, and
+HQ's **Hours** tab shows them apart from your plan's hours, which come back each
+period.
 
 **Automatic top-ups are off** until you turn them on. If you do, you set how
 many packs a period may buy on its own.

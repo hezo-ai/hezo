@@ -277,6 +277,24 @@ describe('PATCH /container-hours', () => {
 			manage_url: 'https://example.com/plan',
 		});
 	});
+
+	it('reports how much of a pinned allowance was bought, beside the total', async () => {
+		pin({ monthlyContainerHours: 30, purchasedContainerHours: 20 });
+		const res = await app.request('/api/container-hours', { headers: authHeader(token) });
+		const data = (await res.json()).data as Record<string, unknown>;
+		expect(data.monthly_hours).toBe(30);
+		expect(data.purchased_hours).toBe(20);
+	});
+
+	it('reports no bought hours when the deployment names none', async () => {
+		pin({ monthlyContainerHours: 30 });
+		const pinned = await app.request('/api/container-hours', { headers: authHeader(token) });
+		expect(((await pinned.json()).data as Record<string, unknown>).purchased_hours).toBe(0);
+
+		resetRuntimeConfig();
+		const unmanaged = await app.request('/api/container-hours', { headers: authHeader(token) });
+		expect(((await unmanaged.json()).data as Record<string, unknown>).purchased_hours).toBe(0);
+	});
 });
 
 describe('GET /instance-settings', () => {
@@ -364,6 +382,44 @@ describe('the policy file', () => {
 				policySchema.parse({ managedBy: 'Acme', pinned: { containerHoursSince } }),
 			).toThrow();
 		}
+	});
+
+	// **A share of the pinned total, never an addition to it.** A split that
+	// does not add up would render a per-period figure the deployment never sold.
+	it('pins the bought share of the hours allowance, and refuses one that does not fit inside it', () => {
+		const parse = (pinned: Record<string, unknown>) =>
+			policySchema.parse({ managedBy: 'Acme', pinned }).pinned;
+		expect(parse({ monthlyContainerHours: 30, purchasedContainerHours: 20 })).toEqual({
+			monthlyContainerHours: 30,
+			purchasedContainerHours: 20,
+		});
+		expect(
+			parse({ monthlyContainerHours: 20, purchasedContainerHours: 20 }).purchasedContainerHours,
+		).toBe(20);
+		expect(
+			parse({ monthlyContainerHours: 10, purchasedContainerHours: 0 }).purchasedContainerHours,
+		).toBe(0);
+
+		expect(() => parse({ monthlyContainerHours: 10, purchasedContainerHours: 11 })).toThrow(
+			/purchasedContainerHours[\s\S]*more than the 10 pinned/,
+		);
+		expect(() => parse({ purchasedContainerHours: 5 })).toThrow(
+			/purchasedContainerHours[\s\S]*not pinned/,
+		);
+		for (const purchasedContainerHours of [-1, 2.5, '5']) {
+			expect(() => parse({ monthlyContainerHours: 10, purchasedContainerHours })).toThrow();
+		}
+	});
+
+	it('refuses a policy file whose bought hours exceed the allowance, keeping the last good one', () => {
+		const path = write(
+			'oversold.json',
+			JSON.stringify({
+				managedBy: 'Acme Cloud',
+				pinned: { monthlyContainerHours: 10, purchasedContainerHours: 20 },
+			}),
+		);
+		expect(readPolicyFile(path)).toBeNull();
 	});
 
 	it('rejects an unknown pinnable key rather than ignoring it', () => {

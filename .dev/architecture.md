@@ -953,6 +953,13 @@ two reads agree rather than asserting a figure. **`policy.pinned.containerHoursS
 window's start back to an instant**, never its end: a control plane billing from the
 moment someone bought pins that moment, so the first window does not count the hours spent
 earlier on the day of purchase. Both reads take it through the same `@hezo/shared` helpers.
+**`policy.pinned.purchasedContainerHours` is a share of the pinned allowance, never an
+addition to it**: the hours a control plane sold as one-off packs, which carry over until
+spent. Admission never reads it, since the cap is the total either way; it reaches only
+`GET /api/container-hours` as `purchased_hours`, so the Budget page can say how much of the
+allowance comes back each period. The schema refuses it without a pinned
+`monthlyContainerHours`, or above it. The instance does not draw packs down; the plane
+re-pins both figures when a period turns.
 
 ### Docs, skills & assets
 

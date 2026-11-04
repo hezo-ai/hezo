@@ -162,6 +162,10 @@ the hours you are capped against cover the period you are charged for. The Hours
 tab names the period it is measuring and the date the allowance comes back, so
 you never have to work out which one you are on.
 
+Where part of a fixed allowance was bought on top of the plan, the Hours tab shows
+the two apart. The plan's hours come back each period, and bought hours carry over
+until they are used.
+
 Where the allowance is fixed by whoever runs your instance, the Budget page says
 so and links to where it can be changed. The same link, **Buy more hours**, sits
 beside the date the allowance resets. Once the allowance is spent, the instance's
