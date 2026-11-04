@@ -128,9 +128,49 @@ test.describe('Responsive — mobile (390px)', () => {
 		});
 		// All three tabs stay reachable: the strip scrolls rather than compressing.
 		await expect(page.getByTestId('budget-tab-team')).toBeVisible();
-		await expect(page.getByTestId('budget-tab-spend')).toBeVisible();
+		await expect(page.getByTestId('budget-tab-tokens')).toBeVisible();
 		await expect(page.getByTestId('budget-tab-hours')).toBeVisible();
 		await expectNoHorizontalOverflow(page);
+	});
+
+	// A project's hours budget card and its editor: three windows side by side on a
+	// desktop, which must stack rather than squeeze at 390px. A limit is set first,
+	// since on a local daemon the card renders only where one exists.
+	test('hours budget card and editor stack at 390px', async ({ page, lightWorkspace }) => {
+		const { projectSlug, token } = lightWorkspace;
+		const res = await page.request.patch(`/api/projects/${projectSlug}/container-hours`, {
+			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+			data: {
+				daily_budget_container_seconds: 3600,
+				weekly_budget_container_seconds: 7 * 3600,
+				monthly_budget_container_seconds: 31 * 3600,
+			},
+		});
+		expect(res.status()).toBe(200);
+
+		await page.goto(`/projects/${projectSlug}/budget/hours`);
+		const daily = page.getByTestId('hours-budget-window-daily');
+		const weekly = page.getByTestId('hours-budget-window-weekly');
+		await expect(daily).toBeVisible({ timeout: 20000 });
+		const dailyBox = await daily.boundingBox();
+		const weeklyBox = await weekly.boundingBox();
+		expect(dailyBox).not.toBeNull();
+		expect(weeklyBox).not.toBeNull();
+		// Stacked: the weekly column starts below the daily one, at the same left edge.
+		if (dailyBox && weeklyBox) {
+			expect(weeklyBox.y).toBeGreaterThanOrEqual(dailyBox.y + dailyBox.height - 1);
+			expect(Math.abs(weeklyBox.x - dailyBox.x)).toBeLessThanOrEqual(1);
+		}
+		await expectNoHorizontalOverflow(page);
+
+		await page.getByTestId('edit-hours-budget').click();
+		const monthly = page.getByTestId('hours-budget-monthly');
+		await expect(monthly).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+		// One hour a day puts the monthly floor at 30.42 hours, and the stored 31 is
+		// coherent: the form submits natively, so the browser must not call it a step
+		// mismatch, or Save does nothing.
+		expect(await monthly.evaluate((el) => (el as HTMLInputElement).checkValidity())).toBe(true);
 	});
 
 	test('global settings nav stacks above content', async ({ page, lightWorkspace }) => {

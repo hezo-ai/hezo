@@ -4,6 +4,7 @@ import {
 	BUDGET_WINDOW_FIELDS,
 	CONTAINER_DISK_GB_MAX,
 	CONTAINER_DISK_GB_MIN,
+	CONTAINER_HOURS_BUDGET_FIELDS,
 	ContainerStatus,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
@@ -632,6 +633,19 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		sets.push(`container_disk_gb = $${idx}`);
 		params.push(body.container_disk_gb);
 		idx++;
+	}
+	// The hours budget has its own superuser-only route; a field for it here is
+	// refused by name rather than dropped, since ignoring it would store nothing.
+	const hoursFields = CONTAINER_HOURS_BUDGET_FIELDS.filter(
+		(field) => (body as Record<string, unknown>)[field] !== undefined,
+	);
+	if (hoursFields.length > 0) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`${hoursFields.join(', ')} ${hoursFields.length === 1 ? 'is' : 'are'} set with PATCH /api/projects/:projectId/container-hours.`,
+			400,
+		);
 	}
 	// Budget limits: 0 = unlimited. One check for the whole write - a retired dollar
 	// field by name, and the trio a partial PATCH leaves, merged over the stored one.

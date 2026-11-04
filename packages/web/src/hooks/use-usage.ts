@@ -58,8 +58,10 @@ export interface AgentBudgetStatus extends EntityBudgetStatus {
 export interface BudgetStatus {
 	project: EntityBudgetStatus;
 	agents: AgentBudgetStatus[];
-	/** Month-to-date usage entries (one per run or chat turn) - drives the Budget hero's runs line. */
+	/** Month-to-date usage entries (one per run or chat turn) - drives the Tokens hero's runs line. */
 	runsThisMonth: number;
+	/** The project's hours budget is spent, so its runs are held for hours rather than tokens. */
+	project_hours_over_budget: boolean;
 }
 
 /** Project + per-agent budget status; powers the Budgets page and warning banner. */

@@ -43,7 +43,9 @@ rather than here, is how a codebase ends up with two of everything.
 | "How much has this task cost since the admin last spoke?" | `loadTaskSpend` (`services/no-work-backoff.ts`) - one query feeds both the handoff hold and the token-ceiling hold |
 | "Which open task carries this system label, and may the Coach review this one?" | `findOpenLabeledTask` / `coachReviewsTaskSql` (`services/description-tasks.ts`) - the review sweep, the task automation and the dispatch gate share them |
 | A system notice a person must act on | `postAdminNotice` (`services/comment-wakeups.ts`) - a system comment plus its inbox rows in one transaction; `unlessPostedSince` posts it once per hold. A notice that only says the admin should decide reaches nobody |
-| The one check every budget write runs | `budgetWriteError` (`lib/budget-validation.ts`) - a retired `*_budget_cents` field refused by name, then the trio a partial write leaves, merged over the stored one. The wording lives once, in `retiredBudgetFieldMessage` (`@hezo/shared`) |
+| The one check every budget write runs | `budgetWriteError` (`lib/budget-validation.ts`) - a retired `*_budget_cents` field refused by name, then the trio a partial write leaves, merged over the stored one. The wording lives once, in `retiredBudgetFieldMessage` (`@hezo/shared`). A project's hours budget runs the same steps through `containerHoursBudgetWrite` beside it |
+| Window floors for any budget, tokens or container-seconds | `windowViolations` / `normalizeWindowsUp` / `minWeeklyLimit` / `minMonthlyLimit` (`@hezo/shared` `budget.ts`) - the token-named functions are wrappers over these; never a second copy of the rule |
+| Whether a run or chat turn is over a budget | `checkOverBudget` (`services/budget.ts`) - agent tokens, project tokens, then project hours; every gate calls it, and `OverBudgetBlock.resource` says which budget fired |
 | Which auth types may use REST and the realtime socket | `humanSurfaceRefusal` (`middleware/auth.ts`) - one table, read by the API middleware and the socket upgrade |
 | A notice Hezo raised, as one line in the reader's language | `noticeParts` / `systemNoticeText` (`packages/web/src/lib/system-notice-text.ts`) - the thread draws the agents as links from the same parts; a row that shows text calls `inboxRowSnippet` |
 | A UTC calendar window, or the day a timestamp falls in | `utcWindowStartSql` / `utcDaySql` (`lib/sql.ts`) - never the three-argument `date_trunc`, which needs a server above the supported floor |
@@ -80,7 +82,7 @@ rather than here, is how a codebase ends up with two of everything.
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
 | A link out to the deployment, or to where more container-hours are bought | `manageHref` / `buyHoursHref` (`web/src/lib/manage-href.ts`) - the one `https:` check on `manage_url`, and the one "is buying how hours are raised here" rule; `useBuyHoursHref` adds "and can this viewer buy" |
 | Reading token usage - totals, per agent, per day | `services/usage-read.ts` (`parseUsageFilters`, `usageTotals`, `usageByAgent`, `usageByDay`) - `GET /usage` and the `get_usage` tool read the same columns through it |
-| Recording token usage | `recordUsage` (`services/budget.ts`) - the one writer of `usage_entries`; it broadcasts to the owning team so the Budget page refreshes |
+| Recording token usage | `recordUsage` (`services/budget.ts`) - the one writer of `usage_entries`; it broadcasts to the owning team so the Tokens tab refreshes |
 | A token count in text the server writes (a notice, a log line) | `englishCount` (`@hezo/shared`) - the web formats counts through the reader's number format instead |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |

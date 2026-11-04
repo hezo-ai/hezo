@@ -1,4 +1,4 @@
-import { HoursBucket, HQ_PROJECT_SLUG } from '@hezo/shared';
+import { containerSecondsToHours, HoursBucket, HQ_PROJECT_SLUG } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { BarChart3, Clock } from 'lucide-react';
 import { useState } from 'react';
@@ -20,6 +20,7 @@ import { ManagedSetting, ManageLink } from '../settings/managed-setting';
 import { BudgetBar } from '../ui/budget-bar';
 import { SectionHeader } from '../ui/section-header';
 import { SegmentedControl } from '../ui/segmented-control';
+import { ProjectHoursBudgetPanel } from './hours-budget-panel';
 import { MonthlyHoursCap } from './monthly-hours-cap';
 
 const HOURS_KEY = 'hours';
@@ -244,11 +245,11 @@ function HoursChart({
 }
 
 /**
- * The Budget page's Hours tab, project scope: how long this project's
- * containers were up. Task runs and chat turns share the same containers, so
- * uptime is one series, not a per-workload split.
+ * The Hours tab, project scope: how long this project's containers were up,
+ * against the project's own hours budget. Task runs and chat turns share the
+ * same containers, so uptime is one series, not a per-workload split.
  *
- * **Not the same question as the Budget tab, and not the same as run time.** That
+ * **Not the same question as the Tokens tab, and not the same as run time.** That
  * tab answers what the agents used in tokens; this answers what the containers
  * cost in uptime, which is billed per hour on a managed backend whether an agent is
  * mid-run, mid-build or warm and idle between runs.
@@ -262,6 +263,14 @@ export function ProjectContainerHoursPanel({ projectId }: { projectId: string })
 	return (
 		<div className="flex flex-col gap-6">
 			<ProjectHoursScope projectId={projectId} />
+			{data && (
+				<ProjectHoursBudgetPanel
+					projectId={projectId}
+					budget={data.budget}
+					periodEnd={data.totals.window_end}
+					metered={data.metered}
+				/>
+			)}
 			{totals && <HoursTiles totals={totals} />}
 			<HoursChart
 				bucket={bucket}
@@ -318,6 +327,36 @@ function ProjectHoursScope({ projectId }: { projectId: string }) {
 }
 
 /**
+ * How the projects' own monthly hours limits add up against the allowance.
+ *
+ * A limit sets no hours aside - it only stops one project - so limits adding up
+ * to more than the pool is allowed, and the owner is told the pool can run out
+ * before every project reaches its limit. Nothing is drawn while no project has
+ * a monthly limit.
+ */
+function ProjectLimitsNote({
+	limits,
+	capHours,
+}: {
+	limits: { limited_projects: number; monthly_seconds: number };
+	capHours: number;
+}) {
+	const { plural, t, formatNumber } = useI18n();
+	if (limits.limited_projects === 0) return null;
+	const limitHours = formatNumber(containerSecondsToHours(limits.monthly_seconds));
+	const over = capHours > 0 && limits.monthly_seconds > capHours * 3600;
+	return (
+		<p className="text-[13px] text-text-2" data-testid="container-hours-project-limits">
+			{plural('budget.hours.projectLimits', limits.limited_projects, {
+				count: limits.limited_projects,
+				hours: limitHours,
+			})}
+			{over && ` ${t('budget.hours.projectLimitsOver', { cap: formatNumber(capHours) })}`}
+		</p>
+	);
+}
+
+/**
  * The instance scope, split by project - the view HQ gets, and the only one that
  * can show the allowance, since the allowance is instance-wide.
  */
@@ -341,6 +380,7 @@ export function InstanceContainerHoursPanel() {
 					buyHoursHref={buyHref}
 				/>
 			)}
+			{data && <ProjectLimitsNote limits={data.project_limits} capHours={capHours} />}
 			<HoursChart
 				bucket={bucket}
 				setBucket={setBucket}

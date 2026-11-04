@@ -1,14 +1,16 @@
 import { englishCount } from './i18n/format.js';
 /**
  * Budget window math - the single source of truth for the daily/weekly/monthly
- * rolling token caps on agents and projects. Imported by the web forms, every
- * backend write path, and the tests so the rules live in exactly one place.
+ * caps: tokens on agents and projects, and container-hours on projects. Imported
+ * by the web forms, every backend write path, and the tests so the rules live in
+ * exactly one place.
  *
- * A budget counts every token a run sent and received: input, cached input
- * included, plus output. 0 = unlimited/disabled for a window and is skipped by
- * every check. Longer windows must be consistent with shorter ones: a longer
- * window can't be set below what the shorter window's rate implies over the
- * same span -
+ * A token budget counts every token a run sent and received: input, cached input
+ * included, plus output. An hours budget counts the seconds a project's
+ * containers were up. 0 = unlimited/disabled for a window and is skipped by
+ * every check. Longer windows must be consistent with shorter ones, whatever the
+ * unit: a longer window can't be set below what the shorter window's rate
+ * implies over the same span -
  *   weekly  >= daily  * 7
  *   monthly >= daily  * 365/12
  *   monthly >= weekly * 52/12
@@ -79,14 +81,43 @@ const DAYS_PER_WEEK = 7;
 const DAYS_PER_MONTH = 365 / 12; // average calendar month
 const WEEKS_PER_MONTH = 52 / 12;
 
+/**
+ * A daily/weekly/monthly budget in one unit, before it is named for a column.
+ *
+ * The floor rules below hold for every budget whatever it counts - tokens on an
+ * agent or a project, container-seconds on a project - so they are written once
+ * against this shape, and each budget maps its own field names onto it.
+ */
+export interface BudgetWindows {
+	daily: number;
+	weekly: number;
+	monthly: number;
+}
+
 /** A window with a 0 limit is unlimited/disabled and never constrains anything. */
-function isEnabled(tokens: number): boolean {
-	return tokens > 0;
+function isEnabled(limit: number): boolean {
+	return limit > 0;
+}
+
+/** Minimum weekly limit implied by the daily one (daily × 7). 0 when daily is unlimited. */
+export function minWeeklyLimit(daily: number): number {
+	return isEnabled(daily) ? daily * DAYS_PER_WEEK : 0;
+}
+
+/**
+ * Minimum monthly limit implied by the daily and/or weekly ones - the larger of
+ * daily × 365/12 and weekly × 52/12, over whichever are enabled. 0 when neither is.
+ */
+export function minMonthlyLimit(daily: number, weekly: number): number {
+	let min = 0;
+	if (isEnabled(daily)) min = Math.max(min, Math.ceil(daily * DAYS_PER_MONTH));
+	if (isEnabled(weekly)) min = Math.max(min, Math.ceil(weekly * WEEKS_PER_MONTH));
+	return min;
 }
 
 /** Minimum weekly tokens implied by the daily cap (daily × 7). 0 when daily is unlimited. */
 export function minWeeklyTokens(dailyTokens: number): number {
-	return isEnabled(dailyTokens) ? dailyTokens * DAYS_PER_WEEK : 0;
+	return minWeeklyLimit(dailyTokens);
 }
 
 /**
@@ -94,52 +125,43 @@ export function minWeeklyTokens(dailyTokens: number): number {
  * daily × 365/12 and weekly × 52/12, over whichever are enabled. 0 when neither is.
  */
 export function minMonthlyTokens(dailyTokens: number, weeklyTokens: number): number {
-	let min = 0;
-	if (isEnabled(dailyTokens)) min = Math.max(min, Math.ceil(dailyTokens * DAYS_PER_MONTH));
-	if (isEnabled(weeklyTokens)) min = Math.max(min, Math.ceil(weeklyTokens * WEEKS_PER_MONTH));
-	return min;
+	return minMonthlyLimit(dailyTokens, weeklyTokens);
 }
 
-export interface BudgetViolation {
-	field: 'weekly_budget_tokens' | 'monthly_budget_tokens';
-	minTokens: number;
-	message: string;
+/** Where a longer window's floor comes from. */
+type FloorBasis = 'weekFromDay' | 'monthFromDay' | 'monthFromWeek';
+
+/** Which longer window broke a floor, and the floor it broke, in the budget's own unit. */
+export interface WindowViolation {
+	window: 'weekly' | 'monthly';
+	min: number;
+	/** The shorter window the floor comes from, for the message. */
+	basis: FloorBasis;
 }
 
 /**
- * All cross-window violations for a trio. Empty array means coherent. Disabled
- * (0) windows are skipped. Comparisons use the same ceil-based floors as
- * `minWeeklyTokens`/`minMonthlyTokens`, so client and server agree to the token.
+ * All cross-window violations for a trio, in any unit. Empty means coherent.
+ * Disabled (0) windows are skipped. Comparisons use the same ceil-based floors as
+ * {@link minWeeklyLimit}/{@link minMonthlyLimit}, so client and server agree to
+ * the unit.
  */
-export function validateBudgetWindows(w: BudgetWindowsTokens): BudgetViolation[] {
-	const violations: BudgetViolation[] = [];
+export function windowViolations(w: BudgetWindows): WindowViolation[] {
+	const violations: WindowViolation[] = [];
 
-	const weeklyFloor = minWeeklyTokens(w.daily_budget_tokens);
-	if (isEnabled(w.weekly_budget_tokens) && w.weekly_budget_tokens < weeklyFloor) {
-		violations.push({
-			field: 'weekly_budget_tokens',
-			minTokens: weeklyFloor,
-			message: `Weekly budget must be at least ${englishCount(weeklyFloor)} tokens to cover the daily budget (daily × 7).`,
-		});
+	const weeklyFloor = minWeeklyLimit(w.daily);
+	if (isEnabled(w.weekly) && w.weekly < weeklyFloor) {
+		violations.push({ window: 'weekly', min: weeklyFloor, basis: 'weekFromDay' });
 	}
 
-	const monthlyFloor = minMonthlyTokens(w.daily_budget_tokens, w.weekly_budget_tokens);
-	if (isEnabled(w.monthly_budget_tokens) && w.monthly_budget_tokens < monthlyFloor) {
+	const monthlyFloor = minMonthlyLimit(w.daily, w.weekly);
+	if (isEnabled(w.monthly) && w.monthly < monthlyFloor) {
 		// Name whichever shorter window binds the floor, for a clearer message.
-		const dailyImplied = isEnabled(w.daily_budget_tokens)
-			? Math.ceil(w.daily_budget_tokens * DAYS_PER_MONTH)
-			: 0;
-		const weeklyImplied = isEnabled(w.weekly_budget_tokens)
-			? Math.ceil(w.weekly_budget_tokens * WEEKS_PER_MONTH)
-			: 0;
-		const basis =
-			dailyImplied >= weeklyImplied
-				? 'daily budget (daily × 365/12)'
-				: 'weekly budget (weekly × 52/12)';
+		const dailyImplied = isEnabled(w.daily) ? Math.ceil(w.daily * DAYS_PER_MONTH) : 0;
+		const weeklyImplied = isEnabled(w.weekly) ? Math.ceil(w.weekly * WEEKS_PER_MONTH) : 0;
 		violations.push({
-			field: 'monthly_budget_tokens',
-			minTokens: monthlyFloor,
-			message: `Monthly budget must be at least ${englishCount(monthlyFloor)} tokens to cover the ${basis}.`,
+			window: 'monthly',
+			min: monthlyFloor,
+			basis: dailyImplied >= weeklyImplied ? 'monthFromDay' : 'monthFromWeek',
 		});
 	}
 
@@ -148,21 +170,131 @@ export function validateBudgetWindows(w: BudgetWindowsTokens): BudgetViolation[]
 
 /**
  * Raise (never lower) each enabled longer window up to its floor so the trio is
+ * coherent, in any unit. Processes daily → weekly → monthly so the raised weekly
+ * feeds the monthly floor.
+ */
+export function normalizeWindowsUp(w: BudgetWindows): BudgetWindows {
+	const weekly = isEnabled(w.weekly) ? Math.max(w.weekly, minWeeklyLimit(w.daily)) : w.weekly;
+	const monthly = isEnabled(w.monthly)
+		? Math.max(w.monthly, minMonthlyLimit(w.daily, weekly))
+		: w.monthly;
+	return { daily: w.daily, weekly, monthly };
+}
+
+/** How each floor's basis reads in a refusal. */
+const VIOLATION_BASIS: Record<FloorBasis, string> = {
+	weekFromDay: 'daily budget (daily × 7)',
+	monthFromDay: 'daily budget (daily × 365/12)',
+	monthFromWeek: 'weekly budget (weekly × 52/12)',
+};
+
+/** The window names a refusal opens with. */
+const VIOLATION_WINDOW: Record<WindowViolation['window'], string> = {
+	weekly: 'Weekly',
+	monthly: 'Monthly',
+};
+
+export interface BudgetViolation {
+	field: 'weekly_budget_tokens' | 'monthly_budget_tokens';
+	minTokens: number;
+	message: string;
+}
+
+/** A token trio as the unit-free trio the floor rules read. */
+function tokenWindows(w: BudgetWindowsTokens): BudgetWindows {
+	return {
+		daily: w.daily_budget_tokens,
+		weekly: w.weekly_budget_tokens,
+		monthly: w.monthly_budget_tokens,
+	};
+}
+
+/**
+ * All cross-window violations for a token trio. Empty array means coherent.
+ * Disabled (0) windows are skipped.
+ */
+export function validateBudgetWindows(w: BudgetWindowsTokens): BudgetViolation[] {
+	return windowViolations(tokenWindows(w)).map((v) => ({
+		field: `${v.window}_budget_tokens` as const,
+		minTokens: v.min,
+		message: `${VIOLATION_WINDOW[v.window]} budget must be at least ${englishCount(v.min)} tokens to cover the ${VIOLATION_BASIS[v.basis]}.`,
+	}));
+}
+
+/**
+ * Raise (never lower) each enabled longer window up to its floor so the trio is
  * coherent. Processes daily → weekly → monthly so the raised weekly feeds the
  * monthly floor. Used by the web editor for live auto-raise as the user types.
  */
 export function normalizeBudgetWindowsUp(w: BudgetWindowsTokens): BudgetWindowsTokens {
-	const weekly = isEnabled(w.weekly_budget_tokens)
-		? Math.max(w.weekly_budget_tokens, minWeeklyTokens(w.daily_budget_tokens))
-		: w.weekly_budget_tokens;
-	const monthly = isEnabled(w.monthly_budget_tokens)
-		? Math.max(w.monthly_budget_tokens, minMonthlyTokens(w.daily_budget_tokens, weekly))
-		: w.monthly_budget_tokens;
+	const n = normalizeWindowsUp(tokenWindows(w));
 	return {
-		daily_budget_tokens: w.daily_budget_tokens,
-		weekly_budget_tokens: weekly,
-		monthly_budget_tokens: monthly,
+		daily_budget_tokens: n.daily,
+		weekly_budget_tokens: n.weekly,
+		monthly_budget_tokens: n.monthly,
 	};
+}
+
+/**
+ * A project's hours budget: how many container-seconds its containers may be up
+ * in each window, 0 for no limit. Counted in seconds because the uptime ledger
+ * is, so the gate compares like with like and nothing is rounded twice; every
+ * surface shows and takes hours.
+ *
+ * Daily and weekly are the UTC day and ISO week, as the token budget's are.
+ * **Monthly is the container-hours window**, the instance allowance's own
+ * period: a project's month and the pool it draws from always cover the same
+ * days, which is the billing period wherever a deployer anchored one.
+ *
+ * Projects only, and never HQ: HQ draws on the instance allowance itself.
+ */
+export interface BudgetWindowsContainerSeconds {
+	daily_budget_container_seconds: number;
+	weekly_budget_container_seconds: number;
+	monthly_budget_container_seconds: number;
+}
+
+/** The three hours-budget fields, in the order a person reads them. */
+export const CONTAINER_HOURS_BUDGET_FIELDS = [
+	'daily_budget_container_seconds',
+	'weekly_budget_container_seconds',
+	'monthly_budget_container_seconds',
+] as const satisfies readonly (keyof BudgetWindowsContainerSeconds)[];
+
+/** An hours trio as the unit-free trio the floor rules read. */
+export function containerSecondsWindows(w: BudgetWindowsContainerSeconds): BudgetWindows {
+	return {
+		daily: w.daily_budget_container_seconds,
+		weekly: w.weekly_budget_container_seconds,
+		monthly: w.monthly_budget_container_seconds,
+	};
+}
+
+/** Seconds in an hour - the unit the ledger counts and the unit a person reads. */
+export const SECONDS_PER_HOUR = 3600;
+
+/**
+ * Container-seconds as the hours a person types, rounded **up** to two decimals.
+ *
+ * Up, because the figure this names is usually a floor: an hour count rounded to
+ * the nearest hundredth can land a few seconds under the floor it states, and
+ * typing back what a refusal asked for would be refused again.
+ */
+export function containerSecondsToHours(seconds: number): number {
+	return Math.ceil(seconds / (SECONDS_PER_HOUR / 100)) / 100;
+}
+
+/** A refusal for an incoherent hours trio, or an empty list. */
+export function validateContainerHoursBudgetWindows(w: BudgetWindowsContainerSeconds): {
+	field: (typeof CONTAINER_HOURS_BUDGET_FIELDS)[number];
+	minSeconds: number;
+	message: string;
+}[] {
+	return windowViolations(containerSecondsWindows(w)).map((v) => ({
+		field: `${v.window}_budget_container_seconds` as const,
+		minSeconds: v.min,
+		message: `${VIOLATION_WINDOW[v.window]} hours budget must be at least ${containerSecondsToHours(v.min)} hours (${v.min} seconds) to cover the ${VIOLATION_BASIS[v.basis]}.`,
+	}));
 }
 
 /**
@@ -328,4 +460,26 @@ export interface EntityBudgetStatus {
 	monthly: WindowStatus;
 	/** True when any window is over budget. */
 	overBudget: boolean;
+}
+
+/** One window of a project's hours budget: container-seconds used against the limit. */
+export interface ContainerHoursWindowStatus {
+	used_seconds: number;
+	/** 0 is no limit. */
+	limit_seconds: number;
+	/** True only when a positive limit is met or exceeded. */
+	over_budget: boolean;
+}
+
+/**
+ * A project's hours budget against what its containers used, as the project's
+ * hours route answers it. Monthly is the container-hours window, whose end the
+ * same response carries as `totals.window_end`.
+ */
+export interface ProjectContainerHoursBudget {
+	daily: ContainerHoursWindowStatus;
+	weekly: ContainerHoursWindowStatus;
+	monthly: ContainerHoursWindowStatus;
+	/** True when any window is over budget. */
+	over_budget: boolean;
 }

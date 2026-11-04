@@ -1,3 +1,4 @@
+import { BudgetResource } from '@hezo/shared';
 import type {
 	SystemBudgetConversionContent,
 	SystemBudgetPausedContent,
@@ -7,6 +8,7 @@ import type {
 	SystemRunSizeStopContent,
 	SystemTaskTokenCeilingContent,
 } from '../components/comment-content';
+import { formatDuration } from './format-duration';
 import type { MessageKey } from './i18n';
 
 /** What a notice's plain-text reading needs from the reader's locale. */
@@ -17,7 +19,7 @@ export interface NoticeTextLocale {
 }
 
 const BUDGET_PAUSED_KEYS: Record<
-	'agent' | 'project',
+	'agent' | 'project' | 'projectHours',
 	Record<'daily' | 'weekly' | 'monthly', MessageKey>
 > = {
 	agent: {
@@ -30,11 +32,27 @@ const BUDGET_PAUSED_KEYS: Record<
 		weekly: 'comment.budgetPaused.project.weekly',
 		monthly: 'comment.budgetPaused.project.monthly',
 	},
+	// A project's hours budget: always project-scoped, counted in container-seconds.
+	projectHours: {
+		daily: 'comment.budgetPaused.projectHours.daily',
+		weekly: 'comment.budgetPaused.projectHours.weekly',
+		monthly: 'comment.budgetPaused.projectHours.monthly',
+	},
 };
 
-/** The catalog sentence for a budget pause, by whose budget and which window. */
+/** True for a pause the project's hours budget caused, rather than a token budget. */
+function isHoursPause(content: SystemBudgetPausedContent): boolean {
+	return content.resource === BudgetResource.ContainerHours;
+}
+
+/** The catalog sentence for a budget pause, by which budget, whose, and which window. */
 export function budgetPausedKey(content: SystemBudgetPausedContent): MessageKey {
-	return BUDGET_PAUSED_KEYS[content.scope === 'project' ? 'project' : 'agent'][
+	const budget = isHoursPause(content)
+		? 'projectHours'
+		: content.scope === 'project'
+			? 'project'
+			: 'agent';
+	return BUDGET_PAUSED_KEYS[budget][
 		content.period === 'daily' || content.period === 'weekly' ? content.period : 'monthly'
 	];
 }
@@ -113,8 +131,13 @@ const NOTICE_PARTS: {
 			key: budgetPausedKey(content),
 			vars: {
 				agent: slug ? `@${slug}` : t('comment.runAgentFallback'),
-				limit: formatNumber(Number(content.limit_tokens ?? 0)),
-				used: formatNumber(Number(content.used_tokens ?? 0)),
+				// Hours read as the Hours tab draws them ("1h 30m"); tokens as a count.
+				limit: isHoursPause(content)
+					? formatDuration(Number(content.limit_seconds ?? 0))
+					: formatNumber(Number(content.limit_tokens ?? 0)),
+				used: isHoursPause(content)
+					? formatDuration(Number(content.used_seconds ?? 0))
+					: formatNumber(Number(content.used_tokens ?? 0)),
 			},
 			agentSlugs: slug ? [slug] : [],
 		};

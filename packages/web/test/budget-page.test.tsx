@@ -66,7 +66,9 @@ test('Budgets page shows per-agent windows and flags an over-budget agent', asyn
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	await findByText('Track token usage and set limits for this project and its agents.');
+	await findByText(
+		'Track tokens and container hours, and set limits for this project and its agents.',
+	);
 
 	// The agent row renders, is flagged over budget, and the project banner appears.
 	await findByTestId(`agent-budget-row-${overAgentSlug}`);

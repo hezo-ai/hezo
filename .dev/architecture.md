@@ -947,7 +947,7 @@ bills on, and both bounds come from `containerHoursWindow` in `@hezo/shared` so 
 — an anchor on the 31st, in a month that has no 31st — is written once. **The gate and
 the meter must read the same window, and once did not**: the admission path moved onto the
 anchor while `containerHoursTotals` stayed on `date_trunc('month')`, so a tenant anchored
-on the 20th was refused a container while the Budget page's bar read a third full. The
+on the 20th was refused a container while the Hours tab's bar read a third full. The
 totals now carry `window_start` and `window_end` beside the sums, and a test asserts the
 two reads agree rather than asserting a figure. **`policy.pinned.containerHoursSince` holds a
 window's start back to an instant**, never its end: a control plane billing from the
@@ -956,10 +956,40 @@ earlier on the day of purchase. Both reads take it through the same `@hezo/share
 **`policy.pinned.purchasedContainerHours` is a share of the pinned allowance, never an
 addition to it**: the hours a control plane sold as one-off packs, which carry over until
 spent. Admission never reads it, since the cap is the total either way; it reaches only
-`GET /api/container-hours` as `purchased_hours`, so the Budget page can say how much of the
+`GET /api/container-hours` as `purchased_hours`, so HQ's Hours tab can say how much of the
 allowance comes back each period. The schema refuses it without a pinned
 `monthlyContainerHours`, or above it. The instance does not draw packs down; the plane
 re-pins both figures when a period turns.
+
+**A project's hours budget sits inside the allowance and is checked by the token gate.**
+`projects.daily_/weekly_/monthly_budget_container_seconds` (migration 086, 0 = unlimited,
+`CHECK >= 0`) cap how long one project's containers may be up. Daily and weekly are the UTC
+day and ISO week, as for tokens; **monthly is the container-hours window**
+(`currentContainerHoursWindow`, the allowance's own anchor and `since`), so a project's month
+and the pool it draws from always name the same days. `checkOverBudget` checks agent tokens,
+then project tokens, then project hours, so every path that already stops for a token budget
+- the pre-run gate in `activateAgent`, task-less dispatch, Run now, the reactive pause after a
+run, the worker and group chat gates, and the resume sweep - stops for hours too, with
+`OverBudgetBlock.resource` saying which. The pause keeps `out_of_project_budget` (no enum
+change) and its notice is recorded under its own scope key (`project-hours:<id>:<period>`),
+so a project running out of tokens and of hours in one window tells the admin both. The sum
+(`projectBudgetWindowSeconds`) reuses the clip expression and is bounded by
+`ended_at IS NULL OR ended_at > <earliest window start>`, which
+`idx_container_uptime_project_end (project_id, ended_at)` serves; like the token gate it reads
+the limits first and never scans the ledger for a project with none. It checks **before** a
+run or a turn, so running work finishes and concurrent starts can pass a limit by what is
+already up, exactly as the token budget can. **Only a superuser sets it**
+(`PATCH /api/projects/:projectId/container-hours`; the general project PATCH refuses the
+fields by name): the hours are one pool, and a project admin raising their own limit would be
+taking hours from the others. The write reads, merges and updates in one transaction whose
+read locks the row (`FOR UPDATE`), so two overlapping saves of different windows keep both:
+the transaction alone would not on a pooled Postgres, where two read-committed reads see the
+same row. HQ is refused, since it draws on the allowance directly. The
+floors are the token floors, from the unit-free `windowViolations`/`normalizeWindowsUp` in
+`@hezo/shared`. A limit reserves nothing: `GET /api/container-hours` reports the projects'
+monthly limits summed (`project_limits`) so HQ's Hours tab can say when they promise more than
+the allowance holds. The control plane needs nothing new: it still meters the whole ledger,
+and the ledger, its columns and its clip expression are unchanged.
 
 ### Docs, skills & assets
 
@@ -1493,7 +1523,7 @@ the park deadline fails the turn. The budget check fails open on infrastructure 
 broken gate must not brick the operator's control surface.
 
 HQ also exposes the standard **assets library**, alongside its Team & Budget page (the
-Team/Budget/Hours tabs; only Settings stays hidden on the internal project). Files the CEO produces for the operator
+Team and Hours tabs, and no Tokens tab, since HQ has no project token budget; only Settings stays hidden on the internal project). Files the CEO produces for the operator
 in the live chat (a quick mockup, demo, or export) are saved via `write_project_asset` and
 linked back as `assets/<filename>`, so they are durable and openable over a signed URL rather
 than stranded as loose files in the container's `/workspace`. The CEO scopes such a
@@ -7800,7 +7830,7 @@ with a "Load older activity" control; the global view previously fetched a fixed
 slice with no way to reach anything older.
 
 **Agent hours** (`routes/agent-hours.ts`, `GET /projects/:projectId/agent-hours?bucket=`).
-The hours tab of the project's Budget page: wall-clock time per agent, summed as
+Each agent's run time on the project's Tokens tab: wall-clock time per agent, summed as
 `finished_at - started_at` over finished `heartbeat_runs`, bucketed by `date_trunc` to
 day/week/month. It is a **bounded aggregate, not a list** — its row count is
 `HOURS_BUCKET_SPAN[bucket]` (30/12/12) times the roster — so it neither pages nor needs to;

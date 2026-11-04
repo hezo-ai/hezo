@@ -1,4 +1,4 @@
-import { AgentRuntimeStatus, BudgetPeriod, HeartbeatRunStatus } from '@hezo/shared';
+import { AgentRuntimeStatus, BudgetPeriod, BudgetResource, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -331,10 +331,13 @@ describe('budget pause / resume', () => {
 		);
 		await db.query(
 			`UPDATE projects
-			 SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0
+			 SET daily_budget_tokens = 0, weekly_budget_tokens = 0, monthly_budget_tokens = 0,
+			     daily_budget_container_seconds = 0, weekly_budget_container_seconds = 0,
+			     monthly_budget_container_seconds = 0
 			 WHERE id = $1`,
 			[projectId],
 		);
+		await db.query('DELETE FROM container_uptime_entries WHERE project_id = $1', [projectId]);
 	});
 
 	it('maps a block scope to the matching out_of_*_budget status', () => {
@@ -342,16 +345,18 @@ describe('budget pause / resume', () => {
 			budgetPauseStatus({
 				scope: 'agent',
 				period: BudgetPeriod.Daily,
-				usedTokens: 600,
-				limitTokens: 500,
+				resource: BudgetResource.Tokens,
+				used: 600,
+				limit: 500,
 			}),
 		).toBe(AgentRuntimeStatus.OutOfAgentBudget);
 		expect(
 			budgetPauseStatus({
 				scope: 'project',
 				period: BudgetPeriod.Monthly,
-				usedTokens: 600,
-				limitTokens: 500,
+				resource: BudgetResource.Tokens,
+				used: 600,
+				limit: 500,
 			}),
 		).toBe(AgentRuntimeStatus.OutOfProjectBudget);
 	});
@@ -363,7 +368,13 @@ describe('budget pause / resume', () => {
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
+			{
+				scope: 'agent',
+				period: BudgetPeriod.Daily,
+				resource: BudgetResource.Tokens,
+				used: 600,
+				limit: 500,
+			},
 			wsManager,
 			{ taskId, projectId },
 		);
@@ -378,8 +389,9 @@ describe('budget pause / resume', () => {
 		const block = {
 			scope: 'project' as const,
 			period: BudgetPeriod.Monthly,
-			usedTokens: 600,
-			limitTokens: 500,
+			resource: BudgetResource.Tokens,
+			used: 600,
+			limit: 500,
 		};
 		// The CEO's pattern: the sweep lifts a project pause it cannot see, and the
 		// next dispatch sets it again.
@@ -417,7 +429,13 @@ describe('budget pause / resume', () => {
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
+			{
+				scope: 'agent',
+				period: BudgetPeriod.Daily,
+				resource: BudgetResource.Tokens,
+				used: 600,
+				limit: 500,
+			},
 			undefined,
 			{ taskId: null, projectId },
 		);
@@ -438,8 +456,9 @@ describe('budget pause / resume', () => {
 		const block = {
 			scope: 'agent' as const,
 			period: BudgetPeriod.Weekly,
-			usedTokens: 1_200_000,
-			limitTokens: 1_000_000,
+			resource: BudgetResource.Tokens,
+			used: 1_200_000,
+			limit: 1_000_000,
 		};
 		await pauseAgentForBudget(db, agentId, teamId, block, undefined, { taskId, projectId });
 		// Already paused: the second call changes nothing and posts nothing.
@@ -464,6 +483,74 @@ describe('budget pause / resume', () => {
 		expect(mentions.rows[0].n).toBeGreaterThan(0);
 	});
 
+	it("tells the admin when the project's hours run out, in hours, apart from its tokens", async () => {
+		const taskId = await createPauseTask('Hours pause notice');
+		const hours = {
+			scope: 'project' as const,
+			period: BudgetPeriod.Daily,
+			resource: BudgetResource.ContainerHours,
+			used: 7_200,
+			limit: 3_600,
+		};
+		await pauseAgentForBudget(db, agentId, teamId, hours, undefined, { taskId, projectId });
+		expect(await getStatus()).toBe(AgentRuntimeStatus.OutOfProjectBudget);
+
+		const notices = await pauseNotices(taskId);
+		expect(notices.rows).toHaveLength(1);
+		expect(notices.rows[0].content).toMatchObject({
+			scope: 'project',
+			period: 'daily',
+			resource: 'container_hours',
+			used_seconds: 7_200,
+			limit_seconds: 3_600,
+		});
+		expect(notices.rows[0].content).not.toHaveProperty('limit_tokens');
+		expect(notices.rows[0].content.text).toContain('daily hours budget of 1 container-hours');
+
+		// The same window again is not news...
+		await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
+		await pauseAgentForBudget(db, agentId, teamId, hours, undefined, { taskId, projectId });
+		expect((await pauseNotices(taskId)).rows).toHaveLength(1);
+
+		// ...but the project's daily tokens running out in the same window is.
+		await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
+		await pauseAgentForBudget(
+			db,
+			agentId,
+			teamId,
+			{ ...hours, resource: BudgetResource.Tokens, used: 600, limit: 500 },
+			undefined,
+			{ taskId, projectId },
+		);
+		expect((await pauseNotices(taskId)).rows).toHaveLength(2);
+	});
+
+	it("lifts an hours pause once the project's hours budget is raised", async () => {
+		await db.query(
+			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
+			 VALUES ($1, 'ctr-hours-pause', GREATEST(now() - interval '10 minutes',
+			         date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), now(), 'docker')`,
+			[projectId],
+		);
+		await db.query('UPDATE projects SET daily_budget_container_seconds = 1 WHERE id = $1', [
+			projectId,
+		]);
+		await db.query(
+			"UPDATE member_agents SET runtime_status = 'out_of_project_budget' WHERE id = $1",
+			[agentId],
+		);
+		// Still over: the sweep leaves it paused.
+		expect(await reconcileBudgetPause(db, agentId, teamId, projectId, undefined)).toBeNull();
+		expect(await getStatus()).toBe(AgentRuntimeStatus.OutOfProjectBudget);
+
+		await db.query('UPDATE projects SET daily_budget_container_seconds = 0 WHERE id = $1', [
+			projectId,
+		]);
+		expect(await reconcileBudgetPause(db, agentId, teamId, projectId, undefined)).toBe(
+			AgentRuntimeStatus.Idle,
+		);
+	});
+
 	it('does not re-broadcast when already in the target budget state', async () => {
 		await db.query(
 			"UPDATE member_agents SET runtime_status = 'out_of_agent_budget' WHERE id = $1",
@@ -474,7 +561,13 @@ describe('budget pause / resume', () => {
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: BudgetPeriod.Monthly, usedTokens: 600, limitTokens: 500 },
+			{
+				scope: 'agent',
+				period: BudgetPeriod.Monthly,
+				resource: BudgetResource.Tokens,
+				used: 600,
+				limit: 500,
+			},
 			wsManager,
 			{ taskId: null, projectId },
 		);
@@ -493,7 +586,13 @@ describe('budget pause / resume', () => {
 			db,
 			agentId,
 			teamId,
-			{ scope: 'agent', period: BudgetPeriod.Daily, usedTokens: 600, limitTokens: 500 },
+			{
+				scope: 'agent',
+				period: BudgetPeriod.Daily,
+				resource: BudgetResource.Tokens,
+				used: 600,
+				limit: 500,
+			},
 			undefined,
 			{ taskId: await createPauseTask('Resume'), projectId },
 		);

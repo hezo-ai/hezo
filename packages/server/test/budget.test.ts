@@ -185,7 +185,13 @@ describe('budget service - checkOverBudget gate', () => {
 		await db.query('UPDATE member_agents SET weekly_budget_tokens = 100 WHERE id = $1', [agentId]);
 		await insertUsageToday(150);
 		const block = await checkOverBudget(db, agentId, projectId);
-		expect(block).toEqual({ scope: 'agent', period: 'weekly', usedTokens: 150, limitTokens: 100 });
+		expect(block).toEqual({
+			scope: 'agent',
+			period: 'weekly',
+			resource: 'tokens',
+			used: 150,
+			limit: 100,
+		});
 	});
 
 	it('blocks all agents when the project is over budget', async () => {
@@ -196,8 +202,9 @@ describe('budget service - checkOverBudget gate', () => {
 		expect(block).toEqual({
 			scope: 'project',
 			period: 'monthly',
-			usedTokens: 200,
-			limitTokens: 100,
+			resource: 'tokens',
+			used: 200,
+			limit: 100,
 		});
 	});
 

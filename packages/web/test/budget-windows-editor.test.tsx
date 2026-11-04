@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { expect, test, vi } from 'vitest';
 import {
 	BudgetWindowsEditor,
+	ContainerHoursBudgetEditor,
 	millionsToTokens,
 	tokensToMillions,
 } from '../src/components/budget/budget-windows-editor';
@@ -129,4 +130,54 @@ test('converts between the millions a person types and whole tokens', () => {
 	expect(millionsToTokens('abc')).toBe(0);
 	expect(tokensToMillions(20_500_000)).toBe('20.5');
 	expect(tokensToMillions(608_333_334)).toBe('608.333');
+});
+
+/**
+ * The editors sit inside forms that submit natively (agent settings, the hire
+ * form, the Hours tab), so a browser refuses to submit while any input reports
+ * itself invalid. A floor that is not a whole number of steps above zero (a
+ * 1-million daily budget puts the monthly floor at 30.417 million) once made
+ * every coherent monthly figure but the floor itself a step mismatch, and the
+ * Save button silently did nothing.
+ */
+test('a coherent budget above an uneven floor is valid for the form that submits it', () => {
+	const { getByTestId } = render(
+		<Harness
+			initial={{
+				daily_budget_tokens: 1_000_000,
+				weekly_budget_tokens: 7_000_000,
+				monthly_budget_tokens: 40_000_000,
+			}}
+			onChange={() => {}}
+		/>,
+	);
+
+	const monthly = getByTestId('budget-monthly') as HTMLInputElement;
+	expect(Number(monthly.min)).toBeGreaterThan(30);
+	expect(monthly.value).toBe('40');
+	expect(monthly.validity.stepMismatch).toBe(false);
+	expect(monthly.checkValidity()).toBe(true);
+});
+
+test('an hours budget above an uneven floor is valid for the form that submits it', () => {
+	const HOUR = 3600;
+	const { getByTestId } = render(
+		<I18nProvider>
+			<ContainerHoursBudgetEditor
+				value={{
+					daily_budget_container_seconds: HOUR,
+					weekly_budget_container_seconds: 7 * HOUR,
+					monthly_budget_container_seconds: 40 * HOUR,
+				}}
+				onChange={() => {}}
+			/>
+		</I18nProvider>,
+	);
+
+	const monthly = getByTestId('hours-budget-monthly') as HTMLInputElement;
+	// One hour a day puts the monthly floor at 30.42 hours.
+	expect(monthly.min).toBe('30.42');
+	expect(monthly.value).toBe('40');
+	expect(monthly.validity.stepMismatch).toBe(false);
+	expect(monthly.checkValidity()).toBe(true);
 });

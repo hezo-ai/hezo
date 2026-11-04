@@ -1,4 +1,8 @@
-import type { HoursBucket } from '@hezo/shared';
+import type {
+	BudgetWindowsContainerSeconds,
+	HoursBucket,
+	ProjectContainerHoursBudget,
+} from '@hezo/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
@@ -45,13 +49,21 @@ export interface ContainerHoursTotals {
 	window_end: string;
 }
 
-export interface ProjectContainerHours {
+/** The series and totals both scopes answer with. */
+export interface ContainerHoursSeries {
 	bucket: HoursBucket;
 	buckets: ContainerHoursBucket[];
 	totals: ContainerHoursTotals;
 }
 
-export interface InstanceContainerHours extends ProjectContainerHours {
+export interface ProjectContainerHours extends ContainerHoursSeries {
+	/** The project's hours budget against what its containers used, window by window. */
+	budget: ProjectContainerHoursBudget;
+	/** Whether a container-hour costs anything here - see {@link InstanceContainerHours.metered}. */
+	metered: boolean;
+}
+
+export interface InstanceContainerHours extends ContainerHoursSeries {
 	by_project: ContainerHoursProjectBucket[];
 	/** The hours allowance for one window. 0 is unlimited, and the default. */
 	monthly_hours: number;
@@ -72,6 +84,8 @@ export interface InstanceContainerHours extends ProjectContainerHours {
 	purchased_hours: number;
 	/** Who fixed it and where to change it, or null when nothing is pinned. */
 	policy: { managed_by: string; manage_url: string | null } | null;
+	/** How the projects' own monthly hours limits add up, beside the allowance. */
+	project_limits: { limited_projects: number; monthly_seconds: number };
 }
 
 /** One project's container hours. Serves the tiles and the chart from one request. */
@@ -108,6 +122,32 @@ export function useSetMonthlyContainerHours() {
 				monthly_hours: monthlyHours,
 			}),
 		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['instance', 'container-hours'] });
+		},
+	});
+}
+
+/**
+ * Set a project's hours budget. Superuser-only server-side.
+ *
+ * Invalidate-and-refetch, never optimistic: the server alone decides who may
+ * write it and whether the windows are coherent, and the limits it stores are
+ * what the gate holds every run and chat turn to.
+ */
+export function useSetProjectContainerHoursBudget(projectId: string) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (budget: BudgetWindowsContainerSeconds) =>
+			api.patch<{ budget: ProjectContainerHoursBudget }>(
+				`/api/projects/${projectId}/container-hours`,
+				budget,
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'container-hours'] });
+			// The project banner reads whether the hours budget is spent from the
+			// budget status, which nothing else refreshes when a limit moves.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.budgetStatus(projectId) });
+			// HQ adds the projects' limits up against the allowance.
 			queryClient.invalidateQueries({ queryKey: ['instance', 'container-hours'] });
 		},
 	});

@@ -1093,6 +1093,18 @@ export const BudgetPeriod = {
 export type BudgetPeriod = (typeof BudgetPeriod)[keyof typeof BudgetPeriod];
 
 /**
+ * What a budget counts. Tokens are summed from `usage_entries` for an agent or a
+ * project; container-hours are summed from `container_uptime_entries` for a
+ * project only. One gate checks both, and every surface that names a block
+ * reads its wording from a table keyed by this.
+ */
+export const BudgetResource = {
+	Tokens: 'tokens',
+	ContainerHours: 'container_hours',
+} as const;
+export type BudgetResource = (typeof BudgetResource)[keyof typeof BudgetResource];
+
+/**
  * Bucket size for the Activity page's per-agent hours series. The value is
  * passed straight to Postgres `date_trunc`, so the strings must stay valid
  * field names there.

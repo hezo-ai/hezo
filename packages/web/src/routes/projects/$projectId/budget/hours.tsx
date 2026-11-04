@@ -6,11 +6,12 @@ import {
 } from '../../../../components/budget/container-hours-panel';
 
 /**
- * The Hours tab: how long containers were up.
+ * The Hours tab: how long containers were up, and against what.
  *
  * HQ gets the instance-wide view, which is where the allowance lives - it is set
- * once and gates every project's container starts, so showing it per project
- * would imply a per-project figure that does not exist.
+ * once and gates every project's container starts. Every other project gets its
+ * own uptime and its own hours budget, which the instance owner sets beneath
+ * that allowance.
  */
 function BudgetHoursPage() {
 	const { projectId } = Route.useParams();

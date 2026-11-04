@@ -120,9 +120,10 @@ describe('message catalogs', () => {
 		// "Team" is the ordinary loanword in all four; French (Équipe), Spanish
 		// (Equipo), Polish (Zespół) and the rest differ.
 		'budget.tab.team': ['de', 'it', 'nl', 'sv'],
-		// "Budget" genuinely is the word in these five, as `nav.budget` recorded
-		// before it was reworded to "Team & Budget".
-		'budget.tab.spend': ['de', 'fr', 'it', 'nl', 'sv'],
+		// "Tokens" is the loanword these five write for a model token, as
+		// `usage.figure.short` records. German (Token), Italian (Token), Polish
+		// (Tokeny) and the rest differ.
+		'budget.tab.tokens': ['es', 'fr', 'nl', 'pt-BR', 'sv'],
 		// "Database" is the ordinary word in Italian and Dutch; the rest differ
 		// (Datenbank, Base de datos, Base de données, Baza danych, Databas, ...).
 		'settings.database.title': ['it', 'nl'],
@@ -204,7 +205,8 @@ describe('message catalogs', () => {
 		'thread.group.runs.one': ['nl'],
 		'thread.group.runs.other': ['nl'],
 		'assets.folderType': ['pl'],
-		// "Budget" genuinely is the word in these five, as `budget.tab.spend` records.
+		// "Budget" genuinely is the word in these five: German, French, Italian,
+		// Dutch and Swedish all write it as English does.
 		'settings.budget.title': ['de', 'fr', 'it', 'nl', 'sv'],
 		// "Total" is the French, Spanish and Portuguese word; German (Gesamt),
 		// Italian (Totale), Dutch (Totaal) and the rest differ.

@@ -18,12 +18,12 @@
 
 import {
 	containerHoursWindow,
-	containerHoursWindowStart,
 	HOURS_BUCKET_SPAN,
 	type HoursBucket,
 	previousContainerHoursWindowStart,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { utcWindowStartSql } from '../lib/sql';
 import { pinnedSetting } from '../lib/system-meta';
 
 /**
@@ -79,6 +79,18 @@ function overlapsWindow(alias: string, from: string, to: string): string {
 function countedSince(): Date | undefined {
 	const since = pinnedSetting('containerHoursSince');
 	return since === undefined ? undefined : new Date(since);
+}
+
+/**
+ * The container-hours window containing `now`, on the bounds the deployer
+ * pinned: the anchor day, held back to `containerHoursSince` where one is set.
+ *
+ * **One reading for every caller** - the instance allowance, the per-project
+ * hours budget and both routes - so a project's month and the pool it draws from
+ * can never name different days.
+ */
+export function currentContainerHoursWindow(now: Date): { start: Date; end: Date } {
+	return containerHoursWindow(pinnedSetting('containerHoursAnchorDay'), now, countedSince());
 }
 
 /** One bucket of the hours series. */
@@ -216,10 +228,12 @@ export async function containerHoursTotals(
 	// rather than written into the SQL because the clamp - an anchor on the 31st,
 	// in a month that has no 31st - is arithmetic `date_trunc` cannot express.
 	const now = new Date();
-	const anchor = pinnedSetting('containerHoursAnchorDay');
-	const since = countedSince();
-	const { start, end } = containerHoursWindow(anchor, now, since);
-	const prevStart = previousContainerHoursWindowStart(anchor, now, since);
+	const { start, end } = currentContainerHoursWindow(now);
+	const prevStart = previousContainerHoursWindowStart(
+		pinnedSetting('containerHoursAnchorDay'),
+		now,
+		countedSince(),
+	);
 
 	const scope = projectId === null ? '' : 'AND e.project_id = $3';
 	const day = `date_trunc('day', now() AT TIME ZONE 'UTC')`;
@@ -275,11 +289,7 @@ export async function containerHoursTotals(
  * would be work done per dispatch and thrown away.
  */
 export async function currentWindowContainerSeconds(db: Db): Promise<number> {
-	const start = containerHoursWindowStart(
-		pinnedSetting('containerHoursAnchorDay'),
-		new Date(),
-		countedSince(),
-	).toISOString();
+	const start = currentContainerHoursWindow(new Date()).start.toISOString();
 	const res = await db.query<{ seconds: number }>(
 		`SELECT COALESCE(SUM(${clippedSeconds('e', '$1::timestamptz', 'now()')}), 0)::int AS seconds
 		   FROM container_uptime_entries e
@@ -287,4 +297,79 @@ export async function currentWindowContainerSeconds(db: Db): Promise<number> {
 		[start],
 	);
 	return res.rows[0]?.seconds ?? 0;
+}
+
+/** A project's container-seconds in each window its hours budget is checked on. */
+export interface ProjectBudgetWindowSeconds {
+	daily: number;
+	weekly: number;
+	monthly: number;
+	/** When the monthly window opened, the start of the container-hours window. */
+	monthStart: string;
+}
+
+/**
+ * One project's container-seconds today, this week and this container-hours
+ * window - what its hours budget is enforced against.
+ *
+ * Daily and weekly are the UTC day and ISO week, the same boundaries as the
+ * token budget and {@link containerHoursTotals}. **Monthly is the
+ * container-hours window**, not the calendar month, so a project's month is the
+ * instance allowance's own period.
+ *
+ * Its own narrow query, like {@link currentWindowContainerSeconds}: it runs on
+ * every dispatch, run completion and chat turn of a project that set a limit.
+ * The WHERE clause restates the overlap test in a form the index can range over
+ * - an interval still open, or one that ended after the earliest window opened -
+ * so the scan reads this month's stretches on `idx_container_uptime_project_end`
+ * rather than the project's whole history. The `started_at` test is kept beside
+ * it, so the rows matched are exactly the ones {@link clippedSeconds} would
+ * count anyway.
+ */
+export async function projectBudgetWindowSeconds(
+	db: Db,
+	projectId: string,
+): Promise<ProjectBudgetWindowSeconds> {
+	const monthStart = currentContainerHoursWindow(new Date()).start.toISOString();
+	const day = utcWindowStartSql("'day'");
+	const week = utcWindowStartSql("'week'");
+	const month = '$1::timestamptz';
+	const res = await db.query<{ daily: number; weekly: number; monthly: number }>(
+		`SELECT
+		   COALESCE(SUM(${clippedSeconds('e', day, 'now()')}), 0)::int   AS daily,
+		   COALESCE(SUM(${clippedSeconds('e', week, 'now()')}), 0)::int  AS weekly,
+		   COALESCE(SUM(${clippedSeconds('e', month, 'now()')}), 0)::int AS monthly
+		 FROM container_uptime_entries e
+		 WHERE e.project_id = $2
+		   AND (e.ended_at IS NULL OR e.ended_at > LEAST(${day}, ${week}, ${month}))
+		   AND ${overlapsWindow('e', `LEAST(${day}, ${week}, ${month})`, 'now()')}`,
+		[monthStart, projectId],
+	);
+	const row = res.rows[0] ?? { daily: 0, weekly: 0, monthly: 0 };
+	return { ...row, monthStart };
+}
+
+/** How the projects' monthly hours limits add up, for the instance view. */
+export interface ProjectHoursLimitsTotal {
+	/** Projects with a monthly hours limit set. */
+	limited_projects: number;
+	/** Their monthly limits, summed, in container-seconds. */
+	monthly_seconds: number;
+}
+
+/**
+ * The projects' monthly hours limits, summed, beside the instance allowance.
+ *
+ * Archived projects are left out: nothing dispatches in one, so its limit holds
+ * back nothing. HQ never carries one. An aggregate over the projects table,
+ * which an instance holds a handful of rows in, so it needs no index of its own.
+ */
+export async function projectHoursLimitsTotal(db: Db): Promise<ProjectHoursLimitsTotal> {
+	const res = await db.query<ProjectHoursLimitsTotal>(
+		`SELECT count(*)::int AS limited_projects,
+		        COALESCE(SUM(monthly_budget_container_seconds), 0)::float8 AS monthly_seconds
+		   FROM projects
+		  WHERE monthly_budget_container_seconds > 0 AND archived_at IS NULL`,
+	);
+	return res.rows[0] ?? { limited_projects: 0, monthly_seconds: 0 };
 }
