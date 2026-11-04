@@ -187,6 +187,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. It is also the most any project may set for itself. |
 | `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. It is also the most any project may set for itself. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
+| `policy.pinned.purchasedContainerHours` | - | How many of the pinned `monthlyContainerHours` were bought on top of the per-period allowance. Bought hours carry over until used, and the Hours tab shows them apart from the hours that come back each period. Requires `monthlyContainerHours` and cannot exceed it. |
 | `policy.pinned.containerHoursAnchorDay` | - | The day of the month that allowance resets on, `1`-`31`. Unset, it resets on the 1st. |
 | `policy.pinned.containerHoursSince` | - | The moment hours start counting from, as an ISO 8601 timestamp with its offset. A window that began earlier counts only from that moment. Later windows start on the anchor day as usual. |
 | `policy.pinned.backend` | - | Fixes which container backend runs agent containers (`docker` or `daytona`). |
@@ -218,6 +219,13 @@ never walks backwards.
 The first window then counts only from that moment, so hours spent earlier the
 same day, before the purchase, are not charged to the first paid period. Windows
 after it are unaffected.
+
+**Pin `purchasedContainerHours` when you sell hours that carry over.**
+`monthlyContainerHours` stays the whole allowance the instance is capped against,
+bought hours included. This key says how many of those hours were bought, so the
+Hours tab can show how much comes back each period. Hezo does not draw bought
+hours down itself. When a period turns, pin the new total and the bought hours
+still unspent.
 
 **`pinned.backend` is the exception: it takes effect on restart.** The engine
 containers run on is chosen once at startup, so re-pinning it while the instance

@@ -61,6 +61,7 @@ together from H24 on.
 | ~~H44~~ | ~~`policy.pinned.containerHoursSince`: count a window from an instant~~ | a first paid window that does not charge the trial hours spent earlier on the day of purchase | **done** |
 | ~~H45~~ | ~~A pinned per-container RAM cap or disk size is a ceiling on project overrides~~ | every container the size the plan prices, whatever a project sets | **done** |
 | ~~H46~~ | ~~`MultiSelect` searches what the caller supplies, and shows the chosen as tags~~ | the operator's one-off email picking people out of every account | **done** |
+| ~~H47~~ | ~~`policy.pinned.purchasedContainerHours`: the bought share of the pinned allowance~~ | a Budget page that does not call bought hours a per-period allowance | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -1091,6 +1092,29 @@ All of it optional, and a caller passing none of it renders as before:
 The web wrapper supplies the new strings (`common.search`,
 `common.removeNamed`, `common.loading`) in every catalog.
 
+## H47 — `policy.pinned.purchasedContainerHours` *(done)*
+
+The plane pins `monthlyContainerHours` to the plan's per-period pool plus the
+hour packs the tenant bought, which carry over until spent. The instance was
+handed only the total, so the Budget page's allowance card read "30 container
+hours each period" for a 10-hour plan with a 20-hour pack, and the remaining
+line promised the whole figure back on the reset date.
+
+- **`policy.pinned.purchasedContainerHours`**, an integer ≥ 0: how many of the
+  pinned total were bought. A share of `monthlyContainerHours`, never an
+  addition, so the cap admission reads is unchanged. The schema refuses it
+  without a pinned `monthlyContainerHours`, or above it; a policy file that
+  breaks either rule is refused like any other invalid file, and the last good
+  one stays in force.
+- **`GET /api/container-hours`** carries it as `purchased_hours`, beside
+  `monthly_hours`; 0 when nothing is pinned.
+- **The allowance card** reads "10 container hours each period, plus 20 bought
+  hours that carry over until used.", and the remaining line names the hours
+  that come back on the reset date rather than saying the allowance resets.
+
+**The instance does not draw packs down.** When a period turns, the plane
+re-pins the new total and the bought hours still unspent.
+
 ## Already satisfied upstream — do not build these
 
 Recorded because the reason they are unnecessary is easy to lose, and because
@@ -1150,7 +1174,8 @@ export async function getMaxContainerMemoryGbSetting(db: Db): Promise<number | n
 ```
 
 `policy.pinned` also covers `defaultRamCapPerContainerGb`,
-`defaultContainerDiskGb` and `monthlyContainerHours`. A pinned setting renders
+`defaultContainerDiskGb` and `monthlyContainerHours`, plus the hours-window keys
+`containerHoursAnchorDay`, `containerHoursSince` and `purchasedContainerHours`. A pinned setting renders
 locked in the UI attributed to `managedBy`, and a `PATCH` of it returns **409**.
 
 The **container shape needs no override at all**: Hezo Cloud prices a

@@ -286,6 +286,16 @@ export interface PolicyConfig {
 		defaultContainerDiskGb?: number;
 		monthlyContainerHours?: number;
 		/**
+		 * How many of `monthlyContainerHours` were bought on top of the per-period
+		 * allowance, and carry over until spent.
+		 *
+		 * A share of that figure, not an addition to it: the cap stays the total,
+		 * so admission never reads this. It exists so the Budget page can say how
+		 * much of the allowance comes back each period, which the total alone
+		 * cannot. Requires `monthlyContainerHours` and never exceeds it.
+		 */
+		purchasedContainerHours?: number;
+		/**
 		 * The day of the month the hours window resets on, 1-31.
 		 *
 		 * Unset, the window is the calendar month, which is what a local or

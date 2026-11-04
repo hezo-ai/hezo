@@ -64,6 +64,12 @@ export interface InstanceContainerHours extends ProjectContainerHours {
 	metered: boolean;
 	/** Set when this deployment fixed the allowance, so the control renders locked. */
 	monthly_hours_pinned: boolean;
+	/**
+	 * How many of `monthly_hours` were bought rather than granted each period.
+	 * They carry over until spent, so they do not come back when the period
+	 * turns. 0 unless a deployment says otherwise.
+	 */
+	purchased_hours: number;
 	/** Who fixed it and where to change it, or null when nothing is pinned. */
 	policy: { managed_by: string; manage_url: string | null } | null;
 }

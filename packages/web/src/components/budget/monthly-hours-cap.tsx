@@ -20,7 +20,14 @@ import { SectionHeader } from '../ui/section-header';
  * gates real work: the stored figure is what admission reads, so it must not
  * appear in force before the server has it.
  */
-export function MonthlyHoursCap({ monthlyHours }: { monthlyHours: number }) {
+export function MonthlyHoursCap({
+	monthlyHours,
+	purchasedHours,
+}: {
+	monthlyHours: number;
+	/** The bought share of the allowance, which carries over rather than coming back. */
+	purchasedHours: number;
+}) {
 	const { t } = useI18n();
 	const setCap = useSetMonthlyContainerHours();
 	const [editing, setEditing] = useState(false);
@@ -91,9 +98,14 @@ export function MonthlyHoursCap({ monthlyHours }: { monthlyHours: number }) {
 			) : (
 				<div className="rounded-lg border border-border bg-surface p-4 shadow-xs">
 					<p className="text-[13px] text-text-1" data-testid="monthly-hours-cap-value">
-						{monthlyHours > 0
-							? t('budget.hours.cap.set', { hours: String(monthlyHours) })
-							: t('budget.hours.cap.unset')}
+						{monthlyHours <= 0
+							? t('budget.hours.cap.unset')
+							: purchasedHours > 0
+								? t('budget.hours.cap.setWithPurchased', {
+										hours: String(monthlyHours - purchasedHours),
+										purchased: String(purchasedHours),
+									})
+								: t('budget.hours.cap.set', { hours: String(monthlyHours) })}
 					</p>
 				</div>
 			)}

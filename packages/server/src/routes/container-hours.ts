@@ -2,7 +2,12 @@ import { HoursBucket, isHoursBucket, SANDBOX_BACKEND_KIND, SandboxBackend } from
 import { Hono } from 'hono';
 import { runtimeConfig } from '../config/runtime';
 import { err, ok } from '../lib/response';
-import { getMonthlyContainerHours, isPinned, setMonthlyContainerHours } from '../lib/system-meta';
+import {
+	getMonthlyContainerHours,
+	isPinned,
+	pinnedSetting,
+	setMonthlyContainerHours,
+} from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
 import {
@@ -93,6 +98,10 @@ containerHoursRoutes.get('/container-hours', async (c) => {
 		// locked control from this rather than offering an edit the PATCH below
 		// will refuse.
 		monthly_hours_pinned: isPinned('monthlyContainerHours'),
+		// The share of `monthly_hours` that was bought and carries over rather than
+		// coming back each period. Only a deployment knows it, so anything else
+		// reads 0: the whole allowance is per-period.
+		purchased_hours: pinnedSetting('purchasedContainerHours') ?? 0,
 		policy: policyBanner(),
 		// What the *cap* is worth showing for. On a local daemon a container-hour
 		// costs nothing anyone bills, so the page renders the series as

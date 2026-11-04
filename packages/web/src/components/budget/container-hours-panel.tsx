@@ -12,7 +12,7 @@ import {
 import { useMe } from '../../hooks/use-me';
 import { useProject } from '../../hooks/use-projects';
 import { formatDuration, hoursSpent, secondsToHours } from '../../lib/format-duration';
-import { Trans, useI18n } from '../../lib/i18n';
+import { type MessageKey, Trans, useI18n } from '../../lib/i18n';
 import { buyHoursHref } from '../../lib/manage-href';
 import { formatBucketLabel } from '../charts/chart-format';
 import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
@@ -75,6 +75,18 @@ function Tile({ title, value, meta }: { title: string; value: string; meta: stri
 	);
 }
 
+/** The remaining-hours sentence, by whether any hours were bought and whether there is a link to buy more. */
+const REMAINING_KEY = {
+	perPeriod: {
+		plain: 'budget.hours.allowance.remaining',
+		link: 'budget.hours.allowance.remainingWithLink',
+	},
+	purchased: {
+		plain: 'budget.hours.allowance.remainingWithPurchased',
+		link: 'budget.hours.allowance.remainingWithPurchasedAndLink',
+	},
+} as const satisfies Record<string, Record<'plain' | 'link', MessageKey>>;
+
 /**
  * Window-to-date hours against the allowance.
  *
@@ -90,21 +102,27 @@ function Tile({ title, value, meta }: { title: string; value: string; meta: stri
  * **Beside the reset date, the way out of waiting for it.** Where the deployment
  * fixed the allowance, the only way to more hours before the reset is to buy them
  * or change plan, and `buyHoursHref` is where that happens.
+ *
+ * **Only the per-period share comes back on that date.** Where part of the
+ * allowance was bought, the line names what renews and says the bought hours
+ * carry over, rather than promising the whole figure back.
  */
 function AllowanceHero({
 	totals,
 	capHours,
+	purchasedHours,
 	buyHoursHref,
 }: {
 	totals: ContainerHoursTotals;
 	capHours: number;
+	purchasedHours: number;
 	buyHoursHref: string | null;
 }) {
 	const { t, formatDate } = useI18n();
 	const usedHours = totals.window_seconds / 3600;
 	const remaining = Math.max(0, capHours - usedHours);
-	const hours = remaining.toFixed(1);
-	const date = formatDate(totals.window_end);
+	const key =
+		REMAINING_KEY[purchasedHours > 0 ? 'purchased' : 'perPeriod'][buyHoursHref ? 'link' : 'plain'];
 	return (
 		<div
 			data-testid="container-hours-allowance"
@@ -121,24 +139,21 @@ function AllowanceHero({
 			</div>
 			<BudgetBar used={totals.window_seconds} total={capHours * 3600} />
 			<span className="text-[11.5px] text-text-3" data-testid="container-hours-remaining">
-				{buyHoursHref ? (
-					<Trans
-						k="budget.hours.allowance.remainingWithLink"
-						vars={{
-							hours,
-							date,
-							link: (
-								<ManageLink
-									href={buyHoursHref}
-									label="budget.hours.allowance.buy"
-									testId="container-hours-buy"
-								/>
-							),
-						}}
-					/>
-				) : (
-					t('budget.hours.allowance.remaining', { hours, date })
-				)}
+				<Trans
+					k={key}
+					vars={{
+						hours: remaining.toFixed(1),
+						periodHours: String(capHours - purchasedHours),
+						date: formatDate(totals.window_end),
+						link: buyHoursHref && (
+							<ManageLink
+								href={buyHoursHref}
+								label="budget.hours.allowance.buy"
+								testId="container-hours-buy"
+							/>
+						),
+					}}
+				/>
 			</span>
 		</div>
 	);
@@ -312,13 +327,19 @@ export function InstanceContainerHoursPanel() {
 	const { data, isLoading } = useInstanceContainerHours(bucket);
 	const totals = data?.totals;
 	const capHours = data?.monthly_hours ?? 0;
+	const purchasedHours = data?.purchased_hours ?? 0;
 	const buyHref = buyHoursHref(data);
 
 	return (
 		<div className="flex flex-col gap-6">
 			{totals && <HoursTiles totals={totals} />}
 			{totals && capHours > 0 && (
-				<AllowanceHero totals={totals} capHours={capHours} buyHoursHref={buyHref} />
+				<AllowanceHero
+					totals={totals}
+					capHours={capHours}
+					purchasedHours={purchasedHours}
+					buyHoursHref={buyHref}
+				/>
 			)}
 			<HoursChart
 				bucket={bucket}
@@ -335,7 +356,7 @@ export function InstanceContainerHoursPanel() {
 				// allowance is not moved by asking again; it is moved by buying hours
 				// or changing plan, which is where `manage_url` already goes.
 				<ManagedSetting pinned={data.monthly_hours_pinned} manageLabel="budget.hours.cap.manage">
-					<MonthlyHoursCap monthlyHours={capHours} />
+					<MonthlyHoursCap monthlyHours={capHours} purchasedHours={purchasedHours} />
 				</ManagedSetting>
 			)}
 			{data && !data.metered && (
