@@ -32,6 +32,7 @@ import {
 	createTestProject,
 	createTestTeam,
 	stubEngineSeams,
+	TEST_RELEASE_GRACE_MS,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
@@ -116,6 +117,7 @@ function makeDeps(dockerOverrides: Record<string, any> = {}): RunnerDeps {
 
 function createJobManager(): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db,
 		docker: createMockDocker(),
 		masterKeyManager,

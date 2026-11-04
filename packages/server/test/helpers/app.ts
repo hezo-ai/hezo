@@ -200,6 +200,14 @@ export function claudeAssistantLine(text: string): string {
 	})}\n`;
 }
 
+/**
+ * The release grace every test job manager runs with: none. A run's container is
+ * then retired as soon as its run ends, rather than seconds later inside tracked
+ * background work that every test's teardown would have to wait out. Suites about
+ * the grace itself set their own.
+ */
+export const TEST_RELEASE_GRACE_MS = 0;
+
 /** The terminating `result` line, carrying the usage a turn is billed on. */
 export function claudeResultLine(
 	usage: { input_tokens: number; output_tokens: number } = { input_tokens: 10, output_tokens: 5 },
@@ -332,6 +340,7 @@ export async function createTestApp(
 		docker,
 		masterKeyManager,
 		serverPort: 0,
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		dataDir,
 		wsManager,
 		events,

@@ -29,6 +29,7 @@ import type {
 	MethodDiscoveryDeps,
 	MethodDiscoveryResult,
 } from '../services/connectors/method-discovery';
+import { holdRunningContainer } from '../services/containers';
 import { invalidateSecretsVault } from '../services/egress';
 import { installLocalMcpById } from '../services/mcp-installer';
 
@@ -1205,9 +1206,13 @@ async function kickoffLocalInstall(
 
 	for (const project of candidates.rows) {
 		if (!project.container_id) continue;
+		// Held so a retirement cannot stop the container mid-install; one already
+		// being retired is skipped like a stopped one, and installs when it next starts.
+		const hold = await holdRunningContainer(db, project.id, project.container_id);
+		if (!hold) continue;
 		try {
 			const result = await installLocalMcpById(
-				{ db, docker, containerId: project.container_id, teamId, projectId: project.id },
+				{ db, docker, containerId: hold.containerId, teamId, projectId: project.id },
 				rowId,
 			);
 			if (result) {
@@ -1222,6 +1227,8 @@ async function kickoffLocalInstall(
 				project: project.id,
 				error: (e as Error).message,
 			});
+		} finally {
+			hold.release();
 		}
 	}
 }

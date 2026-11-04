@@ -352,7 +352,7 @@ describe('050_container_memory_budget migration', () => {
 
 	it('drops the container idle timeout, which is now a constant', async () => {
 		// Nothing to carry it forward to, deliberately: the window is
-		// `CONTAINER_IDLE_TIMEOUT_MIN` now, and a stored number nothing reads is
+		// `CONTAINER_RELEASE_GRACE_SEC` now, and a stored number nothing reads is
 		// worse than no row - it sits in the settings table looking authoritative.
 		expect(await meta('container_idle_timeout_min')).toBeNull();
 	});

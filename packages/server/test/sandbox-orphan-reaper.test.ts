@@ -142,6 +142,19 @@ describe('reapOrphanedContainers', () => {
 		expect(result.destroyed).toEqual(['a', 'c']);
 	});
 
+	it('reports each removal once it has resolved, so its billing can be closed', async () => {
+		// A container that failed to go is still billed, so it is not reported.
+		const { engine } = engineWith(['gone', 'stuck'], { failDestroy: ['stuck'] });
+		const removed: Array<{ Id: string; Names: string[] }> = [];
+		await reapOrphanedContainers(engine, INSTANCE, new Set(), new Set(), {
+			requireSecondSighting: false,
+			onRemoved: async (container) => {
+				removed.push(container);
+			},
+		});
+		expect(removed).toEqual([{ Id: 'gone', Names: ['/hezo-gone'] }]);
+	});
+
 	it('returns no work rather than throwing when the engine is unreachable', async () => {
 		// A provider blip must not turn a background tick into a failure.
 		const { engine } = engineWith([], { listThrows: true });

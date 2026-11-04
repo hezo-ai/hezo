@@ -20,6 +20,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
 } from './helpers/app';
 
 // Archiving a project has to retire it, not merely hide it. It used to stop only
@@ -47,6 +48,7 @@ function containerDeps(): ContainerDeps {
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db: ctx.db,
 		docker,
 		masterKeyManager: ctx.masterKeyManager,

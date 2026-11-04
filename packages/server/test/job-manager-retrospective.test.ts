@@ -3,7 +3,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestProject,
+	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // The cadence half of the Coach's retrospective. The two properties that matter are
@@ -28,6 +34,7 @@ const internals = (m: JobManager) => m as unknown as JmInternals;
 
 function createJobManager(): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db: ctx.db,
 		docker: createStubDocker(),
 		masterKeyManager: ctx.masterKeyManager,

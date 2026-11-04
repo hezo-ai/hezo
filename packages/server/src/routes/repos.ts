@@ -12,7 +12,11 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import { resolveContainerRunUser } from '../services/container-user';
-import { type ContainerDeps, ensureProjectContainerRunning } from '../services/containers';
+import {
+	type ContainerDeps,
+	ensureProjectContainerRunning,
+	holdRunningContainer,
+} from '../services/containers';
 import type { EgressProxy } from '../services/egress';
 import {
 	getCloneState,
@@ -595,100 +599,110 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 		return ok(c, { reset: true, action });
 	}
 
-	// discard_local / prune_worktrees run git in the container → require it running.
-	if (!repo.containerId || !repo.containerRunning) {
+	// discard_local / prune_worktrees run git in the container → require it running,
+	// and hold it so a retirement cannot stop it while the reset is under way.
+	const hold =
+		repo.containerId && repo.containerRunning
+			? await holdRunningContainer(db, projectId, repo.containerId)
+			: null;
+	if (!hold) {
 		return err(c, 'CONTAINER_NOT_RUNNING', 'Start the project container before resetting', 409);
 	}
-	const containerId = repo.containerId;
-	const runUser = await resolveContainerRunUser(docker, containerId);
+	const containerId = hold.containerId;
+	let result: { success: boolean; error?: string; warning?: string; removed?: string[] };
+	try {
+		const runUser = await resolveContainerRunUser(docker, containerId);
 
-	const result = await withProjectGitLock(
-		projectId,
-		async (): Promise<{
-			success: boolean;
-			error?: string;
-			warning?: string;
-			removed?: string[];
-		}> => {
-			if (action === 'prune_worktrees') {
-				const executor = ContainerGitExecutor.forPrep(
-					docker,
-					containerId,
-					null,
-					runUser,
-					mintGitOpScopeId(),
-				);
-				// Remove worktrees whose task is closed (terminal) or no longer exists —
-				// finished tickets plus leftovers from crashed/interrupted runs. Open
-				// tasks' worktrees are left intact; reset is already 409-gated on active
-				// runs, so nothing live is touched. Committed work survives on the pushed
-				// `hezo/<identifier>` branch refs. The sweep also runs the plain
-				// `git worktree prune` afterward to clear any dangling metadata.
-				//
-				// Same policy as the automatic per-run sweep, and unbounded here: a human
-				// asked for this and is waiting on the result, so it clears everything
-				// rather than leaving a remainder for later.
-				const { removed } = await collectFinishedWorktrees(
-					db,
-					executor,
-					projectId,
-					[
-						{
-							containerPath: repo.repoContainerPath,
-							files: executor.files(repo.repoContainerPath),
-						},
-					],
-					undefined,
-				);
-				return { success: true, removed };
-			}
-			// discard_local: the best-effort fetch reaches the remote, so it needs the
-			// egress proxy to substitute the origin's credential placeholder as much
-			// as it needs the bridge.
-			const sshAgentServer = c.get('sshAgentServer');
-			const egressProxy = c.get('egressProxy');
-			const runReset = (
-				bridge: BridgeRunnerArgs | null,
-				scopeId: string,
-				proxyEnv: string[] = [],
-			) => {
-				// The loc's files come from this executor, not another: pairing a cwd
-				// with a seam rooted in a different container is the drift the shared
-				// `files()` accessor exists to prevent.
-				const resetExecutor = ContainerGitExecutor.forPrep(
-					docker,
-					containerId,
-					bridge,
-					runUser,
-					scopeId,
-					proxyEnv,
-				);
-				return resetCloneToOrigin(resetExecutor, {
-					containerPath: repo.repoContainerPath,
-					files: resetExecutor.files(repo.repoContainerPath),
-				});
-			};
-			// Ssh server only — the egress proxy is mandatory, and
-			// `withProvisionBridge` enforces that by throwing. See the note at the
-			// equivalent guard in `containers.ts`.
-			return sshAgentServer
-				? withProvisionBridge(
-						sshAgentServer,
-						{
-							engine: docker,
-							containerId,
-							teamId,
-							dataDir,
-							runUser,
-							db,
-							egressProxy: egressProxy as EgressProxy,
-							projectId,
-						},
-						({ bridge, scopeId, proxyEnv }) => runReset(bridge, scopeId, proxyEnv),
-					)
-				: runReset(null, mintGitOpScopeId());
-		},
-	);
+		result = await withProjectGitLock(
+			projectId,
+			async (): Promise<{
+				success: boolean;
+				error?: string;
+				warning?: string;
+				removed?: string[];
+			}> => {
+				if (action === 'prune_worktrees') {
+					const executor = ContainerGitExecutor.forPrep(
+						docker,
+						containerId,
+						null,
+						runUser,
+						mintGitOpScopeId(),
+					);
+					// Remove worktrees whose task is closed (terminal) or no longer exists —
+					// finished tickets plus leftovers from crashed/interrupted runs. Open
+					// tasks' worktrees are left intact; reset is already 409-gated on active
+					// runs, so nothing live is touched. Committed work survives on the pushed
+					// `hezo/<identifier>` branch refs. The sweep also runs the plain
+					// `git worktree prune` afterward to clear any dangling metadata.
+					//
+					// Same policy as the automatic per-run sweep, and unbounded here: a human
+					// asked for this and is waiting on the result, so it clears everything
+					// rather than leaving a remainder for later.
+					const { removed } = await collectFinishedWorktrees(
+						db,
+						executor,
+						projectId,
+						[
+							{
+								containerPath: repo.repoContainerPath,
+								files: executor.files(repo.repoContainerPath),
+							},
+						],
+						undefined,
+					);
+					return { success: true, removed };
+				}
+				// discard_local: the best-effort fetch reaches the remote, so it needs the
+				// egress proxy to substitute the origin's credential placeholder as much
+				// as it needs the bridge.
+				const sshAgentServer = c.get('sshAgentServer');
+				const egressProxy = c.get('egressProxy');
+				const runReset = (
+					bridge: BridgeRunnerArgs | null,
+					scopeId: string,
+					proxyEnv: string[] = [],
+				) => {
+					// The loc's files come from this executor, not another: pairing a cwd
+					// with a seam rooted in a different container is the drift the shared
+					// `files()` accessor exists to prevent.
+					const resetExecutor = ContainerGitExecutor.forPrep(
+						docker,
+						containerId,
+						bridge,
+						runUser,
+						scopeId,
+						proxyEnv,
+					);
+					return resetCloneToOrigin(resetExecutor, {
+						containerPath: repo.repoContainerPath,
+						files: resetExecutor.files(repo.repoContainerPath),
+					});
+				};
+				// Ssh server only — the egress proxy is mandatory, and
+				// `withProvisionBridge` enforces that by throwing. See the note at the
+				// equivalent guard in `containers.ts`.
+				return sshAgentServer
+					? withProvisionBridge(
+							sshAgentServer,
+							{
+								engine: docker,
+								containerId,
+								teamId,
+								dataDir,
+								runUser,
+								db,
+								egressProxy: egressProxy as EgressProxy,
+								projectId,
+							},
+							({ bridge, scopeId, proxyEnv }) => runReset(bridge, scopeId, proxyEnv),
+						)
+					: runReset(null, mintGitOpScopeId());
+			},
+		);
+	} finally {
+		hold.release();
+	}
 
 	if (!result.success) {
 		return err(c, 'RESET_FAILED', result.error ?? 'git reset failed', 500);

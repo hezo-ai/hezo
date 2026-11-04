@@ -3,7 +3,13 @@ import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestProject,
+	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 /**
@@ -30,6 +36,7 @@ let taskCounter = 0;
 
 function makeJobManager(): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db: ctx.db,
 		docker: createStubDocker(),
 		masterKeyManager: ctx.masterKeyManager,

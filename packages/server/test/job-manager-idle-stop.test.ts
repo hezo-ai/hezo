@@ -1,8 +1,9 @@
-import { CHAT_IDLE_TIMEOUT_MIN, CONTAINER_IDLE_TIMEOUT_MIN } from '@hezo/shared';
+import { CHAT_IDLE_TIMEOUT_MIN, CONTAINER_RELEASE_GRACE_SEC } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
@@ -30,15 +31,14 @@ let taskId: string;
 const CONTAINER_ID = 'idle-box';
 
 /**
- * A staleness comfortably *inside* the idle window, derived from the constant
- * rather than written as a number.
- *
- * These fixtures used to say "5 minutes", which was inside the old configurable
- * 15-minute default and is outside the fixed 2-minute one - so a hardcoded
- * figure would have silently inverted what each test asserts the moment the
- * window changed, rather than failing.
+ * A staleness comfortably *inside* the release grace, derived from the constant
+ * rather than written as a number, so a change to the grace cannot silently
+ * invert what each test asserts.
  */
-const INSIDE_WINDOW_MIN = Math.max(1, CONTAINER_IDLE_TIMEOUT_MIN - 1);
+const INSIDE_GRACE_SEC = Math.max(1, Math.floor(CONTAINER_RELEASE_GRACE_SEC / 2));
+
+/** A chat release comfortably inside the chat pause and well past the release grace. */
+const INSIDE_CHAT_PAUSE_SEC = Math.floor((CHAT_IDLE_TIMEOUT_MIN * 60) / 2);
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -104,12 +104,33 @@ function createManager(stops: string[], removes: string[] = []): JobManager {
 	});
 }
 
+/**
+ * One sweep, then the engine calls it started: a retirement takes the member out
+ * of the pool under the lock and finishes the stop or removal after it.
+ */
+async function sweepWith(manager: JobManager): Promise<void> {
+	await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+	await waitForBackground();
+}
+
 async function runIdlePass(): Promise<{ stops: string[]; manager: JobManager }> {
 	const stops: string[] = [];
 	const manager = createManager(stops);
-	await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+	await sweepWith(manager);
 	manager.shutdown();
 	return { stops, manager };
+}
+
+/** A pool member for the project's own container, released by a chat `secondsAgo`. */
+async function chatReleasedMember(containerId: string, secondsAgo: number): Promise<void> {
+	await db.query(
+		`INSERT INTO container_pool_members (project_id, container_id, state, last_released_at, chat_released_at)
+		 VALUES ($1, $2, 'idle', now() - ($3 * interval '1 second'), now() - ($3 * interval '1 second'))
+		 ON CONFLICT (container_id) DO UPDATE
+		    SET state = 'idle', last_released_at = EXCLUDED.last_released_at,
+		        chat_released_at = EXCLUDED.chat_released_at`,
+		[projectId, containerId, secondsAgo],
+	);
 }
 
 async function containerStatus(): Promise<string | null> {
@@ -122,10 +143,9 @@ async function containerStatus(): Promise<string | null> {
 
 beforeEach(async () => {
 	// Reset to "running and idle for an hour"; each test then adds exactly one
-	// busy signal. The window itself is the CONTAINER_IDLE_TIMEOUT_MIN constant,
-	// so "inside the window" below is expressed relative to it rather than to a
-	// number a test could set - which is the point of it no longer being a
-	// setting.
+	// busy signal. The grace itself is the CONTAINER_RELEASE_GRACE_SEC constant,
+	// so "inside the grace" below is expressed relative to it rather than to a
+	// number a test could set - which is the point of it not being a setting.
 	await db.query(
 		`UPDATE projects
 		 SET container_id = $2, container_status = 'running', container_error = NULL,
@@ -141,6 +161,7 @@ beforeEach(async () => {
 	);
 	await db.query('DELETE FROM chat_sessions WHERE team_id = $1', [teamId]);
 	await db.query('DELETE FROM chat_conversations WHERE team_id = $1', [teamId]);
+	await db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
 });
 
 describe('container-idle-stop', () => {
@@ -150,10 +171,10 @@ describe('container-idle-stop', () => {
 		expect(await containerStatus()).toBe('stopped');
 	});
 
-	it('never stops a container inside its first idle window (start-time floor)', async () => {
+	it('never stops a container inside its first release grace (start-time floor)', async () => {
 		await db.query(
-			`UPDATE projects SET container_last_started_at = now() - ($2 || ' minutes')::interval WHERE id = $1`,
-			[projectId, INSIDE_WINDOW_MIN],
+			`UPDATE projects SET container_last_started_at = now() - ($2 * interval '1 second') WHERE id = $1`,
+			[projectId, INSIDE_GRACE_SEC],
 		);
 		const { stops } = await runIdlePass();
 		expect(stops).toEqual([]);
@@ -196,15 +217,19 @@ describe('container-idle-stop', () => {
 		expect(stops).toEqual([]);
 	});
 
-	it('a run finished inside the idle window holds the container up; an old one does not', async () => {
+	it('a run that just finished does not hold the container up; the work it caused does', async () => {
+		// A finished run used to keep its project warm for a whole window in case
+		// something followed it. What follows it is a queued wakeup or a queued run,
+		// which holds the container on its own; the finish itself is no signal.
 		await db.query(
 			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
 			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(),
-			         now() - ($4 || ' minutes')::interval)`,
-			[agentId, teamId, taskId, INSIDE_WINDOW_MIN],
+			         now() - ($4 * interval '1 second'))`,
+			[agentId, teamId, taskId, INSIDE_GRACE_SEC],
 		);
-		expect((await runIdlePass()).stops).toEqual([]);
+		expect((await runIdlePass()).stops).toContain(CONTAINER_ID);
 
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 		await db.query(
 			`UPDATE heartbeat_runs SET finished_at = now() - interval '60 minutes' WHERE team_id = $1`,
 			[teamId],
@@ -221,6 +246,19 @@ describe('container-idle-stop', () => {
 		);
 		const { stops } = await runIdlePass();
 		expect(stops).toEqual([]);
+	});
+
+	it('a wakeup the dispatcher refused does NOT hold the container (it is not ready right now)', async () => {
+		// Refused for a reason that lifts only when a person replies, so holding a
+		// container warm for it would bill for as long as nobody answers.
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, last_skipped_at, last_skipped_reason)
+			 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status,
+			         jsonb_build_object('task_id', $3::text), now(), 'parked_on_admin')`,
+			[agentId, teamId, taskId],
+		);
+		const { stops } = await runIdlePass();
+		expect(stops).toContain(CONTAINER_ID);
 	});
 
 	it('a capacity-skipped wakeup does NOT hold the container (its backlog is what the cap waits on)', async () => {
@@ -252,57 +290,22 @@ describe('container-idle-stop', () => {
 		expect(stops).toEqual([]);
 	});
 
-	it('a chat session with recent activity holds the container; a stale one does not', async () => {
-		const conversation = await db.query<{ id: string }>(
-			`INSERT INTO chat_conversations (member_id, team_id, project_id, title)
-			 VALUES ($1, $2, $3, 'Idle chat') RETURNING id`,
-			[agentId, teamId, projectId],
-		);
-		await db.query(
-			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
-			 VALUES ($1, $2, $3, 'claude_code', 'running', now())`,
-			[agentId, teamId, projectId],
-		);
+	it('a chat holds the container it last released, until the chat pause lapses', async () => {
+		await chatReleasedMember(CONTAINER_ID, INSIDE_GRACE_SEC);
 		expect((await runIdlePass()).stops).toEqual([]);
 
-		// The session alone doesn't pin the container once its activity is stale.
-		await db.query(
-			`UPDATE chat_sessions SET last_activity_at = now() - interval '60 minutes' WHERE team_id = $1`,
-			[teamId],
-		);
+		// The person has gone: past the pause the container retires like any other.
+		await chatReleasedMember(CONTAINER_ID, CHAT_IDLE_TIMEOUT_MIN * 60 + 60);
 		expect((await runIdlePass()).stops).toContain(CONTAINER_ID);
-
-		// …unless a turn is still in flight (pending/streaming message).
-		await db.query(
-			`UPDATE projects SET container_status = 'running', container_last_started_at = now() - interval '60 minutes' WHERE id = $1`,
-			[projectId],
-		);
-		const session = await db.query<{ id: string }>(
-			`SELECT id FROM chat_sessions WHERE team_id = $1 LIMIT 1`,
-			[teamId],
-		);
-		await db.query(
-			`INSERT INTO chat_messages (conversation_id, role, status, content, session_id)
-			 VALUES ($1, 'assistant', 'streaming', '', $2)`,
-			[conversation.rows[0].id, session.rows[0].id],
-		);
-		expect((await runIdlePass()).stops).toEqual([]);
 	});
 
-	it('a chat pause holds the container well past the run window', async () => {
+	it('a chat pause holds the container well past the release grace', async () => {
 		// The two windows measure different things. Between runs the gap is
-		// mechanical and two minutes covers it; between chat messages it is a person
-		// reading a reply, and reclaiming there suspended the container out from
-		// under an open chatbox so the next message paid a cold start.
-		await db.query(
-			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
-			 VALUES ($1, $2, $3, 'claude_code', 'running', now() - interval '5 minutes')`,
-			[agentId, teamId, projectId],
-		);
-		// Comfortably past CONTAINER_IDLE_TIMEOUT_MIN, comfortably inside
-		// CHAT_IDLE_TIMEOUT_MIN.
-		expect(CONTAINER_IDLE_TIMEOUT_MIN).toBeLessThan(5);
-		expect(CHAT_IDLE_TIMEOUT_MIN).toBeGreaterThan(5);
+		// mechanical and seconds cover it; between chat messages it is a person
+		// reading a reply, and retiring there makes the next message pay a resume.
+		expect(INSIDE_CHAT_PAUSE_SEC).toBeGreaterThan(CONTAINER_RELEASE_GRACE_SEC);
+		expect(INSIDE_CHAT_PAUSE_SEC).toBeLessThan(CHAT_IDLE_TIMEOUT_MIN * 60);
+		await chatReleasedMember(CONTAINER_ID, INSIDE_CHAT_PAUSE_SEC);
 		expect((await runIdlePass()).stops).toEqual([]);
 	});
 
@@ -312,7 +315,7 @@ describe('container-idle-stop', () => {
 		// Simulate a dispatch that has acquired its slot but not yet created the
 		// heartbeat_runs row — the exact window the under-lock recheck closes.
 		(manager as unknown as { acquireProjectRun(id: string): void }).acquireProjectRun(projectId);
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		await sweepWith(manager);
 		expect(stops).toEqual([]);
 		expect(await containerStatus()).toBe('running');
 		manager.shutdown();
@@ -336,7 +339,7 @@ describe('container-idle-stop', () => {
 		const stops: string[] = [];
 		const removes: string[] = [];
 		const manager = createManager(stops, removes);
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		await sweepWith(manager);
 		manager.shutdown();
 
 		expect(stops).toHaveLength(1);
@@ -375,7 +378,7 @@ describe('container-idle-stop', () => {
 		const stops: string[] = [];
 		const removes: string[] = [];
 		const manager = createManager(stops, removes);
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		await sweepWith(manager);
 		manager.shutdown();
 
 		// Never destroyed - that is the half that would lose the work.
@@ -402,15 +405,24 @@ describe('surplus idle containers in a working project', () => {
 	const seedMember = async (
 		containerId: string,
 		state: 'idle' | 'busy' | 'suspended',
-		over: { unpushed?: boolean; idleMin?: number } = {},
+		over: { unpushed?: boolean; idleMin?: number; chat?: boolean } = {},
 	): Promise<void> => {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, memory_bytes, has_unpushed_commits,
-			    last_released_at)
+			    last_released_at, chat_released_at)
 			 VALUES ($1, $2, $3::container_pool_state, $4, $5,
-			         now() - ($6 || ' minutes')::interval)`,
-			[projectId, containerId, state, CAP_BYTES, over.unpushed ?? false, over.idleMin ?? 60],
+			         now() - ($6 || ' minutes')::interval,
+			         CASE WHEN $7::boolean THEN now() - ($6 || ' minutes')::interval END)`,
+			[
+				projectId,
+				containerId,
+				state,
+				CAP_BYTES,
+				over.unpushed ?? false,
+				over.idleMin ?? 60,
+				over.chat ?? false,
+			],
 		);
 	};
 
@@ -426,7 +438,7 @@ describe('surplus idle containers in a working project', () => {
 		const stops: string[] = [];
 		const removes: string[] = [];
 		const manager = createManager(stops, removes);
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		await sweepWith(manager);
 		manager.shutdown();
 		return { stops, removes };
 	};
@@ -482,32 +494,34 @@ describe('surplus idle containers in a working project', () => {
 		expect(removes).toEqual([]);
 	});
 
-	it('leaves a chatting project\u2019s idle members alone until the chat window lapses', async () => {
+	it('a chat keeps one idle member warm, not every idle member of its project', async () => {
 		// Chat turns release their member between replies, so to the member-shaped
 		// scan a mid-conversation project reads idle while a person is mid-thought.
-		// The live-chat window (the same one BUSY_PROJECTS_SQL carries) has to bind
-		// this pass too, or the next message pays a cold start two minutes after
-		// the last reply. The pinned-member flag that used to carve this out is
-		// gone; the session row is the structural signal that replaced it.
-		await seedMember('warm', 'idle');
-		await db.query(
-			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
-			 VALUES ($1, $2, $3, 'claude_code', 'running', now() - interval '5 minutes')`,
-			[agentId, teamId, projectId],
-		);
+		// The member the chat released last is the one its next message lands on,
+		// and only that one is held; the rest are task containers like any other.
+		await seedMember('chat-warm', 'idle', { idleMin: 1, chat: true });
+		await seedMember('task-left', 'idle');
+		await seedMember('task-left-2', 'idle');
 
 		const held = await sweep();
+		// Destroyed rather than suspended: the member the chat holds is already
+		// the project's warm start, so none of these is needed for one.
 		expect(held.stops).toEqual([]);
-		expect(held.removes).toEqual([]);
+		expect(held.removes.sort()).toEqual(['task-left', 'task-left-2']);
+		expect(await remaining()).toEqual(['chat-warm']);
 
-		// The person has genuinely gone: past the chat window the member retires
-		// like any other (the warm-start floor keeps it as the one suspended).
+		// The person has genuinely gone: past the chat pause the member retires
+		// like any other.
 		await db.query(
-			`UPDATE chat_sessions SET last_activity_at = now() - interval '60 minutes' WHERE team_id = $1`,
-			[teamId],
+			`UPDATE container_pool_members
+			    SET chat_released_at = now() - ($2 * interval '1 minute'),
+			        last_released_at = now() - ($2 * interval '1 minute')
+			  WHERE project_id = $1 AND container_id = 'chat-warm'`,
+			[projectId, CHAT_IDLE_TIMEOUT_MIN + 1],
 		);
 		const lapsed = await sweep();
-		expect(lapsed.stops).toEqual(['warm']);
+		// The last member, so the warm-start floor keeps it as the one suspended.
+		expect(lapsed.stops).toEqual(['chat-warm']);
 		expect(lapsed.removes).toEqual([]);
 	});
 
@@ -523,11 +537,10 @@ describe('surplus idle containers in a working project', () => {
 	});
 
 	it('frees the surplus of a project that is working but holds no busy member', async () => {
-		// The production dead zone, end to end. A run that finished seconds ago
-		// keeps the project inside BUSY_PROJECTS_SQL, so the whole-project pass
-		// declines; no member is `busy` at this instant, so the surplus pass used to
-		// decline as well. Three idle members then pinned 12 of a 16 GB budget
-		// indefinitely and every acquire in another project reclaimed instead.
+		// The production dead zone, end to end. A project between runs holds no
+		// `busy` member at the instant the sweep samples it; the surplus pass used
+		// to decline then, and three idle members pinned 12 of a 16 GB budget
+		// indefinitely while every acquire in another project reclaimed instead.
 		await db.query(
 			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
 			 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status, now() - interval '1 minute', now())`,
@@ -543,8 +556,27 @@ describe('surplus idle containers in a working project', () => {
 		expect(await remaining()).toEqual(['a']);
 	});
 
-	it('frees the surplus when a queued wakeup is what keeps the project busy', async () => {
-		// The other arm of BUSY_PROJECTS_SQL, and the one a retry storm produces.
+	it('frees the surplus when the only queued wakeup is one the dispatcher refused', async () => {
+		// What a retry storm produces: a wakeup that stays queued because the
+		// dispatcher keeps skipping it. It is not about to use a container, so it
+		// holds none warm.
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status,
+			                                    last_skipped_at, last_skipped_reason)
+			 VALUES ($1, $2, 'timer'::wakeup_source, $3::jsonb, 'queued'::wakeup_status, now(), 'task_busy')`,
+			[agentId, teamId, JSON.stringify({ task_id: taskId })],
+		);
+		await seedMember('a', 'idle');
+		await seedMember('b', 'idle');
+
+		const { stops, removes } = await sweep();
+		expect(stops).toEqual(['a']);
+		expect(removes).toEqual(['b']);
+	});
+
+	it('keeps the idle members of a project with a wakeup ready to dispatch', async () => {
+		// The job is about to claim one of them; stopping it first would make the
+		// job pay a stop and a start instead of a wait of a few seconds.
 		await db.query(
 			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status)
 			 VALUES ($1, $2, 'timer'::wakeup_source, $3::jsonb, 'queued'::wakeup_status)`,
@@ -554,8 +586,8 @@ describe('surplus idle containers in a working project', () => {
 		await seedMember('b', 'idle');
 
 		const { stops, removes } = await sweep();
-		expect(stops).toEqual(['a']);
-		expect(removes).toEqual(['b']);
+		expect(stops).toEqual([]);
+		expect(removes).toEqual([]);
 	});
 });
 
@@ -594,7 +626,7 @@ describe('dormant suspended containers', () => {
 		const stops: string[] = [];
 		const removes: string[] = [];
 		const manager = createManager(stops, removes);
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		await sweepWith(manager);
 		manager.shutdown();
 		return { stops, removes };
 	};
@@ -644,13 +676,11 @@ describe('dormant suspended containers', () => {
 		expect(await remaining()).toEqual(['has-work']);
 	});
 
-	it('never retires a dormant member of a project that is mid-conversation', async () => {
-		// Nothing is pinned for chat any more - a chat turn borrows a pool member
-		// like a task run does - so the thing worth protecting is the conversation,
-		// not a flag. A live session inside the chat idle window means somebody is
-		// mid-thought, and retiring the member they are about to land on makes
-		// their next message pay a cold start.
-		await seedMember('warm-for-chat', 'suspended', { idleMin: DORMANT_MIN });
+	it('retires a dormant member even while a chat is live in its project', async () => {
+		// A chat holds warm the one idle member it last released, which is where its
+		// next message lands. A member suspended for weeks is not that member - a
+		// chat that had used it would have resumed it - so the chat does not hold it.
+		await seedMember('dormant-beside-chat', 'suspended', { idleMin: DORMANT_MIN });
 		await db.query(
 			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
 			 VALUES ($1, $2, $3, 'claude_code', 'running', now())`,
@@ -659,8 +689,8 @@ describe('dormant suspended containers', () => {
 
 		const { removes } = await sweep();
 
-		expect(removes).toEqual([]);
-		expect(await remaining()).toEqual(['warm-for-chat']);
+		expect(removes).toEqual(['dormant-beside-chat']);
+		expect(await remaining()).toEqual([]);
 	});
 
 	it('leaves a dormant container that is busy or idle to the passes that own it', async () => {

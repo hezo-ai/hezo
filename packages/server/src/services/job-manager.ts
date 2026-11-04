@@ -8,7 +8,7 @@ import {
 	COACH_AGENT_SLUG,
 	COACH_REVIEW_TRIGGER,
 	CONTAINER_DORMANT_RETIRE_MIN,
-	CONTAINER_IDLE_TIMEOUT_MIN,
+	CONTAINER_RELEASE_GRACE_SEC,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
 	HeartbeatRunKind,
@@ -71,7 +71,6 @@ import {
 	PoolCapacityError,
 	provisionContainer,
 	reconcilePoolMembers,
-	type StaleIdleMember,
 	syncAllContainerStatuses,
 	teardownContainer,
 	verifyContainerWorkspace,
@@ -398,6 +397,12 @@ export interface JobManagerDeps {
 	 */
 	isSupervisedWorker?: () => boolean;
 	requestUpdateRestart?: () => Promise<void>;
+	/**
+	 * Test seam: how long a released container waits for its project's next job
+	 * before the release-time retirement runs. Defaults to
+	 * {@link CONTAINER_RELEASE_GRACE_SEC}.
+	 */
+	releaseGraceMs?: number;
 }
 
 /**
@@ -456,9 +461,11 @@ const CONNECTOR_PROBE_INTERVAL_MS = 6 * 60 * 60_000;
 
 /**
  * Idle-container reaper cadence: once a minute (offset to :15 to avoid the
- * top-of-minute pile-up with other jobs). The state it watches — "did the idle
- * window elapse" — changes on minute granularity, so a faster tick would only
- * burn queries. Env-overridable so E2E can dial it down.
+ * top-of-minute pile-up with other jobs). A released container is normally
+ * retired by its own release-time pass a few seconds after its run ends; this
+ * sweep is the backstop for a release whose pass never ran (a restart, a run
+ * whose completion path never got that far) and for the chat pause, which is
+ * measured in minutes. Env-overridable so E2E can dial it down.
  */
 
 /** Containers stopped per idle-stop tick — a bound, not a target; the next
@@ -534,6 +541,15 @@ export class JobManager {
 	/** Projects whose container is being lazy-started by an in-flight dispatch —
 	 * counted against the active-container cap before the DB row reads Running. */
 	private pendingContainerStarts = new Map<string, number>();
+	/**
+	 * Release-time retirement waiting out its grace, one per project. A later
+	 * release in the same project replaces the pending one, so this is bounded by
+	 * the number of projects and every entry leaves when it fires or at shutdown.
+	 */
+	private releaseRetirements = new Map<
+		string,
+		{ timer: ReturnType<typeof setTimeout>; done: () => void }
+	>();
 	private deps: JobManagerDeps;
 	private started = false;
 
@@ -990,6 +1006,11 @@ export class JobManager {
 	}
 
 	shutdown(): void {
+		for (const pending of this.releaseRetirements.values()) {
+			clearTimeout(pending.timer);
+			pending.done();
+		}
+		this.releaseRetirements.clear();
 		for (const task of this.runningTasks.values()) {
 			clearTimeout(task.timeoutId);
 			task.abortController.abort();
@@ -1359,7 +1380,7 @@ export class JobManager {
 		// CEO chat / onboarding message isn't stuck behind a minutes-long image
 		// pull. Once a container exists (running or idle-stopped), lazy start covers
 		// every later use in under a second — eagerly starting it here would just
-		// wake a container the idle-stop cron reclaims minutes later.
+		// wake a container the idle retirement stops again seconds later.
 		const hq = await this.deps.db.query<{ id: string }>(
 			`SELECT id FROM projects
 			 WHERE team_id = $1 AND is_internal = true AND container_id IS NULL`,
@@ -1516,11 +1537,12 @@ export class JobManager {
 
 				if (info.State.Running) continue;
 
+				const startRequestedAt = new Date();
 				await docker.startContainer(row.container_id);
 				// The pool hears about it too. Its member still reads `suspended` after a
 				// restart-time start, and a container the pool believes is down bills
-				// nothing while it is up.
-				await markPoolMemberRunning(db, row.container_id);
+				// nothing while it is up - from the start request, which the backend bills.
+				await markPoolMemberRunning(db, row.container_id, startRequestedAt);
 				await db.query(
 					'UPDATE projects SET container_error = NULL, container_last_started_at = now() WHERE id = $1',
 					[row.id],
@@ -3059,6 +3081,7 @@ export class JobManager {
 					// Dispatch guards (activeTaskRuns / activeProjectRuns) are
 					// released by launchTask's settle handler via runContext.
 					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
+					this.scheduleReleaseRetirement(projectId);
 				}
 			},
 			timeoutMs,
@@ -3671,6 +3694,7 @@ export class JobManager {
 					this.releaseProjectRun(projectRow.id);
 					if (pendingContainerStart) this.releasePendingContainerStart(projectRow.id);
 					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
+					this.scheduleReleaseRetirement(projectRow.id);
 				}
 			},
 			timeoutMs,
@@ -4220,27 +4244,67 @@ export class JobManager {
 	}
 
 	/**
-	 * Retire pools idle past {@link CONTAINER_IDLE_TIMEOUT_MIN}, so an instance
-	 * with no work runs zero containers. Bounded per tick; each stop re-verifies
-	 * the busy predicate under the project's lifecycle lock, so a concurrent
-	 * dispatch's lazy start and this stop can never interleave — the in-memory
-	 * checks close the window before a dispatched run has any DB row, and
-	 * `isProjectIdleForContainerStop` re-runs the DB predicate last.
+	 * Arm the release-time retirement for a project whose run just ended.
 	 *
-	 * The window is a constant rather than a setting, and there is no longer an
-	 * always-on escape hatch: a container that never stops is a container that
-	 * bills forever on a managed backend, and the dev server it used to keep
-	 * alive belongs in something with its own lifecycle.
+	 * Called once the run's completion bookkeeping is done and the dispatcher has
+	 * been kicked, so whatever follow-up the run caused - a comment, a handoff, a
+	 * chained task - is already a queued wakeup or a queued run, and a queued job
+	 * keeps the project's containers warm structurally. The grace covers only what
+	 * a structural signal cannot see: a kick coalesced into the next dispatch
+	 * tick. When it runs out the project's idle members are re-checked under its
+	 * lifecycle lock and retired only if still idle with nothing ready to use
+	 * them; a claim in the meantime moved the member out of `idle`, and a claim
+	 * and release restarted its clock, so either cancels its retirement.
+	 *
+	 * Tracked as background work so shutdown and test teardown can drain it; a
+	 * later release in the same project replaces the pending pass.
+	 */
+	private scheduleReleaseRetirement(projectId: string): void {
+		if (this.draining) return;
+		const graceMs = this.deps.releaseGraceMs ?? CONTAINER_RELEASE_GRACE_SEC * 1000;
+		const pending = this.releaseRetirements.get(projectId);
+		if (pending) {
+			clearTimeout(pending.timer);
+			pending.done();
+		}
+		void trackBackground(
+			new Promise<void>((resolve) => {
+				const timer = setTimeout(() => {
+					if (this.releaseRetirements.get(projectId)?.timer === timer) {
+						this.releaseRetirements.delete(projectId);
+					}
+					this.retireIdleMembersOfProject(projectId, graceMs / 1000)
+						.catch((err) =>
+							log.error(`Release-time retirement failed for project ${ref('', projectId)}:`, err),
+						)
+						.finally(resolve);
+				}, graceMs);
+				this.releaseRetirements.set(projectId, { timer, done: resolve });
+			}),
+		);
+	}
+
+	/**
+	 * Retire pools that have gone quiet, so an instance with no work runs zero
+	 * containers. The backstop for release-time retirement: bounded per tick, and
+	 * each stop re-verifies the busy predicate under the project's lifecycle lock,
+	 * so a concurrent dispatch's lazy start and this stop can never interleave -
+	 * the in-memory checks close the window before a dispatched run has any DB
+	 * row, and `isProjectIdleForContainerStop` re-runs the DB predicate last.
+	 *
+	 * The window is the release grace, a constant rather than a setting, and there
+	 * is no always-on escape hatch: a container that never stops is a container
+	 * that bills forever on a managed backend.
 	 */
 	private async stopIdleContainers(): Promise<void> {
 		const { db, docker } = this.deps;
-		const timeoutMin = CONTAINER_IDLE_TIMEOUT_MIN;
+		const graceSec = CONTAINER_RELEASE_GRACE_SEC;
 		if (!(await docker.ping())) {
 			log.debug('Docker not reachable; skipping idle-container pass');
 			return;
 		}
 
-		const candidates = await findIdleContainerCandidates(db, timeoutMin, IDLE_STOP_BATCH_LIMIT);
+		const candidates = await findIdleContainerCandidates(db, graceSec, IDLE_STOP_BATCH_LIMIT);
 		let stopped = 0;
 		for (const candidate of candidates) {
 			try {
@@ -4248,9 +4312,9 @@ export class JobManager {
 					if ((this.activeProjectRuns.get(candidate.id) ?? 0) > 0) return;
 					if (this.pendingContainerStarts.has(candidate.id)) return;
 					if (this.getLiveRunsForProject(candidate.id).length > 0) return;
-					if (!(await isProjectIdleForContainerStop(db, candidate.id, timeoutMin))) return;
+					if (!(await isProjectIdleForContainerStop(db, candidate.id, graceSec))) return;
 					log.info(
-						`project ${ref(candidate.slug, candidate.id)} idle for ${timeoutMin}min — retiring its pool`,
+						`project ${ref(candidate.slug, candidate.id)} has gone quiet — retiring its pool`,
 					);
 					stopped += await this.shutDownIdlePool(candidate);
 				});
@@ -4316,72 +4380,87 @@ export class JobManager {
 	}
 
 	/**
-	 * Retire idle containers held by projects that are still working.
+	 * Retire idle containers nothing is about to use, project by project.
 	 *
 	 * {@link stopIdleContainers} only ever looks at projects that have gone
-	 * *entirely* quiet, which left the instance's worst capacity failure
-	 * unaddressed: a project running two tasks alongside two idle containers is
-	 * never quiet, so those two were charged to the memory budget in full and no
-	 * other project could reach them. An operator saw four containers, two of them
-	 * doing nothing, and every other project stuck at "at its active-container
-	 * limit" - not for the idle window, but until that project finished
-	 * everything it had.
-	 *
-	 * Deliberately no keep-one-warm rule, unlike the whole-project pass: this
-	 * project's busy containers are about to become idle themselves, so the next
-	 * run's warm start is already covered.
+	 * *entirely* quiet, and a project running two tasks beside two idle
+	 * containers never is - so those two were charged to the memory budget in
+	 * full, billed by the backend, and out of every other project's reach.
+	 * This is the sweep's half of release-time retirement: the same per-project
+	 * pass, run for every project holding a member past its grace.
 	 */
 	private async retireSurplusIdleContainers(): Promise<void> {
 		const { db, docker } = this.deps;
-		const timeoutMin = CONTAINER_IDLE_TIMEOUT_MIN;
 		if (!(await docker.ping())) return;
 
-		const { planSurplusIdleRetirement } = await import('./sandbox/pool');
-		const { loadPoolMembers } = await import('./sandbox/pool-db');
-
-		const stale = await findStaleIdleMembers(db, timeoutMin, IDLE_STOP_BATCH_LIMIT);
-		const byProject = new Map<string, StaleIdleMember[]>();
-		for (const row of stale) {
-			const group = byProject.get(row.project_id);
-			if (group) group.push(row);
-			else byProject.set(row.project_id, [row]);
-		}
-
+		const stale = await findStaleIdleMembers(
+			db,
+			CONTAINER_RELEASE_GRACE_SEC,
+			IDLE_STOP_BATCH_LIMIT,
+		);
 		let retired = 0;
-		for (const [projectId, group] of byProject) {
-			try {
-				await withContainerLifecycleLock(projectId, async () => {
-					// A lazy start in flight has no DB row yet, so the members below could
-					// be claimed the moment this lock is released. Same guard the
-					// whole-project pass uses, and for the same reason.
-					if (this.pendingContainerStarts.has(projectId)) return;
-					// Re-run the scan under the lock: a member claimed and released again
-					// since the batch scan is idle but no longer stale.
-					const fresh = await findStaleIdleMembersInProject(db, projectId, timeoutMin);
-					const staleIds = new Set(fresh.map((r) => r.container_id));
-					if (staleIds.size === 0) return;
-
-					const plan = planSurplusIdleRetirement(await loadPoolMembers(db, projectId), staleIds);
-					if (plan.suspend.length === 0 && plan.destroy.length === 0) return;
-
-					retired += await executeRetirementPlan(
-						this.buildContainerDeps(),
-						{ id: projectId, slug: group[0].slug, team_id: group[0].team_id },
-						{
-							suspend: plan.suspend.map((m) => m.id),
-							destroy: plan.destroy.map((m) => m.id),
-						},
-						{ reason: 'surplus idle' },
-					);
-				});
-			} catch (err) {
+		for (const projectId of new Set(stale.map((row) => row.project_id))) {
+			retired += await this.retireIdleMembersOfProject(
+				projectId,
+				CONTAINER_RELEASE_GRACE_SEC,
+			).catch((err) => {
 				log.error(`Surplus idle retirement failed for project ${ref('', projectId)}:`, err);
-			}
+				return 0;
+			});
 		}
 		if (retired > 0) {
-			log.debug(`Surplus idle pass: retired ${retired} container(s) held by working projects`);
+			log.debug(`Surplus idle pass: retired ${retired} container(s) nothing was about to use`);
 		}
 		await this.retireDormantContainers();
+	}
+
+	/**
+	 * Retire one project's idle members that have sat past `graceSec` with
+	 * nothing about to use them, keeping its warm-start floor.
+	 *
+	 * The one body behind both release-time retirement and the sweep. Runs under
+	 * the project's lifecycle lock and re-reads everything there: a member claimed
+	 * since the caller decided to look is no longer idle, one claimed and released
+	 * again is inside its grace again, and a job that became ready in the meantime
+	 * keeps them all. The engine calls the plan makes finish after the lock is
+	 * released (see `executeRetirementPlan`).
+	 *
+	 * Returns how many containers it retired.
+	 */
+	private async retireIdleMembersOfProject(projectId: string, graceSec: number): Promise<number> {
+		const { db } = this.deps;
+		const { planSurplusIdleRetirement } = await import('./sandbox/pool');
+		const { loadPoolMembers } = await import('./sandbox/pool-db');
+		return withContainerLifecycleLock(projectId, async () => {
+			// A lazy start in flight has no DB row yet, so the members below could be
+			// claimed the moment this lock is released.
+			if (this.pendingContainerStarts.has(projectId)) return 0;
+			// A run dispatched here that has not claimed a container yet - between
+			// its dispatch and its row, or parked waiting for capacity - is about to
+			// take one of these. Retiring it first makes that run pay a stop and a
+			// start. Counted against the runs already holding a container, since a
+			// running sibling in its own container is no reason to keep these.
+			const holding = this.getLiveRunsForProject(projectId).filter(
+				(r) => r.containerId !== null,
+			).length;
+			if ((this.activeProjectRuns.get(projectId) ?? 0) > holding) return 0;
+			const fresh = await findStaleIdleMembersInProject(db, projectId, graceSec);
+			if (fresh.length === 0) return 0;
+			const staleIds = new Set(fresh.map((r) => r.container_id));
+
+			const plan = planSurplusIdleRetirement(await loadPoolMembers(db, projectId), staleIds);
+			if (plan.suspend.length === 0 && plan.destroy.length === 0) return 0;
+
+			return executeRetirementPlan(
+				this.buildContainerDeps(),
+				{ id: projectId, slug: fresh[0].slug, team_id: fresh[0].team_id },
+				{
+					suspend: plan.suspend.map((m) => m.id),
+					destroy: plan.destroy.map((m) => m.id),
+				},
+				{ reason: 'idle' },
+			);
+		});
 	}
 
 	/**
@@ -4429,14 +4508,14 @@ export class JobManager {
 					const still = fresh.find((m) => m.id === member.container_id);
 					if (!still || still.state !== 'suspended' || still.hasUnpushedCommits) return;
 
-					await destroyContainer(
+					// Through the shared executor, so the removal's wait for the backend
+					// happens after this lock is released.
+					retired += await executeRetirementPlan(
 						this.buildContainerDeps(),
-						member.project_id,
-						member.slug,
-						member.team_id,
-						member.container_id,
+						{ id: member.project_id, slug: member.slug, team_id: member.team_id },
+						{ suspend: [], destroy: [member.container_id] },
+						{ reason: 'dormant' },
 					);
-					retired++;
 				});
 			} catch (err) {
 				log.error(
@@ -4473,14 +4552,21 @@ export class JobManager {
 			return;
 		}
 		const { reapOrphanedContainers } = await import('./sandbox/orphan-reaper');
-		const { listReferencedContainerIds } = await import('./sandbox/pool-db');
+		const { listReferencedContainerIds, settleReapedContainerUptime } = await import(
+			'./sandbox/pool-db'
+		);
 		const { getOrCreateInstanceId } = await import('./telemetry');
 		const result = await reapOrphanedContainers(
 			docker,
 			await getOrCreateInstanceId(db, this.deps.dataDir),
 			await listReferencedContainerIds(db),
 			this.suspectedOrphanContainers,
-			{ requireSecondSighting: !opts.atStartup },
+			{
+				requireSecondSighting: !opts.atStartup,
+				// A removed orphan stops billing now, and a create that never answered
+				// was billed from its request until this removal.
+				onRemoved: (container) => settleReapedContainerUptime(db, container.Id, container.Names),
+			},
 		);
 		// Carried to the next tick: a container is only destroyed once it has looked
 		// orphaned twice running, which is what keeps a mid-provision container -

@@ -378,8 +378,9 @@ export async function getProjectContainerDiskGb(db: Db, projectId: string): Prom
 	);
 }
 
-// The container idle window is no longer an operator setting - it is the
-// `CONTAINER_IDLE_TIMEOUT_MIN` constant in `@hezo/shared`, which explains why.
+// How long a released container waits for its project's next job is no longer
+// an operator setting - it is the `CONTAINER_RELEASE_GRACE_SEC` constant in
+// `@hezo/shared`, which explains why.
 
 /**
  * The public base URL of this instance (e.g. `https://hezo.example.com`),

@@ -99,7 +99,8 @@ export interface PoolCapacity {
  *
  * Ahead of the ladder: **any member not provisioned to the cap it would be
  * provisioned to now, or built from another agent image, is recycled**, not
- * reused. An image carries the pinned CLIs, and a container keeps its image for
+ * reused - unless it holds unpushed commits, in which case it is only passed
+ * over, never destroyed. An image carries the pinned CLIs, and a container keeps its image for
  * life: after an upgrade, a reused old container ran the previous CLI - on one
  * instance a different model than every new container - with nothing recording
  * which. The cap is a memory guarantee
@@ -153,14 +154,18 @@ export function selectPoolMember(
 	requiredMemoryBytes: number,
 	requiredImageVersion: string,
 ): PoolDecision {
+	const outdated = (m: PoolMember) =>
+		m.memoryBytes !== requiredMemoryBytes || m.imageVersion !== requiredImageVersion;
+	// A member holding unpushed commits is never recycled - destroying it loses
+	// the only copy of that work, the rule both idle planners keep - and never
+	// handed to a run either, since it was built to the wrong figure. It waits,
+	// suspended by the idle passes, for its work to be recovered.
 	const mismatched = members.filter(
-		(m) =>
-			m.state !== 'busy' &&
-			(m.memoryBytes !== requiredMemoryBytes || m.imageVersion !== requiredImageVersion),
+		(m) => m.state !== 'busy' && !m.hasUnpushedCommits && outdated(m),
 	);
 	if (mismatched.length > 0) return { kind: 'recycle', members: mismatched };
 
-	const available = members.filter(usable);
+	const available = members.filter((m) => usable(m) && !outdated(m));
 
 	if (taskId !== null) {
 		const affine = available.find((m) => m.state === 'idle' && m.lastTaskId === taskId);
@@ -296,8 +301,10 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
  * resumes in about a second. That converges on {@link planIdleShutdown}'s own
  * rule - two planners, one invariant.
  *
- * `staleMemberIds` are the members the caller has established sat idle past the
- * window - the clock lives in SQL, where it can be indexed, so this stays pure.
+ * `staleMemberIds` are the members the caller has established nothing is about
+ * to use - idle past the release grace, not held by a chat, in a project with no
+ * job ready to dispatch. The clock lives in SQL, where it can be indexed, so
+ * this stays pure.
  */
 export function planSurplusIdleRetirement(
 	members: readonly PoolMember[],
@@ -311,12 +318,19 @@ export function planSurplusIdleRetirement(
 	const pinned = stale.filter((m) => m.hasUnpushedCommits);
 	const disposable = stale.filter((m) => !m.hasUnpushedCommits);
 
-	// Three things already guarantee a warm start, and any one of them is enough:
-	// a busy member (about to become idle itself), a suspended member (a ~1s
-	// resume through the ladder's resume rung), or a pinned member this plan is
-	// about to suspend.
+	// Four things already guarantee a warm start, and any one of them is enough:
+	// a busy member (about to become idle itself), an idle member this plan
+	// leaves running (one a chat is holding, or one still inside its grace), a
+	// suspended member (a ~1s resume through the ladder's resume rung), or a
+	// pinned member this plan is about to suspend.
 	const resumableAlready =
-		pinned.length > 0 || members.some((m) => m.state === 'busy' || m.state === 'suspended');
+		pinned.length > 0 ||
+		members.some(
+			(m) =>
+				m.state === 'busy' ||
+				m.state === 'suspended' ||
+				(m.state === 'idle' && !staleMemberIds.has(m.id)),
+		);
 	if (resumableAlready) return { suspend: pinned, destroy: disposable };
 
 	// Nothing else can serve the next run, so the first stale member is held back

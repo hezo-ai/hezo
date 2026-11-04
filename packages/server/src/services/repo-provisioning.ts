@@ -4,7 +4,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
-import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
+import { type ContainerDeps, type ContainerHold, holdProjectContainer } from './containers';
 import type { EgressProxy } from './egress';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { refreshRepoPushAccess } from './repo-push-access';
@@ -84,21 +84,19 @@ export async function performRepoSetup(
 	let setupError: string | null = null;
 	if (docker && dataDir) {
 		const containerDeps: ContainerDeps = { ...deps, docker, dataDir };
+		// Held for the whole clone: the clone runs in the project's container
+		// without claiming it, and a container that reads idle is otherwise retired
+		// under it within seconds.
+		let hold: ContainerHold | null = null;
 		try {
 			try {
-				await ensureProjectContainerRunning(containerDeps, input.projectId);
+				hold = await holdProjectContainer(containerDeps, input.projectId);
 			} catch (e) {
 				log.error('Failed to auto-start container during repo setup:', e);
 			}
+			const containerId = hold?.containerId ?? null;
 
-			const containerRow = await db.query<{
-				container_id: string | null;
-				container_status: string | null;
-			}>('SELECT container_id, container_status FROM projects WHERE id = $1', [input.projectId]);
-			const containerId = containerRow.rows[0]?.container_id ?? null;
-			const running = containerRow.rows[0]?.container_status === 'running';
-
-			if (containerId && running) {
+			if (containerId) {
 				// Git runs inside the project container; the host runs no git. The
 				// provisioning bridge carries the project SSH key for commit signing,
 				// and the egress proxy substitutes the clone's credential placeholder.
@@ -148,6 +146,8 @@ export async function performRepoSetup(
 		} catch (e) {
 			setupError = e instanceof Error ? e.message : 'unknown error';
 			log.error(`Repo setup for ${input.repoIdentifier} threw:`, e);
+		} finally {
+			hold?.release();
 		}
 	}
 

@@ -8,7 +8,7 @@ import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { safeClose } from './helpers';
-import { createStubDocker, createTestApp } from './helpers/app';
+import { createStubDocker, createTestApp, TEST_RELEASE_GRACE_MS } from './helpers/app';
 
 let db: Db;
 let masterKeyManager: MasterKeyManager;
@@ -16,6 +16,7 @@ let dataDir: string;
 
 function makeManager(): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db,
 		docker: createStubDocker({ ping: async () => true }),
 		masterKeyManager,

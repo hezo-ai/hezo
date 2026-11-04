@@ -44,22 +44,30 @@ For the full security picture, including where a container's boundary ends, see
 ## Containers run only when there is work
 
 A container starts automatically the moment an agent run or an assistant chat needs one,
-and stops again after sitting idle for a couple of minutes. A quiet instance runs zero
-containers. That window is fixed rather than configurable: its only job is to keep a
-container warm between one run and the next in the same project. Because containers do not
-stay up between bursts, they are not a place to run a long-lived dev or preview server.
+and stops again a few seconds after its run ends. A quiet instance runs zero containers.
+Because containers do not stay up between bursts, they are not a place to run a
+long-lived dev or preview server.
 
-**Each container is timed separately.** A project running several tasks at once holds one
-container per run, and any of them that finishes and then sits idle past the window is
-retired on its own - the project does not have to fall completely quiet first. So a busy
-project gives its unused memory back while it keeps working, rather than holding it until
-the last task ends.
+**A finished run hands its container to the next job first.** When a run ends, Hezo waits
+about ten seconds before it stops the container. If the run started more work in the same
+project in that time, such as a comment or a handoff that wakes another agent, or if a job
+for that project is already queued, that job gets the container while it is still running.
+Stopping a container and starting another a few seconds later costs more than waiting,
+because the backend bills both the stop and the start. The wait is fixed rather than
+configurable.
 
-**An open assistant chat gets a longer window.** A pause between chat messages is you
-reading a reply, not an idle project, so a container serving a live chat session is kept
-up for about fifteen minutes after the last message rather than a couple of minutes. That
-way a reply you take a few minutes to answer does not cost a container start. Once the
-session ends, the ordinary window applies again.
+**Each container is retired on its own.** A project running several tasks at once holds
+one container per run, and each one that finishes with nothing waiting for it is retired
+by itself. The project does not have to fall completely quiet first, so a busy project
+gives its unused memory back while it keeps working. Hezo keeps at most one stopped
+container per project so the next run can resume it in about a second, and removes the
+rest. A container holding commits that reached no remote is stopped, never removed.
+
+**An open assistant chat keeps one container warm.** A pause between chat messages is you
+reading a reply, so the container your last message used stays up for two minutes after
+the reply finished. A reply you send in that time does not wait for a container to start.
+Only that one container is kept. Any other idle container in the project is retired like a
+task container.
 
 Each container serves one run at a time, which is why a problem in one run stays in one
 run. A project therefore has as many containers as it has runs going at once - two agents
@@ -238,6 +246,8 @@ consume:
   Changing the cap does not resize a container that is already running - nothing can
   resize one in place - so Hezo replaces it instead. The next run in that project gets a
   container built to the new cap and the old one is removed, which costs one cold start.
+  A container holding commits that reached no remote is never removed this way; it is
+  stopped and kept instead.
   Until that happens the Containers page shows what each container actually has, not what
   the setting now says.
 - **Disk per container** - how much disk each container is given for its checkouts,

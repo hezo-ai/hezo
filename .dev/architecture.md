@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member after a fixed 2-minute idle window (15 for a live assistant chat), or sooner when another project needs the memory |
+| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member a few seconds after its run releases it unless a job in the project is ready to take it (a live assistant chat holds one member for 2 minutes), or sooner when another project needs the memory |
 
 **Monorepo** — Bun workspaces + Turborepo. **Four** packages plus a root `agents/`
 tree:
@@ -899,9 +899,25 @@ place and would otherwise tell only `projects`. Forgetting the whole pool at onc
 because dropping the member rows alone strands them open and an open interval bills to
 `now()` for ever.
 
-The interval opens at the `creating` upsert rather
-than at ready, because on a managed backend the build is the longest phase of a cold start
-and bills like any other minute. `end_reason` separates an ordinary stop from a
+**An interval covers the whole time the backend bills**, because a managed backend bills
+creating, starting and stopping at the running rate. It opens at the instant the create,
+start or resume request is sent - `upSince`, backdated, since the id only exists once the
+engine answers - and closes only once the engine's stop or removal call resolves, which the
+`ContainerEngine` contract says happens when the backend has *finished* (the Daytona adapter
+polls until the sandbox reads stopped or gone, bounded by `STOP_WAIT_TIMEOUT_MS`, and throws
+on timeout rather than returning). A create is metered before it has an id through a
+**provisional row keyed by the container's name** (`provisioning:<name>`), re-keyed when the
+create answers; a create that failed is settled by looking the name up (none: the row is
+dropped, nothing billed; one: the row moves to it and closes when it is removed). `error`
+leaves the interval open - a failed or interrupted provision is still a container on the
+backend - and the liveness reconcile closes it once the engine reports the container at rest
+(`ContainerInfo.State.Transitioning` false) or gone. The same reconcile settles intervals no
+member accounts for (`settleUnaccountedUptime`: a provisional row a restart orphaned, a
+removal that never confirmed), skipping any container whose call this process still has in
+flight; the orphan sweep closes the interval of every container it removes, adopting a
+provisional row by name first. An open never starts before the container's previous interval
+ended (`GREATEST` against its latest `ended_at`, indexed by migration 085), so a resume asked
+for while a stop was finishing cannot bill the overlap twice. `end_reason` separates an ordinary stop from a
 cross-project eviction (`ContainerUptimeEndReason.Suspended`, passed down from
 `executeRetirementPlan`), which is the only contention signal the series can show. A
 unique partial index on `(container_id) WHERE ended_at IS NULL` makes open and close
@@ -2489,20 +2505,25 @@ and a fresh one be built.
   wedged instance, not a slow one. `findStaleIdleMembers` asks the member-shaped question
   instead, clocked on `last_released_at` (made total and indexed by migration 053; the old
   clock was `projects.container_last_started_at`, so starting any container reset the timer
-  for every idle sibling). It fires for **every** project. It used to require a `busy`
-  member, leaving a fully idle project to the whole-project pass and its warm-start
-  guarantee - but the two preconditions did not partition the space: a project whose runs
-  last seconds is never quiet (queued wakeups and recent finishes keep it out of the
-  project-shaped pass) and rarely busy when the once-a-minute cron samples it, so its idle
-  members matched neither and pinned the budget indefinitely. The warm-start floor now lives
-  in the planner, where it is a property of the plan rather than of which pass ran: one
-  member is held back and suspended only when nothing else - a busy, suspended or pinned
-  member - could serve the project's next run. A project inside the live-chat window (a
-  `starting`/`running` chat session with recent activity - the same predicate
-  `BUSY_PROJECTS_SQL` carries) is excluded from the stale-member scan entirely: chat
-  turns release their member between replies, so a mid-conversation project reads idle
-  here while a person is mid-thought, and retiring the warm member would make their next
-  message pay a cold start.
+  for every idle sibling). It fires for **every** project. The warm-start floor lives in the
+  planner, where it is a property of the plan rather than of which pass ran: one member is
+  held back and suspended only when nothing else - a busy, suspended or pinned member, or an
+  idle one the plan leaves running - could serve the project's next run. Two exclusions are
+  in the scan itself, both bounded so neither can hold a member for long: every member of a
+  project with a job **ready to dispatch right now** (`READY_WORK_SQL`: a queued run not
+  parked for capacity or hours, or a queued wakeup the dispatcher has not refused - a
+  handed-back one, `run_never_started` or `server_shutdown`, still counts), and the **one**
+  idle member per project a chat is holding (`CHAT_HELD_MEMBERS_SQL`: the member a chat turn
+  or the composer's prewarm released most recently, inside `CHAT_IDLE_TIMEOUT_MIN`, stamped
+  on `container_pool_members.chat_released_at` by migration 085).
+  The same per-project body (`JobManager.retireIdleMembersOfProject`) runs at **release
+  time**: once a run's completion bookkeeping is done and the dispatcher kicked, the job
+  manager arms a per-project timer of `CONTAINER_RELEASE_GRACE_SEC`, and when it fires the
+  project's members are re-read under its lifecycle lock and retired only if still idle past
+  the grace with nothing ready. A claim in the meantime moved the member out of `idle` (the
+  claim's compare-and-set decides the race); a claim and release restarted its clock. The
+  once-a-minute sweep runs the same body for every project with a member past its grace, as
+  the backstop for a release whose timer never fired.
 - **Cross-project reclaim** (`planCrossProjectReclaim`, the `reclaim` rung of
   `selectPoolMember`). Closes the gap in between: rather than queue behind memory a
   neighbour is demonstrably not using, a blocked acquire retires enough of other projects'
@@ -2613,7 +2634,11 @@ resize a container in place - so `selectPoolMember` compares each non-`busy` mem
 recorded allocation (`container_pool_members.memory_bytes`, written at provision from the
 same `memoryCeilingBytes` the engine was handed) against the project's current effective cap
 and returns `{ kind: 'recycle', members }` ahead of every reuse rung. The caller destroys
-them and re-decides.
+them through `executeRetirementPlan`, so the members leave the pool and the budget at once
+and the backend's removal finishes after the project's lifecycle lock is released, and
+re-decides. **A member holding unpushed commits is never recycled** - destroying it loses the
+only copy, the rule both idle planners keep - and never handed to a run either: the ladder
+passes over it, and the idle passes suspend it.
 
 Recorded rather than re-derived, for the reason migration 051 already gives for
 `disk_ceiling_bytes`: the container really does only have what it was created with. Before
@@ -3262,8 +3287,8 @@ one. Returning instead left the row unowned — blocking the retry of its own wa
 `isTaskBusyInDb`, then being reaped 120 s later as a run that never started, and counting
 toward the lost-run escalation. Past the ceiling the row is finalized `Cancelled` (never
 `Failed` — a full instance is not the agent failing) and the wakeup is re-queued. Two
-consequences elsewhere: the idle-stop scan's busy set excludes a parked run
-(`BUSY_PROJECTS_SQL`), since it holds no container and is waiting on the very reclaim that
+consequences elsewhere: the idle-stop scan's ready set excludes a parked run
+(`READY_WORK_SQL`), since it holds no container and is waiting on the very reclaim that
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
 
@@ -3271,9 +3296,9 @@ both rendering "Queued - waiting for container capacity" from `queued_reason`.
 neighbour hands a container back; hours clear when the window turns or the allowance grows.
 Sharing one reason told an operator whose allowance was spent to wait for a container while
 every container sat idle. `PARKED_HOLDING_NOTHING` (`@hezo/shared`) is the set that holds no
-container, `BUSY_PROJECTS_SQL` builds its predicate from that set rather than naming a
+container, `READY_WORK_SQL` builds its predicate from that set rather than naming a
 member — with an explicit `IS NULL` arm, since `<> ALL` yields NULL for an ordinary queued
-run and would drop it out of the busy set — and the web's reason table gains a row per
+run and would drop it out of the ready set — and the web's reason table gains a row per
 member, so a reason added upstream is a compile error until somebody writes its explanation.
 Where the explanation ends in advice to change a limit, an instance carrying a `policy`
 gets a variant ending somewhere its reader can actually go; the branch is on *having* a
@@ -3526,9 +3551,9 @@ reproduces the defect on whichever path skips it. That recorder is also where
 first-writer-wins lives: it declines to write over a `cancel_reason`
 somebody else already set, so a human's Terminate is never relabelled as something the
 instance did. A never-started handback is stamped `run_never_started` and the
-credential give-up `credential_busy`; `BUSY_PROJECTS_SQL` excludes only the two *capacity*
-reasons from its busy set, so a mislabelled handback had the idle pass reclaim the container
-out from under work that was about to run.
+credential give-up `credential_busy`; `READY_WORK_SQL` counts a skipped wakeup as ready only
+for the two handback reasons (`run_never_started`, `server_shutdown`), so a mislabelled
+handback has the idle pass retire the container out from under work that was about to run.
 The `running` arm is unchanged and still `Failed` - a process that vanished mid-flight did
 lose work. `capacity-park-grace` in `orphan-detector.test.ts` pins the constant
 relationship so neither can be moved without meeting the assumption. The run's `error`
@@ -3785,30 +3810,59 @@ should never fire, and if it does, a section escaped the budget.
 **Containers & worktrees.** One container per project, **run on demand**: the container is
 not required to be up between runs. `runAgent` establishes it at the start of every run via
 `ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
-provision), chat turns claim through the same ladder, and the `container-idle-stop` cron (1/min) retires any pool
-idle past `CONTAINER_IDLE_TIMEOUT_MIN` (`@hezo/shared`, **2 minutes**) — so a quiet instance
-runs zero containers. That window is a **constant, not a setting** (migration 050 drops the
-old `container_idle_timeout_min` key): its only job is coalescing a burst — covering the gap
-between one run finishing and the next starting in the same project, which is a comment
-insert, a wakeup fire, the 1 Hz dispatch cron and a container acquire, so seconds to about a
-minute. One minute can suspend a container mid-wakeup-chain; longer buys little, since
-resuming a suspended container costs about a second. The old `0` = always-on escape hatch is
-gone with it — a container that never stops bills forever on a managed backend, and the dev
-server it kept alive belongs in something with its own lifecycle. "Idle" means:
-no active (queued/running) run, no run finished inside the window, no queued wakeup that could
-dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
-recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
-check so a fresh start always gets one full window.
+provision), chat turns claim through the same ladder, and a released container is retired
+`CONTAINER_RELEASE_GRACE_SEC` (`@hezo/shared`, **10 seconds**) after its run's completion
+bookkeeping unless a job in the project is ready to take it — so a quiet instance runs zero
+containers. The grace is a **constant, not a setting** (migration 050 drops the old
+`container_idle_timeout_min` key), and it is a backstop rather than an idle allowance: by the
+time it starts, whatever follow-up the run caused is already a queued wakeup or run, which
+holds the container structurally; the grace covers only a dispatcher kick coalesced into the
+next wakeup-cron tick. Stopping and restarting costs more than the wait on a managed backend,
+where a stop bills until it finishes (measured at 20 s to 1.7 min) and the start after it
+bills too. There is no always-on escape hatch — a container that never stops bills forever on
+a managed backend. The whole-project pass (`findIdleContainerCandidates`, the
+`container-idle-stop` cron at 1/min) treats a project as busy while it has a running run, a
+job in `READY_WORK_SQL`, or a chat-held member; `projects.container_last_started_at` floors
+the check so a fresh start is not stopped inside its first grace.
 
-**A live chat is measured on its own, longer window** — `CHAT_IDLE_TIMEOUT_MIN`
-(`@hezo/shared`, **15 minutes**), interpolated into that one arm of `BUSY_PROJECTS_SQL`. The
-two clocks measure different things: between runs the gap is mechanical, while between chat
-messages it is a person reading a reply, so reclaiming at the run window would suspend the
-warm container an open chatbox is about to reuse and make the next message pay a cold start
-(~30s on a managed backend). The chat window keeps the project's containers warm while the
-`chat_sessions` row is `starting`/`running` with recent activity; once it goes quiet, the
-project falls back to the ordinary window at once. A turn actually executing needs no
-carve-out — its claim holds the member `busy`, which no retirement plan touches.
+**A live chat holds one member for its own, longer pause** — `CHAT_IDLE_TIMEOUT_MIN`
+(`@hezo/shared`, **2 minutes**), measured from the chat turn's release
+(`chat_released_at`), not from the turn's start, so a long reply does not use up the pause.
+Between runs the gap is mechanical; between chat messages it is a person reading a reply, so
+retiring at the grace would stop the container an open chatbox is about to reuse. Only the
+member the chat released last is held; every other idle member of the project retires like a
+task container. A turn actually executing needs no carve-out — its claim holds the member
+`busy`, which no retirement plan touches.
+
+**Retirement does not hold the lifecycle lock for the engine call.** `executeRetirementPlan`
+takes each member out of the pool's hands under the lock — `beginPoolMemberStop` marks a
+member `suspended` without closing its interval, a destroyed member's row is deleted
+(`forgetPoolMember`) — and finishes the stop or removal in the background, closing the
+interval once the engine confirms. `lifecycleCallsInFlight` (`containers.ts`) records those
+calls: a resume of a member still stopping waits for the stop first, and the liveness
+reconcile leaves alone a container whose call is in flight. A stop that fails or times out
+leaves the interval open and logs which container and where to look; the reconcile closes it
+when the engine reports the container at rest, or hands a container found still running back
+to `idle` for the passes to retire again. The 1 Hz status sync leaves alone a container whose
+call is in flight, and reads a container that is not running but still `Transitioning` as
+unchanged, so neither ends a billed stretch or records a stop before the backend has
+finished. The liveness reconcile pages through the pool by container id with a cursor that
+carries across passes (`listPoolMembersForReconcile`), so every member is checked in turn
+however many long-quiet suspended members there are. A resume whose start fails drops the
+member only when the engine reports the container gone; a container that is there but will
+not start fails the acquire with the engine's error. Operator removal and project teardown
+remove without a stop first (a forced removal takes a running container down on every
+backend), and close the billed stretch only when the removal was confirmed.
+
+**Work outside a run holds its container.** A repo clone, a repo reset and an MCP install
+work in the project's named container without a claim, often beside a run, so they take a
+hold instead (`holdProjectContainer`, which also brings the container up, or
+`holdRunningContainer`, which refuses a container a retirement has already taken).
+`executeRetirementPlan` skips a held container, which covers every pass at once; a later pass
+retires it once the hold is released. Release-time retirement also waits while a run
+dispatched in the project has not yet claimed a container (`activeProjectRuns` exceeding the
+live runs that hold one), so a run about to take a warm member never pays for its stop and
+start. A claim clears the member's chat-release stamp.
 
 Every lifecycle *decision* — ensure-running
 and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory

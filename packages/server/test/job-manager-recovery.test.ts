@@ -10,7 +10,13 @@ import { waitForBackground } from '../src/lib/background';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestProject,
+	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // Startup reconciliation and the periodic maintenance sweeps of JobManager:
@@ -48,6 +54,7 @@ const internals = (m: JobManager) => m as unknown as JmInternals;
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db: ctx.db,
 		docker: createStubDocker(),
 		masterKeyManager: ctx.masterKeyManager,
