@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.80.0 - 2026-11-04
+
+### Features
+
+- **budget:** show bought container hours apart from the per-period allowance ([#1207](https://github.com/hezo-ai/hezo/pull/1207))
+- **chat:** bring back a maximize button on the chat dock ([#1204](https://github.com/hezo-ai/hezo/pull/1204))
+
+### Bug Fixes
+
+- **containers:** stop a container as soon as its run ends unless work is waiting ([#1206](https://github.com/hezo-ai/hezo/pull/1206))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.79.1...0.80.0
+
 ## 0.79.1 - 2026-11-04
 
 ### Documentation
