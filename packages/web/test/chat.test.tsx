@@ -535,8 +535,7 @@ test('the dock is a full-height right rail on desktop, a sheet with a scrim on m
 	expect(panel.className).toContain('top-16');
 	expect(panel.className).toContain('inset-x-2');
 	// The scrim is scoped to mobile (`md:hidden`) - the desktop rail is a
-	// persistent companion that leaves the rest of the page interactive. There is
-	// no expand mode: the rail is the whole desktop chat surface.
+	// persistent companion that leaves the rest of the page interactive.
 	const overlay = await findByTestId('chat-overlay');
 	expect(overlay.className).toContain('md:hidden');
 	// The rail is draggable; the handle is desktop-only, and keyboard-reachable
@@ -575,6 +574,66 @@ test('Escape dismisses the open room switcher without closing the dock behind it
 	// With the panel dismissed, Escape reaches the dock again.
 	await user.keyboard('{Escape}');
 	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
+});
+
+// The maximized geometry (full width below the header, edge to edge on a phone,
+// the reading column, the taller composer) is real layout, so it lives in
+// test/browser/chat.spec.ts. This tier pins the state around it.
+
+test('the maximize button grows the dock and the same button restores the rail', async () => {
+	const { findByTestId, queryByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('app-header-chat')).click();
+	const panel = await findByTestId('chat-panel');
+	const toggle = await findByTestId('chat-maximize');
+
+	expect(panel.getAttribute('data-maximized')).toBe('false');
+	expect(toggle.getAttribute('aria-label')).toBe('Maximize chat');
+	expect(queryByTestId('chat-rail-resize')).toBeTruthy();
+
+	await user.click(toggle);
+	await waitFor(() => expect(panel.getAttribute('data-maximized')).toBe('true'));
+	expect(toggle.getAttribute('aria-label')).toBe('Restore chat size');
+	// A maximized dock has no inner edge to drag.
+	expect(queryByTestId('chat-rail-resize')).toBeNull();
+
+	await user.click(toggle);
+	await waitFor(() => expect(panel.getAttribute('data-maximized')).toBe('false'));
+	expect(toggle.getAttribute('aria-label')).toBe('Maximize chat');
+	expect(queryByTestId('chat-rail-resize')).toBeTruthy();
+});
+
+test('Escape restores a maximized dock before it closes it', async () => {
+	const { findByTestId, queryByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('app-header-chat')).click();
+	const panel = await findByTestId('chat-panel');
+	await user.click(await findByTestId('chat-maximize'));
+	await waitFor(() => expect(panel.getAttribute('data-maximized')).toBe('true'));
+
+	await user.keyboard('{Escape}');
+	await waitFor(() => expect(panel.getAttribute('data-maximized')).toBe('false'));
+	expect(queryByTestId('chat-panel')).toBeTruthy();
+
+	await user.keyboard('{Escape}');
+	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
+});
+
+test('a dock closed while maximized reopens at its normal size', async () => {
+	// Many surfaces launch the dock; none of them should open it over the page.
+	const { findByTestId, queryByTestId, user } = await renderApp({ initialPath: '/home' });
+	const launcher = await findByTestId('app-header-chat');
+	await user.click(launcher);
+	await user.click(await findByTestId('chat-maximize'));
+	await waitFor(() =>
+		expect((queryByTestId('chat-panel') as HTMLElement).getAttribute('data-maximized')).toBe(
+			'true',
+		),
+	);
+
+	await user.click(await findByTestId('chat-close'));
+	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
+
+	await user.click(launcher);
+	expect((await findByTestId('chat-panel')).getAttribute('data-maximized')).toBe('false');
 });
 
 test('a user message is shown as typed, not parsed as markdown', async () => {

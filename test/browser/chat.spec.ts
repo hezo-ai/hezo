@@ -39,7 +39,6 @@ test.describe('chat dock — responsive layout', () => {
 		expect(overlayBox?.width ?? 0).toBeGreaterThan(370);
 
 		// Desktop: the same open panel re-lays out to the ~420px rail.
-		// There is no expand mode - the rail is the whole desktop chat.
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await expect(panel).toBeVisible();
 		// setViewportSize does not block on the re-layout, so measuring straight
@@ -152,6 +151,174 @@ test.describe('chat dock — responsive layout', () => {
 		// Opening pins to the bottom — the newest reply is visible.
 		await expect.poll(distanceFromBottom).toBeLessThanOrEqual(8);
 		await expect(page.getByText(LAST_MARKER)).toBeInViewport();
+	});
+});
+
+// Kept in Playwright by decision-tree items 1 & 2 (real CSS layout + a mobile
+// viewport): maximizing is a geometry change - the full width below the header on
+// desktop, edge to edge over it on a phone - and the reading column and the
+// composer's taller cap are sizes only a real layout pass reports. The state
+// around it (the toggle, Escape, reopening at the rail) is in
+// packages/web/test/chat.test.tsx.
+test.describe('chat dock — maximized', () => {
+	// Far taller than either composer cap, so the box stops at the cap and the
+	// measured height IS the cap.
+	const LONG_DRAFT = Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of a long message.`).join(
+		'\n',
+	);
+
+	test('desktop: fills the page below the header, reads in a centered column, then restores', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('app-header-chat');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+
+		const panel = page.getByTestId('chat-panel');
+		const width = async () => (await panel.boundingBox())?.width ?? 0;
+		await expect(panel).toBeVisible();
+		await expect.poll(width).toBeLessThan(440);
+
+		// In the rail the composer stops at its 8rem (128px) cap and scrolls.
+		const input = page.getByTestId('chat-input');
+		const inputHeight = async () => (await input.boundingBox())?.height ?? 0;
+		await input.fill(LONG_DRAFT);
+		await expect.poll(inputHeight).toBeGreaterThan(100);
+		expect(await inputHeight()).toBeLessThanOrEqual(129);
+
+		await page.getByTestId('chat-maximize').click();
+		await expect(panel).toHaveAttribute('data-maximized', 'true');
+		// The panel motion carries the width, so wait for it to settle.
+		await expect.poll(width).toBeGreaterThan(1430);
+		const box = await panel.boundingBox();
+		expect(box).not.toBeNull();
+		expect(box?.x ?? -1).toBeLessThanOrEqual(1);
+		// Still below the h-12 (48px) header, so the top bar stays reachable,
+		// and running to the bottom of the viewport.
+		expect(box?.y ?? 0).toBeGreaterThanOrEqual(47);
+		expect(box?.y ?? 0).toBeLessThanOrEqual(49);
+		expect((box?.y ?? 0) + (box?.height ?? 0)).toBeGreaterThan(898);
+		// A maximized dock has no inner edge to drag.
+		await expect(page.getByTestId('chat-rail-resize')).toHaveCount(0);
+
+		// The thread and the composer read in a 52rem (832px) column, centered:
+		// equal gutters either side instead of lines running the full 1440px.
+		const contentBox = (testId: string) =>
+			page.getByTestId(testId).evaluate((el) => {
+				const s = getComputedStyle(el);
+				const left = Number.parseFloat(s.paddingLeft);
+				const right = Number.parseFloat(s.paddingRight);
+				return { left, right, content: el.clientWidth - left - right };
+			});
+		const composer = await contentBox('chat-composer');
+		expect(composer.left).toBeCloseTo(composer.right, 0);
+		expect(composer.content).toBeCloseTo(832, 0);
+		// The message list may lose a scrollbar's width from its column.
+		const thread = await contentBox('chat-messages');
+		expect(thread.left).toBeCloseTo(thread.right, 0);
+		expect(thread.content).toBeGreaterThan(800);
+		expect(thread.content).toBeLessThanOrEqual(833);
+
+		// The composer may now grow to 40% of the viewport before it scrolls.
+		await expect.poll(inputHeight).toBeGreaterThan(300);
+		expect(await inputHeight()).toBeLessThanOrEqual(0.4 * 900 + 1);
+
+		// The same button restores the rail, its width and its composer cap.
+		await page.getByTestId('chat-maximize').click();
+		await expect(panel).toHaveAttribute('data-maximized', 'false');
+		await expect.poll(width).toBeLessThan(440);
+		await expect.poll(inputHeight).toBeLessThanOrEqual(129);
+		await expect(page.getByTestId('chat-rail-resize')).toBeVisible();
+	});
+
+	test('mobile: covers the whole screen, header included, then restores to the sheet', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+		await page.setViewportSize({ width: 375, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('app-header-chat');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+
+		const panel = page.getByTestId('chat-panel');
+		const top = async () => (await panel.boundingBox())?.y ?? -1;
+		await expect(panel).toBeVisible();
+		// The sheet: 64px down, clear of the header.
+		await expect.poll(top).toBeGreaterThanOrEqual(60);
+
+		await page.getByTestId('chat-maximize').click();
+		await expect(panel).toHaveAttribute('data-maximized', 'true');
+		await expect.poll(top).toBeLessThanOrEqual(0.5);
+		const box = await panel.boundingBox();
+		expect(box?.x ?? -1).toBeLessThanOrEqual(0.5);
+		expect(box?.width ?? 0).toBeGreaterThanOrEqual(374);
+		expect(box?.height ?? 0).toBeGreaterThanOrEqual(799);
+		// Over the header, not under it: the top-left corner, where the header
+		// draws, now hits the panel.
+		const cornerHitsPanel = await page.evaluate(
+			() => document.elementFromPoint(20, 20)?.closest('[data-testid="chat-panel"]') != null,
+		);
+		expect(cornerHitsPanel).toBe(true);
+
+		// The composer may grow past the sheet's 8rem cap.
+		const input = page.getByTestId('chat-input');
+		const inputHeight = async () => (await input.boundingBox())?.height ?? 0;
+		await input.fill(LONG_DRAFT);
+		await expect.poll(inputHeight).toBeGreaterThan(200);
+
+		await page.getByTestId('chat-maximize').click();
+		await expect(panel).toHaveAttribute('data-maximized', 'false');
+		await expect.poll(top).toBeGreaterThanOrEqual(60);
+		await expect.poll(inputHeight).toBeLessThanOrEqual(129);
+	});
+
+	test('mobile: the header keeps all four buttons in the sheet beside the longest room name', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		// The maximize button is the header's fourth, on the narrowest sheet
+		// (359px). The room title truncates; the buttons must not be pushed out.
+		const page = sharedPage;
+		await page.setViewportSize({ width: 375, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('app-header-chat');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+		const panel = page.getByTestId('chat-panel');
+		await expect(panel).toBeVisible();
+
+		const longest = sharedWorkspace.agents
+			.map((a) => a.title)
+			.reduce((a, b) => (b.length > a.length ? b : a));
+		await page.getByTestId('chat-room-select-button').click();
+		await page
+			.getByTestId('chat-room-select-content')
+			.getByRole('option', { name: longest, exact: true })
+			.click();
+		await expect(page.getByTestId('chat-room-title')).toHaveText(longest);
+
+		const header = panel.locator('header');
+		expect(await header.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+		const panelBox = await panel.boundingBox();
+		for (const id of ['chat-new-group', 'chat-copy', 'chat-maximize', 'chat-close']) {
+			const box = await page.getByTestId(id).boundingBox();
+			expect(box, id).not.toBeNull();
+			expect((box?.x ?? 0) + (box?.width ?? 0), id).toBeLessThanOrEqual(
+				(panelBox?.x ?? 0) + (panelBox?.width ?? 0),
+			);
+		}
 	});
 });
 

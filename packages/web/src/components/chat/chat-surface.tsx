@@ -135,7 +135,27 @@ interface ChatSurfaceProps {
 	 * `send` so starter chips can post their text as the first message.
 	 */
 	emptyState?: (send: (text: string) => Promise<unknown>) => ReactNode;
+	/**
+	 * The dock's maximized presentation: the thread reads in a centered column
+	 * and the composer may grow far taller before it scrolls.
+	 */
+	maximized?: boolean;
 }
+
+/**
+ * Spacing and the composer's height cap, per presentation. Maximized, the
+ * thread and composer pad to a 52rem column centered in whatever width the
+ * panel has, so the scrollbar stays on the panel edge; the composer cap is 40%
+ * of the viewport, never less than the default 8rem.
+ */
+const SURFACE_LAYOUT = {
+	default: { messages: 'px-4', composer: 'p-3', input: 'max-h-32' },
+	maximized: {
+		messages: 'px-[max(1rem,calc((100%_-_52rem)/2))]',
+		composer: 'py-3 px-[max(0.75rem,calc((100%_-_52rem)/2))]',
+		input: 'max-h-[max(8rem,40dvh)]',
+	},
+} as const;
 
 /**
  * One chat room: history, streaming replies, queue, attachments and the
@@ -151,7 +171,9 @@ export function ChatSurface({
 	header,
 	beforeMessages,
 	emptyState,
+	maximized = false,
 }: ChatSurfaceProps) {
+	const layout = SURFACE_LAYOUT[maximized ? 'maximized' : 'default'];
 	const {
 		messages,
 		send,
@@ -240,7 +262,7 @@ export function ChatSurface({
 		return () => cancelAnimationFrame(id);
 	}, [launch?.nonce]);
 
-	useAutoGrowTextarea(inputRef, [draft, active]);
+	useAutoGrowTextarea(inputRef, [draft, active, maximized]);
 
 	useEffect(() => {
 		return () => {
@@ -407,7 +429,7 @@ export function ChatSurface({
 					<div
 						ref={scrollRef}
 						data-testid="chat-messages"
-						className={`flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth ${NEVER_RECORD_CLASS}`}
+						className={`flex flex-1 flex-col gap-4 overflow-y-auto py-4 scroll-smooth ${layout.messages} ${NEVER_RECORD_CLASS}`}
 					>
 						{!loaded && (
 							<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
@@ -513,7 +535,7 @@ export function ChatSurface({
 						)}
 					</div>
 
-					<div className="border-t border-border p-3">
+					<div className={`border-t border-border ${layout.composer}`} data-testid="chat-composer">
 						{activeReadOnly && thread && (
 							<div
 								data-testid="chat-readonly-banner"
@@ -658,7 +680,7 @@ export function ChatSurface({
 															: 'Ask the CEO anything, across every project…'
 								}
 								data-testid="chat-input"
-								className="max-h-32 min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+								className={`${layout.input} min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3`}
 							/>
 							<Tooltip content={buttonHint} side="top">
 								<button

@@ -6471,12 +6471,19 @@ refetching a carried-over stream would wipe it. The
 reset runs while the dock is closed too, so the next launch never renders a room from the project
 left behind for the one frame before its own room lands. The CEO and HQ threads are unscoped and
 stay. Every team-room launcher sits inside that room's project, so the switcher never carries a
-room from another project. There is no expand mode. The
+room from another project. The
 rail runs from under the `h-12` shell header to the bottom, flush to the right edge, overlaying
 the page rather than displacing it, and is drag-resizable through `useResizableSplit` with
 `measureContainer` - a `fixed` panel shares the viewport rather than a grid track, so it also
 re-clamps on `window` resize instead of observing a cell - persisted under
-`hezo_chat_rail_width`. The room switcher is a `SearchableSelect` on the room title (grouped,
+`hezo_chat_rail_width`. A header toggle **maximizes** the dock: on desktop it stays anchored right
+and widens to the full viewport below the header (only the width changes, so the panel motion
+carries it), on mobile it goes edge to edge over the header. `ChatSurface`'s `maximized` prop pads
+the thread and composer to a centered 52rem column and lifts the composer's cap from 8rem to 40%
+of the viewport. Maximized is a view of the open dock, not a session: it is never persisted and
+resets whenever the dock closes, Escape restores it before Escape closes the dock, and on desktop
+a pathname change restores the rail rather than closing it - maximized blocks the page, the rail
+does not. The room switcher is a `SearchableSelect` on the room title (grouped,
 type-to-filter), not a row of its own; its panel takes Escape before the dock does.
 
 **Connection indicator.** `useConnectionMonitor` (`hooks/use-connection-status.ts`) drives a

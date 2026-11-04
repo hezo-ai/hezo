@@ -1,7 +1,7 @@
 import { HQ_PROJECT_NAME } from '@hezo/shared';
 import { NameSwitcherButton, type SearchableSelectOption } from '@hezo/ui';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Plus, X } from 'lucide-react';
+import { Check, Copy, Maximize2, Minimize2, Plus, X } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
 import type { ChatLaunch } from '../../contexts/chat-launch-context';
 import { useActiveProject } from '../../hooks/use-active-project';
@@ -33,8 +33,12 @@ import { CreateGroupDialog } from './create-group-dialog';
  * overlays the page rather than displacing it - nothing below reflows when chat
  * opens. Chat lives in rooms, not routes - the switcher on the room title
  * carries the pinned CEO (HQ) on top and, inside a project, that project's agent
- * DMs; team channels and History follow. There is no expand mode and no separate
- * chat page.
+ * DMs; team channels and History follow. There is no separate chat page.
+ *
+ * The header's maximize toggle grows the dock over the page: on desktop across
+ * everything below the shell header, on mobile edge to edge over the header
+ * too. Maximized is a view of the open dock, not a session: it resets whenever
+ * the dock closes, so every launch opens at the rail.
  *
  * The dock owns room selection and the panel chrome; everything inside a room
  * (messages, queue, composer, attachments) is `ChatSurface`, shared with the
@@ -53,6 +57,20 @@ interface ChatWidgetProps {
 
 /** The rail's width before the operator has ever dragged it. */
 const DEFAULT_RAIL_WIDTH = 420;
+
+/**
+ * The dock's box per presentation. Rail: a near-full-screen sheet on mobile; on
+ * desktop flush to the right edge, starting below the h-12 shell header so the
+ * top bar stays reachable while chat is open, and running to the bottom.
+ * Maximized: edge to edge on mobile, over the header too; on desktop the full
+ * width below the header. Desktop stays anchored right and only the width
+ * changes, so the panel motion carries the change from rail to page.
+ */
+const PANEL_LAYOUT = {
+	rail: 'inset-x-2 bottom-2 top-16 rounded-2xl border border-border md:inset-auto md:right-0 md:top-12 md:bottom-0 md:h-auto md:rounded-none md:border-y-0 md:border-r-0 md:w-[var(--chat-rail-w,420px)]',
+	maximized:
+		'inset-0 rounded-none border-0 md:inset-auto md:right-0 md:top-12 md:bottom-0 md:w-full',
+} as const;
 
 /** The rail shares the viewport, not a grid track - see `measureContainer`. */
 const viewportWidth = () => (typeof window === 'undefined' ? undefined : window.innerWidth);
@@ -80,6 +98,9 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	// Whether the room switcher's panel is open. Escape has two meanings once a
 	// popover lives inside the dock, and the inner one wins - see the key handler.
 	const [switcherOpen, setSwitcherOpen] = useState(false);
+	// The maximized presentation. Reset on close (below), never persisted: many
+	// surfaces launch the dock, and none of them should open it over the page.
+	const [maximized, setMaximized] = useState(false);
 	// Drag-to-resize for the desktop rail. The rail is `fixed`, so it shares the
 	// viewport rather than a grid track - hence `measureContainer`, which keeps
 	// MIN_MAIN_WIDTH of page uncovered however wide the operator drags.
@@ -102,26 +123,35 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		selectRoom(launch.room);
 	}, [launch?.nonce]);
 
-	// Escape closes the chat - unless the room switcher's panel is open, which
-	// takes Escape for itself. Radix dismisses the popover on document, then this
-	// listener runs on window with the pre-update value still `true`, so without
-	// the guard one Escape would dismiss the panel AND close the dock behind it.
+	// Escape steps back one presentation: a maximized dock restores to the rail,
+	// the rail closes. The room switcher's open panel takes Escape for itself:
+	// Radix dismisses the popover on document, then this listener runs on window
+	// with the pre-update value still `true`, so without the guard one Escape
+	// would dismiss the panel AND act on the dock behind it.
 	useEffect(() => {
 		if (!open) return;
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== 'Escape' || switcherOpen) return;
-			setOpen(false);
+			if (maximized) setMaximized(false);
+			else setOpen(false);
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [open, setOpen, switcherOpen]);
+	}, [open, setOpen, switcherOpen, maximized]);
 
-	// Navigating away only strands the reader in the blocking presentation - the
-	// mobile full-screen panel with its backdrop. The anchored desktop corner
-	// panel is a deliberately persistent companion and survives navigation,
-	// within the bounds of its room's scope below.
+	// Closing ends the maximized view, whichever way the dock was closed.
+	useEffect(() => {
+		if (!open) setMaximized(false);
+	}, [open]);
+
+	// Navigating away only strands the reader in a presentation that covers the
+	// page. On mobile that is the sheet at either size, so the dock closes. On
+	// desktop the rail is a deliberately persistent companion and survives
+	// navigation, within the bounds of its room's scope below; a maximized dock
+	// covers the page the reader just asked for, so it restores to the rail.
 	const isDesktop = useMediaQuery('(min-width: 768px)');
 	useCloseOnRouteChange(open && !isDesktop, () => setOpen(false));
+	useCloseOnRouteChange(open && isDesktop && maximized, () => setMaximized(false));
 
 	// A team room (an agent DM or a group room) belongs to its project's pages:
 	// leaving them - for another project or a page outside any - closes the
@@ -330,43 +360,46 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 			<div
 				ref={panelCellRef}
 				data-testid="chat-panel"
-				// Mobile: a near-full-screen sheet. Desktop: a rail flush to the right
-				// edge, starting below the h-12 shell header so the top bar stays
-				// reachable while chat is open, and running to the bottom. The width
-				// is the dragged one once there is one; until then the default below.
+				data-maximized={maximized}
+				// The width is the dragged one once there is one; until then the
+				// rail's default. Maximized ignores it and keeps it for the restore.
 				style={
 					railWidth != null ? ({ '--chat-rail-w': `${railWidth}px` } as CSSProperties) : undefined
 				}
-				className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl inset-x-2 bottom-2 top-16 md:inset-auto md:right-0 md:top-12 md:bottom-0 md:h-auto md:rounded-none md:border-y-0 md:border-r-0 md:w-[var(--chat-rail-w,420px)] ${
-					isResizing ? '' : PANEL_MOTION_TRANSITION
-				}`}
+				className={`fixed z-50 flex flex-col overflow-hidden bg-surface shadow-xl ${
+					PANEL_LAYOUT[maximized ? 'maximized' : 'rail']
+				} ${isResizing ? '' : PANEL_MOTION_TRANSITION}`}
 			>
 				{/* Resize handle on the rail's inner edge. Desktop only - the mobile
-				    sheet is sized by the viewport. Keyboard-resizable through the same
-				    props, so the drag is not the only way to widen it. */}
+				    sheet is sized by the viewport - and rail only, since a maximized
+				    dock has no inner edge. Keyboard-resizable through the same props,
+				    so the drag is not the only way to widen it. */}
 				{/* The WAI-ARIA window-splitter pattern, as `ResizableSplit` draws it: a
 				    focusable `separator` with value semantics. An `<hr>`
 				    (useSemanticElements' suggestion) cannot be focused. */}
-				{/* biome-ignore lint/a11y/useSemanticElements: focusable resize separator, not an <hr> */}
-				<div
-					role="separator"
-					aria-orientation="vertical"
-					aria-label={t('chat.rail.resize')}
-					// A focusable separator is the window-splitter pattern: it reports the
-					// width it is set to, and the bounds it may be dragged between.
-					aria-valuenow={railWidth ?? DEFAULT_RAIL_WIDTH}
-					aria-valuemin={MIN_PANEL_WIDTH}
-					aria-valuemax={MAX_PANEL_WIDTH}
-					tabIndex={0}
-					data-testid="chat-rail-resize"
-					{...handleProps}
-					className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize md:block hover:bg-border-strong focus-visible:bg-border-strong focus-visible:outline-none"
-				/>
+				{!maximized && (
+					// biome-ignore lint/a11y/useSemanticElements: focusable resize separator, not an <hr>
+					<div
+						role="separator"
+						aria-orientation="vertical"
+						aria-label={t('chat.rail.resize')}
+						// A focusable separator is the window-splitter pattern: it reports the
+						// width it is set to, and the bounds it may be dragged between.
+						aria-valuenow={railWidth ?? DEFAULT_RAIL_WIDTH}
+						aria-valuemin={MIN_PANEL_WIDTH}
+						aria-valuemax={MAX_PANEL_WIDTH}
+						tabIndex={0}
+						data-testid="chat-rail-resize"
+						{...handleProps}
+						className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize md:block hover:bg-border-strong focus-visible:bg-border-strong focus-visible:outline-none"
+					/>
+				)}
 				<ChatSurface
 					room={room}
 					active={open}
 					launch={launch}
 					thread={activeThread}
+					maximized={maximized}
 					header={({ streaming, queued, copyConversation, copied, canCopy }) => (
 						<header className="flex items-center justify-between gap-1 border-b border-border px-4 py-3">
 							<div className="flex min-w-0 items-center gap-2">
@@ -437,6 +470,24 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 								>
 									{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
 								</button>
+								<Tooltip
+									content={maximized ? t('chat.rail.restore') : t('chat.rail.maximize')}
+									side="bottom"
+								>
+									<button
+										type="button"
+										onClick={() => setMaximized((v) => !v)}
+										aria-label={maximized ? t('chat.rail.restore') : t('chat.rail.maximize')}
+										data-testid="chat-maximize"
+										className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+									>
+										{maximized ? (
+											<Minimize2 className="h-4 w-4" />
+										) : (
+											<Maximize2 className="h-4 w-4" />
+										)}
+									</button>
+								</Tooltip>
 								<button
 									type="button"
 									onClick={() => setOpen(false)}
