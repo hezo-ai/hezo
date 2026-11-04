@@ -38,13 +38,23 @@ test('focusing the composer warms a container for the room ahead of the send', a
 	// that the composer actually asks for it.
 	const { db } = getTestContext();
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
+
+	// The composer asks once per project, on its first focus - and opening the
+	// dock focuses it by itself. So the room must be in the state the call exists
+	// for before the dock opens, whichever focus lands first: HQ known to the
+	// client (without its slug there is nothing to warm), and its pool empty.
+	// The harness seeds HQ a container, which is exactly the case a prewarm
+	// declines.
+	await waitFor(() =>
+		expect(
+			queryClient
+				.getQueryData<{ is_internal: boolean }[]>(queryKeys.projects.all())
+				?.some((p) => p.is_internal),
+		).toBe(true),
+	);
+	await db.query('DELETE FROM container_pool_members');
 	(await findByTestId('app-header-chat')).click();
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
-
-	// The harness seeds HQ a container, which is exactly the case a prewarm
-	// declines - so clear the pool first to put the room in the state the call
-	// exists for: a project holding nothing.
-	await db.query('DELETE FROM container_pool_members');
 	input.focus();
 
 	// The route answers before it warms, so the effect is the thing to wait for.
