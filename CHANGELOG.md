@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.79.0 - 2026-11-04
+
+### Features
+
+- **web:** link to buying more hours beside the allowance reset date ([#1196](https://github.com/hezo-ai/hezo/pull/1196))
+
+### Bug Fixes
+
+- **ui:** keep the support chat launcher hidden once the owner signs in ([#1197](https://github.com/hezo-ai/hezo/pull/1197))
+
+### Other
+
+- Offer buying hours where a spent allowance stops work, and lock a fixed container service ([#1198](https://github.com/hezo-ai/hezo/pull/1198))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.78.0...0.79.0
+
 ## 0.78.0 - 2026-10-29
 
 ### Features
