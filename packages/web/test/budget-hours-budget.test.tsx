@@ -175,3 +175,38 @@ test('a project out of hours says so at the top of every page, and points at its
 		`/projects/${slug}/budget/hours`,
 	);
 });
+
+test('saving a limit below what the project already used raises the project warning at once', async () => {
+	let slug = '';
+	const { findByTestId, queryByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			pinRemoteBackend();
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Hours Lowered' });
+			slug = project.slug;
+			await ctx.db.query(
+				`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
+				 VALUES ($1, 'ctr-lowered', GREATEST(now() - interval '10 minutes',
+				         date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), now(), 'docker')`,
+				[project.id],
+			);
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
+	await findByTestId('hours-budget-window-daily');
+	expect(queryByTestId('budget-banner')).toBeNull();
+
+	await user.click(await findByTestId('edit-hours-budget'));
+	await user.click(await findByTestId('hours-budget-daily-toggle'));
+	const daily = await findByTestId('hours-budget-daily');
+	await user.clear(daily);
+	await user.type(daily, '0.01');
+	await user.click(await findByTestId('save-hours-budget'));
+
+	// No reload and no socket event: the save itself refreshes what the banner reads.
+	expect((await findByTestId('budget-banner-message')).textContent).toBe(
+		'Project is over its hours budget - agent runs are paused',
+	);
+});

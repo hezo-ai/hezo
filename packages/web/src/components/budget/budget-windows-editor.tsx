@@ -52,7 +52,6 @@ interface EditorUnit {
 	toDisplay: (base: number) => number;
 	/** A typed string -> base units. */
 	fromInput: (input: string) => number;
-	step: string;
 	unitLabel: MessageKey;
 	inputLabel: MessageKey;
 	minimumFromDaily: MessageKey;
@@ -64,7 +63,6 @@ interface EditorUnit {
 const TOKEN_UNIT: EditorUnit = {
 	toDisplay: tokensInMillions,
 	fromInput: millionsToTokens,
-	step: '0.1',
 	unitLabel: 'budget.window.unit',
 	inputLabel: 'budget.window.input',
 	minimumFromDaily: 'budget.window.minimumFromDaily',
@@ -75,7 +73,6 @@ const TOKEN_UNIT: EditorUnit = {
 const HOURS_UNIT: EditorUnit = {
 	toDisplay: containerSecondsToHours,
 	fromInput: hoursToSeconds,
-	step: '0.25',
 	unitLabel: 'budget.window.unitHours',
 	inputLabel: 'budget.window.inputHours',
 	minimumFromDaily: 'budget.window.minimumHoursFromDaily',
@@ -249,7 +246,12 @@ function WindowsEditor({
 							<>
 								<Input
 									type="number"
-									step={unit.step}
+									// Any value, never a step: the floor is a computed figure (one
+									// million a day puts the monthly floor at 30.417 million), so a
+									// step counted from it made every coherent figure but the floor
+									// a step mismatch, and a form that submits natively refused to.
+									// Rounding is the conversion's job, not the browser's.
+									step="any"
 									min={row.floor > 0 ? toInput(row.floor) : '0'}
 									value={row.inputVal}
 									onChange={(e) => handleChange(row.key, e.target.value)}

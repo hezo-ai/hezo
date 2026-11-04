@@ -144,6 +144,9 @@ export function useSetProjectContainerHoursBudget(projectId: string) {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'container-hours'] });
+			// The project banner reads whether the hours budget is spent from the
+			// budget status, which nothing else refreshes when a limit moves.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.budgetStatus(projectId) });
 			// HQ adds the projects' limits up against the allowance.
 			queryClient.invalidateQueries({ queryKey: ['instance', 'container-hours'] });
 		},

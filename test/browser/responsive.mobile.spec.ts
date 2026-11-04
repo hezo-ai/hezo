@@ -164,8 +164,13 @@ test.describe('Responsive — mobile (390px)', () => {
 		await expectNoHorizontalOverflow(page);
 
 		await page.getByTestId('edit-hours-budget').click();
-		await expect(page.getByTestId('hours-budget-monthly')).toBeVisible();
+		const monthly = page.getByTestId('hours-budget-monthly');
+		await expect(monthly).toBeVisible();
 		await expectNoHorizontalOverflow(page);
+		// One hour a day puts the monthly floor at 30.42 hours, and the stored 31 is
+		// coherent: the form submits natively, so the browser must not call it a step
+		// mismatch, or Save does nothing.
+		expect(await monthly.evaluate((el) => (el as HTMLInputElement).checkValidity())).toBe(true);
 	});
 
 	test('global settings nav stacks above content', async ({ page, lightWorkspace }) => {
