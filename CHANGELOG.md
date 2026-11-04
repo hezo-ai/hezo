@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.79.1 - 2026-11-04
+
+### Documentation
+
+- **cloud:** "Buy more hours" opens the dashboard, which shows hours and plan ([#1201](https://github.com/hezo-ai/hezo/pull/1201))
+- **dev:** close H15, H16 and H33, and give the manage link its real value ([#1200](https://github.com/hezo-ai/hezo/pull/1200))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.79.0...0.79.1
+
 ## 0.79.0 - 2026-11-04
 
 ### Features
