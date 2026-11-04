@@ -408,7 +408,7 @@ describe('acquireRunContainer reclaiming from another project', () => {
 
 	it('never reclaims a container the instance only just built', async () => {
 		// The age floor, distinct from the idle one: this container has been idle
-		// far longer than the idle window but was provisioned moments ago, so
+		// far longer than the release grace but was provisioned moments ago, so
 		// retiring it would throw away a cold provision the instance just paid for.
 		await emptyFleet();
 		const donor = await freshProject('Reclaim Fresh Donor');

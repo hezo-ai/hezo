@@ -120,12 +120,12 @@ hours allowance counts. Admins get a link from each project's tab to HQ's, and o
 instance whose limits a deployment sets, an **Hours by project** entry in the Settings
 menu beside the plan.
 
-An hour is counted from the moment a container starts being **built**, not from when
-it is ready: on a managed backend the build (image resolve, clone, package install)
-is the longest part of a cold start, and it is billed like any other minute. Counting
-stops when the container stops. A container that stops and resumes three times
-therefore reads as four separate stretches, with the gaps between them costing
-nothing but reserved disk.
+Hours count for as long as the backend bills the container. Counting starts when Hezo
+asks the backend to create or start it, before the container is ready, because a managed
+backend bills the time it spends creating and starting. Counting ends when the backend
+has finished stopping or removing the container, which can be a minute or more after Hezo
+asked. A container that stops and resumes three times therefore reads as four separate
+stretches, with the gaps between them costing nothing but reserved disk.
 
 Three things affect how that figure reads:
 
@@ -133,8 +133,8 @@ Three things affect how that figure reads:
   hours, which is what a provider charges for.
 - **Chat is counted too.** Chat replies run in the same containers as task runs -
   each reply borrows one for its duration - so their uptime is part of the same
-  figure. A container a chat recently used stays warm for 15 minutes after the
-  last message, then stops on its own.
+  figure. The container a chat used last stays warm for two minutes after the
+  reply, then stops on its own.
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
   Each agent's run time for the month is shown on the **Budget** tab, beside its tokens.

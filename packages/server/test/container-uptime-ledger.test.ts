@@ -165,6 +165,10 @@ describe('the ledger follows the pool through a container lifetime', () => {
 
 		await upsertPoolMember(db, projectId, 'c-faulted', 'idle', {});
 		await setPoolMemberState(db, 'c-faulted', 'error');
+		// An errored container may still be up and billing, so the fault alone
+		// ends nothing; the reconcile closes it once the engine reports it down.
+		expect((await intervals('c-faulted'))[0].ended_at).toBeNull();
+		await setPoolMemberState(db, 'c-faulted', 'suspended', ContainerUptimeEndReason.Reconciled);
 		// Nobody asked for this stop, so it reads as reconciled rather than stopped.
 		expect((await intervals('c-faulted'))[0].end_reason).toBe(ContainerUptimeEndReason.Reconciled);
 	});
@@ -524,7 +528,9 @@ describe('every pool state write moves the ledger', () => {
 				[id],
 			);
 			const state = res.rows[0]?.state ?? 'absent';
-			const up = state === 'creating' || state === 'idle' || state === 'busy';
+			// `error` keeps billing: the pool has lost confidence in the container,
+			// not seen it stop, and the reconcile closes it once the engine does.
+			const up = state === 'creating' || state === 'idle' || state === 'busy' || state === 'error';
 			expect({ label, state, open: (await openRows(id)).length }).toEqual({
 				label,
 				state,

@@ -102,6 +102,14 @@ export interface ContainerInfo {
 		Running: boolean;
 		Pid: number;
 		ExitCode: number;
+		/**
+		 * True while the backend is still moving the container between states -
+		 * starting, stopping, removing - and so still billing it, though `Running`
+		 * already reads false. An engine whose lifecycle calls finish the move
+		 * before they resolve leaves it unset. The liveness reconcile closes a
+		 * container's uptime interval only once this is false as well.
+		 */
+		Transitioning?: boolean;
 	};
 	Config: {
 		Image: string;
@@ -262,7 +270,17 @@ export interface ContainerEngine {
 		config: ContainerConfig,
 	): Promise<{ Id: string; Warnings: string[] }>;
 	startContainer(containerId: string): Promise<void>;
+	/**
+	 * Resolves only once the container has **finished** stopping - not when the
+	 * backend accepted the request. The uptime ledger closes the container's
+	 * interval when this resolves, so returning early under-bills by however long
+	 * the backend takes to stop. A backend whose stop is asynchronous waits for it,
+	 * bounded, and rejects with an error naming the container when the wait runs
+	 * out; the interval then stays open until the liveness reconcile sees the
+	 * container at rest.
+	 */
 	stopContainer(containerId: string, timeoutSec?: number): Promise<void>;
+	/** Resolves only once the container is gone, on the same terms as {@link stopContainer}. */
 	removeContainer(containerId: string, force?: boolean): Promise<void>;
 	inspectContainer(containerId: string): Promise<ContainerInfo | null>;
 	listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>>;

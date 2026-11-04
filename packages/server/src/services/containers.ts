@@ -14,6 +14,7 @@ import {
 	TEST_CONTAINER_LABEL_KEY,
 	TEST_CONTAINER_LABEL_VALUE,
 	TEST_CONTAINERS_ENV,
+	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
 	WsMessageType,
@@ -41,7 +42,7 @@ import {
 	clearContainerRunUserCache,
 	resolveContainerRunUser,
 } from './container-user';
-import type { ContainerEngine } from './docker';
+import type { ContainerEngine, ContainerInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { ensureImage } from './ensure-image';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
@@ -59,24 +60,32 @@ import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL, PROJECT_LABEL, TEAM_LABEL } from './sandbox/labels';
 import { detectReclaimChurn, planCrossProjectReclaim, type ReclaimEvent } from './sandbox/pool';
 import {
+	adoptCreateRequestUptime,
+	beginPoolMemberStop,
 	type ContainerAllocation,
 	claimPoolMember,
 	clearProjectContainerIfNamed,
+	closeContainerUptime,
 	decidePoolAcquisition,
 	ensurePoolMemberUptimeOpen,
 	failWedgedProvision,
+	forgetPoolMember,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
+	listUnsettledUptime,
 	loadPoolMembers,
 	markPoolMemberRunning,
+	openCreateRequestUptime,
 	readPoolMemberAllocation,
 	recordPoolMemberMemoryIfUnknown,
 	releasePoolMember,
 	removePoolMember,
 	setPoolMemberOutcome,
 	setPoolMemberState,
+	settleCreateRequestUptime,
 	upsertPoolMember,
 } from './sandbox/pool-db';
+import { containerNameFromProvisionalKey, provisionalContainerKey } from './sandbox/uptime-ledger';
 import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
 import { getOrCreateInstanceId } from './telemetry';
 import { createWakeup } from './wakeup';
@@ -112,17 +121,57 @@ const log = logger.child('containers');
 
 /**
  * Serializes container lifecycle *decisions* per project: ensure-running
- * (start/provision at run or chat start) and the idle-stop cron's
- * check-then-stop. Without it, two runs dispatching into the same stopped
- * project could both provision (two containers, one orphaned), and idle-stop
+ * (start/provision at run or chat start) and the retirement passes'
+ * check-then-retire. Without it, two runs dispatching into the same stopped
+ * project could both provision (two containers, one orphaned), and a retirement
  * could stop a container between a dispatch's capacity check and its exec.
  * Never held across an agent exec — only across the brief inspect/start/
- * provision/stop step — so it is not a throughput ceiling on runs themselves.
+ * provision step and a retirement's bookkeeping; the stop or removal a
+ * retirement asks for finishes after the lock is released — so it is not a
+ * throughput ceiling on runs themselves.
  * Keyed by project id; in-process only (single-server assumption).
  */
 const containerLifecycleLocks: KeyedLockRegistry = new Map();
 export function withContainerLifecycleLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
 	return withKeyedLock(containerLifecycleLocks, projectId, fn);
+}
+
+/**
+ * Engine calls this process has started and not yet seen finish that bill
+ * while they run: a create, keyed by its provisional key until the engine names
+ * the container, and a retirement's stop or removal, keyed by container id.
+ *
+ * **Why the lock is not held for them.** On a managed backend a stop takes from
+ * twenty seconds to nearly two minutes to finish, and the engine call waits for
+ * it so the uptime interval closes when the billing does. Holding the project's
+ * lifecycle lock that long would stall every acquire in the project behind a
+ * container nobody wants. So retirement takes the member out of the pool's hands
+ * under the lock and finishes the engine call after it; this map is what the
+ * two paths that could meet that container afterwards consult instead - a
+ * resume waits for the stop before it starts the container again, and the
+ * liveness reconcile leaves alone a container whose call is still running.
+ *
+ * In-process only, like the lock. Bounded by the containers this instance is
+ * retiring or creating at once; each entry leaves when its call settles.
+ */
+const lifecycleCallsInFlight = new Map<string, Promise<unknown>>();
+
+function trackLifecycleCall(key: string, call: Promise<unknown>): void {
+	const settled = call.then(
+		() => undefined,
+		() => undefined,
+	);
+	lifecycleCallsInFlight.set(key, settled);
+	void trackBackground(
+		settled.then(() => {
+			if (lifecycleCallsInFlight.get(key) === settled) lifecycleCallsInFlight.delete(key);
+		}),
+	);
+}
+
+/** Resolves once any stop or removal this process started on the container has settled. */
+async function awaitLifecycleCall(containerId: string): Promise<void> {
+	await lifecycleCallsInFlight.get(containerId);
 }
 
 export interface ProjectRow {
@@ -574,7 +623,17 @@ export async function provisionContainer(
 		// to absorb (see ContainerConfig.HostConfig.DiskGb).
 		const diskGb = await getProjectContainerDiskGb(db, project.id);
 
-		const { Id, Warnings } = await docker.createContainer(containerName, {
+		// Metered from the request, not from the answer: the backend bills the
+		// create while it runs, and the id that keys the ledger only exists once it
+		// returns. A provisional interval keyed by the name stands in until then.
+		await openCreateRequestUptime(db, {
+			containerName,
+			projectId: project.id,
+			memoryBytes: memoryCeilingBytes,
+			diskGb,
+			requestedAt: new Date(),
+		});
+		const createCall = docker.createContainer(containerName, {
 			Image: baseImage,
 			Cmd: ['sleep', 'infinity'],
 			Env: env,
@@ -594,6 +653,19 @@ export async function provisionContainer(
 			},
 			ExposedPorts: exposedPorts,
 		});
+		trackLifecycleCall(provisionalContainerKey(containerName), createCall);
+		let created: Awaited<typeof createCall>;
+		try {
+			created = await createCall;
+		} catch (createError) {
+			// The request may still have produced a container - a timeout says
+			// nothing about what the backend did. Settled by name in the background,
+			// so this failure is reported now rather than after a lookup and a removal.
+			trackBackground(settleFailedCreate(deps, containerName));
+			throw createError;
+		}
+		const { Id, Warnings } = created;
+		await adoptCreateRequestUptime(db, containerName, Id);
 
 		openStream(Id);
 		// The engine's own account of what it could not honour, on the container's
@@ -839,6 +911,43 @@ export async function provisionContainer(
 }
 
 /**
+ * Settle the metering of a create call that failed: find out whether the backend
+ * made a container anyway.
+ *
+ * None by that name: nothing was created and the provisional interval goes,
+ * billing nothing. One: the interval moves to it, the container is removed - no
+ * pool member or project row names it, so nothing would ever use it - and the
+ * interval closes once the removal has finished. A lookup or a removal that
+ * fails leaves the interval open for the liveness reconcile, which settles it
+ * the same way later; the orphan sweep removes such a container too and closes
+ * its interval when it does.
+ */
+async function settleFailedCreate(deps: ContainerDeps, containerName: string): Promise<void> {
+	const { db, docker } = deps;
+	let found: ContainerInfo | null;
+	try {
+		found = await docker.findContainerByNamePrefix(containerName);
+	} catch (e) {
+		log.warn(
+			`could not check whether the failed create of ${containerName} left a container ` +
+				`(${(e as Error).message}); its billing stays open until the reconcile finds out`,
+		);
+		return;
+	}
+	await settleCreateRequestUptime(db, containerName, found?.Id ?? null);
+	if (!found) return;
+	try {
+		await docker.removeContainer(found.Id, true);
+		await closeContainerUptime(db, found.Id, ContainerUptimeEndReason.Destroyed);
+	} catch (e) {
+		log.warn(
+			`the failed create of ${containerName} left container ${found.Id.slice(0, 12)}, and removing it ` +
+				`failed (${(e as Error).message}); it is billed until the orphan sweep removes it`,
+		);
+	}
+}
+
+/**
  * Bring a project's container up on demand and return its running container id.
  * A container that exists but is stopped is started in place (cheaper, preserves
  * state); one that is missing or was never created is provisioned from scratch.
@@ -887,11 +996,15 @@ export async function ensureProjectContainerRunning(
 			if (info) {
 				// Container exists but is stopped — start it in place.
 				await refuseStartOverBudget(deps, proj.id, proj.slug);
+				// A retirement may still be stopping it; starting into that is a 409 on a
+				// managed backend and an overlapping billed stretch everywhere.
+				await awaitLifecycleCall(proj.container_id);
+				const startRequestedAt = new Date();
 				await docker.startContainer(proj.container_id);
 				// The pool is told too, not just `projects`: its member still reads
 				// `suspended`, and a member the pool believes is down bills nothing while
 				// the container it names is up. No-op when no member names this container.
-				await markPoolMemberRunning(db, proj.container_id);
+				await markPoolMemberRunning(db, proj.container_id, startRequestedAt);
 				await db.query(
 					`UPDATE projects
 					 SET container_status = $1::container_status, container_error = NULL,
@@ -1450,8 +1563,13 @@ export async function acquireRunContainer(
 				}
 			}
 			if (decision.kind === 'resume') {
+				// A member retired moments ago may still be stopping. Its stop has to
+				// finish first - a managed backend refuses a start mid-stop, and the
+				// stop's billed stretch has to end before the resume's begins.
+				await awaitLifecycleCall(member.id);
 				// Resume is a start in place: the writable layer is intact, so the
 				// clones and worktrees this container already built are still there.
+				const startRequestedAt = new Date();
 				try {
 					await docker.startContainer(member.id);
 				} catch {
@@ -1460,7 +1578,7 @@ export async function acquireRunContainer(
 					await removePoolMember(db, member.id);
 					return { kind: 'retry' as const };
 				}
-				await setPoolMemberState(db, member.id, 'idle');
+				await setPoolMemberState(db, member.id, 'idle', undefined, startRequestedAt);
 				await markProjectContainerStarted(deps, projectId, member.id);
 			}
 			if (await claimPoolMember(deps.db, member.id, taskId)) {
@@ -1500,7 +1618,12 @@ export async function acquireRunContainer(
 		release: async () => {
 			if (released) return;
 			released = true;
-			await releasePoolMember(db, containerId, taskId).catch(() => undefined);
+			// Back to idle only. Whether it is then retired is decided once the run's
+			// follow-up work has had its chance to claim it - see the job manager's
+			// release-time retirement - so nothing here races the next acquire.
+			await releasePoolMember(db, containerId, taskId, workload === 'chat-turn').catch(
+				() => undefined,
+			);
 		},
 	};
 }
@@ -1877,23 +2000,6 @@ export async function stopContainerGracefully(
 	await broadcastProjectUpdate(db, wsManager, teamId, projectId);
 }
 
-/**
- * Activity that holds a project's container up, shared by the idle-stop cron's
- * candidate scan and its under-lock recheck. Evaluated activity-side so an idle
- * instance's cost tracks activity inside the window, not table history. A
- * project is busy when it has: an active (queued/running) run, except one parked
- * holding no container at all — waiting for container capacity, or waiting for the
- * hours allowance — since such a run is waiting on the very reclaim this scan
- * feeds, so counting it busy deadlocks it, exactly as
- * capacity-skipped wakeups are excluded below; a run finished
- * inside the idle window (idx_runs_finished); a queued wakeup that could
- * actually dispatch — capacity-skipped wakeups deliberately do NOT hold a
- * container, else a backlog waiting on the container cap would pin containers
- * warm forever ('project_at_capacity' is the pre-rename legacy value, re-stamped
- * within seconds of an upgrade); or a live chat session with recent activity or
- * an in-flight (pending/streaming) turn (idx_chat_messages_inflight).
- * `$1` is the idle window in minutes everywhere.
- */
 const UUID_RE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
 /**
@@ -1906,57 +2012,97 @@ const UUID_RE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
  *
  * **The NULL arm is not optional.** An ordinary queued run carries no reason at
  * all, and `NULL <> ALL (...)` is NULL rather than true - so without the explicit
- * `IS NULL` test every ordinary queued run would drop out of the busy set and
- * have its project's containers reclaimed underneath it. The single-value form
- * this replaced got that for free from `IS DISTINCT FROM`; the set form does not.
+ * `IS NULL` test every ordinary queued run would drop out of the ready set and
+ * have its project's containers retired underneath it.
  */
 const PARKED_HOLDING_NOTHING_SQL = `ARRAY[${PARKED_HOLDING_NOTHING.map((reason: string) => `'${reason}'`).join(', ')}]`;
-const BUSY_PROJECTS_SQL = `
-	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
+
+/**
+ * Skip reasons that hand a wakeup back rather than refuse it.
+ *
+ * A wakeup the dispatcher has skipped for any other reason is waiting on
+ * something that will not change by itself in seconds - a full instance, a busy
+ * credential, a question to a person - so it is not ready to dispatch right now,
+ * and holding a container warm for it bills for as long as the wait lasts, which
+ * can be hours. These two are different: the work was handed back with nothing
+ * in its way, and the next dispatch tick picks it up.
+ */
+const WAKEUP_SKIPS_STILL_READY = [
+	WakeupSkipReason.RunNeverStarted,
+	WakeupSkipReason.ServerShutdown,
+];
+const WAKEUP_SKIPS_STILL_READY_SQL = `ARRAY[${WAKEUP_SKIPS_STILL_READY.map((reason: string) => `'${reason}'`).join(', ')}]`;
+
+/**
+ * Projects with a job ready to dispatch right now: a queued run that is not
+ * parked waiting for capacity or hours, or a queued wakeup the dispatcher has
+ * not refused.
+ *
+ * What keeps a released container warm past its grace. Bounded by construction,
+ * which is the point: a queued run either claims a container within seconds or
+ * parks, and a fresh wakeup either dispatches on the next tick or is skipped -
+ * either way it leaves this set, so nothing in it can hold a container for long.
+ * A parked run and a refused wakeup are left out for that reason, and a
+ * capacity wait for a second one too: it waits on the very retirement this feeds,
+ * so counting it would deadlock it.
+ */
+const READY_WORK_SQL = `
+	SELECT t.project_id FROM heartbeat_runs hr
 	 JOIN tasks t ON t.id = hr.task_id
-	 WHERE (hr.status = 'running'
-	     OR (hr.status = 'queued'
-	         AND (hr.queued_reason IS NULL
-	              OR hr.queued_reason <> ALL (${PARKED_HOLDING_NOTHING_SQL}))))
+	 WHERE hr.status = 'queued'
+	   AND (hr.queued_reason IS NULL
+	        OR hr.queued_reason <> ALL (${PARKED_HOLDING_NOTHING_SQL}))
 	UNION
-	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
-	 JOIN tasks t ON t.id = hr.task_id
-	 WHERE hr.finished_at > now() - ($1 * interval '1 minute')
-	UNION
-	-- The exclusion list is capacity-only **by design**, and a new WakeupSkipReason
-	-- does not belong on it by reflex. Every other reason names work that is ready
-	-- to dispatch and therefore wants its container kept warm; only a wakeup
-	-- waiting on the very reclaim this scan feeds must be left out, or it
-	-- deadlocks. 'credential_busy' and 'run_never_started' are deliberately absent.
-	SELECT DISTINCT t.project_id FROM agent_wakeup_requests w
+	SELECT t.project_id FROM agent_wakeup_requests w
 	 JOIN tasks t ON t.id = (w.payload->>'task_id')::uuid
 	 WHERE w.status = 'queued'
 	   AND w.payload->>'task_id' ~ '${UUID_RE}'
 	   AND (w.last_skipped_reason IS NULL
-	     OR w.last_skipped_reason NOT IN ('instance_at_capacity', 'project_at_capacity'))
+	        OR w.last_skipped_reason = ANY (${WAKEUP_SKIPS_STILL_READY_SQL}))
 	UNION
-	SELECT DISTINCT (w.payload->>'project_id')::uuid AS project_id FROM agent_wakeup_requests w
+	SELECT (w.payload->>'project_id')::uuid AS project_id FROM agent_wakeup_requests w
 	 WHERE w.status = 'queued'
 	   AND w.payload->>'project_id' ~ '${UUID_RE}'
 	   AND (w.last_skipped_reason IS NULL
-	     OR w.last_skipped_reason NOT IN ('instance_at_capacity', 'project_at_capacity'))
-	UNION
-	-- A live chat keeps its container on its **own**, longer window. A pause
-	-- between messages is a person thinking, not an idle project, and reclaiming
-	-- at the run window suspended the container out from under an open chatbox.
-	SELECT cs.project_id FROM chat_sessions cs
-	 WHERE cs.status IN ('starting', 'running')
-	   AND (cs.last_activity_at > now() - (${CHAT_IDLE_TIMEOUT_MIN} * interval '1 minute')
-	     OR EXISTS (SELECT 1 FROM chat_messages cm
-	                WHERE cm.session_id = cs.id AND cm.status IN ('pending', 'streaming')))
+	        OR w.last_skipped_reason = ANY (${WAKEUP_SKIPS_STILL_READY_SQL}))
 `;
 
 /**
- * The per-candidate predicate the idle-stop cron applies: container running,
- * up for at least one full idle window (the start-time floor — a manual start
- * or fresh provision is never stopped early; NULL-started rows never match, so
- * they are never idle-stopped), and no busy signal. `extraSql` narrows to one
- * project for the under-lock recheck.
+ * The one idle member per project a chat is keeping warm: the one a chat turn
+ * (or the composer's prewarm) released most recently, inside the chat pause.
+ *
+ * One, not all: a person's next message lands on one container, and every other
+ * idle member of the project is retired like any task container. Served by
+ * `idx_container_pool_members_chat_release`.
+ */
+const CHAT_HELD_MEMBERS_SQL = `
+	SELECT DISTINCT ON (project_id) container_id, project_id
+	  FROM container_pool_members
+	 WHERE state = 'idle'
+	   AND chat_released_at > now() - (${CHAT_IDLE_TIMEOUT_MIN} * interval '1 minute')
+	 ORDER BY project_id, chat_released_at DESC, container_id
+`;
+
+/**
+ * Activity that keeps a project out of the whole-project idle pass: a running
+ * run, a job ready to dispatch, or a member a chat is holding warm.
+ */
+const BUSY_PROJECTS_SQL = `
+	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
+	 JOIN tasks t ON t.id = hr.task_id
+	 WHERE hr.status = 'running'
+	UNION
+	${READY_WORK_SQL}
+	UNION
+	SELECT project_id FROM (${CHAT_HELD_MEMBERS_SQL}) held
+`;
+
+/**
+ * The per-candidate predicate the whole-project idle pass applies: container
+ * running, started at least one release grace ago (a manual start or fresh
+ * provision is not stopped in the same breath; NULL-started rows never match),
+ * and no busy signal. `extraSql` narrows to one project for the under-lock
+ * recheck. `$1` is the grace, in seconds.
  */
 const IDLE_CANDIDATE_SQL = (extraSql: string, limitSql: string) => `
 	WITH busy AS (${BUSY_PROJECTS_SQL})
@@ -1965,7 +2111,7 @@ const IDLE_CANDIDATE_SQL = (extraSql: string, limitSql: string) => `
 	WHERE p.container_status = 'running'::container_status
 	  AND p.container_id IS NOT NULL
 	  AND p.container_last_started_at IS NOT NULL
-	  AND p.container_last_started_at < now() - ($1 * interval '1 minute')
+	  AND p.container_last_started_at < now() - ($1 * interval '1 second')
 	  AND p.id NOT IN (SELECT project_id FROM busy)
 	  ${extraSql}
 	${limitSql}
@@ -1978,14 +2124,14 @@ export interface IdleContainerCandidate {
 	container_id: string;
 }
 
-/** Projects whose running container has been idle past the timeout. */
+/** Projects whose running container has sat idle past the release grace. */
 export async function findIdleContainerCandidates(
 	db: Db,
-	timeoutMin: number,
+	graceSec: number,
 	limit: number,
 ): Promise<IdleContainerCandidate[]> {
 	const res = await db.query<IdleContainerCandidate>(IDLE_CANDIDATE_SQL('', 'LIMIT $2'), [
-		timeoutMin,
+		graceSec,
 		limit,
 	]);
 	return res.rows;
@@ -1998,54 +2144,35 @@ export async function findIdleContainerCandidates(
 export async function isProjectIdleForContainerStop(
 	db: Db,
 	projectId: string,
-	timeoutMin: number,
+	graceSec: number,
 ): Promise<boolean> {
-	const res = await db.query(IDLE_CANDIDATE_SQL('AND p.id = $2', 'LIMIT 1'), [
-		timeoutMin,
-		projectId,
-	]);
+	const res = await db.query(IDLE_CANDIDATE_SQL('AND p.id = $2', 'LIMIT 1'), [graceSec, projectId]);
 	return res.rows.length > 0;
 }
 
 /**
- * Idle pool members past their own idle window, whatever their project is doing.
+ * Pool members idle past `$1` seconds that nothing is about to use.
  *
- * The query above asks a project-shaped question - "has everything here gone
- * quiet?" - and a project with two busy containers and two idle ones never
- * answers yes, so its idle members were charged to the instance memory budget in
- * full for as long as it kept working and no other project could reach that
- * memory. This asks the member-shaped question instead, which is the one that
- * bounds the budget.
+ * Member-shaped rather than project-shaped: a project with two busy containers
+ * and two idle ones is never quiet, yet its idle members are charged to the
+ * instance memory budget in full and billed by the backend. Left out are the
+ * member a chat is holding warm and every member of a project with a job ready
+ * to dispatch right now - that job is about to claim one, and stopping it first
+ * makes the job pay a stop and a start instead of a wait of a few seconds. Both
+ * exclusions are bounded (see `READY_WORK_SQL` and `CHAT_HELD_MEMBERS_SQL`), so
+ * neither can hold a member indefinitely.
  *
- * It used to carry an `EXISTS ... state = 'busy'` so that a fully idle project
- * was left to {@link findIdleContainerCandidates} and its warm-start guarantee.
- * The two preconditions did not partition the space: a project whose runs last
- * seconds is never quiet (queued wakeups and recent finishes keep it out of the
- * project-shaped pass) and rarely busy when the once-a-minute cron samples it,
- * so its idle members matched neither and pinned the budget indefinitely. The
- * warm-start floor now lives in `planSurplusIdleRetirement`, where it is a
- * property of the plan rather than of which pass ran, so this can be total.
- *
- * A project mid-conversation is excluded: chat turns release their member
- * between replies, so to this pass a chatting project looks idle while a person
- * is mid-thought - and retiring the warm member makes their next message pay a
- * cold start. The predicate is the same live-chat window `BUSY_PROJECTS_SQL`
- * carries (a live session, recent activity), a structural signal rather than
- * the old pinned-member flag. The table it reads is one small row per member.
- * Served by `idx_container_pool_members_idle`.
+ * The warm-start floor lives in `planSurplusIdleRetirement`, so this can be
+ * total. Served by `idx_container_pool_members_idle`.
  */
 const STALE_MEMBER_SQL = (state: 'idle' | 'suspended', extraSql: string, limitSql: string) => `
 	SELECT m.container_id, m.project_id, p.slug, p.team_id
 	  FROM container_pool_members m
 	  JOIN projects p ON p.id = m.project_id
 	 WHERE m.state = '${state}'
-	   AND m.last_released_at < now() - ($1 * interval '1 minute')
-	   AND NOT EXISTS (
-	     SELECT 1 FROM chat_sessions cs
-	      WHERE cs.project_id = m.project_id
-	        AND cs.status IN ('starting', 'running')
-	        AND cs.last_activity_at > now() - (${CHAT_IDLE_TIMEOUT_MIN} * interval '1 minute')
-	   )
+	   AND m.last_released_at < now() - ($1 * interval '1 second')
+	   AND m.container_id NOT IN (SELECT container_id FROM (${CHAT_HELD_MEMBERS_SQL}) held)
+	   AND m.project_id NOT IN (${READY_WORK_SQL})
 	   ${extraSql}
 	 ORDER BY m.last_released_at
 	 ${limitSql}
@@ -2058,14 +2185,14 @@ export interface StaleIdleMember {
 	team_id: string;
 }
 
-/** Surplus idle members across the instance, oldest first. */
+/** Idle members across the instance that nothing is about to use, oldest first. */
 export async function findStaleIdleMembers(
 	db: Db,
-	timeoutMin: number,
+	graceSec: number,
 	limit: number,
 ): Promise<StaleIdleMember[]> {
 	const res = await db.query<StaleIdleMember>(STALE_MEMBER_SQL('idle', '', 'LIMIT $2'), [
-		timeoutMin,
+		graceSec,
 		limit,
 	]);
 	return res.rows;
@@ -2074,17 +2201,17 @@ export async function findStaleIdleMembers(
 /**
  * Re-run the scan for one project immediately before retiring anything, under
  * that project's lifecycle lock. A member claimed and released again between the
- * batch scan and the lock is idle once more but no longer *stale*, and retiring
+ * scan and the lock is idle once more but inside its grace again, and retiring
  * it there would take a container the project is actively cycling through.
  */
 export async function findStaleIdleMembersInProject(
 	db: Db,
 	projectId: string,
-	timeoutMin: number,
+	graceSec: number,
 ): Promise<StaleIdleMember[]> {
 	const res = await db.query<StaleIdleMember>(
 		STALE_MEMBER_SQL('idle', 'AND m.project_id = $2', ''),
-		[timeoutMin, projectId],
+		[graceSec, projectId],
 	);
 	return res.rows;
 }
@@ -2127,7 +2254,7 @@ export async function findDormantSuspendedMembers(
 ): Promise<StaleIdleMember[]> {
 	const res = await db.query<StaleIdleMember>(
 		STALE_MEMBER_SQL('suspended', 'AND NOT m.has_unpushed_commits', 'LIMIT $2'),
-		[dormantMin, limit],
+		[dormantMin * 60, limit],
 	);
 	return res.rows;
 }
@@ -2136,14 +2263,24 @@ export async function findDormantSuspendedMembers(
  * Carry out a retirement plan against one project's containers: suspend some,
  * destroy the rest.
  *
- * The single executor behind all three callers - the whole-project idle pass, the
- * surplus-member pass, and cross-project reclaim on the acquire path. They differ
- * only in how the plan was chosen; what it takes to retire a container safely
- * (clear a project row still naming a destroyed container) is identical. A chat
- * turn holds its container busy for exactly one exec, so a member this plan can
- * see as idle has no chat riding on it and nothing needs parking first.
+ * The single executor behind every caller - the release-time retirement, the
+ * whole-project idle pass, the surplus-member pass, and cross-project reclaim on
+ * the acquire path. They differ only in how the plan was chosen; what it takes to
+ * retire a container safely (clear a project row still naming a destroyed
+ * container) is identical. A chat turn holds its container busy for exactly one
+ * exec, so a member this plan can see as idle has no chat riding on it and
+ * nothing needs parking first.
  *
- * Returns how many containers were actually retired, for the caller's log line.
+ * **Two halves, and only the first runs under the caller's lock.** Every caller
+ * holds the project's lifecycle lock, and the engine call can take minutes on a
+ * managed backend because it waits for the stop or removal to finish. So this
+ * takes each member out of the pool's hands at once - a suspended member cannot
+ * be claimed and is not charged to the budget; a destroyed one has no row left
+ * to claim - and finishes the engine call in the background, where it closes the
+ * container's uptime interval once the backend confirms. A resume of a member
+ * still stopping waits for that first ({@link awaitLifecycleCall}).
+ *
+ * Returns how many containers were taken out of service, for the caller's log line.
  */
 export async function executeRetirementPlan(
 	deps: ContainerDeps,
@@ -2160,7 +2297,7 @@ export async function executeRetirementPlan(
 		endReason?: ContainerUptimeEndReason;
 	},
 ): Promise<number> {
-	const { db, docker } = deps;
+	const { db } = deps;
 
 	let retired = 0;
 	for (const containerId of plan.destroy) {
@@ -2170,8 +2307,7 @@ export async function executeRetirementPlan(
 		log.info(
 			`project ${ref(project.slug, project.id)} retiring ${opts.reason} container ${ref(project.slug, containerId.slice(0, 12))}`,
 		);
-		await docker.removeContainer(containerId, true).catch(() => undefined);
-		await removePoolMember(db, containerId);
+		await forgetPoolMember(db, containerId);
 		// The project row may still name this container - `provisionContainer`
 		// points `container_id` at the newest one, which is exactly the surplus
 		// the plan destroys first. Left behind, the row names a container that
@@ -2179,24 +2315,55 @@ export async function executeRetirementPlan(
 		// project's container having died: a spurious error on a project whose
 		// remaining containers are perfectly healthy.
 		await clearProjectContainerIfNamed(db, project.id, containerId);
+		trackLifecycleCall(containerId, finishRemoval(deps, project, containerId));
 		retired++;
 	}
 
 	for (const containerId of plan.suspend) {
+		if (!(await beginPoolMemberStop(db, containerId))) continue;
 		log.info(
 			`project ${ref(project.slug, project.id)} ${opts.reason} — suspending container ${ref(project.slug, containerId.slice(0, 12))}`,
 		);
-		await stopContainerGracefully(
-			deps,
-			project.id,
-			project.slug,
-			project.team_id,
+		trackLifecycleCall(
 			containerId,
-			opts.endReason,
+			stopContainerGracefully(
+				deps,
+				project.id,
+				project.slug,
+				project.team_id,
+				containerId,
+				opts.endReason,
+			),
 		);
 		retired++;
 	}
 	return retired;
+}
+
+/**
+ * The background half of a destroy: remove the container, then stop billing it.
+ *
+ * A removal that fails or runs out of time leaves the interval open, and says
+ * which container and where to look: the liveness reconcile closes it once the
+ * engine reports the container gone, and the orphan sweep removes a container no
+ * row names and closes its interval when it does.
+ */
+async function finishRemoval(
+	deps: ContainerDeps,
+	project: { id: string; slug: string },
+	containerId: string,
+): Promise<void> {
+	try {
+		await deps.docker.removeContainer(containerId, true);
+	} catch (e) {
+		log.warn(
+			`project ${ref(project.slug, project.id)} container ${ref(project.slug, containerId.slice(0, 12))} ` +
+				`was not confirmed removed: ${(e as Error).message}. It stays metered until the backend ` +
+				'reports it gone; check it on the Containers page or in the backend console.',
+		);
+		return;
+	}
+	await closeContainerUptime(deps.db, containerId, ContainerUptimeEndReason.Destroyed);
 }
 
 /**
@@ -2379,9 +2546,11 @@ async function enforceContainerMemoryLimit(
 
 	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
 
+	let stopped = true;
 	try {
 		await docker.stopContainer(containerId);
 	} catch (err) {
+		stopped = false;
 		log.warn(
 			`docker.stopContainer failed during memory-limit enforcement for project ${ref(projectSlug, projectId)}; recording error anyway`,
 			err,
@@ -2397,8 +2566,10 @@ async function enforceContainerMemoryLimit(
 		[ContainerStatus.Error, lastLogs, errorMessage, projectId],
 	);
 	await setPoolMemberOutcome(db, containerId, lastLogs, errorMessage);
-	// Stopped, so no longer a warm member the ladder may hand out untouched.
-	await setPoolMemberState(db, containerId, 'suspended');
+	// Stopped, so no longer a warm member the ladder may hand out untouched. A stop
+	// that did not confirm leaves the member and its billing as they are; the
+	// liveness reconcile settles both once the engine reports where it ended up.
+	if (stopped) await setPoolMemberState(db, containerId, 'suspended');
 
 	log.warn(
 		`Auto-stopped container ${ref(projectSlug, containerId.slice(0, 12))} for project ${ref(projectSlug, projectId)}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,
@@ -2830,6 +3001,50 @@ function dueForPoolLivenessCheck(containerId: string, now: number, intervalMs: n
 }
 
 /**
+ * Close or settle uptime intervals no pool member accounts for.
+ *
+ * Every other interval is reconciled through its member above. These two kinds
+ * have none, and both are left by a process that stopped mid-call: a create
+ * request whose answer never arrived (still keyed by the container's name) and a
+ * removal that never confirmed (its member was dropped when the removal was
+ * asked for). Without this they would bill to `now()` for ever.
+ *
+ * A create is settled by looking its name up: nothing there means nothing was
+ * created, so the interval is dropped; a container there takes the interval
+ * over, and since nothing names it, the orphan sweep removes it and closes the
+ * interval then. A removal is closed once the engine reports the container gone,
+ * or at rest. A container still running is left for the orphan sweep. Anything
+ * unanswerable is left for the next pass.
+ */
+async function settleUnaccountedUptime(deps: ContainerDeps): Promise<void> {
+	const { db, docker } = deps;
+	const intervals = await listUnsettledUptime(
+		db,
+		POOL_RECONCILE_MIN_AGE_SECONDS,
+		POOL_RECONCILE_LIMIT,
+	);
+	for (const interval of intervals) {
+		if (lifecycleCallsInFlight.has(interval.containerId)) continue;
+		try {
+			if (interval.provisional) {
+				const name = containerNameFromProvisionalKey(interval.containerId);
+				const found = await docker.findContainerByNamePrefix(name);
+				await settleCreateRequestUptime(db, name, found?.Id ?? null);
+				continue;
+			}
+			const info = await docker.inspectContainer(interval.containerId);
+			if (info === null) {
+				await closeContainerUptime(db, interval.containerId, ContainerUptimeEndReason.Destroyed);
+			} else if (!info.State.Running && !info.State.Transitioning) {
+				await closeContainerUptime(db, interval.containerId, ContainerUptimeEndReason.Reconciled);
+			}
+		} catch {
+			// The engine could not answer; the interval stays open until it can.
+		}
+	}
+}
+
+/**
  * Reconcile every pool member against the engine: drop the ones whose container
  * is gone, and suspend the ones that are merely no longer running.
  *
@@ -2875,11 +3090,15 @@ export async function reconcilePoolMembers(
 		POOL_RECONCILE_LIMIT,
 	);
 	const result = { dropped: 0, wedged: 0, transitions: [] as ContainerTransition[] };
+	await settleUnaccountedUptime(deps);
 	if (stale.length === 0) return result;
 
 	const interval = deps.poolLivenessIntervalMs ?? POOL_LIVENESS_CHECK_INTERVAL_MS;
 	for (const member of stale) {
 		if (!dueForPoolLivenessCheck(member.containerId, now, interval)) continue;
+		// A stop or removal this process is still waiting on owns the container
+		// until it settles; judging it mid-call would race the call's own ending.
+		if (lifecycleCallsInFlight.has(member.containerId)) continue;
 
 		// Ahead of the engine round trip, and deliberately: a provision this old is
 		// dead whatever the backend says about the sandbox, and asking first would
@@ -2931,17 +3150,36 @@ export async function reconcilePoolMembers(
 			// thing that looks at a healthy member and it just walked past. Rides the
 			// round trip already made above, like the memory learn.
 			//
-			// `idle`/`busy` only: `error` means the pool has stopped believing this
-			// container is up, and `creating` opened its interval at the upsert.
+			// `creating` opened its interval at the create request, and `error` keeps
+			// whatever it had: an errored container that is still up is still billed.
 			if (member.state === 'idle' || member.state === 'busy') {
 				await ensurePoolMemberUptimeOpen(db, member.containerId);
+			} else if (member.state === 'suspended') {
+				// The pool believes this container stopped and it is up: a retirement's
+				// stop that failed or ran out of time, or one a restart cut short. Its
+				// interval is still open, so it is billed correctly; marking it idle
+				// hands it back to the retirement passes, which stop it again.
+				await markPoolMemberRunning(db, member.containerId);
+				log.info(
+					`pool member ${member.containerId.slice(0, 12)} was recorded stopped but is running — back to idle`,
+				);
 			}
 			continue;
 		}
-		// Only a member the pool believed was up. `suspended` is already stopped,
-		// and `creating`/`error` are outside the ladder - a container still coming
-		// up legitimately reads not-running, and judging it dead here would fail
-		// the run that is provisioning it.
+		// Still moving between states on the backend, and still billed while it
+		// does: a stop that ran out of time is the usual case. Asked again next pass.
+		if (info.State.Transitioning) continue;
+		// At rest now. A `suspended` member whose stop never confirmed, and an
+		// `error` member - a failed or interrupted provision - keep their interval
+		// open until the engine says the container is down, which is now. Closed at
+		// the moment it was seen, the best end this pass can know.
+		if (member.state === 'suspended' || member.state === 'error') {
+			await closeContainerUptime(db, member.containerId, ContainerUptimeEndReason.Reconciled);
+			continue;
+		}
+		// Only a member the pool believed was up from here. `creating` is outside
+		// the ladder - a container still coming up legitimately reads not-running,
+		// and judging it dead here would fail the run that is provisioning it.
 		if (member.state !== 'idle' && member.state !== 'busy') continue;
 
 		const exitCode = info.State.ExitCode;

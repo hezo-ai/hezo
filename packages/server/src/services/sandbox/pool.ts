@@ -296,8 +296,10 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
  * resumes in about a second. That converges on {@link planIdleShutdown}'s own
  * rule - two planners, one invariant.
  *
- * `staleMemberIds` are the members the caller has established sat idle past the
- * window - the clock lives in SQL, where it can be indexed, so this stays pure.
+ * `staleMemberIds` are the members the caller has established nothing is about
+ * to use - idle past the release grace, not held by a chat, in a project with no
+ * job ready to dispatch. The clock lives in SQL, where it can be indexed, so
+ * this stays pure.
  */
 export function planSurplusIdleRetirement(
 	members: readonly PoolMember[],
@@ -311,12 +313,19 @@ export function planSurplusIdleRetirement(
 	const pinned = stale.filter((m) => m.hasUnpushedCommits);
 	const disposable = stale.filter((m) => !m.hasUnpushedCommits);
 
-	// Three things already guarantee a warm start, and any one of them is enough:
-	// a busy member (about to become idle itself), a suspended member (a ~1s
-	// resume through the ladder's resume rung), or a pinned member this plan is
-	// about to suspend.
+	// Four things already guarantee a warm start, and any one of them is enough:
+	// a busy member (about to become idle itself), an idle member this plan
+	// leaves running (one a chat is holding, or one still inside its grace), a
+	// suspended member (a ~1s resume through the ladder's resume rung), or a
+	// pinned member this plan is about to suspend.
 	const resumableAlready =
-		pinned.length > 0 || members.some((m) => m.state === 'busy' || m.state === 'suspended');
+		pinned.length > 0 ||
+		members.some(
+			(m) =>
+				m.state === 'busy' ||
+				m.state === 'suspended' ||
+				(m.state === 'idle' && !staleMemberIds.has(m.id)),
+		);
 	if (resumableAlready) return { suspend: pinned, destroy: disposable };
 
 	// Nothing else can serve the next run, so the first stale member is held back

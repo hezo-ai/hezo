@@ -415,6 +415,11 @@ export function describeEngineConformance(
 			await engine.execStart(write);
 
 			await engine.stopContainer(containerId);
+			// Finished when the call resolves, not merely accepted: the uptime ledger
+			// closes the container's billed stretch at that moment.
+			const stopped = await engine.inspectContainer(containerId);
+			expect(stopped?.State.Running).toBe(false);
+			expect(stopped?.State.Transitioning ?? false).toBe(false);
 			await engine.startContainer(containerId);
 
 			const read = await engine.execCreate(containerId, {
@@ -562,6 +567,10 @@ export function describeEngineConformance(
 				// suite that pinned the number would fail the next adapter for having a
 				// different wrapper rather than for sharing process space.
 				expect(await countProcesses(second.Id, '[s]leep 301')).toBeGreaterThanOrEqual(1);
+
+				// Gone when the call resolves, on the same terms as a stop.
+				await engine.removeContainer(second.Id, true);
+				expect(await engine.inspectContainer(second.Id)).toBeNull();
 			} finally {
 				await engine.removeContainer(second.Id, true).catch(() => undefined);
 			}

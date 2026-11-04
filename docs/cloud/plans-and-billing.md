@@ -20,8 +20,9 @@ moments, not a limit on how many agents you may hire.
 
 **Container-hours a month** is the budget those containers draw from. One
 container running for one hour is one container-hour; five containers running
-for twelve minutes is also one. Time is metered while a container is up, so an
-idle team costs nothing.
+for twelve minutes is also one. Time is metered from the moment Hezo asks for a
+container until it has finished stopping, which matches what the container provider
+bills. An idle team costs nothing.
 
 Both reset with your billing period. Your first period counts from the moment
 you subscribe, so hours your trial used earlier that day do not come out of it.

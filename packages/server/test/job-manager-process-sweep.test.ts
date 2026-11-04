@@ -6,7 +6,13 @@ import type { ContainerProcessInfo } from '../src/services/docker';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { SWEEP_MIN_AGE_SECS } from '../src/services/process-sweeper';
-import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestProject,
+	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // The startup dangling-process sweep (4th reconcile pass) and the shutdown
@@ -32,6 +38,7 @@ function proc(over: Partial<ContainerProcessInfo>): ContainerProcessInfo {
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db: ctx.db,
 		docker: createStubDocker(),
 		masterKeyManager: ctx.masterKeyManager,

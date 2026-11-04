@@ -27,6 +27,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
 } from './helpers/app';
 import {
 	clearContainerCapacityForTest,
@@ -79,6 +80,7 @@ function createMockDocker(): ContainerEngine {
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db,
 		docker: createMockDocker(),
 		masterKeyManager,

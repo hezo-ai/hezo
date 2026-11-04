@@ -657,6 +657,9 @@ describe('DaytonaEngine degradations', () => {
  * ("Sandbox state change in progress") on stop-then-start, and a just-created
  * sandbox reading `Running: false` straight into the container-death path.
  */
+/** Stop and removal waits that fail in milliseconds rather than minutes. */
+const FAST_STOP_WAIT = { timeoutMs: 2_000, pollMs: 5 };
+
 describe('DaytonaEngine settles a transition before returning', () => {
 	/**
 	 * An API whose state machine takes `steps` polls to reach its resting state,
@@ -722,7 +725,7 @@ describe('DaytonaEngine settles a transition before returning', () => {
 		// The live API rejects a start while the stop is still in flight, which is
 		// exactly what the chat's resume path and the pool's resume rung do.
 		const { api } = laggyApi({ stopStates: ['stopping', 'stopped'], startStates: ['started'] });
-		const engine = new DaytonaEngine(api);
+		const engine = new DaytonaEngine(api, FAST_STOP_WAIT);
 		await engine.stopContainer('sbx-lag');
 		// Settled on the way out: a suspended container must not read as dead.
 		expect((await engine.inspectContainer('sbx-lag'))?.State.Running).toBe(false);
@@ -782,6 +785,99 @@ describe('DaytonaEngine settles a transition before returning', () => {
 			[{ id: 'sbx-up2', state: 'started', labels: {}, toolboxProxyUrl: 'https://p/toolbox' }],
 		);
 		await expect(new DaytonaEngine(api).stopContainer('sbx-up2')).rejects.toThrow(/400/);
+	});
+
+	it('resolves a stop only once the sandbox reports stopped, not when the request is accepted', async () => {
+		// Measured in production: right after the stop request the sandbox can
+		// still read `started` - a resting state - and the interval closed then
+		// ended nearly two minutes before the provider stopped billing. The engine
+		// contract is that the call resolves when the stop has finished.
+		const states = ['started', 'started', 'stopping', 'stopping', 'stopped'];
+		let stopAccepted = false;
+		let polls = 0;
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-slow-stop',
+			state: 'started',
+			labels: {},
+			toolboxProxyUrl: 'https://p/toolbox',
+		};
+		const { api } = fakeApi(
+			{
+				getSandbox: async () => {
+					if (stopAccepted) {
+						polls += 1;
+						sandbox.state = states.shift() ?? 'stopped';
+					}
+					return sandbox;
+				},
+				stop: async () => {
+					stopAccepted = true;
+				},
+			},
+			[sandbox],
+		);
+		await new DaytonaEngine(api, FAST_STOP_WAIT).stopContainer('sbx-slow-stop');
+		expect(sandbox.state).toBe('stopped');
+		expect(polls).toBe(5);
+	});
+
+	it('fails loudly, naming the sandbox, when a stop does not finish in time', async () => {
+		// Returning as if it had stopped would close the billed stretch while the
+		// provider is still charging for it.
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-stuck',
+			state: 'started',
+			labels: {},
+			toolboxProxyUrl: 'https://p/toolbox',
+		};
+		const { api } = fakeApi(
+			{
+				stop: async () => {
+					sandbox.state = 'stopping';
+				},
+			},
+			[sandbox],
+		);
+		await expect(
+			new DaytonaEngine(api, { timeoutMs: 30, pollMs: 5 }).stopContainer('sbx-stuck'),
+		).rejects.toThrow(/sbx-stuck did not finish its stop.*"stopping"/);
+	});
+
+	it('resolves a removal only once the sandbox is gone', async () => {
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-going',
+			state: 'started',
+			labels: {},
+			toolboxProxyUrl: 'https://p/toolbox',
+		};
+		let polls = 0;
+		const { api, sandboxes } = fakeApi(
+			{
+				destroy: async () => {
+					sandbox.state = 'destroying';
+				},
+				getSandbox: async (id) => {
+					polls += 1;
+					if (polls === 3) sandboxes.delete(id);
+					return sandboxes.get(id) ?? null;
+				},
+			},
+			[sandbox],
+		);
+		await new DaytonaEngine(api, FAST_STOP_WAIT).removeContainer('sbx-going');
+		expect(polls).toBe(3);
+	});
+
+	it('reports a sandbox mid-stop as transitioning, so it is not read as stopped', async () => {
+		const { api } = fakeApi({}, [
+			{ id: 'sbx-mid', state: 'stopping', labels: {}, toolboxProxyUrl: 'https://p/toolbox' },
+			{ id: 'sbx-rest', state: 'stopped', labels: {}, toolboxProxyUrl: 'https://p/toolbox' },
+		]);
+		const engine = new DaytonaEngine(api);
+		const mid = await engine.inspectContainer('sbx-mid');
+		const rest = await engine.inspectContainer('sbx-rest');
+		expect(mid?.State).toMatchObject({ Running: false, Transitioning: true });
+		expect(rest?.State).toMatchObject({ Running: false, Transitioning: false });
 	});
 
 	it('does not call start on a sandbox that is already started', async () => {

@@ -466,35 +466,39 @@ export function splitRunLinks(text: string): RunLinkSegment[] {
 }
 
 /**
- * Minutes a project's containers keep running after their last activity (agent
- * runs, assistant chat) before the idle pass retires the pool - suspending one
- * and destroying the rest. Containers come back on demand.
+ * Seconds a released container waits, warm, for the next job in its project
+ * before it is retired - one suspended per project, the rest destroyed.
  *
- * **A constant, not an operator setting.** Its only real job is coalescing a
- * burst: covering the gap between one run finishing and the next starting in the
- * same project, so the next run finds a warm container rather than resuming or
- * creating one. That gap is a comment insert, a wakeup fire, the 1 Hz dispatch
- * cron and a container acquire - seconds to about a minute. Two minutes is the
- * smallest value that reliably covers that chain; one can suspend a container
- * mid-wakeup-chain, so the next run pays a resume and the instance pays the
- * suspend work twice for nothing. Longer buys very little, because resuming a
- * suspended container costs about a second anyway.
+ * **A backstop for a handoff, not an idle allowance.** Retirement is armed only
+ * after the run that released the container has finished its completion
+ * bookkeeping and kicked the dispatcher, so whatever follow-up that run caused
+ * (a comment, a handoff, a chained task) is already a queued wakeup or a queued
+ * run by then, and queued work keeps the member warm structurally. What this
+ * window covers is the one step a structural signal cannot see: a kick that
+ * lands while a dispatch tick is already running is coalesced into the next
+ * tick of the wakeup cron (every five seconds by default), and only then does
+ * the wakeup become a run row. Two cron periods covers that with a period to
+ * spare.
  *
- * An operator has no way to reason about this better than the system can, which
- * is exactly the kind of knob worth deleting - and the old `0 = never stop`
- * escape hatch was the only thing keeping a dev server alive between runs, which
- * is a job an agent-run container was never the right home for.
+ * Stopping and starting again costs more than this wait on a managed backend:
+ * the stop is billed until it completes (measured at twenty seconds to nearly
+ * two minutes), and the start or create after it is billed and slow too. Longer
+ * than this, though, and a project that is genuinely done pays for a container
+ * nobody will use.
+ *
+ * A constant, not an operator setting: an operator has no way to reason about
+ * this better than the system can.
  */
-export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
+export const CONTAINER_RELEASE_GRACE_SEC = 10;
 
 /**
  * How long a **suspended** container is kept for a warm resume before it is
  * retired outright.
  *
  * A third clock, and a much slower one, because it answers a third question.
- * {@link CONTAINER_IDLE_TIMEOUT_MIN} asks "is this project between runs" and
- * stops the container; this asks "is this project still a going concern" and
- * disposes of it. In between, a stopped container is the cheapest warm start the
+ * {@link CONTAINER_RELEASE_GRACE_SEC} asks "is the next job here already on its
+ * way" and stops the container; this asks "is this project still a going
+ * concern" and disposes of it. In between, a stopped container is the cheapest warm start the
  * pool has - about a second to resume, against minutes to clone - and it is
  * charged nothing, so keeping it costs the instance nothing the budget measures.
  *
@@ -512,21 +516,21 @@ export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
 export const CONTAINER_DORMANT_RETIRE_MIN = 7 * 24 * 60;
 
 /**
- * The same window, for a project whose **assistant chat session is live**.
+ * Minutes a chat keeps **one** container of its project warm after its last
+ * turn released it.
  *
- * Longer because the two are measuring different things. Between agent runs the
- * gap is mechanical - a wakeup fires, the dispatch cron ticks, a container is
- * acquired - and two minutes covers it. Between chat messages the gap is a
- * person reading a reply and deciding what to say next, and two minutes of that
- * is an ordinary pause, not an idle instance. Reclaiming there suspended the
- * container out from under an open chatbox, so the next message paid a cold
- * start (~30s on a managed backend) for a conversation the operator never left.
+ * The only idle window measured in minutes. Between agent runs the gap is
+ * mechanical, and {@link CONTAINER_RELEASE_GRACE_SEC} covers it in seconds.
+ * Between chat messages the gap is a person reading a reply and deciding what to
+ * say next, and retiring the container there makes the next message pay a resume
+ * or a cold start for a conversation the person never left.
  *
- * Fifteen minutes is "you have gone away" rather than "you are thinking". It
- * applies only while a session is `starting`/`running` - once it stops, the
- * project falls back to the ordinary window immediately.
+ * It protects a single member per project: the one a chat turn (or the composer's
+ * prewarm) released most recently. Every other idle member of the project is
+ * retired like any task container. The clock starts at that release, not at the
+ * turn's start, so a long reply does not eat into the pause after it.
  */
-export const CHAT_IDLE_TIMEOUT_MIN = 15;
+export const CHAT_IDLE_TIMEOUT_MIN = 2;
 
 /**
  * Width cap for a chat message preview on list-shaped surfaces: the room list's
@@ -539,21 +543,21 @@ export const CHAT_MESSAGE_PREVIEW_CHARS = 140;
  * How long a member must have sat idle before another **project** may reclaim it
  * to fit its own container into the memory budget.
  *
- * Much shorter than {@link CONTAINER_IDLE_TIMEOUT_MIN} because it answers a
- * different question. The idle window asks "is this container still worth
- * keeping warm?", and the answer stays yes for a while because nothing else
- * wants the memory. Reclaim only runs when something else demonstrably does: a
- * run that is otherwise queued indefinitely. A starved project waiting two
- * minutes for a container its neighbour is not using is the defect, not the
- * remedy.
+ * A member normally sits idle only for its project's
+ * {@link CONTAINER_RELEASE_GRACE_SEC}, or for the {@link CHAT_IDLE_TIMEOUT_MIN} a
+ * chat holds one member warm. Reclaim only runs when something else demonstrably
+ * wants the memory: a run that is otherwise queued indefinitely. A starved
+ * project waiting out a chat pause for a container its neighbour is not using is
+ * the defect, not the remedy.
  *
  * It is not zero, and that is what stops the thrash. A project mid-burst
  * releases a container between two runs seconds apart, and stripping it in that
  * gap would make the pair of runs pay a cold start each to hand memory to a
  * third project that would then lose it the same way. Thirty seconds is longer
- * than the release-to-reacquire chain (comment insert, wakeup fire, 1 Hz
- * dispatch cron, acquire) and short enough that a genuinely stranded run is not
- * left waiting on a container nobody wants.
+ * than the release-to-reacquire chain (comment insert, wakeup fire, dispatch,
+ * acquire) that {@link CONTAINER_RELEASE_GRACE_SEC} is sized to, and short
+ * enough that a genuinely stranded run is not left waiting on a container nobody
+ * wants.
  */
 export const CONTAINER_RECLAIM_MIN_IDLE_SEC = 30;
 
@@ -569,10 +573,11 @@ export const CONTAINER_RECLAIM_MIN_IDLE_SEC = 30;
  * memory to a project that will pay the same cold start for a replacement is a
  * loss on both sides.
  *
- * Derived rather than picked. It must exceed {@link CONTAINER_IDLE_TIMEOUT_MIN}
- * so a project's own surplus-idle pass always gets first refusal: that pass
- * keeps the project warm and cross-project reclaim cannot, so memory reachable
- * both ways should be freed the cheaper way. And it must stay inside the
+ * Derived rather than picked. It must exceed {@link CHAT_IDLE_TIMEOUT_MIN}, the
+ * longest a project's own retirement leaves a member idle, so that retirement
+ * always gets first refusal: it keeps the project one suspended member and
+ * cross-project reclaim cannot, so memory reachable both ways should be freed the
+ * cheaper way. And it must stay inside the
  * capacity-park window, so a run blocked behind this floor is still parked
  * rather than requeued when the surplus pass frees the same memory properly.
  * Five minutes sits between the two with room either side.

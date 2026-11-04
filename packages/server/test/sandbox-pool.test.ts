@@ -1,7 +1,8 @@
 import {
-	CONTAINER_IDLE_TIMEOUT_MIN,
+	CHAT_IDLE_TIMEOUT_MIN,
 	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
+	CONTAINER_RELEASE_GRACE_SEC,
 } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -643,12 +644,16 @@ describe('planCrossProjectReclaim', () => {
 
 describe('reclaim floors', () => {
 	it('lets a project’s own surplus pass get first refusal, and stays inside the park window', () => {
-		// The derivation, not the number. The age floor must sit above the idle
-		// window - so memory reachable both ways is freed the cheaper way, by the
-		// pass that keeps the project warm - and below the capacity park, so a run
-		// blocked behind it is still parked rather than requeued.
-		expect(CONTAINER_RECLAIM_MIN_AGE_SEC).toBeGreaterThan(CONTAINER_IDLE_TIMEOUT_MIN * 60);
+		// The derivation, not the number. The age floor must sit above the longest
+		// a project's own retirement leaves a member idle - the chat pause - so
+		// memory reachable both ways is freed the cheaper way, by the pass that
+		// keeps the project warm - and below the capacity park, so a run blocked
+		// behind it is still parked rather than requeued.
+		expect(CONTAINER_RECLAIM_MIN_AGE_SEC).toBeGreaterThan(CHAT_IDLE_TIMEOUT_MIN * 60);
 		expect(CONTAINER_RECLAIM_MIN_AGE_SEC).toBeGreaterThan(CONTAINER_RECLAIM_MIN_IDLE_SEC);
+		// And the idle floor sits above the release grace, so a project handing a
+		// container to its own next job keeps it rather than losing it mid-handoff.
+		expect(CONTAINER_RECLAIM_MIN_IDLE_SEC).toBeGreaterThan(CONTAINER_RELEASE_GRACE_SEC);
 	});
 });
 

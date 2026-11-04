@@ -24,6 +24,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
 } from './helpers/app';
 import {
 	clearContainerCapacityForTest,
@@ -55,6 +56,7 @@ const json = { 'Content-Type': 'application/json' };
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db,
 		docker: createStubDocker(),
 		masterKeyManager,

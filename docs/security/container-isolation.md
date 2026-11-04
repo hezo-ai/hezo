@@ -37,9 +37,10 @@ share is the project's work itself: the repositories they are collaborating on.
 ## Containers run only when there is work
 
 A container starts the moment an agent run or an assistant chat needs one, and is
-retired after a couple of minutes idle (a live assistant chat keeps its container for
-about fifteen minutes, so a reply you take a moment to type does not pay a cold start). A
-quiet instance runs zero containers.
+retired a few seconds after its run ends unless another job in the same project is ready
+to use it. An assistant chat keeps the container it last used for two minutes after a
+reply, so your next message does not wait for one to start. A quiet instance runs zero
+containers.
 
 What a burst of agent activity can consume is bounded in **Settings -> Containers**, and
 every ceiling is enforced per container:

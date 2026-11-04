@@ -73,7 +73,15 @@ export async function reapOrphanedContainers(
 	instanceId: string,
 	liveContainerIds: ReadonlySet<string>,
 	previouslySuspected: ReadonlySet<string> = new Set(),
-	opts: { requireSecondSighting?: boolean } = {},
+	opts: {
+		requireSecondSighting?: boolean;
+		/**
+		 * Called once per container this pass removed, after the removal
+		 * resolved. Where the caller stops billing it; a failure there is logged
+		 * and does not stop the sweep.
+		 */
+		onRemoved?: (container: { Id: string; Names: string[] }) => Promise<void>;
+	} = {},
 ): Promise<ReapResult> {
 	const requireSecondSighting = opts.requireSecondSighting ?? true;
 	const result: ReapResult = { examined: 0, destroyed: [], deferred: 0, suspected: new Set() };
@@ -109,6 +117,14 @@ export async function reapOrphanedContainers(
 			// Already gone, or mid-transition and not yet destroyable - either way
 			// the next pass picks it up.
 			log.warn(`Could not destroy orphaned container ${orphan.Id}: ${(e as Error).message}`);
+			continue;
+		}
+		try {
+			await opts.onRemoved?.(orphan);
+		} catch (e) {
+			log.warn(
+				`Could not settle the billing of removed container ${orphan.Id}: ${(e as Error).message}`,
+			);
 		}
 	}
 

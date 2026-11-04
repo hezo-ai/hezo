@@ -16,6 +16,7 @@ import {
 	createTestProject,
 	createTestTeam,
 	projectSlugFor,
+	TEST_RELEASE_GRACE_MS,
 } from './helpers/app';
 
 let app: Hono<Env>;
@@ -63,6 +64,7 @@ function createMockDocker(): ContainerEngine {
 
 function createJobManager(): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db,
 		docker: createMockDocker(),
 		masterKeyManager,

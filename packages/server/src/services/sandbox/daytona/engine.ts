@@ -224,7 +224,18 @@ export class DaytonaEngine implements ContainerEngine {
 	 */
 	private readonly sandboxes = new Map<string, DaytonaSandbox>();
 
-	constructor(private readonly client: DaytonaApi) {}
+	constructor(
+		private readonly client: DaytonaApi,
+		/**
+		 * How long a stop or removal is waited on, and how often it is asked. The
+		 * defaults are the measured figures below; a test passes its own so a wait
+		 * that runs out takes milliseconds rather than minutes.
+		 */
+		private readonly stopWait: { timeoutMs: number; pollMs: number } = {
+			timeoutMs: STOP_WAIT_TIMEOUT_MS,
+			pollMs: STOP_WAIT_POLL_MS,
+		},
+	) {}
 
 	// ---- lifecycle ---------------------------------------------------------
 
@@ -352,31 +363,39 @@ export class DaytonaEngine implements ContainerEngine {
 		// has already stopped answers `400 Sandbox is not in a stoppable state`,
 		// which surfaced to the operator as a red banner on a container that was
 		// doing exactly what it should. Mirrors the check `startContainer` makes.
-		if (!settled || !isRunning(settled.state)) {
-			this.sandboxes.delete(containerId);
-			return;
-		}
-		try {
-			await this.client.stop(containerId);
-		} catch (e) {
-			// The provider's own auto-stop can still land between the check above
-			// and this call, so the same answer is tolerated here - but only once
-			// the sandbox is confirmed to be at rest, since "not stoppable" is also
-			// what a sandbox mid-transition says.
-			if (!(e instanceof DaytonaApiError) || e.status !== 400) throw e;
-			const after = await this.fetch(containerId, { refresh: true });
-			if (after && isRunning(after.state)) throw e;
+		if (settled && isRunning(settled.state)) {
+			try {
+				await this.client.stop(containerId);
+			} catch (e) {
+				// The provider's own auto-stop can still land between the check above
+				// and this call, so the same answer is tolerated here - but only once
+				// the sandbox is confirmed to be at rest, since "not stoppable" is also
+				// what a sandbox mid-transition says.
+				if (!(e instanceof DaytonaApiError) || e.status !== 400) throw e;
+				const after = await this.fetch(containerId, { refresh: true });
+				if (after && isRunning(after.state)) throw e;
+			}
 		}
 		this.sandboxes.delete(containerId);
-		// Settle on the way out too, so the caller's next `inspectContainer` reads
-		// `stopped` rather than the transitional `stopping` - the difference
-		// between a suspended container and one that reads as dead.
-		await this.settle(containerId);
+		// The stop was accepted, not finished, and the provider bills a stopping
+		// sandbox at the running rate. The engine contract is that this resolves
+		// once the stop is done, because the caller closes the container's uptime
+		// interval the moment it does. A plain settle is not enough: right after
+		// the request the sandbox can still read `started`, which is a resting
+		// state, and an interval closed then was measured closing nearly two
+		// minutes before the provider reported the sandbox stopped.
+		await this.waitFor(
+			containerId,
+			'stop',
+			(s) => !s || (isSettled(s.state) && !isRunning(s.state)),
+		);
 	}
 
 	async removeContainer(containerId: string): Promise<void> {
 		await this.client.destroy(containerId);
 		this.sandboxes.delete(containerId);
+		// Accepted, not done - the same contract as stop, for the same reason.
+		await this.waitFor(containerId, 'removal', (s) => !s || s.state === 'destroyed');
 	}
 
 	async inspectContainer(containerId: string): Promise<ContainerInfo | null> {
@@ -393,6 +412,9 @@ export class DaytonaEngine implements ContainerEngine {
 				// a nonzero one so the existing death-detection path reads it the
 				// same way it reads a crashed container.
 				ExitCode: isFailed(sandbox.state) ? 1 : 0,
+				// Mid-transition the sandbox is still billed, so the reconcile must not
+				// read a `stopping` sandbox as stopped.
+				Transitioning: !isSettled(sandbox.state),
 			},
 			Config: { Image: sandbox.labels?.[IMAGE_LABEL] ?? '' },
 			// What the provider actually allocated, which is the request rounded up to
@@ -852,6 +874,34 @@ export class DaytonaEngine implements ContainerEngine {
 		return sandbox;
 	}
 
+	/**
+	 * Wait, bounded, for a stop or removal the provider has accepted to finish.
+	 *
+	 * Fails loudly when the bound runs out rather than returning as if it had
+	 * finished: the caller would then close the container's uptime interval while
+	 * the provider is still billing it. Left open, the interval is closed by the
+	 * liveness reconcile once the sandbox reports at rest.
+	 */
+	private async waitFor(
+		containerId: string,
+		what: 'stop' | 'removal',
+		done: (sandbox: DaytonaSandbox | null) => boolean,
+	): Promise<void> {
+		const deadline = Date.now() + this.stopWait.timeoutMs;
+		let sandbox = await this.fetch(containerId, { refresh: true });
+		while (!done(sandbox)) {
+			if (Date.now() >= deadline) {
+				throw new Error(
+					`Daytona sandbox ${containerId} did not finish its ${what} within ` +
+						`${Math.round(this.stopWait.timeoutMs / 1000)}s (last state "${sandbox?.state}"). ` +
+						'Hezo keeps metering it until it reports at rest; check the sandbox in the Daytona dashboard.',
+				);
+			}
+			await new Promise((resolve) => setTimeout(resolve, this.stopWait.pollMs));
+			sandbox = await this.fetch(containerId, { refresh: true });
+		}
+	}
+
 	private async fetch(
 		containerId: string,
 		opts: { refresh?: boolean } = {},
@@ -883,7 +933,7 @@ function shQuote(s: string): string {
 /**
  * Minutes of inactivity after which Daytona stops a sandbox on its own.
  *
- * Deliberately looser than Hezo's own fixed idle window: this is the backstop
+ * Deliberately looser than Hezo's own idle windows: this is the backstop
  * for a server that died holding sandboxes, not the mechanism. If it were equal
  * the provider could stop a container in the same moment Hezo was handing it to
  * the next run.
@@ -898,6 +948,19 @@ const DAYTONA_IDLE_STOP_MIN = 10;
  */
 const SETTLE_TIMEOUT_MS = 180_000;
 const SETTLE_POLL_MS = 500;
+
+/**
+ * How long a stop or removal is waited on before the call fails, and how often
+ * the sandbox is asked in the meantime.
+ *
+ * Production audit logs put a stop's completion at twenty seconds to about 1.7
+ * minutes after the request. Five minutes is well clear of that, so a timeout
+ * means something is wrong with the sandbox rather than that it was slow. Polled
+ * every two seconds: these waits are long, the answer only changes once, and a
+ * busy instance retires several containers at a time.
+ */
+const STOP_WAIT_TIMEOUT_MS = 5 * 60_000;
+const STOP_WAIT_POLL_MS = 2_000;
 
 function isRunning(state: string): boolean {
 	return state === 'started';

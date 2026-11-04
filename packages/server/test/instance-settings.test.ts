@@ -278,7 +278,7 @@ describe('concurrency settings', () => {
 	});
 
 	it('rejects the retired idle-timeout setting rather than silently ignoring it', async () => {
-		// The window is a constant now (CONTAINER_IDLE_TIMEOUT_MIN). A PATCH naming
+		// The window is a constant now (CONTAINER_RELEASE_GRACE_SEC). A PATCH naming
 		// only the retired field must 400 rather than 200-with-no-effect, so an
 		// operator or script still setting it finds out.
 		const res = await patchSettings({ container_idle_timeout_min: 45 });

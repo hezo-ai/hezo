@@ -13,7 +13,13 @@ import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { MAX_TASK_ATTEMPT_GIVEUPS } from '../src/services/no-work-backoff';
 import { clearRefreshFns, registerRefreshFn } from '../src/services/oauth/token-resolver';
-import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestProject,
+	createTestTeam,
+	TEST_RELEASE_GRACE_MS,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // Scheduling / dispatch branches of JobManager: the run-now dispatch path end to
@@ -75,6 +81,7 @@ const internals = (m: JobManager) => m as unknown as JmInternals;
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 	return new JobManager({
+		releaseGraceMs: TEST_RELEASE_GRACE_MS,
 		db: ctx.db,
 		docker: createStubDocker(),
 		masterKeyManager: ctx.masterKeyManager,
