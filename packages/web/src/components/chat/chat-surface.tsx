@@ -917,7 +917,10 @@ function MessageBubble({
 	}
 
 	// Marker rows: the converted-task pointer and the task breadcrumbs share the
-	// centred pill idiom; a breadcrumb's own text names the task.
+	// centred pill idiom; a breadcrumb's own text names the task. That text ends
+	// in a task title of any length, so the pill shrinks to the thread's width
+	// and wraps rather than truncating: on a phone there is no hover to read the
+	// rest. `rounded-xl` is a full pill at one line and a rounded box past it.
 	if (message.role === 'system') {
 		return (
 			<div
@@ -927,18 +930,18 @@ function MessageBubble({
 				data-system-kind={message.system_kind ?? undefined}
 			>
 				<span className="h-px flex-1 bg-border" />
-				<span className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
-					<SquareCheckBig className="h-3 w-3 shrink-0" aria-hidden="true" />
-					{message.system_kind === ChatSystemMessageKind.ConvertedTask && convertedTask ? (
-						<Trans
-							k="chat.converted.metaMessage"
-							vars={{ task: <ConvertedTaskLink task={convertedTask} /> }}
-						/>
-					) : (
-						<span className="truncate">
+				<span className="inline-flex min-w-0 items-start gap-1 rounded-xl border border-border bg-surface-2 px-2.5 py-0.5">
+					<SquareCheckBig className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+					<span className="min-w-0 wrap-anywhere">
+						{message.system_kind === ChatSystemMessageKind.ConvertedTask && convertedTask ? (
+							<Trans
+								k="chat.converted.metaMessage"
+								vars={{ task: <ConvertedTaskLink task={convertedTask} /> }}
+							/>
+						) : (
 							<RunLinkedText text={message.content} />
-						</span>
-					)}
+						)}
+					</span>
 				</span>
 				<span className="h-px flex-1 bg-border" />
 			</div>

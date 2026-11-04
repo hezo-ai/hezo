@@ -421,6 +421,105 @@ test.describe('chat dock — long unbreakable content', () => {
 			}
 		}
 	});
+
+	test('a long task breadcrumb wraps inside the thread instead of running past the panel edge', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+		// The breadcrumb pills carry a task's whole title, and a title has no
+		// length limit. Short ones keep the one-line centred pill.
+		const LONG_TITLE =
+			'Research one-page reports for new crypto holdings and reconcile them against the portfolio';
+		const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+		const seeded = [
+			{
+				id: 'seed-user',
+				conversation_id: 'conv-crumbs',
+				role: 'user',
+				channel: 'web',
+				status: 'complete',
+				content: 'Set the research up, please.',
+				created_at: at(0),
+			},
+			{
+				id: 'seed-created',
+				conversation_id: 'conv-crumbs',
+				role: 'system',
+				system_kind: 'task_created',
+				channel: 'web',
+				status: 'complete',
+				content: `Created task INV-375 in Investments: ${LONG_TITLE}`,
+				created_at: at(1),
+			},
+			{
+				id: 'seed-done',
+				conversation_id: 'conv-crumbs',
+				role: 'system',
+				system_kind: 'task_completed',
+				channel: 'web',
+				status: 'complete',
+				content: 'Task INV-376 completed: Render HTML',
+				created_at: at(2),
+			},
+		];
+		await page.route('**/api/chat/conversation', (route) =>
+			route.fulfill({ json: { data: { conversation_id: 'conv-crumbs', messages: seeded } } }),
+		);
+
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+		const launcher = page.getByTestId('app-header-chat');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+
+		const list = page.getByTestId('chat-messages');
+		const crumb = (kind: string) =>
+			page.locator(`[data-testid="chat-message"][data-system-kind="${kind}"] > span`).nth(1);
+		const long = crumb('task_created');
+		const short = crumb('task_completed');
+		await expect(long).toBeVisible();
+		await expect(short).toBeVisible();
+
+		// The anchored rail and the phone sheet are the two widths it has to fit.
+		for (const width of [1280, 375]) {
+			await page.setViewportSize({ width, height: 800 });
+			await expect
+				.poll(() => list.evaluate((el) => el.scrollWidth - el.clientWidth))
+				.toBeLessThanOrEqual(1);
+
+			const listBox = await list.boundingBox();
+			const longBox = await long.boundingBox();
+			expect(listBox).not.toBeNull();
+			expect(longBox).not.toBeNull();
+			if (!listBox || !longBox) continue;
+			expect(longBox.x, `long pill left edge at ${width}px`).toBeGreaterThanOrEqual(listBox.x - 1);
+			expect(longBox.x + longBox.width, `long pill right edge at ${width}px`).toBeLessThanOrEqual(
+				listBox.x + listBox.width + 1,
+			);
+			// The whole title is shown - wrapped onto more lines, not cut or
+			// ellipsised: nothing inside the pill overflows its box.
+			expect(
+				await long.evaluate((el) =>
+					[el, ...Array.from(el.querySelectorAll('*'))].every(
+						(n) => n.scrollWidth <= n.clientWidth + 1,
+					),
+				),
+				`long pill text fully shown at ${width}px`,
+			).toBe(true);
+			expect(longBox.height, `long pill wraps at ${width}px`).toBeGreaterThan(30);
+
+			// A short one stays a single centred line.
+			const shortBox = await short.boundingBox();
+			expect(shortBox?.height ?? 0, `short pill height at ${width}px`).toBeLessThan(26);
+			const gutterLeft = (shortBox?.x ?? 0) - listBox.x;
+			const gutterRight = listBox.x + listBox.width - ((shortBox?.x ?? 0) + (shortBox?.width ?? 0));
+			expect(Math.abs(gutterLeft - gutterRight), `short pill centred at ${width}px`).toBeLessThan(
+				20,
+			);
+		}
+	});
 });
 
 // Kept in Playwright by decision-tree item 1 (real CSS layout): the composer
