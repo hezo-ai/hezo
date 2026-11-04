@@ -37,8 +37,8 @@ together from H24 on.
 | **H5** | Hosted gate + setup wizard | cloud SSO login | **large** |
 | **H9** | Behind-gateway seam in `provision.sh` | cloud provisioning | small |
 | **H14** | Migration path without session affinity | cloud DB density | **large** |
-| **H15** | Wire up the policy-file watcher | live tier changes | small |
-| **H16** | Make the container backend pinnable | tenant can't break itself | small |
+| **H15** | Wire up the policy-file watcher | live tier changes | **done**, with H33 |
+| **H16** | Make the container backend pinnable | tenant can't break itself | **done** |
 | H10 | Unprefix provision-script env vars | nothing | optional |
 | H18 | A 1-vCPU Daytona shape | 38% off the container-hour rate | optional |
 | **H21** | Extract a `@hezo/ui` package | the control plane writing its own primitives | **done** |
@@ -66,8 +66,8 @@ together from H24 on.
 independent** of the SSO chain and of each other.
 
 **One release containing H1–H5 + H9 + H16 unblocks the control plane's SSO
-work.** H14 can ride that release or a later one. H15 either ships or the cloud
-plan stops claiming a restart-free tier change — today it does not have one.
+work.** H14 can ride that release or a later one. H15 and H33 have shipped, so a
+tier change reaches a running instance with no restart.
 
 ---
 
@@ -567,7 +567,7 @@ deliberately-added `LISTEN`.
 
 ---
 
-## H15 — Wire up the policy-file watcher
+## H15 — Wire up the policy-file watcher *(done)*
 
 `watchPolicyFile()` (`config/policy.ts:78-135`) is written, correct, debounced,
 and re-arms after every event to survive the inode swap from a `rename()`. It is
@@ -588,7 +588,7 @@ survives the inode swap; nothing is watched when `policyFile` is unset.
 
 ---
 
-## H33 — reload the policy on any directory event, not on a name Bun does not report
+## H33 — reload the policy on any directory event, not on a name Bun does not report *(done)*
 
 **H15 shipped and the watcher never fires on the runtime a release runs.** The
 control plane writes `/etc/hezo/policy.json` as `<file>.tmp` then `rename()`,
@@ -640,7 +640,7 @@ so the new test belongs in the Bun-native tier — this is exactly the
 
 ---
 
-## H16 — Make the container backend pinnable
+## H16 — Make the container backend pinnable *(done)*
 
 `policy.pinned` covered four keys before this task, and `backend` was not one.
 `containers.backend` is a bare `z.string()` in the schema, and
@@ -1125,13 +1125,14 @@ Settable from the config file today:
 // /etc/hezo/hezo.config.cjs — mode 600
 module.exports = {
   containers: {
-    backend: 'daytona',
     daytona: { apiKey: '…' },
   },
   policy: {
     managedBy: 'Hezo Cloud',
-    manageUrl: 'https://app.hezo.ai/dashboard',
-    pinned: { maxContainerMemoryGb: 12 },
+    // The plans card on the dashboard. Every link out of the instance lands
+    // here: the settings menu, a locked setting's notice, "Buy more hours".
+    manageUrl: 'https://app.hezo.ai#billing',
+    pinned: { maxContainerMemoryGb: 12, backend: 'daytona' },
   },
 };
 ```
@@ -1156,9 +1157,10 @@ The **container shape needs no override at all**: Hezo Cloud prices a
 (`DEFAULT_RAM_CAP_PER_CONTAINER_GB`, `DEFAULT_CONTAINER_DISK_GB`). Only the
 instance-wide budget differs from stock.
 
-**Two caveats that were originally recorded here as working and are not:** the
-backend is a *default*, not a pin — that is H16. And `policyFile` is not
-re-read live — that is H15. A tier change needs a restart until H15 lands.
+**Two caveats once recorded here are closed.** The backend is pinnable as
+`policy.pinned.backend` (H16), though a change to it takes effect on restart.
+And `policyFile` is re-read live (H15, H33), so a tier change needs no restart.
+The hosted plane writes the policy there, not inline as above.
 
 ### Anything about updates — not needed, and the original ask was wrong
 
