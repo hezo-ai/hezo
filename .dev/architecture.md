@@ -981,7 +981,10 @@ run or a turn, so running work finishes and concurrent starts can pass a limit b
 already up, exactly as the token budget can. **Only a superuser sets it**
 (`PATCH /api/projects/:projectId/container-hours`; the general project PATCH refuses the
 fields by name): the hours are one pool, and a project admin raising their own limit would be
-taking hours from the others. HQ is refused, since it draws on the allowance directly. The
+taking hours from the others. The write reads, merges and updates in one transaction whose
+read locks the row (`FOR UPDATE`), so two overlapping saves of different windows keep both:
+the transaction alone would not on a pooled Postgres, where two read-committed reads see the
+same row. HQ is refused, since it draws on the allowance directly. The
 floors are the token floors, from the unit-free `windowViolations`/`normalizeWindowsUp` in
 `@hezo/shared`. A limit reserves nothing: `GET /api/container-hours` reports the projects'
 monthly limits summed (`project_limits`) so HQ's Hours tab can say when they promise more than

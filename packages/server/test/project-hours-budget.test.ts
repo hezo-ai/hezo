@@ -1,6 +1,6 @@
 import { BudgetResource, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRuntimeConfig, setPolicy } from '../src/config/runtime';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -247,6 +247,53 @@ describe('PATCH /api/projects/:projectId/container-hours', () => {
 		const { data } = await ok.json();
 		expect(data.budget.daily.limit_seconds).toBe(HOUR);
 		expect(data.budget.monthly.limit_seconds).toBe(31 * HOUR);
+	});
+
+	it('keeps both of two saves that overlap, each merged over the other', async () => {
+		// One sets only the day, the other only the period. Each reads the stored
+		// trio and writes all three. The first save is held after its read until
+		// the second has read too - or, when the second cannot read until the first
+		// has written, for a short wait - so the overlap that loses an update is
+		// forced rather than left to timing.
+		const query = db.query.bind(db);
+		let reads = 0;
+		let secondRead: () => void = () => {};
+		const secondHasRead = new Promise<void>((resolve) => {
+			secondRead = resolve;
+		});
+		const spy = vi.spyOn(db, 'query').mockImplementation((async (
+			sql: string,
+			params?: unknown[],
+		) => {
+			const isBudgetRead = sql.includes('is_internal') && sql.includes('budget_container_seconds');
+			const result = await query(sql, params);
+			if (isBudgetRead) {
+				reads += 1;
+				if (reads === 1) {
+					await Promise.race([secondHasRead, new Promise((resolve) => setTimeout(resolve, 300))]);
+				} else {
+					secondRead();
+				}
+			}
+			return result;
+		}) as any);
+		try {
+			const [daily, monthly] = await Promise.all([
+				patchHours({ daily_budget_container_seconds: HOUR }),
+				patchHours({ monthly_budget_container_seconds: 40 * HOUR }),
+			]);
+			expect(daily.status).toBe(200);
+			expect(monthly.status).toBe(200);
+		} finally {
+			spy.mockRestore();
+		}
+		const stored = await db.query<{ daily: string; monthly: string }>(
+			`SELECT daily_budget_container_seconds AS daily, monthly_budget_container_seconds AS monthly
+			   FROM projects WHERE id = $1`,
+			[projectId],
+		);
+		expect(Number(stored.rows[0].daily)).toBe(HOUR);
+		expect(Number(stored.rows[0].monthly)).toBe(40 * HOUR);
 	});
 
 	it('refuses a negative, fractional or missing value', async () => {

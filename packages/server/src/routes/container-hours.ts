@@ -92,6 +92,20 @@ async function isMetered(db: Db): Promise<boolean> {
 	return SANDBOX_BACKEND_KIND[backend ?? SandboxBackend.Docker] === 'remote';
 }
 
+/** Why an hours-budget write was refused, as the response names it. */
+type HoursBudgetRefusal = 'NOT_FOUND' | 'INVALID_REQUEST';
+
+/** The status each refusal answers with. */
+const HOURS_BUDGET_REFUSAL_STATUS: Record<HoursBudgetRefusal, 400 | 404> = {
+	NOT_FOUND: 404,
+	INVALID_REQUEST: 400,
+};
+
+/** What the write's transaction decided: a refusal, or the row it wrote (null for no change). */
+type HoursBudgetWrite =
+	| { refused: HoursBudgetRefusal; message: string }
+	| { updated: Record<string, unknown> | null };
+
 /**
  * Set a project's hours budget - any of its three windows, in container-seconds,
  * 0 for no limit. Answers with the budget as the read does.
@@ -115,47 +129,52 @@ containerHoursRoutes.patch('/projects/:projectId/container-hours', async (c) => 
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
 	const teamId = c.get('teamId') as string;
-	const existing = await db.query<BudgetWindowsContainerSeconds & { is_internal: boolean }>(
-		`SELECT is_internal, ${CONTAINER_HOURS_BUDGET_FIELDS.join(', ')}
-		   FROM projects WHERE id = $1 AND team_id = $2`,
-		[projectId, teamId],
-	);
-	const row = existing.rows[0];
-	if (!row) return err(c, 'NOT_FOUND', 'Project not found', 404);
-	if (row.is_internal) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			"HQ has no hours budget: it draws on the instance's container-hours allowance, set with PATCH /api/container-hours.",
-			400,
-		);
-	}
-
 	const body: Record<string, unknown> = await c.req
 		.json<Record<string, unknown>>()
 		.catch(() => ({}));
-	const stored: BudgetWindowsContainerSeconds = {
-		daily_budget_container_seconds: Number(row.daily_budget_container_seconds),
-		weekly_budget_container_seconds: Number(row.weekly_budget_container_seconds),
-		monthly_budget_container_seconds: Number(row.monthly_budget_container_seconds),
-	};
-	const write = containerHoursBudgetWrite(body, stored);
-	if ('error' in write) return err(c, 'INVALID_REQUEST', write.error, 400);
-	if (!write.supplied) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			`Send at least one of ${CONTAINER_HOURS_BUDGET_FIELDS.join(', ')}.`,
-			400,
-		);
-	}
 
-	// Never write a row that has not changed: the embedded database does not
-	// vacuum, and a no-op update is storage spent on nothing.
-	const changed = CONTAINER_HOURS_BUDGET_FIELDS.some(
-		(field) => write.trio[field] !== stored[field],
-	);
-	if (changed) {
+	// The read, the merge and the write are one step. Two saves that overlap
+	// each merge over the trio they read, so without this the later one writes
+	// back the window it read before the earlier one saved, and an owner's limit
+	// is gone with both saves reporting success. The transaction alone does not
+	// stop that on a pooled Postgres - two read-committed reads see the same row
+	// - so the read takes the row's lock, and the second save reads what the
+	// first wrote.
+	const outcome = await db.transaction(async (): Promise<HoursBudgetWrite> => {
+		const existing = await db.query<BudgetWindowsContainerSeconds & { is_internal: boolean }>(
+			`SELECT is_internal, ${CONTAINER_HOURS_BUDGET_FIELDS.join(', ')}
+			   FROM projects WHERE id = $1 AND team_id = $2
+			    FOR UPDATE`,
+			[projectId, teamId],
+		);
+		const row = existing.rows[0];
+		if (!row) return { refused: 'NOT_FOUND', message: 'Project not found' };
+		if (row.is_internal) {
+			return {
+				refused: 'INVALID_REQUEST',
+				message:
+					"HQ has no hours budget: it draws on the instance's container-hours allowance, set with PATCH /api/container-hours.",
+			};
+		}
+		const stored: BudgetWindowsContainerSeconds = {
+			daily_budget_container_seconds: Number(row.daily_budget_container_seconds),
+			weekly_budget_container_seconds: Number(row.weekly_budget_container_seconds),
+			monthly_budget_container_seconds: Number(row.monthly_budget_container_seconds),
+		};
+		const write = containerHoursBudgetWrite(body, stored);
+		if ('error' in write) return { refused: 'INVALID_REQUEST', message: write.error };
+		if (!write.supplied) {
+			return {
+				refused: 'INVALID_REQUEST',
+				message: `Send at least one of ${CONTAINER_HOURS_BUDGET_FIELDS.join(', ')}.`,
+			};
+		}
+		// Never write a row that has not changed: the embedded database does not
+		// vacuum, and a no-op update is storage spent on nothing.
+		const changed = CONTAINER_HOURS_BUDGET_FIELDS.some(
+			(field) => write.trio[field] !== stored[field],
+		);
+		if (!changed) return { updated: null };
 		const updated = await db.query<Record<string, unknown>>(
 			`UPDATE projects
 			    SET daily_budget_container_seconds = $1,
@@ -170,7 +189,15 @@ containerHoursRoutes.patch('/projects/:projectId/container-hours', async (c) => 
 				projectId,
 			],
 		);
-		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', updated.rows[0]);
+		return { updated: updated.rows[0] ?? null };
+	});
+
+	if ('refused' in outcome) {
+		return err(c, outcome.refused, outcome.message, HOURS_BUDGET_REFUSAL_STATUS[outcome.refused]);
+	}
+	// Announced once committed, so no page refetches a row another save may yet roll back.
+	if (outcome.updated) {
+		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', outcome.updated);
 	}
 
 	return ok(c, { budget: await getProjectHoursBudgetStatus(db, projectId) });
