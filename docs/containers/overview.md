@@ -246,6 +246,8 @@ consume:
   Changing the cap does not resize a container that is already running - nothing can
   resize one in place - so Hezo replaces it instead. The next run in that project gets a
   container built to the new cap and the old one is removed, which costs one cold start.
+  A container holding commits that reached no remote is never removed this way; it is
+  stopped and kept instead.
   Until that happens the Containers page shows what each container actually has, not what
   the setting now says.
 - **Disk per container** - how much disk each container is given for its checkouts,

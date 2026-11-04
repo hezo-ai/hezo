@@ -272,6 +272,26 @@ describe('selectPoolMember exclusions', () => {
 		});
 	});
 
+	it('never recycles a container holding unpushed commits, and never hands it to a run', () => {
+		// Destroying it loses the only copy of that work - the rule both idle
+		// planners keep. Built to the wrong figure, it cannot serve a run either,
+		// so the ladder passes over it to the next rung.
+		const pinned = member('pinned', { imageVersion: '0.68.1', hasUnpushedCommits: true });
+		const suspendedPinned = member('pinned-s', {
+			state: 'suspended',
+			memoryBytes: CAP * 2,
+			hasUnpushedCommits: true,
+		});
+		expect(selectPoolMember('t', [pinned, suspendedPinned], ROOM, CAP, IMAGE)).toEqual({
+			kind: 'create',
+		});
+		const outdated = member('outdated', { imageVersion: '0.68.1' });
+		expect(selectPoolMember('t', [pinned, outdated], ROOM, CAP, IMAGE)).toEqual({
+			kind: 'recycle',
+			members: [outdated],
+		});
+	});
+
 	it('never recycles a busy container out from under its run', () => {
 		// It is replaced the next time it comes up for acquisition, which is the
 		// first moment that costs no run.

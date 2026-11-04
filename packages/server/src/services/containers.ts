@@ -174,6 +174,80 @@ async function awaitLifecycleCall(containerId: string): Promise<void> {
 	await lifecycleCallsInFlight.get(containerId);
 }
 
+/**
+ * Containers something other than a run is executing in right now - a repo
+ * clone, a repo reset, an MCP install - counted per container.
+ *
+ * A run claims its member `busy`, which every retirement pass already leaves
+ * alone. These callers work in the project's named container without a claim,
+ * often while a run holds it too, so a claim cannot express them; without this a
+ * container a clone is running in reads `idle` and is retired mid-clone.
+ * `executeRetirementPlan` skips a held container, which covers every pass at
+ * once. In-process only, like the lifecycle lock; each entry leaves when its
+ * holder releases it.
+ */
+const containerHolds = new Map<string, number>();
+
+/** A hold on one container; `release` is idempotent. */
+export interface ContainerHold {
+	containerId: string;
+	release(): void;
+}
+
+function takeHold(containerId: string): ContainerHold {
+	containerHolds.set(containerId, (containerHolds.get(containerId) ?? 0) + 1);
+	let released = false;
+	return {
+		containerId,
+		release: () => {
+			if (released) return;
+			released = true;
+			const left = (containerHolds.get(containerId) ?? 1) - 1;
+			if (left > 0) containerHolds.set(containerId, left);
+			else containerHolds.delete(containerId);
+		},
+	};
+}
+
+/**
+ * Bring the project's container up, as {@link ensureProjectContainerRunning}
+ * does, and hold it against retirement until the caller releases it.
+ *
+ * Taken under the same lock hold that started it, so no retirement can slip in
+ * between the start and the hold.
+ */
+export async function holdProjectContainer(
+	deps: ContainerDeps,
+	projectId: string,
+): Promise<ContainerHold> {
+	return withContainerLifecycleLock(projectId, async () =>
+		takeHold(await ensureRunningUnderLock(deps, projectId)),
+	);
+}
+
+/**
+ * Hold a container the caller already knows is running, without starting
+ * anything. Null when it is not available to work in: a retirement has already
+ * taken it (its stop or removal is under way, or it reads stopped), so the
+ * caller answers as it would for a stopped container.
+ */
+export async function holdRunningContainer(
+	db: Db,
+	projectId: string,
+	containerId: string,
+): Promise<ContainerHold | null> {
+	return withContainerLifecycleLock(projectId, async () => {
+		if (lifecycleCallsInFlight.has(containerId)) return null;
+		const member = await db.query<{ state: string }>(
+			'SELECT state::text AS state FROM container_pool_members WHERE container_id = $1',
+			[containerId],
+		);
+		const state = member.rows[0]?.state;
+		if (state === 'suspended' || state === 'error') return null;
+		return takeHold(containerId);
+	});
+}
+
 export interface ProjectRow {
 	id: string;
 	team_id: string;
@@ -962,49 +1036,30 @@ export async function ensureProjectContainerRunning(
 	// lock so every caller (agent runner, chat session, repo provisioning) is
 	// covered without call-site changes: concurrent ensures serialize, and the
 	// second caller sees a running container instead of double-provisioning.
-	return withContainerLifecycleLock(projectId, async () => {
-		const { db, docker } = deps;
-		const res = await db.query<ProjectRow & { team_slug: string; archived_at: string | null }>(
-			`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
-			        p.dev_ports, p.archived_at, c.slug AS team_slug
-			 FROM projects p JOIN teams c ON c.id = p.team_id
-			 WHERE p.id = $1`,
-			[projectId],
-		);
-		const proj = res.rows[0];
-		if (!proj) throw new Error('Project not found');
-		if (proj.archived_at) throw new ProjectArchivedError(proj.slug);
+	return withContainerLifecycleLock(projectId, () => ensureRunningUnderLock(deps, projectId));
+}
 
-		if (proj.container_id) {
-			const info = await docker.inspectContainer(proj.container_id);
-			if (info?.State.Running) {
-				// Docker is the truth; if the row lags (e.g. an out-of-band start),
-				// reconcile it and stamp the start floor so the idle-stop cron can
-				// see — and eventually reclaim — this container.
-				if (proj.container_status !== ContainerStatus.Running) {
-					await db.query(
-						`UPDATE projects
-						 SET container_status = $1::container_status, container_error = NULL,
-						     container_last_started_at = now()
-						 WHERE id = $2`,
-						[ContainerStatus.Running, proj.id],
-					);
-					await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
-				}
-				return proj.container_id;
-			}
-			if (info) {
-				// Container exists but is stopped — start it in place.
-				await refuseStartOverBudget(deps, proj.id, proj.slug);
-				// A retirement may still be stopping it; starting into that is a 409 on a
-				// managed backend and an overlapping billed stretch everywhere.
-				await awaitLifecycleCall(proj.container_id);
-				const startRequestedAt = new Date();
-				await docker.startContainer(proj.container_id);
-				// The pool is told too, not just `projects`: its member still reads
-				// `suspended`, and a member the pool believes is down bills nothing while
-				// the container it names is up. No-op when no member names this container.
-				await markPoolMemberRunning(db, proj.container_id, startRequestedAt);
+/** The body of {@link ensureProjectContainerRunning}; the caller holds the project's lifecycle lock. */
+async function ensureRunningUnderLock(deps: ContainerDeps, projectId: string): Promise<string> {
+	const { db, docker } = deps;
+	const res = await db.query<ProjectRow & { team_slug: string; archived_at: string | null }>(
+		`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
+		        p.dev_ports, p.archived_at, c.slug AS team_slug
+		 FROM projects p JOIN teams c ON c.id = p.team_id
+		 WHERE p.id = $1`,
+		[projectId],
+	);
+	const proj = res.rows[0];
+	if (!proj) throw new Error('Project not found');
+	if (proj.archived_at) throw new ProjectArchivedError(proj.slug);
+
+	if (proj.container_id) {
+		const info = await docker.inspectContainer(proj.container_id);
+		if (info?.State.Running) {
+			// Docker is the truth; if the row lags (e.g. an out-of-band start),
+			// reconcile it and stamp the start floor so the idle-stop cron can
+			// see — and eventually reclaim — this container.
+			if (proj.container_status !== ContainerStatus.Running) {
 				await db.query(
 					`UPDATE projects
 					 SET container_status = $1::container_status, container_error = NULL,
@@ -1012,21 +1067,43 @@ export async function ensureProjectContainerRunning(
 					 WHERE id = $2`,
 					[ContainerStatus.Running, proj.id],
 				);
-				if (deps.containerLogStreamer && deps.logs) {
-					deps.containerLogStreamer.subscribe(proj.id, proj.container_id, deps.logs, docker);
-				}
 				await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
-				log.info(
-					`project ${ref(proj.slug, proj.id)} container ${ref(proj.slug, proj.container_id.slice(0, 12))} started on demand`,
-				);
-				return proj.container_id;
 			}
+			return proj.container_id;
 		}
+		if (info) {
+			// Container exists but is stopped — start it in place.
+			await refuseStartOverBudget(deps, proj.id, proj.slug);
+			// A retirement may still be stopping it; starting into that is a 409 on a
+			// managed backend and an overlapping billed stretch everywhere.
+			await awaitLifecycleCall(proj.container_id);
+			const startRequestedAt = new Date();
+			await docker.startContainer(proj.container_id);
+			// The pool is told too, not just `projects`: its member still reads
+			// `suspended`, and a member the pool believes is down bills nothing while
+			// the container it names is up. No-op when no member names this container.
+			await markPoolMemberRunning(db, proj.container_id, startRequestedAt);
+			await db.query(
+				`UPDATE projects
+				 SET container_status = $1::container_status, container_error = NULL,
+				     container_last_started_at = now()
+				 WHERE id = $2`,
+				[ContainerStatus.Running, proj.id],
+			);
+			if (deps.containerLogStreamer && deps.logs) {
+				deps.containerLogStreamer.subscribe(proj.id, proj.container_id, deps.logs, docker);
+			}
+			await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
+			log.info(
+				`project ${ref(proj.slug, proj.id)} container ${ref(proj.slug, proj.container_id.slice(0, 12))} started on demand`,
+			);
+			return proj.container_id;
+		}
+	}
 
-		// No container id, or the stored id no longer exists in Docker — provision.
-		await refuseStartOverBudget(deps, proj.id, proj.slug);
-		return provisionContainer(deps, proj, proj.team_slug);
-	});
+	// No container id, or the stored id no longer exists in Docker — provision.
+	await refuseStartOverBudget(deps, proj.id, proj.slug);
+	return provisionContainer(deps, proj, proj.team_slug);
 }
 
 /**
@@ -1519,8 +1596,16 @@ export async function acquireRunContainer(
 					log.info(
 						`project ${ref(proj.slug, projectId)} container ${ref(proj.slug, stale.id.slice(0, 12))} was provisioned for ${describeAllocation(stale.memoryBytes)} but the cap is now ${requestMemoryGb} GiB; replacing it`,
 					);
-					await destroyContainer(deps, projectId, proj.slug, proj.team_id, stale.id);
 				}
+				// Through the shared executor, so the member leaves the pool and the
+				// budget now while the backend's removal finishes after this lock is
+				// released - every other acquire in the project would otherwise wait it out.
+				await executeRetirementPlan(
+					deps,
+					{ id: projectId, slug: proj.slug, team_id: proj.team_id },
+					{ suspend: [], destroy: decision.members.map((m) => m.id) },
+					{ reason: 'outdated' },
+				);
 				return { kind: 'retry' as const };
 			}
 
@@ -1572,9 +1657,12 @@ export async function acquireRunContainer(
 				const startRequestedAt = new Date();
 				try {
 					await docker.startContainer(member.id);
-				} catch {
-					// The container is gone from under the row. Drop it and re-decide
-					// rather than handing a run an id the engine no longer knows.
+				} catch (startError) {
+					// Dropped only on a definite "gone": a container the engine still
+					// knows may still be billing, and dropping its row would end its
+					// billed stretch and orphan it. A start that failed on a container
+					// that is there is a real fault, and the acquire says so.
+					if ((await docker.inspectContainer(member.id)) !== null) throw startError;
 					await removePoolMember(db, member.id);
 					return { kind: 'retry' as const };
 				}
@@ -1785,18 +1873,29 @@ async function loadProjectRow(
  * caller (teardown clears the whole project, Remove clears one row), and folding
  * them together is what made the old rebuild path forget the pool.
  */
-async function removeFromEngine(docker: ContainerEngine, containerId: string): Promise<void> {
-	if (keepOldContainersFlag) return;
-	try {
-		await docker.stopContainer(containerId);
-	} catch {
-		// Container may already be stopped
-	}
+async function removeFromEngine(docker: ContainerEngine, containerId: string): Promise<boolean> {
+	if (keepOldContainersFlag) return true;
+	// A forced removal takes a running container down with it on every backend,
+	// so no stop first: on a managed backend each call waits for the backend to
+	// finish, and a stop ahead of the removal doubled that wait for nothing.
 	try {
 		await docker.removeContainer(containerId, true);
-	} catch {
-		// Container may already be removed
+		return true;
+	} catch (e) {
+		// Not confirmed gone, so it may still be billing: the caller keeps its
+		// uptime interval open for the reconcile or the orphan sweep to close.
+		log.warn(
+			`container ${containerId.slice(0, 12)} was not confirmed removed: ${(e as Error).message}. ` +
+				'It stays metered until the backend reports it gone; check the backend console.',
+		);
+		return false;
 	}
+}
+
+/** Drop a member once its removal was asked for, closing its billing only when the removal was confirmed. */
+async function dropRemovedMember(db: Db, containerId: string, confirmed: boolean): Promise<void> {
+	if (confirmed) await removePoolMember(db, containerId);
+	else await forgetPoolMember(db, containerId);
 }
 
 /**
@@ -1843,8 +1942,7 @@ export async function destroyContainer(
 	const annotated = appendMemoryLine(lastLogs || null, consumeFinalMemoryLine(projectId));
 	await setPoolMemberOutcome(db, containerId, annotated, null);
 
-	await removeFromEngine(docker, containerId);
-	await removePoolMember(db, containerId);
+	await dropRemovedMember(db, containerId, await removeFromEngine(docker, containerId));
 	// The project row still names a single "the" container; leaving it pointing at
 	// one that no longer exists makes the 1 Hz sync read a container it cannot
 	// inspect as one that died, and report a spurious error on a project whose
@@ -1904,8 +2002,7 @@ export async function teardownContainer(
 	const teardownContainerId = result.rows[0]?.container_id;
 	const toRemove = new Set(poolIds);
 	if (teardownContainerId) toRemove.add(teardownContainerId);
-	for (const id of toRemove) await removeFromEngine(docker, id);
-	for (const id of toRemove) await removePoolMember(db, id);
+	for (const id of toRemove) await dropRemovedMember(db, id, await removeFromEngine(docker, id));
 
 	await db.query('UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1', [
 		projectId,
@@ -2274,7 +2371,9 @@ export async function findDormantSuspendedMembers(
  * **Two halves, and only the first runs under the caller's lock.** Every caller
  * holds the project's lifecycle lock, and the engine call can take minutes on a
  * managed backend because it waits for the stop or removal to finish. So this
- * takes each member out of the pool's hands at once - a suspended member cannot
+ * takes each member out of the pool's hands at once - leaving any container
+ * something is working in outside a run ({@link holdProjectContainer}) - so a
+ * suspended member cannot
  * be claimed and is not charged to the budget; a destroyed one has no row left
  * to claim - and finishes the engine call in the background, where it closes the
  * container's uptime interval once the backend confirms. A resume of a member
@@ -2301,6 +2400,9 @@ export async function executeRetirementPlan(
 
 	let retired = 0;
 	for (const containerId of plan.destroy) {
+		// Something is working in it outside a run; it is retired by a later pass
+		// once that work lets go.
+		if (containerHolds.has(containerId)) continue;
 		// Destroyed, not stopped: its filesystem is reproducible from the git
 		// remote, and a container kept beyond the one suspended member is
 		// storage nobody asked for.
@@ -2320,6 +2422,7 @@ export async function executeRetirementPlan(
 	}
 
 	for (const containerId of plan.suspend) {
+		if (containerHolds.has(containerId)) continue;
 		if (!(await beginPoolMemberStop(db, containerId))) continue;
 		log.info(
 			`project ${ref(project.slug, project.id)} ${opts.reason} — suspending container ${ref(project.slug, containerId.slice(0, 12))}`,
@@ -2436,6 +2539,11 @@ export async function syncContainerStatus(
 		);
 		return ContainerStatus.Error;
 	}
+
+	// Still moving between states, and still billed while it does - a stop that
+	// ran out of time, or one a restart left behind. Not a stop yet; asked again
+	// next tick.
+	if (!info.State.Running && info.State.Transitioning) return previousStatus ?? null;
 
 	const status = info.State.Running ? ContainerStatus.Running : ContainerStatus.Stopped;
 
@@ -2620,6 +2728,11 @@ export async function syncAllContainerStatuses(
 	// is what made a tick overrun its period once a handful of projects existed.
 	const projectsToSync = projects.rows;
 	await forEachConcurrent(projectsToSync, CONTAINER_SYNC_CONCURRENCY, async (project) => {
+		// A retirement's stop or removal is under way: the retirement writes the
+		// project row and ends the billed stretch itself once the backend confirms.
+		// Read here mid-stop, a managed sandbox reads not-running and the sync would
+		// record a stop that has not finished.
+		if (lifecycleCallsInFlight.has(project.container_id)) return;
 		const oldStatus = project.container_status;
 		let newStatus = await syncContainerStatus(
 			db,
@@ -2947,6 +3060,9 @@ async function allocateHostPorts(
 const POOL_RECONCILE_MIN_AGE_SECONDS = 60;
 const POOL_RECONCILE_LIMIT = 50;
 
+/** Where the next reconcile pass resumes, by container id; null starts from the beginning. */
+let poolReconcileCursor: string | null = null;
+
 /**
  * How often one pool member is asked about.
  *
@@ -3088,7 +3204,14 @@ export async function reconcilePoolMembers(
 		db,
 		POOL_RECONCILE_MIN_AGE_SECONDS,
 		POOL_RECONCILE_LIMIT,
+		poolReconcileCursor,
 	);
+	// The next pass carries on after this page, and a short page means the end
+	// was reached, so the one after starts over. Every member is visited in turn
+	// however many there are; a fixed oldest-first page let the oldest members -
+	// a week of quiet projects' suspended ones - fill it on every pass.
+	poolReconcileCursor =
+		stale.length < POOL_RECONCILE_LIMIT ? null : (stale.at(-1)?.containerId ?? null);
 	const result = { dropped: 0, wedged: 0, transitions: [] as ContainerTransition[] };
 	await settleUnaccountedUptime(deps);
 	if (stale.length === 0) return result;

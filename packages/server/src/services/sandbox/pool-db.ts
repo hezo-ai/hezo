@@ -412,7 +412,8 @@ export async function claimPoolMember(
 	// rows, and "did this row move" is exactly what decides the race.
 	const res = await db.query<{ container_id: string }>(
 		`UPDATE container_pool_members
-		    SET state = 'busy', last_task_id = COALESCE($2, last_task_id), updated_at = now()
+		    SET state = 'busy', last_task_id = COALESCE($2, last_task_id), updated_at = now(),
+		        chat_released_at = NULL
 		  WHERE container_id = $1 AND state = 'idle'
 		  RETURNING container_id`,
 		[containerId, lastTaskId],
@@ -1096,7 +1097,12 @@ export interface PoolMemberForReconcile {
 }
 
 /**
- * Pool members old enough to be worth checking against the engine, oldest first.
+ * One page of pool members old enough to be worth checking against the engine,
+ * in container-id order after `afterContainerId` (null for the first page).
+ *
+ * Keyset-paged so the caller visits every member in turn: a page that always
+ * started from the oldest members was filled every pass by the same ones, and a
+ * member past it was never checked at all.
  *
  * `updated_at` rather than `created_at`: a member that just changed state is
  * mid-transition and reconciling it would race the thing that moved it. The age
@@ -1111,6 +1117,7 @@ export async function listPoolMembersForReconcile(
 	db: Db,
 	minAgeSeconds: number,
 	limit: number,
+	afterContainerId: string | null = null,
 ): Promise<PoolMemberForReconcile[]> {
 	const res = await db.query<{
 		container_id: string;
@@ -1127,9 +1134,10 @@ export async function listPoolMembersForReconcile(
 		   FROM container_pool_members m
 		   JOIN projects p ON p.id = m.project_id
 		  WHERE m.updated_at < now() - ($1 * interval '1 second')
-		  ORDER BY m.updated_at ASC
+		    AND ($3::text IS NULL OR m.container_id > $3)
+		  ORDER BY m.container_id
 		  LIMIT $2`,
-		[minAgeSeconds, limit],
+		[minAgeSeconds, limit, afterContainerId],
 	);
 	return res.rows.map((r) => ({
 		containerId: r.container_id,

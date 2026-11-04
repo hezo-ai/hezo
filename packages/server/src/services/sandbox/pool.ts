@@ -99,7 +99,8 @@ export interface PoolCapacity {
  *
  * Ahead of the ladder: **any member not provisioned to the cap it would be
  * provisioned to now, or built from another agent image, is recycled**, not
- * reused. An image carries the pinned CLIs, and a container keeps its image for
+ * reused - unless it holds unpushed commits, in which case it is only passed
+ * over, never destroyed. An image carries the pinned CLIs, and a container keeps its image for
  * life: after an upgrade, a reused old container ran the previous CLI - on one
  * instance a different model than every new container - with nothing recording
  * which. The cap is a memory guarantee
@@ -153,14 +154,18 @@ export function selectPoolMember(
 	requiredMemoryBytes: number,
 	requiredImageVersion: string,
 ): PoolDecision {
+	const outdated = (m: PoolMember) =>
+		m.memoryBytes !== requiredMemoryBytes || m.imageVersion !== requiredImageVersion;
+	// A member holding unpushed commits is never recycled - destroying it loses
+	// the only copy of that work, the rule both idle planners keep - and never
+	// handed to a run either, since it was built to the wrong figure. It waits,
+	// suspended by the idle passes, for its work to be recovered.
 	const mismatched = members.filter(
-		(m) =>
-			m.state !== 'busy' &&
-			(m.memoryBytes !== requiredMemoryBytes || m.imageVersion !== requiredImageVersion),
+		(m) => m.state !== 'busy' && !m.hasUnpushedCommits && outdated(m),
 	);
 	if (mismatched.length > 0) return { kind: 'recycle', members: mismatched };
 
-	const available = members.filter(usable);
+	const available = members.filter((m) => usable(m) && !outdated(m));
 
 	if (taskId !== null) {
 		const affine = available.find((m) => m.state === 'idle' && m.lastTaskId === taskId);

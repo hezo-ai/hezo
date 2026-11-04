@@ -4435,6 +4435,15 @@ export class JobManager {
 			// A lazy start in flight has no DB row yet, so the members below could be
 			// claimed the moment this lock is released.
 			if (this.pendingContainerStarts.has(projectId)) return 0;
+			// A run dispatched here that has not claimed a container yet - between
+			// its dispatch and its row, or parked waiting for capacity - is about to
+			// take one of these. Retiring it first makes that run pay a stop and a
+			// start. Counted against the runs already holding a container, since a
+			// running sibling in its own container is no reason to keep these.
+			const holding = this.getLiveRunsForProject(projectId).filter(
+				(r) => r.containerId !== null,
+			).length;
+			if ((this.activeProjectRuns.get(projectId) ?? 0) > holding) return 0;
 			const fresh = await findStaleIdleMembersInProject(db, projectId, graceSec);
 			if (fresh.length === 0) return 0;
 			const staleIds = new Set(fresh.map((r) => r.container_id));

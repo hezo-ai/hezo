@@ -2634,7 +2634,11 @@ resize a container in place - so `selectPoolMember` compares each non-`busy` mem
 recorded allocation (`container_pool_members.memory_bytes`, written at provision from the
 same `memoryCeilingBytes` the engine was handed) against the project's current effective cap
 and returns `{ kind: 'recycle', members }` ahead of every reuse rung. The caller destroys
-them and re-decides.
+them through `executeRetirementPlan`, so the members leave the pool and the budget at once
+and the backend's removal finishes after the project's lifecycle lock is released, and
+re-decides. **A member holding unpushed commits is never recycled** - destroying it loses the
+only copy, the rule both idle planners keep - and never handed to a run either: the ladder
+passes over it, and the idle passes suspend it.
 
 Recorded rather than re-derived, for the reason migration 051 already gives for
 `disk_ceiling_bytes`: the container really does only have what it was created with. Before
@@ -3839,7 +3843,26 @@ calls: a resume of a member still stopping waits for the stop first, and the liv
 reconcile leaves alone a container whose call is in flight. A stop that fails or times out
 leaves the interval open and logs which container and where to look; the reconcile closes it
 when the engine reports the container at rest, or hands a container found still running back
-to `idle` for the passes to retire again.
+to `idle` for the passes to retire again. The 1 Hz status sync leaves alone a container whose
+call is in flight, and reads a container that is not running but still `Transitioning` as
+unchanged, so neither ends a billed stretch or records a stop before the backend has
+finished. The liveness reconcile pages through the pool by container id with a cursor that
+carries across passes (`listPoolMembersForReconcile`), so every member is checked in turn
+however many long-quiet suspended members there are. A resume whose start fails drops the
+member only when the engine reports the container gone; a container that is there but will
+not start fails the acquire with the engine's error. Operator removal and project teardown
+remove without a stop first (a forced removal takes a running container down on every
+backend), and close the billed stretch only when the removal was confirmed.
+
+**Work outside a run holds its container.** A repo clone, a repo reset and an MCP install
+work in the project's named container without a claim, often beside a run, so they take a
+hold instead (`holdProjectContainer`, which also brings the container up, or
+`holdRunningContainer`, which refuses a container a retirement has already taken).
+`executeRetirementPlan` skips a held container, which covers every pass at once; a later pass
+retires it once the hold is released. Release-time retirement also waits while a run
+dispatched in the project has not yet claimed a container (`activeProjectRuns` exceeding the
+live runs that hold one), so a run about to take a warm member never pays for its stop and
+start. A claim clears the member's chat-release stamp.
 
 Every lifecycle *decision* — ensure-running
 and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory

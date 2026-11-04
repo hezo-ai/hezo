@@ -21,7 +21,11 @@ import {
 	acquireRunContainer,
 	type ContainerDeps,
 	executeRetirementPlan,
+	holdProjectContainer,
+	holdRunningContainer,
 	reconcilePoolMembers,
+	syncAllContainerStatuses,
+	syncContainerStatus,
 } from '../src/services/containers';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
@@ -59,6 +63,13 @@ function engine(
 	opts: {
 		createDelayMs?: number;
 		stopDelayMs?: number;
+		/**
+		 * Stop the way a managed backend does: the container reads not-running and
+		 * mid-transition at once, and only reads at rest once this has elapsed.
+		 */
+		slowStopMs?: number;
+		removeDelayMs?: number;
+		startError?: Error;
 		createError?: Error;
 		onCreate?: (name: string) => void;
 		findByName?: (name: string) => Promise<ContainerInfo | null>;
@@ -66,14 +77,16 @@ function engine(
 ): Engine {
 	const calls: Engine['calls'] = [];
 	const running = new Set<string>();
+	const transitioning = new Set<string>();
 	let seq = 0;
 	const info = (id: string): ContainerInfo => ({
 		Id: id,
 		State: {
-			Status: running.has(id) ? 'running' : 'exited',
+			Status: running.has(id) ? 'running' : transitioning.has(id) ? 'created' : 'exited',
 			Running: running.has(id),
 			Pid: 1,
 			ExitCode: 0,
+			Transitioning: transitioning.has(id),
 		},
 		Config: { Image: 'stub' },
 	});
@@ -88,15 +101,23 @@ function engine(
 		}),
 		startContainer: vi.fn(async (id: string) => {
 			calls.push({ op: 'start', id });
+			if (opts.startError) throw opts.startError;
 			running.add(id);
 		}),
 		stopContainer: vi.fn(async (id: string) => {
 			calls.push({ op: 'stop', id });
+			if (opts.slowStopMs) {
+				running.delete(id);
+				transitioning.add(id);
+				await new Promise((r) => setTimeout(r, opts.slowStopMs));
+				transitioning.delete(id);
+			}
 			if (opts.stopDelayMs) await new Promise((r) => setTimeout(r, opts.stopDelayMs));
 			running.delete(id);
 		}),
 		removeContainer: vi.fn(async (id: string) => {
 			calls.push({ op: 'remove', id });
+			if (opts.removeDelayMs) await new Promise((r) => setTimeout(r, opts.removeDelayMs));
 			running.delete(id);
 		}),
 		inspectContainer: vi.fn(async (id: string) => info(id)),
@@ -663,5 +684,300 @@ describe('a restart in the middle of a lifecycle call', () => {
 		});
 		await reconcilePoolMembers(deps(docker));
 		expect((await intervals(id))[0].ended_at).not.toBeNull();
+	});
+});
+
+/** The project row and ids a test needs to retire a member directly, as a pass would. */
+async function projectRef(
+	projectId: string,
+): Promise<{ id: string; slug: string; team_id: string }> {
+	const res = await db.query<{ slug: string; team_id: string }>(
+		'SELECT slug, team_id FROM projects WHERE id = $1',
+		[projectId],
+	);
+	return { id: projectId, ...res.rows[0] };
+}
+
+describe('nothing reads a stop as finished before the backend has finished it', () => {
+	it('leaves a stop under way to the retirement that asked for it', async () => {
+		// Mid-stop a managed sandbox reads not-running. The status sync used to take
+		// that as the container having stopped: it ended the billed stretch at the
+		// start of the stop and recorded a spurious "Container stopped" error.
+		const { projectId, taskId } = await freshProject('Sync Mid Stop');
+		const e = engine({ slowStopMs: 300 });
+		const acquired = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await acquired.release();
+		await executeRetirementPlan(
+			deps(e.docker),
+			await projectRef(projectId),
+			{ suspend: [acquired.containerId], destroy: [] },
+			{ reason: 'idle' },
+		);
+		await syncAllContainerStatuses(deps(e.docker));
+
+		expect((await intervals(acquired.containerId))[0].ended_at).toBeNull();
+		const mid = await db.query<{ container_status: string; container_error: string | null }>(
+			'SELECT container_status::text AS container_status, container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(mid.rows[0]).toEqual({ container_status: 'running', container_error: null });
+
+		await waitForBackground();
+		expect((await intervals(acquired.containerId))[0].ended_at).not.toBeNull();
+	});
+
+	it('does not record a stop for a container still moving between states', async () => {
+		// The same reading with no retirement in this process behind it - a stop
+		// that ran out of time, or one a restart left behind.
+		const { projectId, taskId } = await freshProject('Sync Transitioning');
+		const e = engine({ slowStopMs: 50 });
+		const acquired = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await acquired.release();
+		const midStop = e.docker.stopContainer(acquired.containerId);
+		const project = await projectRef(projectId);
+		const status = await syncContainerStatus(
+			db,
+			e.docker,
+			projectId,
+			project.slug,
+			acquired.containerId,
+			'running',
+		);
+		await midStop;
+
+		expect(status).toBe('running');
+		expect((await intervals(acquired.containerId))[0].ended_at).toBeNull();
+		expect(await memberState(acquired.containerId)).toBe('idle');
+	});
+});
+
+describe('work done in a container outside a run holds it', () => {
+	it('keeps a held container through every retirement pass, and retires it once released', async () => {
+		// A repo clone runs in the project's container without claiming it, so the
+		// container reads idle; without the hold it was retired mid-clone.
+		const { projectId } = await freshProject('Hold Clone');
+		const e = engine();
+		const jm = manager(e.docker);
+		const hold = await holdProjectContainer(deps(e.docker), projectId);
+		await db.query(
+			`UPDATE container_pool_members SET last_released_at = now() - interval '10 minutes'
+			  WHERE container_id = $1`,
+			[hold.containerId],
+		);
+		await db.query(
+			`UPDATE projects SET container_last_started_at = now() - interval '10 minutes' WHERE id = $1`,
+			[projectId],
+		);
+		// Bringing the container up wakes agents with pending work; that queued
+		// work would keep the container warm on its own and hide the hold.
+		await db.query('DELETE FROM agent_wakeup_requests');
+		await sweep(jm);
+		expect(e.calls.filter((c) => c.op === 'stop' || c.op === 'remove')).toEqual([]);
+
+		hold.release();
+		await sweep(jm);
+		jm.shutdown();
+		expect(e.calls.filter((c) => c.op === 'stop').map((c) => c.id)).toEqual([hold.containerId]);
+	});
+
+	it('will not hold a container a retirement has already taken', async () => {
+		const { projectId, taskId } = await freshProject('Hold Taken');
+		const e = engine({ stopDelayMs: 100 });
+		const acquired = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await acquired.release();
+		await executeRetirementPlan(
+			deps(e.docker),
+			await projectRef(projectId),
+			{ suspend: [acquired.containerId], destroy: [] },
+			{ reason: 'idle' },
+		);
+		// Mid-stop, and once stopped: either way the caller answers as it would
+		// for a stopped container rather than working in one going away.
+		expect(await holdRunningContainer(db, projectId, acquired.containerId)).toBeNull();
+		await waitForBackground();
+		expect(await holdRunningContainer(db, projectId, acquired.containerId)).toBeNull();
+	});
+});
+
+describe('repo setup holds the container it clones into', () => {
+	it('keeps the container up through a retirement pass that runs mid-clone', async () => {
+		const { projectId, teamId } = await freshProject('Repo Setup Hold');
+		const repo = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, setup_status)
+			 VALUES ($1, 'acme/held-clone', 'github'::repo_host_type, 'pending'::repo_setup_status)
+			 RETURNING id`,
+			[projectId],
+		);
+		const e = engine();
+		let retiredMidClone = -1;
+		let cloning = false;
+		vi.mocked(e.docker.execCreate).mockImplementation(async () => {
+			// The first exec once the container is ready is the clone starting; a
+			// retirement pass lands there, as the sweep or a release timer could.
+			// Provisioning's own execs run while the member is still `creating`.
+			const named = await db.query<{ container_id: string | null; state: string | null }>(
+				`SELECT p.container_id, m.state::text AS state FROM projects p
+				   LEFT JOIN container_pool_members m ON m.container_id = p.container_id
+				  WHERE p.id = $1`,
+				[projectId],
+			);
+			const containerId = named.rows[0]?.container_id;
+			if (containerId && named.rows[0]?.state === 'idle' && !cloning) {
+				cloning = true;
+				retiredMidClone = await executeRetirementPlan(
+					deps(e.docker),
+					await projectRef(projectId),
+					{ suspend: [containerId], destroy: [] },
+					{ reason: 'idle' },
+				);
+			}
+			return 'exec-x';
+		});
+		const { performRepoSetup } = await import('../src/services/repo-provisioning');
+		await performRepoSetup(
+			{ db, docker: e.docker, dataDir, masterKeyManager },
+			{ teamId, projectId, repoId: repo.rows[0].id, repoIdentifier: 'acme/held-clone' },
+		);
+		await waitForBackground();
+
+		expect(cloning).toBe(true);
+		expect(retiredMidClone).toBe(0);
+		expect(e.calls.filter((c) => c.op === 'stop')).toEqual([]);
+	});
+});
+
+describe('replacing and resuming members', () => {
+	it('replaces an outdated member without making the next run wait for its removal', async () => {
+		const { projectId, taskId } = await freshProject('Recycle Lock');
+		let removedAt = 0;
+		const e = engine({ removeDelayMs: 300 });
+		const first = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await first.release();
+		await db.query('UPDATE container_pool_members SET memory_bytes = 1 WHERE container_id = $1', [
+			first.containerId,
+		]);
+		const removal = vi.mocked(e.docker.removeContainer);
+		const original = removal.getMockImplementation();
+		removal.mockImplementation(async (id: string, force?: boolean) => {
+			await original?.(id, force);
+			removedAt = Date.now();
+		});
+
+		const next = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		const acquiredAt = Date.now();
+		await waitForBackground();
+
+		expect(next.containerId).not.toBe(first.containerId);
+		expect(removedAt).toBeGreaterThan(acquiredAt);
+		// Billed until the removal finished, not until it was asked for.
+		const [row] = await intervals(first.containerId);
+		expect((row.ended_at as Date).getTime()).toBeGreaterThanOrEqual(acquiredAt);
+		await next.release();
+	});
+
+	it('keeps billing a container an operator removal could not confirm gone', async () => {
+		const { projectId, taskId } = await freshProject('Remove Unconfirmed');
+		const e = engine();
+		const acquired = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await acquired.release();
+		vi.mocked(e.docker.removeContainer).mockImplementation(async () => {
+			throw new Error('removal did not finish in time');
+		});
+		const project = await projectRef(projectId);
+		const { destroyContainer } = await import('../src/services/containers');
+		await destroyContainer(
+			deps(e.docker),
+			projectId,
+			project.slug,
+			project.team_id,
+			acquired.containerId,
+		);
+
+		expect(await memberState(acquired.containerId)).toBeNull();
+		expect((await intervals(acquired.containerId))[0].ended_at).toBeNull();
+	});
+
+	it('fails a resume loudly, keeping the member, when the container is there but will not start', async () => {
+		const { projectId, taskId } = await freshProject('Resume Fails');
+		const good = engine();
+		const acquired = await acquireRunContainer(deps(good.docker), projectId, taskId);
+		await acquired.release();
+		await setPoolMemberState(db, acquired.containerId, 'suspended');
+
+		const bad = engine({ startError: new Error('sandbox state change in progress') });
+		await expect(acquireRunContainer(deps(bad.docker), projectId, taskId)).rejects.toThrow(
+			/state change in progress/,
+		);
+		expect(await memberState(acquired.containerId)).toBe('suspended');
+		expect(bad.calls.filter((c) => c.op === 'create')).toEqual([]);
+	});
+
+	it('does not retire a released member while a run dispatched in its project has yet to claim one', async () => {
+		const { projectId, taskId } = await freshProject('Dispatch Pending');
+		const e = engine();
+		const jm = manager(e.docker);
+		const acquired = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await acquired.release();
+		(jm as unknown as { acquireProjectRun(id: string): void }).acquireProjectRun(projectId);
+		runEnded(jm, projectId);
+		await waitForBackground();
+		jm.shutdown();
+		expect(await memberState(acquired.containerId)).toBe('idle');
+		expect(e.calls.filter((c) => c.op === 'stop' || c.op === 'remove')).toEqual([]);
+	});
+
+	it('clears a chat hold when a run claims the member', async () => {
+		const { projectId } = await freshProject('Claim Clears Chat');
+		const e = engine();
+		const chat = await acquireRunContainer(deps(e.docker), projectId, null, 'chat-turn');
+		await chat.release();
+		const run = await acquireRunContainer(deps(e.docker), projectId, null);
+		const row = await db.query<{ chat_released_at: Date | null }>(
+			'SELECT chat_released_at FROM container_pool_members WHERE container_id = $1',
+			[run.containerId],
+		);
+		expect(run.containerId).toBe(chat.containerId);
+		expect(row.rows[0].chat_released_at).toBeNull();
+		await run.release();
+	});
+});
+
+/**
+ * Last in the file: every member in this database is reconciled here, not only
+ * the ones this case seeds.
+ */
+describe('the liveness reconcile reaches every member in turn', () => {
+	it('reaches a member past the first page, however many long-quiet members sort ahead of it', async () => {
+		const { projectId } = await freshProject('Reconcile Paging');
+		for (let i = 0; i < 60; i++) {
+			const id = `aaa-quiet-${String(i).padStart(3, '0')}`;
+			await upsertPoolMember(db, projectId, id, 'idle', { memoryBytes: GB });
+			await setPoolMemberState(db, id, 'suspended');
+		}
+		await db.query(
+			`UPDATE container_pool_members SET updated_at = now() - interval '7 days'
+			  WHERE container_id LIKE 'aaa-quiet-%'`,
+		);
+		// A stop that never confirmed: recorded suspended, interval still open.
+		await upsertPoolMember(db, projectId, 'zzz-unconfirmed', 'idle', { memoryBytes: GB });
+		await beginPoolMemberStop(db, 'zzz-unconfirmed');
+		await db.query(
+			`UPDATE container_pool_members SET updated_at = now() - interval '5 minutes'
+			  WHERE container_id = 'zzz-unconfirmed'`,
+		);
+		const docker = createStubDocker({
+			inspectContainer: vi.fn(async (cid: string) => ({
+				Id: cid,
+				State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+				Config: { Image: 'stub' },
+			})),
+		});
+		const members = await db.query<{ n: number }>(
+			'SELECT count(*)::int AS n FROM container_pool_members',
+		);
+		const passes = Math.ceil(members.rows[0].n / 50) + 1;
+		for (let i = 0; i < passes; i++) await reconcilePoolMembers(deps(docker));
+
+		expect((await intervals('zzz-unconfirmed'))[0].ended_at).not.toBeNull();
 	});
 });

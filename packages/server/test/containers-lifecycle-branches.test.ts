@@ -377,7 +377,7 @@ describe('ensureProjectContainerRunning', () => {
 });
 
 describe('teardownContainer', () => {
-	it('stops and removes the container, clears the row, and removes the workspace', async () => {
+	it('removes the container without a stop first, clears the row, and removes the workspace', async () => {
 		await resetContainerRow();
 		await db.query(
 			"UPDATE projects SET container_id = 'teardown-cid', container_status = 'running'::container_status WHERE id = $1",
@@ -392,7 +392,10 @@ describe('teardownContainer', () => {
 
 		await teardownContainer(deps(docker), projectId, projectSlug, teamId);
 
-		expect(stopContainer).toHaveBeenCalledWith('teardown-cid');
+		// A forced removal takes a running container down on every backend, and on a
+		// managed one each call waits for the backend to finish - a stop first only
+		// doubled the wait.
+		expect(stopContainer).not.toHaveBeenCalled();
 		expect(removeContainer).toHaveBeenCalledWith('teardown-cid', true);
 		expect(existsSync(getProjectDir(dataDir, teamId, projectId))).toBe(false);
 		const row = await db.query<{ container_id: string | null; container_status: string | null }>(
@@ -537,7 +540,7 @@ describe('stopContainerGracefully', () => {
 });
 
 describe('destroyContainer', () => {
-	it('snapshots the container, removes it from the engine, and drops its member row', async () => {
+	it('snapshots the container, force-removes it from the engine, and drops its member row', async () => {
 		await resetContainerRow();
 		await db.query(
 			"UPDATE projects SET container_id = 'doomed-cid', container_status = 'running'::container_status WHERE id = $1",
@@ -560,7 +563,7 @@ describe('destroyContainer', () => {
 
 		await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'doomed-cid');
 
-		expect(stopContainer).toHaveBeenCalledWith('doomed-cid');
+		expect(stopContainer).not.toHaveBeenCalled();
 		expect(removeContainer).toHaveBeenCalledWith('doomed-cid', true);
 		const left = await db.query('SELECT 1 FROM container_pool_members WHERE container_id = $1', [
 			'doomed-cid',
