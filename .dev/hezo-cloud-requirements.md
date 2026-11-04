@@ -1129,9 +1129,10 @@ module.exports = {
   },
   policy: {
     managedBy: 'Hezo Cloud',
-    // The plans card on the dashboard. Every link out of the instance lands
-    // here: the settings menu, a locked setting's notice, "Buy more hours".
-    manageUrl: 'https://app.hezo.ai#billing',
+    // The top of the dashboard, which opens on the hours and plan tiles. Every
+    // link out of the instance lands here: the settings menu, a locked
+    // setting's notice, "Buy more hours".
+    manageUrl: 'https://app.hezo.ai',
     pinned: { maxContainerMemoryGb: 12, backend: 'daytona' },
   },
 };
