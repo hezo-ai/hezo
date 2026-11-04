@@ -1,6 +1,17 @@
-import { HoursBucket, isHoursBucket, SANDBOX_BACKEND_KIND, SandboxBackend } from '@hezo/shared';
+import {
+	type BudgetWindowsContainerSeconds,
+	CONTAINER_HOURS_BUDGET_FIELDS,
+	HoursBucket,
+	isHoursBucket,
+	SANDBOX_BACKEND_KIND,
+	SandboxBackend,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { runtimeConfig } from '../config/runtime';
+import type { Db } from '../db/database';
+import { broadcastChange } from '../lib/broadcast';
+import { containerHoursBudgetWrite } from '../lib/budget-validation';
 import { err, ok } from '../lib/response';
 import {
 	getMonthlyContainerHours,
@@ -10,10 +21,12 @@ import {
 } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
+import { getProjectHoursBudgetStatus } from '../services/budget';
 import {
 	containerHoursByProject,
 	containerHoursSeries,
 	containerHoursTotals,
+	projectHoursLimitsTotal,
 } from '../services/container-hours';
 import { getSandboxBackendSetting } from '../services/sandbox/backend-store';
 
@@ -58,11 +71,109 @@ containerHoursRoutes.get('/projects/:projectId/container-hours', async (c) => {
 	// which has already checked this caller may see this project.
 	const projectId = c.get('projectId') as string;
 
-	const [buckets, totals] = await Promise.all([
+	const [buckets, totals, budget, metered] = await Promise.all([
 		containerHoursSeries(db, bucket, projectId),
 		containerHoursTotals(db, projectId),
+		getProjectHoursBudgetStatus(db, projectId),
+		isMetered(db),
 	]);
-	return ok(c, { bucket, buckets, totals });
+	return ok(c, { bucket, buckets, totals, budget, metered });
+});
+
+/**
+ * Whether a container-hour is worth budgeting on this instance: true on a
+ * remote backend, which bills uptime, and false on a local daemon, where it
+ * costs nothing anyone bills. The page renders hours as observability either
+ * way and offers the allowance and the per-project limits only where they mean
+ * something.
+ */
+async function isMetered(db: Db): Promise<boolean> {
+	const backend = await getSandboxBackendSetting(db);
+	return SANDBOX_BACKEND_KIND[backend ?? SandboxBackend.Docker] === 'remote';
+}
+
+/**
+ * Set a project's hours budget - any of its three windows, in container-seconds,
+ * 0 for no limit. Answers with the budget as the read does.
+ *
+ * **Superuser-only**, unlike the token budget, which a project's admins edit
+ * with the project. The hours are one pool every project draws on, so a project
+ * admin raising their own limit would be taking hours from the others; deciding
+ * where the pool goes is the instance owner's call.
+ *
+ * **Never HQ.** HQ draws on the instance allowance itself, which is set on its
+ * own Hours tab, and a second limit there would be a second number for the same
+ * thing.
+ *
+ * Merged over the stored trio and held to the token budget's floors, so a
+ * partial write is checked against what it leaves rather than what it sent.
+ */
+containerHoursRoutes.patch('/projects/:projectId/container-hours', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	const teamId = c.get('teamId') as string;
+	const existing = await db.query<BudgetWindowsContainerSeconds & { is_internal: boolean }>(
+		`SELECT is_internal, ${CONTAINER_HOURS_BUDGET_FIELDS.join(', ')}
+		   FROM projects WHERE id = $1 AND team_id = $2`,
+		[projectId, teamId],
+	);
+	const row = existing.rows[0];
+	if (!row) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	if (row.is_internal) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			"HQ has no hours budget: it draws on the instance's container-hours allowance, set with PATCH /api/container-hours.",
+			400,
+		);
+	}
+
+	const body: Record<string, unknown> = await c.req
+		.json<Record<string, unknown>>()
+		.catch(() => ({}));
+	const stored: BudgetWindowsContainerSeconds = {
+		daily_budget_container_seconds: Number(row.daily_budget_container_seconds),
+		weekly_budget_container_seconds: Number(row.weekly_budget_container_seconds),
+		monthly_budget_container_seconds: Number(row.monthly_budget_container_seconds),
+	};
+	const write = containerHoursBudgetWrite(body, stored);
+	if ('error' in write) return err(c, 'INVALID_REQUEST', write.error, 400);
+	if (!write.supplied) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`Send at least one of ${CONTAINER_HOURS_BUDGET_FIELDS.join(', ')}.`,
+			400,
+		);
+	}
+
+	// Never write a row that has not changed: the embedded database does not
+	// vacuum, and a no-op update is storage spent on nothing.
+	const changed = CONTAINER_HOURS_BUDGET_FIELDS.some(
+		(field) => write.trio[field] !== stored[field],
+	);
+	if (changed) {
+		const updated = await db.query<Record<string, unknown>>(
+			`UPDATE projects
+			    SET daily_budget_container_seconds = $1,
+			        weekly_budget_container_seconds = $2,
+			        monthly_budget_container_seconds = $3
+			  WHERE id = $4
+			  RETURNING *`,
+			[
+				write.trio.daily_budget_container_seconds,
+				write.trio.weekly_budget_container_seconds,
+				write.trio.monthly_budget_container_seconds,
+				projectId,
+			],
+		);
+		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', updated.rows[0]);
+	}
+
+	return ok(c, { budget: await getProjectHoursBudgetStatus(db, projectId) });
 });
 
 /**
@@ -80,12 +191,13 @@ containerHoursRoutes.get('/container-hours', async (c) => {
 	if (!bucket) return err(c, 'INVALID_REQUEST', 'bucket must be one of day, week, month', 400);
 
 	const db = c.get('db');
-	const [buckets, byProject, totals, monthlyHours, backend] = await Promise.all([
+	const [buckets, byProject, totals, monthlyHours, metered, projectLimits] = await Promise.all([
 		containerHoursSeries(db, bucket, null),
 		containerHoursByProject(db, bucket),
 		containerHoursTotals(db, null),
 		getMonthlyContainerHours(db),
-		getSandboxBackendSetting(db),
+		isMetered(db),
+		projectHoursLimitsTotal(db),
 	]);
 
 	return ok(c, {
@@ -107,7 +219,12 @@ containerHoursRoutes.get('/container-hours', async (c) => {
 		// costs nothing anyone bills, so the page renders the series as
 		// observability and leaves the cap controls out rather than inviting an
 		// operator to budget a resource that is free.
-		metered: SANDBOX_BACKEND_KIND[backend ?? SandboxBackend.Docker] === 'remote',
+		metered,
+		// How the projects' own monthly hours limits add up against the
+		// allowance. A total rather than a list: a limit sets no hours aside, so
+		// what the owner needs here is whether the limits promise more than the
+		// pool holds, and each project's own figures are on its Hours tab.
+		project_limits: projectLimits,
 	});
 });
 

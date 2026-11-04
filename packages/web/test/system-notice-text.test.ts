@@ -43,6 +43,24 @@ test('a budget-pause notice picks the sentence for whose budget and which window
 	);
 });
 
+test('an hours pause reads in hours, the way the Hours tab draws them, not as tokens', () => {
+	const text = systemNoticeText(
+		{
+			kind: 'budget_paused',
+			scope: 'project',
+			period: 'monthly',
+			resource: 'container_hours',
+			agent_slug: 'engineer',
+			limit_seconds: 5_400,
+			used_seconds: 6_000,
+		},
+		localeFor(Language.En),
+	);
+	expect(text).toBe(
+		"@engineer is paused: the project's monthly hours budget of 1h 30m is used up (1h 40m used). An instance owner can raise it to let the agent run again before the period ends.",
+	);
+});
+
 test('a conversion notice reads as its opening sentence, by where its rate came from', () => {
 	const text = systemNoticeText(
 		{ kind: 'budget_conversion', tokens_per_cent: 10_000, basis: 'fallback' },

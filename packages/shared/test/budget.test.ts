@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+	CONTAINER_HOURS_BUDGET_FIELDS,
 	containerHoursWindow,
 	containerHoursWindowStart,
+	containerSecondsToHours,
 	minMonthlyTokens,
 	minWeeklyTokens,
 	normalizeBudgetWindowsUp,
@@ -9,6 +11,7 @@ import {
 	RETIRED_BUDGET_FIELDS,
 	retiredBudgetFieldError,
 	validateBudgetWindows,
+	validateContainerHoursBudgetWindows,
 } from '../src/budget';
 
 describe('retiredBudgetFieldError', () => {
@@ -114,6 +117,71 @@ describe('normalizeBudgetWindowsUp', () => {
 			monthly_budget_tokens: 3042,
 		};
 		expect(normalizeBudgetWindowsUp(coherent)).toEqual(coherent);
+	});
+});
+
+describe('hours budget windows', () => {
+	const HOUR = 3600;
+
+	it('holds an hours trio to the same floors as a token trio', () => {
+		// One hour a day implies seven a week, so a five-hour week is refused.
+		const violations = validateContainerHoursBudgetWindows({
+			daily_budget_container_seconds: HOUR,
+			weekly_budget_container_seconds: 5 * HOUR,
+			monthly_budget_container_seconds: 0,
+		});
+		expect(violations).toHaveLength(1);
+		expect(violations[0].field).toBe('weekly_budget_container_seconds');
+		expect(violations[0].minSeconds).toBe(7 * HOUR);
+		expect(violations[0].message).toContain('at least 7 hours');
+		expect(violations[0].message).toContain('daily × 7');
+	});
+
+	it('names the weekly budget when it sets the monthly floor', () => {
+		const violations = validateContainerHoursBudgetWindows({
+			daily_budget_container_seconds: 0,
+			weekly_budget_container_seconds: 12 * HOUR,
+			monthly_budget_container_seconds: 30 * HOUR,
+		});
+		expect(violations).toHaveLength(1);
+		expect(violations[0].field).toBe('monthly_budget_container_seconds');
+		expect(violations[0].minSeconds).toBe(52 * HOUR);
+		expect(violations[0].message).toContain('weekly × 52/12');
+	});
+
+	it('accepts a coherent trio and an all-unlimited one', () => {
+		expect(
+			validateContainerHoursBudgetWindows({
+				daily_budget_container_seconds: HOUR,
+				weekly_budget_container_seconds: 7 * HOUR,
+				monthly_budget_container_seconds: 31 * HOUR,
+			}),
+		).toEqual([]);
+		expect(
+			validateContainerHoursBudgetWindows({
+				daily_budget_container_seconds: 0,
+				weekly_budget_container_seconds: 0,
+				monthly_budget_container_seconds: 0,
+			}),
+		).toEqual([]);
+	});
+
+	it('states a floor in hours that is never below the floor itself', () => {
+		// daily 1 h -> monthly floor ceil(3600 × 365/12) = 109,500 s = 30.4166... h.
+		const floor = 109_500;
+		const hours = containerSecondsToHours(floor);
+		expect(hours).toBe(30.42);
+		// Typing back the hours the refusal named clears the floor.
+		expect(Math.round(hours * HOUR)).toBeGreaterThanOrEqual(floor);
+		expect(containerSecondsToHours(7 * HOUR)).toBe(7);
+	});
+
+	it('lists the fields in the order a person reads them', () => {
+		expect(CONTAINER_HOURS_BUDGET_FIELDS).toEqual([
+			'daily_budget_container_seconds',
+			'weekly_budget_container_seconds',
+			'monthly_budget_container_seconds',
+		]);
 	});
 });
 

@@ -8,13 +8,14 @@ section: Concepts
 
 Autonomous agents can use up a provider allowance or a model bill quickly. Hezo counts
 every token each run and chat turn uses, lets you cap that per agent and per project,
-and stops the loops a budget alone would not catch.
+lets you cap each project's container hours, and stops the loops a budget alone would
+not catch.
 
 These tabs live on a project's **Team & Budget** page, beside the **Team** tab that holds
 the roster. There are two of them, because agents use two different things:
 
-- **Budget** - the model tokens the agents use.
-- **Hours** - how long the containers are up.
+- **Tokens** - the model tokens the agents use, and the token budget.
+- **Hours** - how long the containers are up, and the project's hours budget.
 
 ## Token usage
 
@@ -36,7 +37,7 @@ carries on with your next message once the window rolls over or you raise the li
 
 ## Budget windows
 
-You set limits in tokens over three rolling windows, in UTC:
+You set token limits over three rolling windows, in UTC:
 
 - **Daily** - from the start of the day.
 - **Weekly** - from the start of the week (Monday).
@@ -80,7 +81,7 @@ agent, whether or not it has a budget:
   agent yourself. A teammate who is not an admin cannot release it either way.
 - **A subscription's allowance is spread across its window.** Hezo reads how much of the
   week a Codex or Claude Code subscription has used and holds agent work that gets ahead of
-  an even pace. The Budget page shows where each subscription's week stands, under
+  an even pace. The Tokens tab shows where each subscription's week stands, under
   **Subscription usage**. See [How Hezo paces a subscription](/docs/ai-models#how-hezo-paces-a-subscription).
 - **Agents cannot pass a task back and forth forever.** After 8 rounds in a row without
   a reply from you, the task waits for you. See
@@ -137,7 +138,7 @@ Three things affect how that figure reads:
   reply, then stops on its own.
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
-  Each agent's run time for the month is shown on the **Budget** tab, beside its tokens.
+  Each agent's run time for the month is shown on the **Tokens** tab, beside its tokens.
   That one really is a calendar month, and is a different figure from the hours below.
 
 On a local Docker daemon an hour of uptime costs nothing, so there the Hours tab is a
@@ -166,9 +167,46 @@ Where part of a fixed allowance was bought on top of the plan, the Hours tab sho
 the two apart. The plan's hours come back each period, and bought hours carry over
 until they are used.
 
-Where the allowance is fixed by whoever runs your instance, the Budget page says
+Where the allowance is fixed by whoever runs your instance, HQ's Hours tab says
 so and links to where it can be changed. The same link, **Buy more hours**, sits
 beside the date the allowance resets. Once the allowance is spent, the instance's
 admin also finds it in three more places: the notice after pressing **Run now** or
 **Retry**, the tip on a **Run now** button the spent hours have disabled, and the
 chat's warning above the composer.
+
+### A project's hours budget
+
+Each project can also have an **hours budget**: limits on how many container hours its
+containers may be up in a day, a week and a period. Use it to decide where an
+instance's hours go, so that one busy project cannot use the whole allowance.
+
+- **Only an instance owner can set it.** The hours are one pool that every project draws
+  on, so a project's admins can see its limits but cannot change them. An owner sets
+  them on the project's **Hours** tab, with **Edit limits**.
+- **The windows follow the allowance.** The daily limit counts the UTC day, and the
+  weekly limit counts from Monday, as token budgets do. The monthly limit counts over
+  the allowance's own period, so where your hours renew on a billing date, the
+  project's limit renews on the same date.
+- **Longer limits cover shorter ones**, as for token budgets. A weekly limit is at least
+  seven times the daily limit. A monthly limit is at least the daily limit times 365/12
+  (about 30.4), and at least the weekly limit times 52/12. The editor raises a longer
+  limit for you as you type.
+- **At a limit, the project's new work waits.** Agents with work in the project are
+  paused, a chat reply in the project is refused with a notice, and you get one inbox
+  notice per window. Runs already going finish, so a project can go a little past its
+  limit. Work starts again on its own when the window turns, or as soon as an owner
+  raises the limit.
+- **A limit sets no hours aside.** The allowance still applies to every project, and it
+  can run out before a project reaches its own limit. HQ's Hours tab shows how the
+  projects' monthly limits add up against the allowance.
+- **HQ has no hours budget.** The CEO's and the Coach's work draws on the allowance
+  directly.
+
+On a local Docker daemon an hour costs nothing, so the Hours tab offers no hours budget
+there unless one is already set.
+
+Through the API, a project's hours budget is read with
+`GET /api/projects/:projectId/container-hours` and set with
+`PATCH /api/projects/:projectId/container-hours`, in seconds:
+`daily_budget_container_seconds`, `weekly_budget_container_seconds` and
+`monthly_budget_container_seconds`, with 0 for no limit.

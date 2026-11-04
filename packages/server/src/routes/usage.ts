@@ -6,6 +6,7 @@ import type { Env } from '../lib/types';
 import {
 	type BudgetLimits,
 	getProjectBudgetStatus,
+	isProjectOverHoursBudget,
 	toEntityBudgetStatus,
 	USAGE_ENTRY_COLUMNS_SQL,
 	USAGE_WINDOW_FLOOR_SQL,
@@ -113,9 +114,9 @@ usageRoutes.get('/projects/:projectId/usage', async (c) => {
 });
 
 /**
- * Project budget status: per-window usage vs. limit for the project and each of
- * its agents, with over-budget flags. Powers the Budgets page and the project
- * warning banner. `overBudget` for an agent is true when the agent itself or the
+ * Project budget status: per-window token usage vs. limit for the project and
+ * each of its agents, with over-budget flags, plus whether the project's hours
+ * budget is spent. Powers the Tokens tab and the project warning banner. `overBudget` for an agent is true when the agent itself or the
  * project breaches any window (matching the run gate); both component flags are
  * surfaced so the UI can explain why.
  */
@@ -124,7 +125,10 @@ usageRoutes.get('/projects/:projectId/budget-status', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 
-	const projectStatus = await getProjectBudgetStatus(db, projectId);
+	const [projectStatus, projectHoursOver] = await Promise.all([
+		getProjectBudgetStatus(db, projectId),
+		isProjectOverHoursBudget(db, projectId),
+	]);
 
 	// Month-to-date usage-entry count (one entry per run or chat turn) powers the
 	// Budget hero's "{N} runs" line. Same UTC month boundary the windowed sums use.
@@ -185,5 +189,12 @@ usageRoutes.get('/projects/:projectId/budget-status', async (c) => {
 		};
 	});
 
-	return ok(c, { project: projectStatus, agents: agentStatuses, runsThisMonth });
+	return ok(c, {
+		project: projectStatus,
+		agents: agentStatuses,
+		runsThisMonth,
+		// The project's hours budget is spent, so its runs are held too. The agent
+		// flags above stay token-only: they explain the token windows beside them.
+		project_hours_over_budget: projectHoursOver,
+	});
 });

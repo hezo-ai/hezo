@@ -41,7 +41,7 @@ async function seedRun(teamId: string, memberId: string, minutes: number): Promi
 	);
 }
 
-test('the budget index opens on the Budget tab, with only that tab selected', async () => {
+test('the budget index opens on the Tokens tab, with only that tab selected', async () => {
 	let slug = '';
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -55,13 +55,13 @@ test('the budget index opens on the Budget tab, with only that tab selected', as
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: slug } });
 
 	const team = await findByTestId('budget-tab-team');
-	const spend = await findByTestId('budget-tab-spend');
+	const tokens = await findByTestId('budget-tab-tokens');
 	const hours = await findByTestId('budget-tab-hours');
 	// The active tab merges into the panel below it (`bg-bg`); an inactive one
-	// stays recessed (`bg-surface-2`). Spend is the index route, so a fuzzy match
+	// stays recessed (`bg-surface-2`). Tokens is the index route, so a fuzzy match
 	// would claim its siblings too - several tabs reading as selected is the bug
 	// this asserts against.
-	expect(spend.className).toContain('bg-bg');
+	expect(tokens.className).toContain('bg-bg');
 	for (const inactive of [team, hours]) {
 		expect(inactive.className).toContain('bg-surface-2');
 		expect(inactive.className).not.toContain('bg-bg');
@@ -194,7 +194,7 @@ test("HQ's Hours tab, which already shows every project, carries no such line", 
 	expect(queryByTestId('container-hours-scope')).toBeNull();
 });
 
-test("the Spend tab carries each agent's run time beside its spend", async () => {
+test("the Tokens tab carries each agent's run time beside its spend", async () => {
 	let slug = '';
 	let engineerSlug = '';
 	const { findByTestId, router } = await renderApp({

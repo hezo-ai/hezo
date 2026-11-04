@@ -1,8 +1,18 @@
-import { type AiProvider, BudgetPeriod, wsRoom } from '@hezo/shared';
+import {
+	type AiProvider,
+	BudgetPeriod,
+	BudgetResource,
+	type BudgetWindowsContainerSeconds,
+	CONTAINER_HOURS_BUDGET_FIELDS,
+	type ContainerHoursWindowStatus,
+	type ProjectContainerHoursBudget,
+	wsRoom,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { BUDGET_USAGE_COUNTED_FROM_META_KEY } from '../db/migrations/code/081_token_budgets';
 import { broadcastRowChange } from '../lib/broadcast';
 import { utcWindowStartSql } from '../lib/sql';
+import { projectBudgetWindowSeconds } from './container-hours';
 import type { WebSocketManager } from './ws';
 
 /**
@@ -17,6 +27,13 @@ import type { WebSocketManager } from './ws';
  * `member_agents` and `projects` as `daily_/weekly_/monthly_budget_tokens`; a
  * limit of 0 means unlimited for that window. A run is blocked when the agent OR
  * its project breaches ANY window.
+ *
+ * A project also carries an **hours budget**, `daily_/weekly_/monthly_budget_container_seconds`,
+ * summed from the container-uptime ledger rather than from `usage_entries`
+ * (`container-hours.ts`). It is checked by the same gate, after the token
+ * budgets, so every path that already stops for tokens - the pre-run gate, the
+ * reactive pause, the chat turn, the resume sweep - stops for hours too, and the
+ * block says which it was.
  *
  * Every run and chat turn records its tokens through {@link recordUsage}, however
  * its credential is billed: a subscription spends an allowance as surely as an
@@ -175,68 +192,190 @@ export function getProjectBudgetStatus(db: Db, projectId: string): Promise<Entit
 export interface OverBudgetBlock {
 	scope: 'agent' | 'project';
 	period: BudgetPeriod;
-	usedTokens: number;
-	limitTokens: number;
+	/** What the budget counts. An hours block is always project-scoped. */
+	resource: BudgetResource;
+	/** Used so far in the window, in the resource's unit: tokens, or container-seconds. */
+	used: number;
+	/** The window's limit, in the same unit. */
+	limit: number;
 }
 
-function firstBlockingWindow(
-	status: EntityBudgetStatus,
-): { period: BudgetPeriod; window: WindowStatus } | null {
-	if (status.daily.overBudget) return { period: BudgetPeriod.Daily, window: status.daily };
-	if (status.weekly.overBudget) return { period: BudgetPeriod.Weekly, window: status.weekly };
-	if (status.monthly.overBudget) return { period: BudgetPeriod.Monthly, window: status.monthly };
-	return null;
+/** The three windows, used against limit, in whatever unit the budget counts. */
+interface WindowUse {
+	daily: { used: number; limit: number };
+	weekly: { used: number; limit: number };
+	monthly: { used: number; limit: number };
+}
+
+/** The windows in the order a block is reported: the shortest one that binds. */
+const WINDOW_ORDER: readonly { period: BudgetPeriod; key: keyof WindowUse }[] = [
+	{ period: BudgetPeriod.Daily, key: 'daily' },
+	{ period: BudgetPeriod.Weekly, key: 'weekly' },
+	{ period: BudgetPeriod.Monthly, key: 'monthly' },
+];
+
+/** A window is over budget only when a positive limit is met or exceeded. */
+function isOver(window: { used: number; limit: number }): boolean {
+	return window.limit > 0 && window.used >= window.limit;
 }
 
 function toBlock(
 	scope: OverBudgetBlock['scope'],
-	status: EntityBudgetStatus,
+	resource: BudgetResource,
+	use: WindowUse,
 ): OverBudgetBlock | null {
-	const blocking = firstBlockingWindow(status);
-	if (!blocking) return null;
-	return {
-		scope,
-		period: blocking.period,
-		usedTokens: blocking.window.usedTokens,
-		limitTokens: blocking.window.limitTokens,
-	};
+	for (const { period, key } of WINDOW_ORDER) {
+		const window = use[key];
+		if (isOver(window)) return { scope, period, resource, used: window.used, limit: window.limit };
+	}
+	return null;
 }
 
 /**
- * The gate primitive. Returns the first blocking window across the agent then
- * the project, or null when both are within budget. When `projectId` is omitted
- * (e.g. a task-less wakeup whose project is not yet resolved) only the agent is
- * checked.
+ * The gate primitive. Returns the first blocking window across the agent's
+ * tokens, then the project's tokens, then the project's container-hours, or null
+ * when all are within budget. When `projectId` is omitted (e.g. a task-less
+ * wakeup whose project is not yet resolved) only the agent is checked.
  */
 export async function checkOverBudget(
 	db: Db,
 	memberId: string,
 	projectId: string | null,
 ): Promise<OverBudgetBlock | null> {
-	const agentBlock = await entityBlock(db, 'agent', memberId);
+	const agentBlock = await entityBlock(
+		db,
+		'agent',
+		memberId,
+		await readLimits(db, 'agent', memberId),
+	);
 	if (agentBlock) return agentBlock;
 	if (!projectId) return null;
-	return entityBlock(db, 'project', projectId);
+	const limits = await readProjectLimits(db, projectId);
+	if (!limits) return null;
+	return (await entityBlock(db, 'project', projectId, limits)) ?? hoursBlock(db, projectId, limits);
 }
 
 /**
- * The window that blocks an entity, or null. The sums are skipped when every
- * window is unlimited, which is the default: nothing can be over, so a gate run
- * per dispatch and per run completion pays one primary-key read.
+ * The token window that blocks an entity, or null. The sums are skipped when
+ * every window is unlimited, which is the default: nothing can be over, so a
+ * gate run per dispatch and per run completion pays one primary-key read.
  */
 async function entityBlock(
 	db: Db,
 	entity: BudgetEntity,
 	id: string,
+	limits: BudgetLimits,
 ): Promise<OverBudgetBlock | null> {
-	const limits = await readLimits(db, entity, id);
 	const unlimited =
 		Number(limits.daily_budget_tokens) <= 0 &&
 		Number(limits.weekly_budget_tokens) <= 0 &&
 		Number(limits.monthly_budget_tokens) <= 0;
 	if (unlimited) return null;
 	const usage = await getUsageByColumn(db, BUDGET_ENTITIES[entity].usageColumn, id);
-	return toBlock(entity, toEntityBudgetStatus(usage, limits));
+	return toBlock(entity, BudgetResource.Tokens, {
+		daily: { used: Number(usage.daily), limit: Number(limits.daily_budget_tokens) },
+		weekly: { used: Number(usage.weekly), limit: Number(limits.weekly_budget_tokens) },
+		monthly: { used: Number(usage.monthly), limit: Number(limits.monthly_budget_tokens) },
+	});
+}
+
+/** A project's hours limits, as JSON numbers. */
+function hoursLimits(limits: BudgetWindowsContainerSeconds): BudgetWindowsContainerSeconds {
+	return {
+		daily_budget_container_seconds: Number(limits.daily_budget_container_seconds),
+		weekly_budget_container_seconds: Number(limits.weekly_budget_container_seconds),
+		monthly_budget_container_seconds: Number(limits.monthly_budget_container_seconds),
+	};
+}
+
+/** True when a project set no hours limit in any window - the default. */
+function noHoursLimit(limits: BudgetWindowsContainerSeconds): boolean {
+	return CONTAINER_HOURS_BUDGET_FIELDS.every((field) => Number(limits[field]) <= 0);
+}
+
+/**
+ * The hours window that blocks a project, or null. Like the token check, the
+ * ledger is never read for a project with no hours limit.
+ */
+async function hoursBlock(
+	db: Db,
+	projectId: string,
+	stored: BudgetWindowsContainerSeconds,
+): Promise<OverBudgetBlock | null> {
+	const limits = hoursLimits(stored);
+	if (noHoursLimit(limits)) return null;
+	const used = await projectBudgetWindowSeconds(db, projectId);
+	return toBlock('project', BudgetResource.ContainerHours, {
+		daily: { used: used.daily, limit: limits.daily_budget_container_seconds },
+		weekly: { used: used.weekly, limit: limits.weekly_budget_container_seconds },
+		monthly: { used: used.monthly, limit: limits.monthly_budget_container_seconds },
+	});
+}
+
+/**
+ * Whether the gate would stop this project for its hours right now - the cheap
+ * question the project banner asks on every page, so it reads the ledger only
+ * when the project set an hours limit.
+ */
+export async function isProjectOverHoursBudget(db: Db, projectId: string): Promise<boolean> {
+	const limits = await readProjectLimits(db, projectId);
+	return limits !== null && (await hoursBlock(db, projectId, limits)) !== null;
+}
+
+/** The hours-budget columns of `projects`. */
+const HOURS_LIMIT_COLUMNS = CONTAINER_HOURS_BUDGET_FIELDS.join(', ');
+
+/** A project's token and hours limits in one primary-key read, or null when it is gone. */
+async function readProjectLimits(
+	db: Db,
+	projectId: string,
+): Promise<(BudgetLimits & BudgetWindowsContainerSeconds) | null> {
+	const res = await db.query<BudgetLimits & BudgetWindowsContainerSeconds>(
+		`SELECT ${BUDGET_LIMIT_COLUMNS}, ${HOURS_LIMIT_COLUMNS} FROM projects WHERE id = $1`,
+		[projectId],
+	);
+	return res.rows[0] ?? null;
+}
+
+function hoursWindowStatus(usedSeconds: number, limitSeconds: number): ContainerHoursWindowStatus {
+	return {
+		used_seconds: usedSeconds,
+		limit_seconds: limitSeconds,
+		over_budget: isOver({ used: usedSeconds, limit: limitSeconds }),
+	};
+}
+
+/**
+ * A project's hours budget against what its containers used, for display.
+ *
+ * Read from the same sums and the same windows as the gate, so a page that says
+ * a window has room can never sit beside a gate that has closed it.
+ */
+export async function getProjectHoursBudgetStatus(
+	db: Db,
+	projectId: string,
+): Promise<ProjectContainerHoursBudget> {
+	const res = await db.query<BudgetWindowsContainerSeconds>(
+		`SELECT ${HOURS_LIMIT_COLUMNS} FROM projects WHERE id = $1`,
+		[projectId],
+	);
+	const limits = hoursLimits(
+		res.rows[0] ?? {
+			daily_budget_container_seconds: 0,
+			weekly_budget_container_seconds: 0,
+			monthly_budget_container_seconds: 0,
+		},
+	);
+	const used = await projectBudgetWindowSeconds(db, projectId);
+	const daily = hoursWindowStatus(used.daily, limits.daily_budget_container_seconds);
+	const weekly = hoursWindowStatus(used.weekly, limits.weekly_budget_container_seconds);
+	const monthly = hoursWindowStatus(used.monthly, limits.monthly_budget_container_seconds);
+	return {
+		daily,
+		weekly,
+		monthly,
+		over_budget: daily.over_budget || weekly.over_budget || monthly.over_budget,
+	};
 }
 
 /**

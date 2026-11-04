@@ -130,8 +130,13 @@ export interface SystemBudgetPausedContent {
 	agent_slug?: string;
 	scope?: 'agent' | 'project';
 	period?: 'daily' | 'weekly' | 'monthly';
+	/** What the budget counts. Absent on a token pause, which is every pause written before hours budgets. */
+	resource?: string;
 	used_tokens?: number;
 	limit_tokens?: number;
+	/** An hours pause's figures, in container-seconds. */
+	used_seconds?: number;
+	limit_seconds?: number;
 	text?: string;
 }
 

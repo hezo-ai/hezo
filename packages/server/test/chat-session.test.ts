@@ -1224,6 +1224,51 @@ describe('ChatSessionManager', () => {
 			}
 		});
 
+		test("gates the turn on the project's hours budget, and says it was hours", async () => {
+			const w = await seedWorker();
+			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
+			const { manager } = makeManager(ctx, chat.docker);
+			await ctx.db.query(`UPDATE projects SET daily_budget_container_seconds = 1 WHERE id = $1`, [
+				w.projectId,
+			]);
+			await ctx.db.query(
+				`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
+				 VALUES ($1, 'ctr-chat-hours', GREATEST(now() - interval '5 minutes',
+				         date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), now(), 'docker')`,
+				[w.projectId],
+			);
+			try {
+				const res = await manager.sendWorkerTurn({
+					memberId: w.memberId,
+					teamId: w.teamId,
+					projectId: w.projectId,
+					text: 'hello?',
+				});
+				const rows = await ctx.db.query<{
+					role: string;
+					system_kind: string | null;
+					content: string;
+				}>(
+					`SELECT role::text AS role, system_kind, content FROM chat_messages
+					 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+					[res.conversationId],
+				);
+				expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
+				expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+				expect(rows.rows[1].content).toContain('daily hours budget');
+				expect(rows.rows[1].content).toContain('Hours tab');
+				expect(chat.scenario.entered).toBe(false);
+			} finally {
+				await ctx.db.query(`DELETE FROM container_uptime_entries WHERE project_id = $1`, [
+					w.projectId,
+				]);
+				await ctx.db.query(`UPDATE projects SET daily_budget_container_seconds = 0 WHERE id = $1`, [
+					w.projectId,
+				]);
+				await manager.stop();
+			}
+		});
+
 		test('refuses an explicit conversation belonging to someone else', async () => {
 			const w = await seedWorker();
 			const { manager } = makeManager(

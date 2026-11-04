@@ -1,6 +1,8 @@
 import {
 	AgentRuntimeStatus,
 	BUDGET_PAUSE_STATUSES,
+	BudgetResource,
+	containerSecondsToHours,
 	englishCount,
 	HeartbeatRunStatus,
 	wsRoom,
@@ -11,6 +13,7 @@ import { utcWindowStartSql } from '../lib/sql';
 import { logger } from '../logger';
 import { checkOverBudget, type OverBudgetBlock } from './budget';
 import { postAdminNotice } from './comment-wakeups';
+import { currentContainerHoursWindow } from './container-hours';
 import { PLANNING_TASK_LABEL } from './project-create';
 import type { WebSocketManager } from './ws';
 
@@ -85,24 +88,87 @@ const BUDGET_WINDOW_UNIT: Record<OverBudgetBlock['period'], string> = {
 };
 
 /** When each window frees the agent again, as the notice says it in English. */
-const BUDGET_WINDOW_END: Record<OverBudgetBlock['period'], string> = {
-	daily: 'before the day ends',
-	weekly: 'before the week ends',
-	monthly: 'before the month ends',
+const BUDGET_WINDOW_END: Record<
+	OverBudgetBlock['resource'],
+	Record<OverBudgetBlock['period'], string>
+> = {
+	tokens: {
+		daily: 'before the day ends',
+		weekly: 'before the week ends',
+		monthly: 'before the month ends',
+	},
+	// The hours month is the container-hours window, which a deployer may anchor
+	// to a billing day, so it is a period rather than a month.
+	container_hours: {
+		daily: 'before the day ends',
+		weekly: 'before the week ends',
+		monthly: 'before the period ends',
+	},
+};
+
+/**
+ * How a block is told to the admin, per resource: the scope key its notice is
+ * recorded under, the window start that key holds, the comment's numbers, and
+ * the sentence. Token and hours blocks on one project are recorded apart, so
+ * running out of one in a window never silences the notice for the other.
+ */
+const BLOCK_NOTICE: Record<
+	OverBudgetBlock['resource'],
+	{
+		scopeKey: (block: OverBudgetBlock, projectId: string | null) => string;
+		/** SQL for the window's start as text, over the bound `$3`, and the value bound there. */
+		windowStart: (block: OverBudgetBlock) => { sql: string; param: string };
+		numbers: (block: OverBudgetBlock) => Record<string, unknown>;
+		text: (block: OverBudgetBlock, slug: string) => string;
+	}
+> = {
+	tokens: {
+		scopeKey: (block, projectId) =>
+			`${block.scope === 'project' ? `project:${projectId ?? ''}` : 'agent'}:${block.period}`,
+		windowStart: (block) => ({
+			sql: `${utcWindowStartSql('$3')}::text`,
+			param: BUDGET_WINDOW_UNIT[block.period],
+		}),
+		numbers: (block) => ({ used_tokens: block.used, limit_tokens: block.limit }),
+		text: (block, slug) => {
+			const whose = block.scope === 'project' ? "the project's" : `@${slug}'s`;
+			return `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limit)} tokens is used up (${englishCount(block.used)} used). Raise the budget to let it run again ${BUDGET_WINDOW_END.tokens[block.period]}.`;
+		},
+	},
+	container_hours: {
+		scopeKey: (block, projectId) => `project-hours:${projectId ?? ''}:${block.period}`,
+		// The hours month opens on the container-hours window, which `date_trunc`
+		// cannot name; the day and week are the UTC ones, as for tokens.
+		windowStart: (block) =>
+			block.period === 'monthly'
+				? {
+						sql: '$3::timestamptz::text',
+						param: currentContainerHoursWindow(new Date()).start.toISOString(),
+					}
+				: { sql: `${utcWindowStartSql('$3')}::text`, param: BUDGET_WINDOW_UNIT[block.period] },
+		numbers: (block) => ({
+			resource: BudgetResource.ContainerHours,
+			used_seconds: block.used,
+			limit_seconds: block.limit,
+		}),
+		text: (block, slug) =>
+			`@${slug} is paused: the project's ${block.period} hours budget of ${containerSecondsToHours(block.limit)} container-hours is used up (${containerSecondsToHours(block.used)} used). Raise the hours budget to let it run again ${BUDGET_WINDOW_END.container_hours[block.period]}.`,
+	},
 };
 
 /**
  * Reactively pause an agent for a budget trip - the single entry point shared by
  * the pre-run gate and post-run usage enforcement, so every window
- * (daily/weekly/monthly) and scope (agent/project) pauses identically. Sets the
- * scoped `out_of_*_budget` status, writing only when the status actually changes
- * (so we don't churn broadcasts re-pausing an already-paused agent).
+ * (daily/weekly/monthly), scope (agent/project) and resource (tokens/hours)
+ * pauses identically. Sets the scoped `out_of_*_budget` status, writing only when
+ * the status actually changes (so we don't churn broadcasts re-pausing an
+ * already-paused agent).
  *
  * The pause is also a notice to the admin: the budget, what was used and the
  * window, in their inbox, on the task the agent was working or, for a run with no
- * task, on its project's planning task. It is posted once per agent, scope and
- * window: `budget_notice_keys` records the window each one covered. The CEO
- * and the Coach have no project of their own, so the resume sweep lifts a
+ * task, on its project's planning task. It is posted once per agent, scope,
+ * resource and window: `budget_notice_keys` records the window each one covered.
+ * The CEO and the Coach have no project of their own, so the resume sweep lifts a
  * project-scoped pause of theirs and the next dispatch sets it again; without the
  * key each round would post another notice.
  */
@@ -134,24 +200,25 @@ export async function pauseAgentForBudget(
 		log.warn(`Budget pause for agent ${memberId} has no task to post its notice on`);
 		return;
 	}
-	// One entry per scope and window, not one slot: an agent that trips its own
-	// budget between two project pauses would otherwise overwrite the record of
-	// the first and tell the admin about it twice.
-	const scopeKey = `${block.scope === 'project' ? `project:${context.projectId ?? ''}` : 'agent'}:${block.period}`;
+	// One entry per scope, resource and window, not one slot: an agent that trips
+	// its own budget between two project pauses would otherwise overwrite the
+	// record of the first and tell the admin about it twice.
+	const notice = BLOCK_NOTICE[block.resource];
+	const scopeKey = notice.scopeKey(block, context.projectId);
+	const windowStart = notice.windowStart(block);
 	const claimed = await db.query<{ key: string }>(
 		`UPDATE member_agents
 		    SET budget_notice_keys =
-		          jsonb_set(budget_notice_keys, ARRAY[$2], to_jsonb(${utcWindowStartSql('$3')}::text))
+		          jsonb_set(budget_notice_keys, ARRAY[$2], to_jsonb(${windowStart.sql}))
 		  WHERE id = $1
-		    AND budget_notice_keys->>$2 IS DISTINCT FROM ${utcWindowStartSql('$3')}::text
+		    AND budget_notice_keys->>$2 IS DISTINCT FROM ${windowStart.sql}
 		  RETURNING budget_notice_keys->>$2 AS key`,
-		[memberId, scopeKey, BUDGET_WINDOW_UNIT[block.period]],
+		[memberId, scopeKey, windowStart.param],
 	);
 	const key = claimed.rows[0]?.key;
 	if (!key) return;
 
 	const slug = res.rows[0].slug;
-	const whose = block.scope === 'project' ? "the project's" : `@${slug}'s`;
 	await postAdminNotice({
 		db,
 		teamId: target.team_id,
@@ -161,9 +228,8 @@ export async function pauseAgentForBudget(
 			agent_slug: slug,
 			scope: block.scope,
 			period: block.period,
-			used_tokens: block.usedTokens,
-			limit_tokens: block.limitTokens,
-			text: `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limitTokens)} tokens is used up (${englishCount(block.usedTokens)} used). Raise the budget to let it run again ${BUDGET_WINDOW_END[block.period]}.`,
+			...notice.numbers(block),
+			text: notice.text(block, slug),
 		},
 		wsManager,
 	}).catch(async (e) => {

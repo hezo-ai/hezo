@@ -131,15 +131,27 @@ const CHAT_CAPACITY_POLL_MS = 5_000;
 export function chatBudgetExceededNotice(block: OverBudgetBlock): string {
 	const scope = block.scope === 'agent' ? 'This agent has' : 'This project has';
 	return (
-		`${scope} used up its ${block.period} token budget, so chat is paused. ` +
-		'It resumes when the window rolls over, or when the budget is raised on the Budget page.'
+		`${scope} used up its ${block.period} ${CHAT_BUDGET_NAME[block.resource]}, so chat is paused. ` +
+		`It resumes when the window rolls over, or when the budget is raised on the ${CHAT_BUDGET_TAB[block.resource]} tab.`
 	);
 }
+
+/** What each kind of budget is called in a chat refusal. */
+const CHAT_BUDGET_NAME: Record<OverBudgetBlock['resource'], string> = {
+	tokens: 'token budget',
+	container_hours: 'hours budget',
+};
+
+/** The Team & Budget tab each kind of budget is raised on. */
+const CHAT_BUDGET_TAB: Record<OverBudgetBlock['resource'], string> = {
+	tokens: 'Tokens',
+	container_hours: 'Hours',
+};
 
 /** The hours half of the same refusal - decision-level twin of the budget notice. */
 export const CHAT_HOURS_EXHAUSTED_NOTICE =
 	'This chat cannot start a container: the instance has spent its monthly container-hours ' +
-	'allowance. It resumes when the month turns, or when the allowance is raised on the Budget page.';
+	"allowance. It resumes when the period turns, or when the allowance is raised on HQ's Hours tab.";
 
 /** The turn is parked on the instance memory budget; said in the thread at once. */
 export const CHAT_CAPACITY_WAIT_NOTICE =

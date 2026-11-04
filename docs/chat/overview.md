@@ -172,13 +172,13 @@ handed back after. Two things keep that from showing:
 ## What a chat turn uses
 
 Chat is metered like everything else. Each turn's tokens count against the agent's
-project (the CEO's on HQ), and the containers chat runs in count toward the monthly
-container-hours allowance - the CEO's included. If a budget or the hours allowance
-runs out, the conversation says so in place; send again once there is room and it
-carries on from where you left off.
+project (the CEO's on HQ), and the containers chat runs in count toward the project's
+hours budget and the container-hours allowance - the CEO's included. If a budget or the
+hours allowance runs out, the conversation says so in place; send again once there is
+room and it carries on from where you left off.
 
 When the container-hours allowance is spent, the composer says so before you type: a
-reply that needs a new container will not start until the month turns or the allowance
+reply that needs a new container will not start until the period turns or the allowance
 is raised. The composer stays open, because a reply that lands on a container already
 running still goes through. Admins get a link straight to the Hours tab, where the
 allowance is set. Where whoever runs your instance fixed the allowance, the link is

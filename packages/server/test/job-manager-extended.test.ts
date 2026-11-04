@@ -710,6 +710,76 @@ describe('JobManager — extended coverage', () => {
 			manager.shutdown();
 		});
 
+		it("pauses the agent and marks the wakeup over_budget when the project's hours are spent", async () => {
+			const manager = createJobManager();
+			await db.query(
+				'UPDATE member_agents SET runtime_status = $1, budget_notice_keys = $2::jsonb WHERE id = $3',
+				[AgentRuntimeStatus.Idle, '{}', agentId],
+			);
+			await db.query('UPDATE projects SET daily_budget_container_seconds = 1 WHERE id = $1', [
+				projectId,
+			]);
+			await db.query(
+				`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
+				 VALUES ($1, 'ctr-gate-hours', GREATEST(now() - interval '5 minutes',
+				         date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), now(), 'docker')`,
+				[projectId],
+			);
+			const wakeupId = await insertQueuedWakeup(agentId, 'mention');
+			await db.query("UPDATE agent_wakeup_requests SET status = 'claimed' WHERE id = $1", [
+				wakeupId,
+			]);
+
+			try {
+				await (
+					manager as unknown as {
+						activateAgent(
+							m: string,
+							t: string,
+							w: string,
+							p: Record<string, unknown>,
+							s: string,
+						): Promise<void>;
+					}
+				).activateAgent(agentId, teamId, wakeupId, { task_id: taskId }, 'mention');
+
+				const ws = await wakeupStatus(wakeupId);
+				expect(ws.last_skipped_reason).toBe(WakeupSkipReason.OverBudget);
+				const agent = await db.query<{ runtime_status: string }>(
+					'SELECT runtime_status FROM member_agents WHERE id = $1',
+					[agentId],
+				);
+				expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.OutOfProjectBudget);
+				const runs = await db.query<{ c: string }>(
+					'SELECT count(*)::text AS c FROM heartbeat_runs WHERE task_id = $1',
+					[taskId],
+				);
+				expect(runs.rows[0].c).toBe('0');
+				const notice = await db.query<{ content: Record<string, unknown> }>(
+					`SELECT content FROM task_comments
+					  WHERE task_id = $1 AND content->>'kind' = 'budget_paused'
+					  ORDER BY created_at DESC LIMIT 1`,
+					[taskId],
+				);
+				expect(notice.rows[0]?.content).toMatchObject({
+					scope: 'project',
+					period: 'daily',
+					resource: 'container_hours',
+					limit_seconds: 1,
+				});
+			} finally {
+				await db.query('DELETE FROM container_uptime_entries WHERE project_id = $1', [projectId]);
+				await db.query('UPDATE projects SET daily_budget_container_seconds = 0 WHERE id = $1', [
+					projectId,
+				]);
+				await db.query('UPDATE member_agents SET runtime_status = $1 WHERE id = $2', [
+					AgentRuntimeStatus.Idle,
+					agentId,
+				]);
+				manager.shutdown();
+			}
+		});
+
 		it('defers a code-touching wakeup with awaiting_repo_setup when the project has no designated repo', async () => {
 			const manager = createJobManager();
 			// Code-touching agent + no designated repo + a non-conversational source

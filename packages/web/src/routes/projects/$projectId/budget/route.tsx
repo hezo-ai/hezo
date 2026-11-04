@@ -6,17 +6,18 @@ import { useI18n } from '../../../../lib/i18n';
 
 /**
  * The project's Team & Budget page: who is on the team, how many tokens the
- * agents used against their limits, and what the containers cost in hours.
+ * agents used against their limits, and how many container hours the project
+ * used against its own.
  *
  * Three different questions with three different answers, which is why they
  * are three tabs rather than one page. The Team tab is the roster (org chart +
- * member cards, the hire entry point); the Budget tab counts the tokens each run
- * sent and received; hours are metered from container uptime, and on a managed
- * backend they are billed whether an agent is mid-run, mid-build, or warm and
- * idle between runs. Each tab carries its own URL so a link to any survives a
- * refresh.
+ * member cards, the hire entry point); the Tokens tab counts the tokens each run
+ * sent and received; the Hours tab meters container uptime, which on a managed
+ * backend is billed whether an agent is mid-run, mid-build, or warm and idle
+ * between runs. Both budgets are the page's, which is why it keeps its name.
+ * Each tab carries its own URL so a link to any survives a refresh.
  *
- * **HQ gets Team and Hours and not Budget.** It runs no project team you staff
+ * **HQ gets Team and Hours and not Tokens.** It runs no project team you staff
  * (its roster is the CEO/Coach singletons), and it has no per-project token
  * budget - but it does hold the assistant chat's container, which is metered
  * like any other, and it is the only scope from which the instance-wide
@@ -48,21 +49,21 @@ function BudgetLayout() {
 						icon: <Users className="h-3.5 w-3.5" aria-hidden />,
 						testId: 'budget-tab-team',
 					},
-					// HQ has no Budget tab. Rendered rather than hidden: the other tabs
+					// HQ has no Tokens tab. Rendered rather than hidden: the other tabs
 					// still need their own selected state, and a strip that vanishes on
 					// one project reads as a missing page.
 					...(isHq
 						? []
 						: [
 								{
-									// Exact: Budget is the index route, so a fuzzy match would also
+									// Exact: Tokens is the index route, so a fuzzy match would also
 									// claim the sibling tabs and light several at once.
 									to: '/projects/$projectId/budget/' as const,
 									exact: true,
 									params,
-									label: t('budget.tab.spend'),
+									label: t('budget.tab.tokens'),
 									icon: <Gauge className="h-3.5 w-3.5" aria-hidden />,
-									testId: 'budget-tab-spend',
+									testId: 'budget-tab-tokens',
 								},
 							]),
 					{
@@ -83,7 +84,7 @@ function BudgetLayout() {
 export const Route = createFileRoute('/projects/$projectId/budget')({
 	beforeLoad: ({ params, location }) => {
 		// HQ has no per-project token budget, so its index redirects to a tab it
-		// does have rather than 404ing or rendering an empty Budget page.
+		// does have rather than 404ing or rendering an empty Tokens tab.
 		if (
 			params.projectId === HQ_PROJECT_SLUG &&
 			!location.pathname.endsWith('/hours') &&
