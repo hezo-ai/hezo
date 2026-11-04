@@ -15,7 +15,11 @@ with the teammate who owns it.
 Chat opens in the **dock** - a panel down the right-hand side of the window, running
 from under the top bar to the bottom (near full-screen on a phone). It sits over the
 page rather than squeezing it, and you can drag its left edge to make it wider; the
-width is remembered. Selecting the room name at the top switches rooms: type to filter,
+width is remembered. For a long read or a long message, select the **maximize** button
+in the dock's header. The chat then fills the page below the top bar (the whole screen
+on a phone), the messages sit in a centered column, and the message box grows much
+taller before it scrolls. Select the button again, or press **Escape**, to go back to
+the normal size. The dock always opens at its normal size. Selecting the room name at the top switches rooms: type to filter,
 and the CEO is pinned on top, the current project's agents follow, then the project's
 **group rooms**, conversations from connected chat apps and, under **History**, closed
 conversations that remain readable.
@@ -26,7 +30,9 @@ cards.
 
 An agent's direct message or a group room belongs to its project. When you open another
 project, or a page outside any project, the dock closes. The CEO stays open as you move
-between pages, except on a phone, where any page change closes the dock.
+between pages, except on a phone, where any page change closes the dock. A maximized
+dock goes back to its normal size when you move to another page, so the page you opened
+is not hidden behind it.
 
 ## Chat thinks, tasks work
 

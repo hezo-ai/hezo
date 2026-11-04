@@ -17,8 +17,9 @@
 // The chat is the one surface split across tiers, because its rule is
 // viewport-conditional (only the presentations that BLOCK the page close). happy-dom
 // implements matchMedia and reports a 1024px viewport, so this file covers the two
-// desktop branches — anchored survives, expanded collapses — and the mobile
-// full-screen sheet is covered in test/browser/chat.spec.ts ("dismissal on navigation").
+// desktop branches — the rail survives, a maximized dock restores to the rail —
+// and the mobile full-screen sheet is covered in test/browser/chat.spec.ts
+// ("dismissal on navigation").
 
 import { screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
@@ -136,6 +137,25 @@ test('the anchored CEO dock survives navigation', async () => {
 
 	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
 	expect(screen.getByTestId('chat-panel')).toBeTruthy();
+});
+
+test('a maximized CEO dock restores to the rail on navigation instead of closing', async () => {
+	// Maximized, the dock covers the page the reader just asked for, so it steps
+	// back to the rail beside it. It stays open: on desktop the conversation is a
+	// companion to the page, at either size.
+	const { findByTestId, user, router } = await renderApp({ initialPath: '/home' });
+
+	await user.click(await findByTestId('app-header-chat', undefined, { timeout: 15_000 }));
+	const panel = await findByTestId('chat-panel');
+	await user.click(await findByTestId('chat-maximize'));
+	await waitFor(() => expect(panel.getAttribute('data-maximized')).toBe('true'));
+
+	await router.navigate({ to: '/settings/containers' });
+
+	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
+	await waitFor(() =>
+		expect(screen.getByTestId('chat-panel').getAttribute('data-maximized')).toBe('false'),
+	);
 });
 
 test('a hash-only navigation leaves the open dialog and its half-filled form alone', async () => {
