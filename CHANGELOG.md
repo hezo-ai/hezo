@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.81.0 - 2026-11-05
+
+### Features
+
+- **budget:** rename the Budget tab to Tokens and add a per-project hours budget ([#1209](https://github.com/hezo-ai/hezo/pull/1209))
+
+### Bug Fixes
+
+- **chat:** wrap a long task breadcrumb inside the thread ([#1205](https://github.com/hezo-ai/hezo/pull/1205))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.80.0...0.81.0
+
 ## 0.80.0 - 2026-11-04
 
 ### Features
