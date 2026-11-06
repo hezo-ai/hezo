@@ -188,14 +188,30 @@ export function resyncManagedModel(db: Db, masterKeyManager: MasterKeyManager): 
  * `withheld` and writing it back on `available` reaches the provider list, the
  * default, chat and every run with no second check anywhere else. Returns the
  * call that stops listening.
+ *
+ * **`afterSync` is what a credential mutation through the API would have done
+ * next**, which a policy swap has no request to do: tell open clients the list
+ * changed, and send a hosted signup brief the model's return has made
+ * deliverable. It runs only after a sync that went through, and a failure in it
+ * is logged rather than undoing the sync.
  */
-export function followManagedModelPolicy(db: Db, masterKeyManager: MasterKeyManager): () => void {
+export function followManagedModelPolicy(
+	db: Db,
+	masterKeyManager: MasterKeyManager,
+	afterSync: () => Promise<void>,
+): () => void {
 	return onPolicyChange((previous, next) => {
 		if (previous?.pinned.managedModel === next?.pinned.managedModel) return;
 		trackBackground(
-			resyncManagedModel(db, masterKeyManager).catch((err) => {
-				log.error('could not apply the managed model the policy now asks for:', err);
-			}),
+			resyncManagedModel(db, masterKeyManager).then(
+				() =>
+					afterSync().catch((err) => {
+						log.error('could not finish applying the managed model the policy now asks for:', err);
+					}),
+				(err) => {
+					log.error('could not apply the managed model the policy now asks for:', err);
+				},
+			),
 		);
 	});
 }

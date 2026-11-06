@@ -4585,7 +4585,11 @@ brings their own AI: the block stays on disk, `managedModelInEffect` reads the p
 the call, and `followManagedModelPolicy` re-syncs the row whenever a policy swap moves the key
 (the `onPolicyChange` listener in `config/runtime.ts`), so moving between plans needs no
 restart. Removing the row, rather than hiding it, is what reaches every reader of credentials
-at once. Like the local runners its
+at once. **After a re-sync the follower does what a credential route does after a change**,
+since no request made this one: it signals `AiProvidersChanged` on the global
+`ai-providers:global` room, so an open setup screen refetches and shows the model it now has,
+and it calls `deliverSeedBrief`, so a signup brief that was waiting for a runnable CEO goes
+out when the model it was waiting on comes back. Like the local runners its
 endpoint rides on the credential (`metadata -> 'base_url'`), and so do its request headers
 (`metadata -> 'request_headers'`, `AiProviderCredential.requestHeaders`), which the Claude Code
 adapter sends as `ANTHROPIC_CUSTOM_HEADERS`, one `Name: value` per line; the plane names the
@@ -6464,6 +6468,9 @@ payload-free `ProjectsChanged` signal on the global `projects:global` room (whic
 shell watches). Clients react by refetching the per-caller-authorized project index, so the
 left project rail updates live — for the dialog, the CEO's `create_project`, and other
 sessions alike — without a row on the shared room leaking a project a user can't see.
+`ai-providers:global` is the same arrangement for a provider list that changes with no
+request from any client (a hosting plan adding or withholding the managed credential):
+a payload-free `AiProvidersChanged`, after which the shell refetches its provider views.
 
 **A rename moves the route.** Renaming a project rewrites its slug and the server keeps no
 slug history, so every request under the old slug fails from that moment. The project layout

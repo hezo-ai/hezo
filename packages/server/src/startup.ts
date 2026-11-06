@@ -516,7 +516,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	let stopFollowingManagedModel = () => {};
 	if (config.masterKeyHeld) {
 		const { followManagedModelPolicy } = await import('./services/managed-model.js');
-		stopFollowingManagedModel = followManagedModelPolicy(db, masterKeyManager);
+		const { broadcastAiProvidersChanged } = await import('./lib/broadcast.js');
+		// What the credential routes do after a change, done here for one no
+		// request made: open clients refetch, and a signup brief waiting on a
+		// runnable CEO goes out now that the model it was waiting on is back.
+		stopFollowingManagedModel = followManagedModelPolicy(db, masterKeyManager, async () => {
+			broadcastAiProvidersChanged(wsManager);
+			await deliverSeedBrief(db, chatSessionManager);
+		});
 		await prepareHeldKeyInstance(db, masterKeyManager, config.webUrl);
 	}
 

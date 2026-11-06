@@ -276,6 +276,8 @@ describe('a policy that withholds the managed model', () => {
 	let db: Db;
 	let masterKeyManager: MasterKeyManager;
 	let stopFollowing: () => void = () => {};
+	// What the boot hands the follower: told the list changed, after the row did.
+	let afterSync = vi.fn(async () => {});
 
 	const policy = (managedModel?: ManagedModelAvailability) => ({
 		managedBy: 'Acme Cloud',
@@ -291,6 +293,7 @@ describe('a policy that withholds the managed model', () => {
 		await db.query('DELETE FROM ai_provider_configs');
 		resetRuntimeConfig();
 		setRuntimeConfig({ ...runtimeConfig(), managedModel: MANAGED, policy: null });
+		afterSync = vi.fn(async () => {});
 	});
 	afterEach(async () => {
 		stopFollowing();
@@ -333,7 +336,7 @@ describe('a policy that withholds the managed model', () => {
 	it('removes the row when a swap withholds it, handing the default on, and writes it back when offered again', async () => {
 		await resyncManagedModel(db, masterKeyManager);
 		await addOwnCredential();
-		stopFollowing = followManagedModelPolicy(db, masterKeyManager);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
 
 		setPolicy(policy(ManagedModelAvailability.Withheld));
 		await waitForBackground();
@@ -353,7 +356,7 @@ describe('a policy that withholds the managed model', () => {
 
 	it('treats a policy that no longer names the key as offering the model', async () => {
 		setPolicy(policy(ManagedModelAvailability.Withheld));
-		stopFollowing = followManagedModelPolicy(db, masterKeyManager);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
 		setPolicy(policy());
 		await waitForBackground();
 		expect((await rows()).map(({ provider }) => provider)).toEqual(['hezo_cloud']);
@@ -362,16 +365,52 @@ describe('a policy that withholds the managed model', () => {
 	it('writes nothing when a swap leaves the key where it was', async () => {
 		await resyncManagedModel(db, masterKeyManager);
 		const [before] = await rows();
-		stopFollowing = followManagedModelPolicy(db, masterKeyManager);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
 		setPolicy({ ...policy(), pinned: { maxContainerMemoryGb: 64 } });
 		await waitForBackground();
 		const [after] = await rows();
 		expect(after.updated_at).toEqual(before.updated_at);
 	});
 
+	// **The step a credential route takes after a change, which a swap has no
+	// request to take**: tell open clients, and send a signup brief the model's
+	// return made deliverable. It must see the row as the swap left it, and run
+	// for nothing else.
+	it('runs the after-sync step once per swap that moves the key, after the row has moved', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		const seen: string[][] = [];
+		afterSync = vi.fn(async () => {
+			seen.push((await rows()).map(({ provider }) => provider));
+		});
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+		setPolicy({ ...policy(ManagedModelAvailability.Withheld), manageUrl: 'https://acme.example' });
+		await waitForBackground();
+		setPolicy(policy(ManagedModelAvailability.Available));
+		await waitForBackground();
+
+		expect(seen).toEqual([[], ['hezo_cloud']]);
+	});
+
+	it('keeps the swap when the after-sync step fails', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		afterSync = vi.fn(async () => {
+			throw new Error('no socket');
+		});
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+
+		expect(afterSync).toHaveBeenCalledTimes(1);
+		expect(await rows()).toEqual([]);
+	});
+
 	it('stops following once told to', async () => {
 		await resyncManagedModel(db, masterKeyManager);
-		stopFollowing = followManagedModelPolicy(db, masterKeyManager);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
 		stopFollowing();
 		setPolicy(policy(ManagedModelAvailability.Withheld));
 		await waitForBackground();
