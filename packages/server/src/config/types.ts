@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import type { LocaleSettings, SandboxBackend } from '@hezo/shared';
+import type { LocaleSettings, ManagedModelAvailability, SandboxBackend } from '@hezo/shared';
 import {
 	CONNECTOR_CAPABILITIES,
 	DEFAULT_DATA_DIR,
@@ -316,6 +316,16 @@ export interface PolicyConfig {
 		containerHoursSince?: string;
 		/** Which container backend runs agent containers. A name, not a number. */
 		backend?: SandboxBackend;
+		/**
+		 * Whether the managed model (`managedModel` beside the held key) is offered.
+		 *
+		 * `withheld` removes its credential row and hands the default on, exactly as
+		 * a config without the block does; `available`, or nothing, keeps it. Read
+		 * live: a plan change flips it without a restart, so the deployment never
+		 * has to rebuild an instance to move a customer between plans that include
+		 * the model and plans on which they bring their own.
+		 */
+		managedModel?: ManagedModelAvailability;
 	};
 	/**
 	 * Where the person signed in asks this deployment for help. Absent means the

@@ -2,6 +2,7 @@ import type { LocaleSettings } from '@hezo/shared';
 import {
 	CONTAINER_HOURS_ANCHOR_MAX_DAY,
 	CONTAINER_HOURS_ANCHOR_MIN_DAY,
+	MANAGED_MODEL_AVAILABILITIES,
 	parseIssuerPublicKeys,
 	parseLocaleSettingsPatch,
 	parseProjectBrief,
@@ -266,6 +267,10 @@ export const policySchema = z
 				// to say so: leaving this to the operator lets them switch onto a
 				// runtime that is not there and break every run.
 				backend: z.enum(SANDBOX_BACKENDS).optional(),
+				// Whether the managed model the deployment provides is offered at all.
+				// A plan on which the customer brings their own AI withholds it, and
+				// the instance removes its credential row until it is available again.
+				managedModel: z.enum(MANAGED_MODEL_AVAILABILITIES).optional(),
 			})
 			.strict()
 			.superRefine((pinned, ctx) => {

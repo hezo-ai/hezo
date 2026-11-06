@@ -25,9 +25,10 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
   per-agent charge. What a plan sets is how many containers can run at once and
   how many container-hours a month they may use. See
   [Plans, usage & billing](/docs/cloud/plans-and-billing).
-- **AI inference included, on the Base AI model.** Every plan comes with a
-  model already connected, so your agents can start work the moment your
-  instance is up. It has no token meter and no bill of its own: your plan's
+- **AI inference included, on the Base AI model.** A plan with AI included
+  comes with a model already connected, so your agents can start work the
+  moment your instance is up. A plan with your own AI costs less and uses the
+  providers you connect instead. It has no token meter and no bill of its own: your plan's
   container-hours bound it, with a daily safety limit set well above what they
   can use. See [The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
 - **An instance that unlocks itself.** We keep its recovery phrase for you,

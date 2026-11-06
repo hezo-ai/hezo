@@ -7,12 +7,22 @@
  * routes refuse), so the config is its only source.
  */
 
-import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider, AiProviderStatus } from '@hezo/shared';
+import {
+	AI_PROVIDER_INFO,
+	AiAuthMethod,
+	AiProvider,
+	AiProviderStatus,
+	ManagedModelAvailability,
+} from '@hezo/shared';
+import { onPolicyChange, runtimeConfig } from '../config/runtime';
 import type { ManagedModelConfig } from '../config/types';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
+import { trackBackground } from '../lib/background';
+import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
 import { withTransaction } from '../lib/sql';
+import { logger } from '../logger';
 import {
 	deleteAiProviderConfig,
 	readConfigBaseUrl,
@@ -138,4 +148,54 @@ export async function syncManagedModel(
 			keyChanged ? encrypt(managed.apiKey, encryptionKey) : null,
 		],
 	);
+}
+
+const log = logger.child('managed-model');
+
+/**
+ * The managed model this instance should carry now: the hosted config's block,
+ * or none while the policy withholds it.
+ *
+ * Read inside the call, never captured: the policy is reloaded while the server
+ * runs, and a plan change is what flips it.
+ */
+export function managedModelInEffect(): ManagedModelConfig | null {
+	const config = runtimeConfig();
+	if (config.policy?.pinned.managedModel === ManagedModelAvailability.Withheld) return null;
+	return config.managedModel;
+}
+
+/**
+ * One sync at a time. The boot's sync and a policy change landing during it would
+ * otherwise both read no row and both insert one; the second would then see a
+ * stray and delete it, which is correct but hands the default around for nothing.
+ * Held only across the sync's few statements, never across a request.
+ */
+const syncLocks: KeyedLockRegistry = new Map();
+const SYNC_LOCK_KEY = 'managed-model';
+
+/** Make the managed row match what the config and the policy now say. */
+export function resyncManagedModel(db: Db, masterKeyManager: MasterKeyManager): Promise<void> {
+	return withKeyedLock(syncLocks, SYNC_LOCK_KEY, () =>
+		syncManagedModel(db, masterKeyManager, managedModelInEffect()),
+	);
+}
+
+/**
+ * Re-sync whenever a policy swap moves `pinned.managedModel`, and only then.
+ *
+ * The row is the one place every reader of credentials looks, so removing it on
+ * `withheld` and writing it back on `available` reaches the provider list, the
+ * default, chat and every run with no second check anywhere else. Returns the
+ * call that stops listening.
+ */
+export function followManagedModelPolicy(db: Db, masterKeyManager: MasterKeyManager): () => void {
+	return onPolicyChange((previous, next) => {
+		if (previous?.pinned.managedModel === next?.pinned.managedModel) return;
+		trackBackground(
+			resyncManagedModel(db, masterKeyManager).catch((err) => {
+				log.error('could not apply the managed model the policy now asks for:', err);
+			}),
+		);
+	});
 }

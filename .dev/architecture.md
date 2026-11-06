@@ -4579,7 +4579,13 @@ the name "Base AI model"; the underlying model and CLI are never named to the te
 boot (§ *Configuration resolution*), by `syncManagedModel` (`services/managed-model.ts`):
 inserted when absent, as the default only where no row is; rewritten only where it differs, so
 an unchanged boot writes nothing, and a changed key starts unheld; removed, through
-`deleteAiProviderConfig` and its default hand-on, when the block is. Like the local runners its
+`deleteAiProviderConfig` and its default hand-on, when the block is, **or while the policy
+pins `managedModel: withheld`**. That pin is how a plane sells a plan on which the customer
+brings their own AI: the block stays on disk, `managedModelInEffect` reads the policy inside
+the call, and `followManagedModelPolicy` re-syncs the row whenever a policy swap moves the key
+(the `onPolicyChange` listener in `config/runtime.ts`), so moving between plans needs no
+restart. Removing the row, rather than hiding it, is what reaches every reader of credentials
+at once. Like the local runners its
 endpoint rides on the credential (`metadata -> 'base_url'`), and so do its request headers
 (`metadata -> 'request_headers'`, `AiProviderCredential.requestHeaders`), which the Claude Code
 adapter sends as `ANTHROPIC_CUSTOM_HEADERS`, one `Name: value` per line; the plane names the
@@ -7229,7 +7235,7 @@ integer, and a header value may not hold a line break, since the CLI reads the h
 line. The same boot step writes it as the managed provider's credential (§ 6 *Providers and
 runtimes*), after the admin and address and before the unlock hook, whose seeded brief needs a
 model to answer it; a failure there is a fatal `HeldMasterKeyError`. A boot without the block
-removes that credential.
+removes that credential, and so does one whose policy pins `managedModel: withheld`.
 
 **The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
 first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the

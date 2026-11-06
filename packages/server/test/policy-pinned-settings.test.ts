@@ -12,7 +12,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SandboxBackend } from '@hezo/shared';
+import { MANAGED_MODEL_AVAILABILITIES, SandboxBackend } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { readPolicyFile } from '../src/config/policy';
@@ -420,6 +420,17 @@ describe('the policy file', () => {
 			}),
 		);
 		expect(readPolicyFile(path)).toBeNull();
+	});
+
+	it('pins whether the managed model is offered, by name, and refuses any other word', () => {
+		for (const managedModel of MANAGED_MODEL_AVAILABILITIES) {
+			expect(policySchema.parse({ managedBy: 'Acme', pinned: { managedModel } }).pinned).toEqual({
+				managedModel,
+			});
+		}
+		for (const managedModel of ['off', 'hidden', true, '']) {
+			expect(() => policySchema.parse({ managedBy: 'Acme', pinned: { managedModel } })).toThrow();
+		}
 	});
 
 	it('rejects an unknown pinnable key rather than ignoring it', () => {
