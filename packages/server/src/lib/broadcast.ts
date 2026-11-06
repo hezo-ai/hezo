@@ -117,6 +117,16 @@ export function broadcastProjectsChanged(wsManager: WebSocketManager | undefined
 	wsManager.broadcast(wsRoom.projects(), { type: WsMessageType.ProjectsChanged });
 }
 
+/**
+ * Signal that the instance's AI provider list changed with no client asking, so
+ * every connected shell refetches its provider views. Carries no row, for the
+ * reason `broadcastProjectsChanged` carries none.
+ */
+export function broadcastAiProvidersChanged(wsManager: WebSocketManager | undefined): void {
+	if (!wsManager) return;
+	wsManager.broadcast(wsRoom.aiProviders(), { type: WsMessageType.AiProvidersChanged });
+}
+
 export async function broadcastProjectUpdate(
 	db: Db,
 	wsManager: WebSocketManager | undefined,

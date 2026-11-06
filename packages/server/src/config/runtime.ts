@@ -41,10 +41,35 @@ export function runtimeConfig(): HezoConfig {
  * that could reach them would imply they can.
  */
 export function setPolicy(policy: HezoConfig['policy']): void {
+	const previous = runtimeConfig().policy;
 	current = { ...runtimeConfig(), policy };
+	for (const listener of policyListeners) listener(previous, policy);
+}
+
+/**
+ * Called with the policy before and after each swap.
+ *
+ * **For state the policy decides that lives outside this config**, such as a
+ * database row the instance keeps in step with it. A reader of the config itself
+ * needs none of this: it calls `runtimeConfig()` and sees the new slice.
+ *
+ * Synchronous, and called inside `setPolicy`: a listener with async work hands
+ * it to `trackBackground` and returns, and must not throw.
+ */
+export type PolicyListener = (previous: HezoConfig['policy'], next: HezoConfig['policy']) => void;
+
+const policyListeners = new Set<PolicyListener>();
+
+/** Listen for policy swaps. Returns the call that stops listening. */
+export function onPolicyChange(listener: PolicyListener): () => void {
+	policyListeners.add(listener);
+	return () => {
+		policyListeners.delete(listener);
+	};
 }
 
 /** Restore the unset state. Tests only, so one spec's override cannot leak into the next. */
 export function resetRuntimeConfig(): void {
 	current = null;
+	policyListeners.clear();
 }

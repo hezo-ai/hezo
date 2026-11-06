@@ -83,6 +83,14 @@ export async function handleWsSubscribe(
 		return;
 	}
 
+	// The single global AI-provider room. Like the project index, it carries only
+	// a "the list changed" signal, and the refetch it triggers is the authorized
+	// `GET /api/ai-providers`, so any authenticated socket may watch it.
+	if (room === wsRoom.aiProviders()) {
+		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
 	const teamMatch = room.match(/^team:(.+)$/);
 	if (teamMatch) {
 		const allowed = await deps.canAccessTeam(ws.data.auth, teamMatch[1]);

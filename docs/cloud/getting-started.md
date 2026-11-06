@@ -42,9 +42,10 @@ to come up. We email you when it is ready.
 
 ## 4. Meet your team
 
-There is no AI model and no recovery phrase to set up. Your instance comes with
-the Base AI model already connected, so your agents can work straight away, and
-it unlocks itself: we keep its recovery phrase for you, encrypted. You can
+There is no recovery phrase to set up. On a plan with AI included, your
+instance comes with the Base AI model already connected, so your agents can work
+straight away. On a plan with your own AI, connect your provider first. Either
+way the instance unlocks itself: we keep its recovery phrase for you, encrypted. You can
 download a copy from your dashboard after signing in again by email. If you would rather
 use your own provider account, connect it at any time - see
 [AI model support](/docs/ai-models).

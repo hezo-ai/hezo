@@ -3480,6 +3480,27 @@ export function isSandboxBackend(value: string): value is SandboxBackend {
 }
 
 /**
+ * Whether a hosting deployment offers its managed model on this instance.
+ *
+ * Shared because two programs must agree on the words: the hosting plane writes
+ * one into the policy file, and the server reads it. A deployment that sells a
+ * plan on which customers bring their own AI withholds the model it would
+ * otherwise provide, and offers it again when the customer moves to a plan that
+ * includes it.
+ */
+export const ManagedModelAvailability = {
+	/** The managed model is offered, as on an instance whose policy says nothing. */
+	Available: 'available',
+	/** The managed model is not offered: its credential row is removed until it is again. */
+	Withheld: 'withheld',
+} as const;
+export type ManagedModelAvailability =
+	(typeof ManagedModelAvailability)[keyof typeof ManagedModelAvailability];
+
+export const MANAGED_MODEL_AVAILABILITIES: readonly ManagedModelAvailability[] =
+	Object.values(ManagedModelAvailability);
+
+/**
  * The stand-in id for a container that is being provisioned but has no engine id
  * yet.
  *

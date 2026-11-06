@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { invalidateTeamAgentCaches } from '../lib/invalidate-team-caches';
 import { queryKeys } from '../lib/query-keys';
+import { invalidateAiProviders } from './use-ai-providers';
 import type { Project } from './use-projects';
 
 /**
@@ -337,4 +338,20 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 			leaveRoom(room);
 		};
 	}, [queryClient, joinRoom, leaveRoom, subscribe]);
+
+	// The provider list can change with no request from this client: a hosting
+	// plan adds or withholds the managed credential while the instance runs. A
+	// setup screen open at that moment would otherwise keep asking for a provider
+	// the instance now has.
+	useEffect(() => {
+		const room = wsRoom.aiProviders();
+		joinRoom(room);
+		const unsubscribe = subscribe(WsMessageType.AiProvidersChanged, () => {
+			invalidateAiProviders();
+		});
+		return () => {
+			unsubscribe();
+			leaveRoom(room);
+		};
+	}, [joinRoom, leaveRoom, subscribe]);
 }

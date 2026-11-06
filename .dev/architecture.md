@@ -4579,7 +4579,17 @@ the name "Base AI model"; the underlying model and CLI are never named to the te
 boot (§ *Configuration resolution*), by `syncManagedModel` (`services/managed-model.ts`):
 inserted when absent, as the default only where no row is; rewritten only where it differs, so
 an unchanged boot writes nothing, and a changed key starts unheld; removed, through
-`deleteAiProviderConfig` and its default hand-on, when the block is. Like the local runners its
+`deleteAiProviderConfig` and its default hand-on, when the block is, **or while the policy
+pins `managedModel: withheld`**. That pin is how a plane sells a plan on which the customer
+brings their own AI: the block stays on disk, `managedModelInEffect` reads the policy inside
+the call, and `followManagedModelPolicy` re-syncs the row whenever a policy swap moves the key
+(the `onPolicyChange` listener in `config/runtime.ts`), so moving between plans needs no
+restart. Removing the row, rather than hiding it, is what reaches every reader of credentials
+at once. **After a re-sync the follower does what a credential route does after a change**,
+since no request made this one: it signals `AiProvidersChanged` on the global
+`ai-providers:global` room, so an open setup screen refetches and shows the model it now has,
+and it calls `deliverSeedBrief`, so a signup brief that was waiting for a runnable CEO goes
+out when the model it was waiting on comes back. Like the local runners its
 endpoint rides on the credential (`metadata -> 'base_url'`), and so do its request headers
 (`metadata -> 'request_headers'`, `AiProviderCredential.requestHeaders`), which the Claude Code
 adapter sends as `ANTHROPIC_CUSTOM_HEADERS`, one `Name: value` per line; the plane names the
@@ -6458,6 +6468,9 @@ payload-free `ProjectsChanged` signal on the global `projects:global` room (whic
 shell watches). Clients react by refetching the per-caller-authorized project index, so the
 left project rail updates live — for the dialog, the CEO's `create_project`, and other
 sessions alike — without a row on the shared room leaking a project a user can't see.
+`ai-providers:global` is the same arrangement for a provider list that changes with no
+request from any client (a hosting plan adding or withholding the managed credential):
+a payload-free `AiProvidersChanged`, after which the shell refetches its provider views.
 
 **A rename moves the route.** Renaming a project rewrites its slug and the server keeps no
 slug history, so every request under the old slug fails from that moment. The project layout
@@ -7229,7 +7242,7 @@ integer, and a header value may not hold a line break, since the CLI reads the h
 line. The same boot step writes it as the managed provider's credential (§ 6 *Providers and
 runtimes*), after the admin and address and before the unlock hook, whose seeded brief needs a
 model to answer it; a failure there is a fatal `HeldMasterKeyError`. A boot without the block
-removes that credential.
+removes that credential, and so does one whose policy pins `managedModel: withheld`.
 
 **The `seed` block.** `seed: { locale?, project? } | null` is what a provisioner hands a
 first run: a full `LocaleSettings` and a project brief. Its schema calls the validators the
