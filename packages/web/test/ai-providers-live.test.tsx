@@ -8,12 +8,13 @@
 // thing that tells this client is the signal. A subscription that lived in the
 // shell would be unmounted for exactly the moment it was needed. The harness
 // stubs the real socket, so its context is a stand-in that delivers a room's
-// broadcast to a client that joined the room, as the server does.
+// broadcast to a client that joined the room while it is connected, as the
+// server does, and that can drop and heal like a real connection.
 
 import type { ManagedModelConfig } from '@hezo/server/src/config/types';
 import { syncManagedModel } from '@hezo/server/src/services/managed-model';
 import { WsMessageType, wsRoom } from '@hezo/shared';
-import { waitFor } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -21,21 +22,35 @@ import { getTestContext, renderApp } from './helpers/render';
 const socket = vi.hoisted(() => {
 	const handlers = new Map<string, Set<(msg: unknown) => void>>();
 	const joined = new Set<string>();
+	const watchers = new Set<() => void>();
+	let connected = true;
 	return {
 		handlers,
 		joined,
-		/** The server's room broadcast: only a socket that joined the room hears it. */
+		/** The server's room broadcast: only a connected socket that joined the room hears it. */
 		broadcast(room: string, msg: { type: string }) {
-			if (!joined.has(room)) return;
+			if (!connected || !joined.has(room)) return;
 			for (const h of handlers.get(msg.type) ?? []) h(msg);
+		},
+		isConnected: () => connected,
+		watch(onChange: () => void) {
+			watchers.add(onChange);
+			return () => {
+				watchers.delete(onChange);
+			};
+		},
+		setConnected(next: boolean) {
+			connected = next;
+			for (const w of watchers) w();
 		},
 	};
 });
 
-// One stable value, like the provider's memoised callbacks.
-vi.mock('../src/contexts/socket-context', () => {
-	const value = {
-		connected: true,
+// Stable callbacks, like the provider's memoised ones; `connected` re-renders
+// its readers when it changes, like the provider's state.
+vi.mock('../src/contexts/socket-context', async () => {
+	const { useSyncExternalStore } = await import('react');
+	const callbacks = {
 		subscribe: (type: string, handler: (msg: unknown) => void) => {
 			let set = socket.handlers.get(type);
 			if (!set) {
@@ -51,7 +66,10 @@ vi.mock('../src/contexts/socket-context', () => {
 	};
 	return {
 		SocketProvider: ({ children }: { children: ReactNode }) => children,
-		useSocket: () => value,
+		useSocket: () => ({
+			...callbacks,
+			connected: useSyncExternalStore(socket.watch, socket.isConnected),
+		}),
 	};
 });
 
@@ -73,6 +91,7 @@ async function planMoves(managed: ManagedModelConfig | null): Promise<void> {
 afterEach(() => {
 	socket.handlers.clear();
 	socket.joined.clear();
+	socket.setConnected(true);
 });
 
 test('an open setup wizard gives way when the plan brings the model back, and returns when it goes', async () => {
@@ -100,4 +119,25 @@ test('an open setup wizard gives way when the plan brings the model back, and re
 		timeout: 15_000,
 	});
 	await findByTestId('app-header-chat');
+});
+
+test('an open setup wizard catches up on a plan move it missed while the connection was down', async () => {
+	const { findByTestId, queryByTestId } = await renderApp({
+		initialPath: '/home',
+		seed: async ({ db }) => {
+			await db.query('DELETE FROM ai_provider_configs');
+		},
+	});
+	await findByTestId('setup-step-ai-provider', undefined, { timeout: 15_000 });
+
+	// A phone browser suspends the tab, and the plan brings the model back
+	// meanwhile: the signal goes to a socket that is not there.
+	act(() => socket.setConnected(false));
+	await planMoves(MANAGED);
+	expect(queryByTestId('setup-step-ai-provider')).not.toBeNull();
+
+	// The connection heals, and the wizard catches up with no signal at all.
+	act(() => socket.setConnected(true));
+	await findByTestId('app-header-chat', undefined, { timeout: 15_000 });
+	expect(queryByTestId('setup-step-ai-provider')).toBeNull();
 });

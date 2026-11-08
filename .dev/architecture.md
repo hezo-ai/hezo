@@ -6475,10 +6475,12 @@ sessions alike — without a row on the shared room leaking a project a user can
 `ai-providers:global` is the same arrangement for a provider list that changes with no
 request from any client (a hosting plan adding or withholding the managed credential):
 a payload-free `AiProvidersChanged`, after which the client refetches its provider views.
-The setup gate watches that room (`useAiProvidersRoom`), not the shell: it draws the setup
+The setup gate watches that room (`useSessionWebSockets`), not the shell: it draws the setup
 wizard in the shell's place while no provider is configured, the wizard is the screen the
 signal is for, and the gate stays mounted under the shell, so the signal is heard in both
-directions.
+directions. The gate also runs the full refetch after a dropped connection heals
+(`useInvalidateOnReconnect`), for the same reason: a signal sent while the socket was down is
+lost, and the wizard has no other way to catch up.
 
 **A rename moves the route.** Renaming a project rewrites its slug and the server keeps no
 slug history, so every request under the old slug fails from that moment. The project layout
