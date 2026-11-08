@@ -13,7 +13,7 @@ oversight.
 
 There are two ways to run it. **Self-host it** on a machine you control, free, from a
 single binary, with the models you connect. Or let us run an always-on instance for you
-on **Hezo Cloud**, with AI inference included. The main difference is who runs the box, and [Ways to run Hezo](/docs/ways-to-run) lays out the
+on **Hezo Cloud**, with AI included or with your own. The main difference is who runs the box, and [Ways to run Hezo](/docs/ways-to-run) lays out the
 choice.
 
 Hezo supplies the rest of a company around those agents: org charts, projects, budgets,

@@ -1,17 +1,30 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AiProvider, deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
+import {
+	AiProvider,
+	ChatMessageRole,
+	deriveAuthKeyPair,
+	deriveUnlockKey,
+	ManagedModelAvailability,
+	WsMessageType,
+	wsRoom,
+} from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { loadPolicy } from '../src/config/policy';
+import { resetRuntimeConfig, setPolicy, setRuntimeConfig } from '../src/config/runtime';
+import type { ManagedModelConfig, PolicyConfig } from '../src/config/types';
 import { HeldMasterKeyError, MasterKeyManager } from '../src/crypto/master-key';
 import { createMemoryDb } from '../src/db/client';
+import type { Db } from '../src/db/database';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { waitForBackground } from '../src/lib/background';
 import { getInstanceBaseUrl, INSTANCE_BASE_URL_KEY, setSystemMeta } from '../src/lib/system-meta';
 import { getAiProviderStatus, selectProviderConfig } from '../src/services/ai-provider-keys';
+import { ChatSessionManager } from '../src/services/chat-session-manager';
 import { getSuperuserId } from '../src/services/superuser';
 import { getRunSocketDir } from '../src/services/workspace';
+import type { WsSocket } from '../src/services/ws';
 import {
 	type HezoConfig,
 	resolveMasterKeyState,
@@ -36,6 +49,47 @@ function keyFor(phrase: string): { unlockKeyHex: string; publicKeyHex: string } 
 	};
 }
 
+const MANAGED_MODEL: ManagedModelConfig = {
+	baseUrl: 'https://models.example/api',
+	model: 'vendor/model',
+	apiKey: 'sk-managed',
+	contextTokens: 1_048_576,
+	requestHeaders: { 'x-session-id': 'tenant-1' },
+};
+
+const BRIEF = 'A newsletter for our climbing gym. Weekly routes and events.';
+
+function pinManagedModel(managedModel: ManagedModelAvailability): PolicyConfig {
+	return { managedBy: 'Acme Cloud', pinned: { managedModel } };
+}
+
+/** Write a fresh policy file and rename it over the target, the way a deployment must. */
+function renamePolicyInto(path: string, policy: PolicyConfig): void {
+	writeFileSync(`${path}.tmp`, JSON.stringify(policy));
+	renameSync(`${path}.tmp`, path);
+}
+
+/** What the admin has said in any chat, oldest first. */
+async function adminMessages(db: Db): Promise<string[]> {
+	const r = await db.query<{ content: string }>(
+		'SELECT content FROM chat_messages WHERE role = $1 ORDER BY created_at',
+		[ChatMessageRole.User],
+	);
+	return r.rows.map((row) => row.content);
+}
+
+/** A browser tab with the instance open, as the socket manager holds one. */
+function openTab(): WsSocket & { received: unknown[] } {
+	const received: unknown[] = [];
+	return {
+		data: { auth: { type: 'user' }, rooms: new Set<string>() },
+		send(msg: string) {
+			received.push(JSON.parse(msg));
+		},
+		received,
+	};
+}
+
 describe('startup with a held master key', () => {
 	const savedEnv: Record<string, string | undefined> = {};
 	const dataDirs: string[] = [];
@@ -52,12 +106,23 @@ describe('startup with a held master key', () => {
 		return result;
 	}
 
+	/**
+	 * The unlock's work runs off the job manager's start, an untracked chain, so
+	 * wait for that start and then for the background work it queued.
+	 */
+	async function settleUnlock(booted: StartupResult): Promise<void> {
+		const jm = booted.jobManager as unknown as { started: boolean };
+		await vi.waitFor(() => expect(jm.started).toBe(true), { timeout: 15_000 });
+		await waitForBackground();
+	}
+
 	async function shutdown(): Promise<void> {
 		if (!result) return;
 		// An unlocked boot starts the job manager off an untracked chain; stopping
 		// before it has started would let the crons come up against a closed DB.
 		const jm = result.jobManager as unknown as { started: boolean };
 		await vi.waitFor(() => expect(jm.started).toBe(true), { timeout: 15_000 });
+		result.policyWatcher.close();
 		result.jobManager.shutdown();
 		await result.chatSessionManager.stop();
 		await waitForBackground();
@@ -75,6 +140,7 @@ describe('startup with a held master key', () => {
 	afterEach(async () => {
 		await shutdown();
 		resetRuntimeConfig();
+		vi.restoreAllMocks();
 	});
 
 	afterAll(() => {
@@ -140,6 +206,92 @@ describe('startup with a held master key', () => {
 
 		const again = await boot(dataDir, { masterKey: keyFor(PHRASE_A), managedModel: null });
 		expect(await getAiProviderStatus(again.db)).toEqual({ configured: false, providers: [] });
+	}, 120_000);
+
+	// The plan moves while the box runs: the plane rewrites the policy file, and
+	// the boot's wiring is all that turns that into a row, a signal to open tabs
+	// and the brief that was waiting for a model.
+	it('follows a plan change in the policy file without a restart, and stops on close', async () => {
+		const dataDir = freshDataDir();
+		// A directory of its own, as a deployment mounts it: the watch reloads on
+		// every event in the directory, and the database's writes are not a plan change.
+		const policyFile = join(freshDataDir(), 'policy.json');
+		renamePolicyInto(policyFile, pinManagedModel(ManagedModelAvailability.Withheld));
+		const booted = await boot(dataDir, {
+			masterKey: keyFor(PHRASE_A),
+			managedModel: MANAGED_MODEL,
+			seed: { project: { description: BRIEF } },
+			policyFile,
+			policy: loadPolicy(policyFile) ?? null,
+		});
+		await settleUnlock(booted);
+		// On a plan with the customer's own AI: no model, so the brief waits.
+		expect(await getAiProviderStatus(booted.db)).toEqual({ configured: false, providers: [] });
+		expect(await adminMessages(booted.db)).toEqual([]);
+
+		const tab = openTab();
+		booted.wsManager.subscribe(tab, wsRoom.aiProviders());
+		renamePolicyInto(policyFile, pinManagedModel(ManagedModelAvailability.Available));
+
+		await vi.waitFor(async () => expect(await adminMessages(booted.db)).toEqual([BRIEF]), {
+			timeout: 15_000,
+		});
+		expect(await getAiProviderStatus(booted.db)).toEqual({
+			configured: true,
+			providers: [AiProvider.HezoCloud],
+		});
+		expect(tab.received).toEqual([{ type: WsMessageType.AiProvidersChanged }]);
+
+		// Closed, the instance stops following: a swap that reaches the config by
+		// any other road moves nothing.
+		booted.policyWatcher.close();
+		setPolicy(pinManagedModel(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+		expect(await getAiProviderStatus(booted.db)).toEqual({
+			configured: true,
+			providers: [AiProvider.HezoCloud],
+		});
+		expect(tab.received).toHaveLength(1);
+	}, 120_000);
+
+	// The plane can rewrite the file while a box restarts. A swap landing before
+	// the boot has recovered its chat must not spend the one send of the brief on
+	// a turn the recovery is about to mark crashed; the unlock sends it after.
+	it('sends a waiting brief only after the boot has recovered its chat', async () => {
+		const dataDir = freshDataDir();
+		// A directory of its own, as a deployment mounts it: the watch reloads on
+		// every event in the directory, and the database's writes are not a plan change.
+		const policyFile = join(freshDataDir(), 'policy.json');
+		renamePolicyInto(policyFile, pinManagedModel(ManagedModelAvailability.Withheld));
+		const recover = ChatSessionManager.prototype.reconcileDatabaseOnStartup;
+		let sentBeforeRecovery: string[] | null = null;
+		vi.spyOn(ChatSessionManager.prototype, 'reconcileDatabaseOnStartup').mockImplementation(
+			async function (this: ChatSessionManager) {
+				const { db } = (this as unknown as { deps: { db: Db } }).deps;
+				setPolicy(pinManagedModel(ManagedModelAvailability.Available));
+				await waitForBackground();
+				sentBeforeRecovery = await adminMessages(db);
+				return recover.call(this);
+			},
+		);
+
+		const booted = await boot(dataDir, {
+			masterKey: keyFor(PHRASE_A),
+			managedModel: MANAGED_MODEL,
+			seed: { project: { description: BRIEF } },
+			policyFile,
+			policy: loadPolicy(policyFile) ?? null,
+		});
+
+		// The swap went through before the recovery, and the brief did not.
+		expect(sentBeforeRecovery).toEqual([]);
+		expect(await getAiProviderStatus(booted.db)).toEqual({
+			configured: true,
+			providers: [AiProvider.HezoCloud],
+		});
+		await vi.waitFor(async () => expect(await adminMessages(booted.db)).toEqual([BRIEF]), {
+			timeout: 15_000,
+		});
 	}, 120_000);
 });
 

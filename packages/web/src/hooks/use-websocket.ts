@@ -338,11 +338,21 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 			leaveRoom(room);
 		};
 	}, [queryClient, joinRoom, leaveRoom, subscribe]);
+}
 
-	// The provider list can change with no request from this client: a hosting
-	// plan adds or withholds the managed credential while the instance runs. A
-	// setup screen open at that moment would otherwise keep asking for a provider
-	// the instance now has.
+/**
+ * Watch the global AI-provider room, and refetch every provider view when the
+ * list changes with no request from this client: a hosting plan adds or
+ * withholds the managed credential while the instance runs.
+ *
+ * **Called by the setup gate, never by the shell.** The gate draws the setup
+ * wizard *instead of* the shell while no provider is configured, and that wizard
+ * is the screen most in need of the signal: without it, it keeps asking for a
+ * provider the instance now has. The gate stays mounted when it gives way to the
+ * shell, so one subscription covers both, in either direction.
+ */
+export function useAiProvidersRoom(): void {
+	const { joinRoom, leaveRoom, subscribe } = useSocket();
 	useEffect(() => {
 		const room = wsRoom.aiProviders();
 		joinRoom(room);

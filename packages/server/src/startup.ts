@@ -514,6 +514,11 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// Listening starts before the boot's own sync, so a plan change landing while it
 	// runs is applied after it rather than lost between the two.
 	let stopFollowingManagedModel = () => {};
+	// Set where the unlocked services send the brief themselves. Until then a swap
+	// sends none: the chat reconciliation below has not yet run, and would mark the
+	// brief's turn crashed with its one send already spent. The unlock's own send
+	// comes after it and reads whatever row the swap left.
+	let followerSendsBrief = false;
 	if (config.masterKeyHeld) {
 		const { followManagedModelPolicy } = await import('./services/managed-model.js');
 		const { broadcastAiProvidersChanged } = await import('./lib/broadcast.js');
@@ -522,7 +527,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		// runnable CEO goes out now that the model it was waiting on is back.
 		stopFollowingManagedModel = followManagedModelPolicy(db, masterKeyManager, async () => {
 			broadcastAiProvidersChanged(wsManager);
-			await deliverSeedBrief(db, chatSessionManager);
+			if (followerSendsBrief) await deliverSeedBrief(db, chatSessionManager);
 		});
 		await prepareHeldKeyInstance(db, masterKeyManager, config.webUrl);
 	}
@@ -563,6 +568,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 				// A hosted brief reaches the CEO once a credential exists, which is
 				// usually when the admin adds one (routes/ai-providers). This covers an
 				// instance that restarted in between, or that had one when it upgraded.
+				// From here on a policy swap that brings the model back sends it too.
+				followerSendsBrief = true;
 				trackBackground(
 					deliverSeedBrief(db, chatSessionManager).catch((err) =>
 						log.error('Failed to send the seeded brief to the CEO chat:', err),

@@ -1,15 +1,22 @@
 // The provider list can change with no request from this client: a hosting
 // plan adds or withholds the managed credential while the instance runs, and
-// the server says so on the global AI-provider room. Here the socket context is
-// a controllable emitter, and the shell's socket hook is driven directly: the
-// room is joined, and the signal marks every provider view stale.
+// the server says so on the global AI-provider room.
+//
+// The setup wizard is the screen that signal exists for, and the setup gate
+// draws it *instead of* the shell. So the whole tree is rendered here, the
+// server writes the managed row the way the policy follower does, and the only
+// thing that tells this client is the signal. A subscription that lived in the
+// shell would be unmounted for exactly the moment it was needed. The harness
+// stubs the real socket, so its context is a stand-in that delivers a room's
+// broadcast to a client that joined the room, as the server does.
 
+import type { ManagedModelConfig } from '@hezo/server/src/config/types';
+import { syncManagedModel } from '@hezo/server/src/services/managed-model';
 import { WsMessageType, wsRoom } from '@hezo/shared';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { useShellWebSockets } from '../src/hooks/use-websocket';
-import { queryClient } from '../src/lib/query-client';
+import { getTestContext, renderApp } from './helpers/render';
 
 const socket = vi.hoisted(() => {
 	const handlers = new Map<string, Set<(msg: unknown) => void>>();
@@ -17,8 +24,10 @@ const socket = vi.hoisted(() => {
 	return {
 		handlers,
 		joined,
-		emit(type: string, msg: unknown) {
-			for (const h of handlers.get(type) ?? []) h(msg);
+		/** The server's room broadcast: only a socket that joined the room hears it. */
+		broadcast(room: string, msg: { type: string }) {
+			if (!joined.has(room)) return;
+			for (const h of handlers.get(msg.type) ?? []) h(msg);
 		},
 	};
 });
@@ -38,41 +47,57 @@ vi.mock('../src/contexts/socket-context', () => {
 		},
 		joinRoom: (room: string) => socket.joined.add(room),
 		leaveRoom: (room: string) => socket.joined.delete(room),
+		reconnect: () => {},
 	};
-	return { useSocket: () => value };
+	return {
+		SocketProvider: ({ children }: { children: ReactNode }) => children,
+		useSocket: () => value,
+	};
 });
 
-function Shell() {
-	useShellWebSockets(undefined);
-	return null;
+const MANAGED: ManagedModelConfig = {
+	baseUrl: 'https://models.example/api',
+	model: 'vendor/one-model',
+	apiKey: 'sk-managed',
+	contextTokens: 1_048_576,
+	requestHeaders: {},
+};
+
+/** What the server's policy follower does on a swap, then the signal it sends. */
+async function planMoves(managed: ManagedModelConfig | null): Promise<void> {
+	const { db, masterKeyManager } = getTestContext();
+	await syncManagedModel(db, masterKeyManager, managed);
+	socket.broadcast(wsRoom.aiProviders(), { type: WsMessageType.AiProvidersChanged });
 }
 
 afterEach(() => {
-	queryClient.clear();
 	socket.handlers.clear();
 	socket.joined.clear();
 });
 
-test('a provider-list signal marks every provider view stale, and nothing else', () => {
-	// The keys `use-ai-providers` reads: the list, and the status the setup
-	// screen gates on.
-	queryClient.setQueryData(['ai-providers'], []);
-	queryClient.setQueryData(['ai-providers', 'status'], { configured: false, providers: [] });
-	queryClient.setQueryData(['unrelated'], 'kept');
+test('an open setup wizard gives way when the plan brings the model back, and returns when it goes', async () => {
+	const { findByTestId, queryByTestId } = await renderApp({
+		initialPath: '/home',
+		seed: async ({ db }) => {
+			await db.query('DELETE FROM ai_provider_configs');
+		},
+	});
 
-	const { unmount } = render(
-		<QueryClientProvider client={queryClient}>
-			<Shell />
-		</QueryClientProvider>,
-	);
-	expect(socket.joined.has(wsRoom.aiProviders())).toBe(true);
+	// A box on a plan with the customer's own AI and nothing connected yet.
+	await findByTestId('setup-step-ai-provider', undefined, { timeout: 15_000 });
 
-	socket.emit(WsMessageType.AiProvidersChanged, { type: WsMessageType.AiProvidersChanged });
+	await planMoves(MANAGED);
+	await findByTestId('app-header-chat', undefined, { timeout: 15_000 });
+	expect(queryByTestId('setup-step-ai-provider')).toBeNull();
 
-	expect(queryClient.getQueryState(['ai-providers'])?.isInvalidated).toBe(true);
-	expect(queryClient.getQueryState(['ai-providers', 'status'])?.isInvalidated).toBe(true);
-	expect(queryClient.getQueryState(['unrelated'])?.isInvalidated).toBe(false);
+	// The shell is up now, and the next swap is heard as well, in the other
+	// direction: the gate holds the room, and it stays mounted under the shell.
+	await planMoves(null);
+	await findByTestId('setup-step-ai-provider', undefined, { timeout: 15_000 });
 
-	unmount();
-	expect(socket.joined.has(wsRoom.aiProviders())).toBe(false);
+	await planMoves(MANAGED);
+	await waitFor(() => expect(queryByTestId('setup-step-ai-provider')).toBeNull(), {
+		timeout: 15_000,
+	});
+	await findByTestId('app-header-chat');
 });

@@ -81,6 +81,7 @@ import {
 import {
 	type AiProviderCredential,
 	getAiProviderConfig,
+	missingCredentialReason,
 	readActiveUsageHold,
 	readAiProviderCredentialValue,
 	recordCredentialAllowance,
@@ -2137,8 +2138,9 @@ export async function runAgent(
 		selection.config.configId,
 	);
 	if (storedCredential === null) {
+		// Gone since it was chosen. `requiredRuntime` is null only on the override path.
 		return finalizeFailure(
-			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
+			missingCredentialReason(provider, { override: selection.requiredRuntime === null }),
 		);
 	}
 	let credential = { ...selection.config, value: storedCredential };

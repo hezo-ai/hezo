@@ -234,8 +234,8 @@ provide.** The `managedModel` block stays in the config file. While the pin says
 providers, the default moves to another credential if there is one, and agents
 run on the providers the owner connects. Pinning `available` again puts it back
 without making it the default where another credential already is. Both take
-effect while the instance runs, and an open AI providers page refreshes on its
-own.
+effect while the instance runs, and an open AI providers page or setup screen
+refreshes on its own.
 
 **`pinned.backend` is the exception: it takes effect on restart.** The engine
 containers run on is chosen once at startup, so re-pinning it while the instance

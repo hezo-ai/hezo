@@ -22,6 +22,7 @@ import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
 import { withTransaction } from '../lib/sql';
+import { pinnedSetting } from '../lib/system-meta';
 import { logger } from '../logger';
 import {
 	deleteAiProviderConfig,
@@ -160,9 +161,8 @@ const log = logger.child('managed-model');
  * runs, and a plan change is what flips it.
  */
 export function managedModelInEffect(): ManagedModelConfig | null {
-	const config = runtimeConfig();
-	if (config.policy?.pinned.managedModel === ManagedModelAvailability.Withheld) return null;
-	return config.managedModel;
+	if (pinnedSetting('managedModel') === ManagedModelAvailability.Withheld) return null;
+	return runtimeConfig().managedModel;
 }
 
 /**

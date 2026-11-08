@@ -689,7 +689,8 @@ export const wsRoom = {
 	 * The single global AI-provider room. A hosting plan can add or withhold the
 	 * managed credential while the instance runs (`pinned.managedModel`), with no
 	 * request from any client to refresh after, so the "the provider list changed"
-	 * signal is broadcast here and every shell refetches its provider views.
+	 * signal is broadcast here and every signed-in client refetches its provider
+	 * views, the setup wizard included.
 	 */
 	aiProviders: () => 'ai-providers:global',
 } as const;
