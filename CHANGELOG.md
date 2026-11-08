@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.82.0 - 2026-11-08
+
+### Features
+
+- **cloud:** let a hosting plan withhold the Base AI model ([#1211](https://github.com/hezo-ai/hezo/pull/1211))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.81.0...0.82.0
+
 ## 0.81.0 - 2026-11-05
 
 ### Features
