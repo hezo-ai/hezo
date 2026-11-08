@@ -22,6 +22,7 @@ export enum WsMessageType {
 	ChatConversationUpdated = 'chat_conversation_updated',
 	ChatGroupPendingTurns = 'chat_group_pending_turns',
 	ProjectsChanged = 'projects_changed',
+	AiProvidersChanged = 'ai_providers_changed',
 	Pong = 'pong',
 	Error = 'error',
 }
@@ -132,6 +133,18 @@ export interface WsPongMessage {
  */
 export interface WsProjectsChangedMessage {
 	type: WsMessageType.ProjectsChanged;
+}
+
+/**
+ * The instance's AI provider list changed without a client asking: a hosting
+ * plan added or withheld the managed credential. Broadcast to the global
+ * `ai-providers:global` room with no payload, for the reason the project-index
+ * signal carries none: `GET /api/ai-providers` is the authorized read. Clients
+ * refetch their provider views, so a setup screen open when the plan changed
+ * shows the model it now has.
+ */
+export interface WsAiProvidersChangedMessage {
+	type: WsMessageType.AiProvidersChanged;
 }
 
 /**
@@ -280,6 +293,7 @@ export type WsServerMessage =
 	| WsChatConversationUpdatedMessage
 	| WsChatGroupPendingTurnsMessage
 	| WsProjectsChangedMessage
+	| WsAiProvidersChangedMessage
 	| WsConnectedMessage
 	| WsPongMessage
 	| WsErrorMessage;

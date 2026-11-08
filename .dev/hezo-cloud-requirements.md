@@ -1115,6 +1115,28 @@ line promised the whole figure back on the reset date.
 **The instance does not draw packs down.** When a period turns, the plane
 re-pins the new total and the bought hours still unspent.
 
+## H48 — `policy.pinned.managedModel` *(done)*
+
+The plane sells plans on which the customer brings their own AI. On those, and
+on a trial started on one, the Base AI model must not be offered; a customer who
+moves up to a plan that includes it must get it back. The `managedModel` block
+reaches a box once, at first boot, so it cannot carry a plan change.
+
+- **`policy.pinned.managedModel`**, `available` or `withheld`
+  (`ManagedModelAvailability` in `@hezo/shared`). Absent means available.
+- **`withheld` removes the `hezo_cloud` row** exactly as a config without the
+  block does, through the ordinary delete, so a held default passes to the next
+  credential and every reader of credentials (the provider list, chat, runs,
+  the judge) stops seeing it with no check of its own.
+- **`available` writes it back** from the `managedModel` block, which stays on
+  disk throughout. A returning row is the default only if nothing else is.
+- **Applied live.** A policy swap that moves this key re-syncs the row without a
+  restart; the boot's sync reads it too.
+
+**The plane also turns the key off at the router** while it is withheld, so a
+box on an older release, which ignores nothing and refuses the unknown key, is
+never sent it: the plane writes the key only to a release that reads it.
+
 ## Already satisfied upstream — do not build these
 
 Recorded because the reason they are unnecessary is easy to lose, and because

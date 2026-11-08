@@ -2,6 +2,7 @@ import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { useAiProviderStatus } from '../../hooks/use-ai-providers';
+import { useSessionWebSockets } from '../../hooks/use-websocket';
 import { api } from '../../lib/api';
 import { getPendingSetupToken } from '../../lib/auth';
 import { useI18n } from '../../lib/i18n';
@@ -153,8 +154,15 @@ interface SetupGateProps {
 	children: React.ReactNode;
 }
 
-/** Wraps the app shell: shows the AI-provider wizard until a provider is configured. */
+/**
+ * Wraps the app shell: shows the AI-provider wizard until a provider is configured.
+ * Rendered inside the socket provider and kept for the whole session, so it is
+ * what listens for a provider list that changes with no request from this
+ * client, and what refetches after a dropped connection (see
+ * `useSessionWebSockets`).
+ */
 export function SetupGate({ hosted, children }: SetupGateProps) {
+	useSessionWebSockets();
 	const step = useWizardStep();
 	if (step === 'loading') {
 		return (

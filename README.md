@@ -233,9 +233,9 @@ for the full picture.
 
 [Self-host it](./docs/deployment/self-hosting.md) and the models you connect, the
 machine, the data and the master key are all yours. On
-[Hezo Cloud](./docs/cloud/overview.md) we run the box and include AI inference on the
-Base AI model, and any model account you connect is still billed to you by its
-provider.
+[Hezo Cloud](./docs/cloud/overview.md) we run the box. A plan with AI included comes
+with the Base AI model, a plan with your own AI runs on the providers you connect, and
+any model account you connect is still billed to you by its provider.
 
 ## Works with your models
 

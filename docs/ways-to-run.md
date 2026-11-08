@@ -29,8 +29,8 @@ trial. Start at [Hezo Cloud](/docs/cloud/overview).
 | Shell access to the box | Yours | We run the machine, so everything the `hezo` command does is done for you or from the web app |
 | Database and file storage | Embedded by default, or bring your own | Managed for you |
 | Who holds the recovery phrase | You | We keep it for you, encrypted, so your instance unlocks itself. You can download a copy |
-| AI models | The ones you connect | The Base AI model, included, plus any you connect |
-| What it costs | Nothing. You pay your model providers | A monthly or annual plan, with AI inference on the Base AI model included. Any model provider you connect bills you. See [hezo.ai/pricing](https://hezo.ai/pricing/) |
+| AI models | The ones you connect | On a plan with AI included, the Base AI model plus any you connect. On a plan with your own AI, the ones you connect |
+| What it costs | Nothing. You pay your model providers | A monthly or annual plan, with AI included or, for less, with your own AI. Any model provider you connect bills you. See [hezo.ai/pricing](https://hezo.ai/pricing/) |
 
 ## Which one to pick
 

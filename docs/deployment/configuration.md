@@ -191,6 +191,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.pinned.containerHoursAnchorDay` | - | The day of the month that allowance resets on, `1`-`31`. Unset, it resets on the 1st. |
 | `policy.pinned.containerHoursSince` | - | The moment hours start counting from, as an ISO 8601 timestamp with its offset. A window that began earlier counts only from that moment. Later windows start on the anchor day as usual. |
 | `policy.pinned.backend` | - | Fixes which container backend runs agent containers (`docker` or `daytona`). |
+| `policy.pinned.managedModel` | - | `available` or `withheld`. Whether the model the hosted config provides (`managedModel`) is offered. Unset means `available`. `withheld` removes it from the AI providers, handing the default to another credential, and `available` puts it back. |
 | `policyFile` | - | Path to a JSON file holding the `policy` block. The file wins over an inline block, and is re-read when it changes. |
 
 Each key under `pinned` is independent: pin the memory budget and leave disk to
@@ -226,6 +227,15 @@ bought hours included. This key says how many of those hours were bought, so the
 Hours tab can show how much comes back each period. Hezo does not draw bought
 hours down itself. When a period turns, pin the new total and the bought hours
 still unspent.
+
+**Pin `managedModel: withheld` when a plan does not include the model you
+provide.** The `managedModel` block stays in the config file. While the pin says
+`withheld`, the instance offers no managed model: it is removed from the AI
+providers, the default moves to another credential if there is one, and agents
+run on the providers the owner connects. Pinning `available` again puts it back
+without making it the default where another credential already is. Both take
+effect while the instance runs, and an open AI providers page or setup screen
+refreshes on its own.
 
 **`pinned.backend` is the exception: it takes effect on restart.** The engine
 containers run on is chosen once at startup, so re-pinning it while the instance

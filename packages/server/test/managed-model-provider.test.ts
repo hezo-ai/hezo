@@ -7,18 +7,35 @@ import {
 	claudeCodeProviderUsesCustomEndpoint,
 	isAddableAiProvider,
 	isManagedAiProvider,
+	ManagedModelAvailability,
 	providerDirectUpstreamHosts,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	resetRuntimeConfig,
+	runtimeConfig,
+	setPolicy,
+	setRuntimeConfig,
+} from '../src/config/runtime';
 import type { ManagedModelConfig } from '../src/config/types';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { buildProviderEnv } from '../src/services/agent-runner';
-import { getProviderCredential, selectProviderConfig } from '../src/services/ai-provider-keys';
-import { syncManagedModel } from '../src/services/managed-model';
+import {
+	getProviderCredential,
+	resolveRunCredential,
+	selectProviderConfig,
+} from '../src/services/ai-provider-keys';
+import {
+	followManagedModelPolicy,
+	managedModelInEffect,
+	resyncManagedModel,
+	syncManagedModel,
+} from '../src/services/managed-model';
 import { condemnRejectedProviderCredential } from '../src/services/provider-credential-health';
 import { judgeModelForProvider } from '../src/services/stop-hook-prompt';
 import { safeClose } from './helpers';
@@ -256,6 +273,203 @@ describe('syncManagedModel', () => {
 			'SELECT label, is_default FROM ai_provider_configs',
 		);
 		expect(left.rows).toEqual([{ label: 'Mine', is_default: true }]);
+	});
+});
+
+describe('a policy that withholds the managed model', () => {
+	let db: Db;
+	let masterKeyManager: MasterKeyManager;
+	let stopFollowing: () => void = () => {};
+	// What the boot hands the follower: told the list changed, after the row did.
+	let afterSync = vi.fn(async () => {});
+
+	const policy = (managedModel?: ManagedModelAvailability) => ({
+		managedBy: 'Acme Cloud',
+		pinned: managedModel ? { managedModel } : {},
+	});
+
+	beforeAll(async () => {
+		const ctx = await createTestApp();
+		db = ctx.db;
+		masterKeyManager = ctx.masterKeyManager;
+	});
+	beforeEach(async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		await db.query(
+			'UPDATE member_agents SET model_override_provider = NULL, model_override_model = NULL',
+		);
+		resetRuntimeConfig();
+		setRuntimeConfig({ ...runtimeConfig(), managedModel: MANAGED, policy: null });
+		afterSync = vi.fn(async () => {});
+	});
+	afterEach(async () => {
+		stopFollowing();
+		stopFollowing = () => {};
+		await waitForBackground();
+		resetRuntimeConfig();
+	});
+	afterAll(async () => {
+		await safeClose(db);
+	});
+
+	async function rows() {
+		const r = await db.query<{ provider: string; is_default: boolean }>(
+			'SELECT provider, is_default FROM ai_provider_configs ORDER BY provider',
+		);
+		return r.rows;
+	}
+
+	async function addOwnCredential() {
+		await db.query(
+			`INSERT INTO ai_provider_configs (provider, label, encrypted_credential, status)
+			 VALUES ('anthropic', 'Mine', 'enc', 'verified')`,
+		);
+	}
+
+	it('carries the configured model unless the policy withholds it', () => {
+		expect(managedModelInEffect()).toEqual(MANAGED);
+		setPolicy(policy(ManagedModelAvailability.Available));
+		expect(managedModelInEffect()).toEqual(MANAGED);
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		expect(managedModelInEffect()).toBeNull();
+	});
+
+	it('writes no row at boot while withheld', async () => {
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await resyncManagedModel(db, masterKeyManager);
+		expect(await rows()).toEqual([]);
+	});
+
+	it('removes the row when a swap withholds it, handing the default on, and writes it back when offered again', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		await addOwnCredential();
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+		expect((await rows()).map(({ provider, is_default }) => ({ provider, is_default }))).toEqual([
+			{ provider: 'anthropic', is_default: true },
+		]);
+
+		setPolicy(policy(ManagedModelAvailability.Available));
+		await waitForBackground();
+		// Back, but not the default: the tenant's own credential took it while the
+		// model was withheld, and a returning row never takes a default away.
+		expect((await rows()).map(({ provider, is_default }) => ({ provider, is_default }))).toEqual([
+			{ provider: 'anthropic', is_default: true },
+			{ provider: 'hezo_cloud', is_default: false },
+		]);
+	});
+
+	// An agent the admin pinned to the model while the plan included it. The row
+	// goes, and its override stays as the admin set it: the run is refused with
+	// the one step that fixes it, never told to add a credential nobody can add.
+	it('refuses an agent pinned to the withheld model by naming the plan and the override', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		await addOwnCredential();
+		const agent = await db.query<{ id: string }>(
+			`UPDATE member_agents SET model_override_provider = 'hezo_cloud', model_override_model = $1
+			  WHERE id = (SELECT id FROM member_agents ORDER BY id LIMIT 1)
+			 RETURNING id`,
+			[MODEL],
+		);
+		expect(agent.rows).toHaveLength(1);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+
+		const refused = await resolveRunCredential(db, {
+			overrideProvider: AiProvider.HezoCloud,
+			taskRuntimeType: null,
+		});
+		expect(refused).toEqual({
+			ok: false,
+			reason:
+				"This agent is set to the Base AI model, which this instance's plan does not include. Clear the agent's model override in its settings.",
+		});
+		const kept = await db.query<{ provider: string; model: string }>(
+			`SELECT model_override_provider AS provider, model_override_model AS model
+			   FROM member_agents WHERE id = $1`,
+			[agent.rows[0].id],
+		);
+		expect(kept.rows[0]).toEqual({ provider: AiProvider.HezoCloud, model: MODEL });
+		// An agent with no override runs on the credential the default passed to.
+		expect(
+			await resolveRunCredential(db, { overrideProvider: null, taskRuntimeType: null }),
+		).toMatchObject({ ok: true, provider: AiProvider.Anthropic });
+	});
+
+	it('treats a policy that no longer names the key as offering the model', async () => {
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+		setPolicy(policy());
+		await waitForBackground();
+		expect((await rows()).map(({ provider }) => provider)).toEqual(['hezo_cloud']);
+	});
+
+	it('writes nothing when a swap leaves the key where it was', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		// A row a sync would rewrite, so a sync that ran would show. One that
+		// already matched could not tell a skipped sync from a sync that found
+		// nothing to do.
+		await db.query(
+			`UPDATE ai_provider_configs SET default_model = 'vendor/older'
+			  WHERE provider = 'hezo_cloud'`,
+		);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+		setPolicy({ ...policy(), pinned: { maxContainerMemoryGb: 64 } });
+		await waitForBackground();
+		const r = await db.query<{ default_model: string }>(
+			`SELECT default_model FROM ai_provider_configs WHERE provider = 'hezo_cloud'`,
+		);
+		expect(r.rows.map((row) => row.default_model)).toEqual(['vendor/older']);
+		expect(afterSync).not.toHaveBeenCalled();
+	});
+
+	// **The step a credential route takes after a change, which a swap has no
+	// request to take**: tell open clients, and send a signup brief the model's
+	// return made deliverable. It must see the row as the swap left it, and run
+	// for nothing else.
+	it('runs the after-sync step once per swap that moves the key, after the row has moved', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		const seen: string[][] = [];
+		afterSync = vi.fn(async () => {
+			seen.push((await rows()).map(({ provider }) => provider));
+		});
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+		setPolicy({ ...policy(ManagedModelAvailability.Withheld), manageUrl: 'https://acme.example' });
+		await waitForBackground();
+		setPolicy(policy(ManagedModelAvailability.Available));
+		await waitForBackground();
+
+		expect(seen).toEqual([[], ['hezo_cloud']]);
+	});
+
+	it('keeps the swap when the after-sync step fails', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		afterSync = vi.fn(async () => {
+			throw new Error('no socket');
+		});
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+
+		expect(afterSync).toHaveBeenCalledTimes(1);
+		expect(await rows()).toEqual([]);
+	});
+
+	it('stops following once told to', async () => {
+		await resyncManagedModel(db, masterKeyManager);
+		stopFollowing = followManagedModelPolicy(db, masterKeyManager, afterSync);
+		stopFollowing();
+		setPolicy(policy(ManagedModelAvailability.Withheld));
+		await waitForBackground();
+		expect((await rows()).map(({ provider }) => provider)).toEqual(['hezo_cloud']);
 	});
 });
 

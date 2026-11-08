@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { invalidateTeamAgentCaches } from '../lib/invalidate-team-caches';
 import { queryKeys } from '../lib/query-keys';
+import { invalidateAiProviders } from './use-ai-providers';
 import type { Project } from './use-projects';
 
 /**
@@ -245,6 +246,9 @@ interface TeamRoom {
  * rebuilds at boot) are lost — there is no replay — so the only way to catch
  * up is a full invalidation once the connection is back. The initial connect
  * is skipped: queries are freshly fetched on mount anyway.
+ *
+ * Run once per signed-in session, by `useSessionWebSockets`, so it covers the
+ * setup wizard as well as the shell.
  */
 export function useInvalidateOnReconnect(connected: boolean): void {
 	const queryClient = useQueryClient();
@@ -268,9 +272,7 @@ export function useInvalidateOnReconnect(connected: boolean): void {
  */
 export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 	const queryClient = useQueryClient();
-	const { connected, joinRoom, leaveRoom, subscribe } = useSocket();
-
-	useInvalidateOnReconnect(connected);
+	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	const teamsKey =
 		teams
@@ -337,4 +339,34 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 			leaveRoom(room);
 		};
 	}, [queryClient, joinRoom, leaveRoom, subscribe]);
+}
+
+/**
+ * What a signed-in session needs from the socket whichever screen it is on:
+ * a full refetch after a dropped connection heals, and the global AI-provider
+ * room, which refetches every provider view when the list changes with no
+ * request from this client (a hosting plan adds or withholds the managed
+ * credential while the instance runs).
+ *
+ * **Called by the setup gate, never by the shell.** The gate draws the setup
+ * wizard *instead of* the shell while no provider is configured, and that wizard
+ * is the screen most in need of both: without them, it keeps asking for a
+ * provider the instance now has, and a signal sent while the socket was down
+ * is lost. The gate stays mounted when it gives way to the shell, so one call
+ * covers both, in either direction.
+ */
+export function useSessionWebSockets(): void {
+	const { connected, joinRoom, leaveRoom, subscribe } = useSocket();
+	useInvalidateOnReconnect(connected);
+	useEffect(() => {
+		const room = wsRoom.aiProviders();
+		joinRoom(room);
+		const unsubscribe = subscribe(WsMessageType.AiProvidersChanged, () => {
+			invalidateAiProviders();
+		});
+		return () => {
+			unsubscribe();
+			leaveRoom(room);
+		};
+	}, [joinRoom, leaveRoom, subscribe]);
 }

@@ -7,8 +7,9 @@ section: Hezo Cloud
 # Hezo Cloud
 
 **Hezo Cloud is Hezo, run for you.** You get your own always-on instance at
-your own address, with unlimited projects, unlimited agents and AI inference
-included, and you never touch a server. The rest of these docs describe your instance;
+your own address, with unlimited projects and unlimited agents, and you never
+touch a server. Every plan comes in two kinds: with AI included, or with your
+own AI for less. The rest of these docs describe your instance;
 [What's different from self-hosting](/docs/cloud/whats-different) is the short
 list of exceptions.
 
@@ -25,11 +26,13 @@ Plans and prices are on [hezo.ai/pricing](https://hezo.ai/pricing/).
   per-agent charge. What a plan sets is how many containers can run at once and
   how many container-hours a month they may use. See
   [Plans, usage & billing](/docs/cloud/plans-and-billing).
-- **AI inference included, on the Base AI model.** Every plan comes with a
+- **AI included, or your own.** A plan with AI included comes with the Base AI
   model already connected, so your agents can start work the moment your
-  instance is up. It has no token meter and no bill of its own: your plan's
-  container-hours bound it, with a daily safety limit set well above what they
-  can use. See [The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
+  instance is up. The Base AI model has no token meter and no bill of its own:
+  your plan's container-hours bound it, with a daily safety limit set well above
+  what they can use. A plan with your own AI costs less and does not include the
+  Base AI model. You connect your own provider, and that provider bills you. See
+  [The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
 - **An instance that unlocks itself.** We keep its recovery phrase for you,
   encrypted, so it never asks for it, and you can download a copy from your
   dashboard.

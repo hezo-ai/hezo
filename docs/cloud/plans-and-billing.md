@@ -32,23 +32,33 @@ the hours went, open **Hours by project** in the Settings menu.
 
 ## AI models
 
-**AI inference on the Base AI model is included in every plan.** It is not
-metered in tokens and is never billed separately: it only works while one of
-your containers is up, so your container-hours already bound it. Each instance
+**Every plan comes in two kinds: with AI included, or with your own AI.** The
+two kinds give you the same containers and the same container-hours. The
+difference is where your agents' AI comes from.
+
+**A plan with AI included comes with the Base AI model.** It is not metered in
+tokens and is never billed separately: it only works while one of your
+containers is up, so your container-hours already bound it. Each instance
 also has a daily safety limit on it, set well above what its plan's hours can
 use; if an instance reaches it, the Base AI model pauses until the next day
 begins (UTC). See
 [The Base AI model](/docs/cloud/whats-different#the-base-ai-model).
 
-**Your own model accounts are billed by their providers.** When an agent runs
-on a provider you connected, that provider bills you directly, not us. See
-[AI model support](/docs/ai-models).
+**A plan with your own AI does not include the Base AI model.** You connect
+your own provider, your agents run on it, and it bills you directly, not us.
+These plans cost less, because we pay for no AI.
+
+**Your own model accounts are billed by their providers** on either kind of
+plan. When an agent runs on a provider you connected, that provider bills you
+directly. See [AI model support](/docs/ai-models).
 
 ## The free trial
 
 Every account starts with a **seven-day free trial, and we do not ask for a
 card**. The trial grants a flat three container-hours and three concurrent
-containers, the same for everyone, and includes the Base AI model.
+containers, the same for everyone. A trial you start from a plan with AI
+included comes with the Base AI model. A trial you start from a plan with your
+own AI does not, so connect your own provider to begin.
 
 The clock starts when your instance is first ready, and the trial ends at
 whichever comes first: seven days, or three container-hours.
@@ -88,6 +98,12 @@ you buy more - work in flight is not interrupted mid-run.
 - **Moving down takes effect at the end of the period** you have paid for.
 - **Switching between monthly and annual** takes effect at the end of the
   period, in both directions.
+- **You can move from a plan with your own AI to one with AI included.** When
+  the change takes effect, the Base AI model shows up in
+  **Settings > AI providers**. Your own provider stays the default, so your
+  agents keep running on it until you make the Base AI model the default there.
+  A plan with AI included cannot move to one with your own AI.
+- **Your first plan can be either kind**, whichever kind of trial you started.
 
 Annual is billed once a year and works out cheaper per month.
 

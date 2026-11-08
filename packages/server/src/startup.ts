@@ -9,7 +9,6 @@ import { openAssetStorage } from './assets/open';
 import type { AssetStore } from './assets/store';
 import type { HezoConfig } from './cli';
 import { watchPolicyFile } from './config/policy';
-import type { ManagedModelConfig } from './config/types';
 import type { Db } from './db/database';
 import { logger } from './logger';
 
@@ -512,8 +511,25 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// its address, so the boot does both. After the default team exists, which the
 	// admin joins, and before the unlock hook below starts anything that addresses
 	// the admin.
+	// Listening starts before the boot's own sync, so a plan change landing while it
+	// runs is applied after it rather than lost between the two.
+	let stopFollowingManagedModel = () => {};
+	// Set where the unlocked services send the brief themselves. Until then a swap
+	// sends none: the chat reconciliation below has not yet run, and would mark the
+	// brief's turn crashed with its one send already spent. The unlock's own send
+	// comes after it and reads whatever row the swap left.
+	let followerSendsBrief = false;
 	if (config.masterKeyHeld) {
-		await prepareHeldKeyInstance(db, masterKeyManager, config.webUrl, config.managedModel);
+		const { followManagedModelPolicy } = await import('./services/managed-model.js');
+		const { broadcastAiProvidersChanged } = await import('./lib/broadcast.js');
+		// What the credential routes do after a change, done here for one no
+		// request made: open clients refetch, and a signup brief waiting on a
+		// runnable CEO goes out now that the model it was waiting on is back.
+		stopFollowingManagedModel = followManagedModelPolicy(db, masterKeyManager, async () => {
+			broadcastAiProvidersChanged(wsManager);
+			if (followerSendsBrief) await deliverSeedBrief(db, chatSessionManager);
+		});
+		await prepareHeldKeyInstance(db, masterKeyManager, config.webUrl);
 	}
 
 	// Before the app serves a request, and regardless of lock state: the API must
@@ -552,6 +568,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 				// A hosted brief reaches the CEO once a credential exists, which is
 				// usually when the admin adds one (routes/ai-providers). This covers an
 				// instance that restarted in between, or that had one when it upgraded.
+				// From here on a policy swap that brings the model back sends it too.
+				followerSendsBrief = true;
 				trackBackground(
 					deliverSeedBrief(db, chatSessionManager).catch((err) =>
 						log.error('Failed to send the seeded brief to the CEO chat:', err),
@@ -652,7 +670,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 		sshAgentServer,
 		egressProxy,
-		policyWatcher,
+		policyWatcher: {
+			close: () => {
+				policyWatcher.close();
+				stopFollowingManagedModel();
+			},
+		},
 	};
 }
 
@@ -1144,7 +1167,8 @@ export async function resolveMasterKeyState(
 /**
  * The admin account and the public address, which a setup screen would
  * otherwise create and capture, and the model its control plane provides, which
- * the setup screen's model step would otherwise ask for. All are idempotent, and
+ * the setup screen's model step would otherwise ask for, unless the policy
+ * withholds it (`pinned.managedModel`). All are idempotent, and
  * the address is only written while unset, so one the owner later changes in
  * settings is kept. Before the unlock hook, whose seeded brief needs the model.
  */
@@ -1152,7 +1176,6 @@ async function prepareHeldKeyInstance(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
 	webUrl: string,
-	managedModel: ManagedModelConfig | null,
 ): Promise<void> {
 	try {
 		const { ensureSuperuserId } = await import('./services/superuser.js');
@@ -1167,8 +1190,8 @@ async function prepareHeldKeyInstance(
 		});
 	}
 	try {
-		const { syncManagedModel } = await import('./services/managed-model.js');
-		await syncManagedModel(db, masterKeyManager, managedModel);
+		const { resyncManagedModel } = await import('./services/managed-model.js');
+		await resyncManagedModel(db, masterKeyManager);
 	} catch (err) {
 		throw new HeldMasterKeyError('and writing the model it provides (managedModel) failed.', {
 			cause: err,

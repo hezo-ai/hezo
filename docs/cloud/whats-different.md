@@ -16,7 +16,7 @@ of what does not apply, and what replaces it.
 | [Concepts](/docs/concepts/projects-and-teams) | Yes, unchanged |
 | [Chat & messaging apps](/docs/chat/overview) | Yes, unchanged |
 | [Security](/docs/security/secret-protection) | Yes, unchanged |
-| [AI models & connections](/docs/ai-models) | Yes, for the model accounts you bring. Hezo Cloud also includes [the Base AI model](#the-base-ai-model) |
+| [AI models & connections](/docs/ai-models) | Yes, for the model accounts you bring. Plans with AI included also come with [the Base AI model](#the-base-ai-model) |
 | [MCP API reference](/docs/reference/mcp-api) | Yes, unchanged |
 | [Containers](/docs/containers/overview) | Read it for how sandboxing works. The backend is fixed for you, so the parts about choosing or switching one do not apply |
 | [Budgets & cost control](/docs/concepts/budgets-and-costs) | Yes, and your plan sets the container-hour allowance |
@@ -27,18 +27,25 @@ of what does not apply, and what replaces it.
 
 ## The Base AI model
 
-A self-hosted instance runs only on models you bring. On Hezo Cloud your
-instance also comes with the **Base AI model** already connected, so setup never
-asks you for a model and your agents can work from the first minute.
+A self-hosted instance runs only on models you bring. On a Hezo Cloud plan with
+AI included, your instance also comes with the **Base AI model** already
+connected, so setup never asks you for a model and your agents can work from the
+first minute.
 
-- **It is included in your plan.** It is not metered in tokens and has no
+- **It comes with plans that include AI.** On a plan with your own AI, or a
+  trial started from one, it is not there: setup asks you to connect your own
+  provider instead. Move up to a plan with AI included and the Base AI model
+  shows up in **Settings > AI providers**. Your own provider stays the default
+  until you make the Base AI model the default there. See
+  [Plans, usage & billing](/docs/cloud/plans-and-billing#ai-models).
+- **It is part of the plan's price.** It is not metered in tokens and has no
   separate bill. It only works while your containers are up, so your
   container-hours bound it, with a daily safety limit set well above what they
   can use. See
   [Plans, usage & billing](/docs/cloud/plans-and-billing#ai-models).
-- **It is listed with your other AI providers**, and it is the default model on
-  a new instance. You cannot edit or remove it: we run it and choose the model
-  behind it, and we may change that model.
+- **It is listed with your other AI providers**, and on a new instance with AI
+  included it is the default model. You cannot edit or remove it: we run it and
+  choose the model behind it, and we may change that model.
 - **You can still use your own models.** Connect a provider as
   [AI model support](/docs/ai-models) describes, then make it the default, or
   give it to one agent and leave the rest on the Base AI model.

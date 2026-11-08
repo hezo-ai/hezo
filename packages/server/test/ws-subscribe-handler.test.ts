@@ -1,6 +1,7 @@
 import { AuthType, WsMessageType, wsRoom } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
+import { broadcastAiProvidersChanged } from '../src/lib/broadcast';
 import type { AuthInfo } from '../src/lib/types';
 import { canAuthAccessTeam } from '../src/middleware/auth';
 import { ContainerLogStreamer, containerStreamId } from '../src/services/container-logs';
@@ -331,6 +332,22 @@ describe('handleWsSubscribe', () => {
 		wsManager.broadcast(wsRoom.projects(), { type: WsMessageType.ProjectsChanged });
 		expect(ws._sent).toHaveLength(1);
 		expect(JSON.parse(ws._sent[0]).type).toBe(WsMessageType.ProjectsChanged);
+	});
+
+	it('subscribes any authenticated socket to the global AI-provider room', async () => {
+		// The same reasoning as the project index: the signal carries nothing, and
+		// the refetch it triggers is the authorized provider read.
+		const user = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name) VALUES ('P') RETURNING id",
+		);
+		const ws = createMockWs({ type: AuthType.Admin, userId: user.rows[0].id });
+
+		await handleWsSubscribe(ws, wsRoom.aiProviders(), deps());
+
+		expect(wsManager.getRoomSize(wsRoom.aiProviders())).toBe(1);
+		broadcastAiProvidersChanged(wsManager);
+		expect(ws._sent).toHaveLength(1);
+		expect(JSON.parse(ws._sent[0])).toEqual({ type: WsMessageType.AiProvidersChanged });
 	});
 
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {

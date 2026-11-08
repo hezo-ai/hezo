@@ -1,10 +1,12 @@
 import {
 	type AgentRuntime,
+	AI_PROVIDER_INFO,
 	type AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
 	effectiveRuntime,
 	isAgentRuntime,
+	isManagedAiProvider,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProviderAllowance,
 } from '@hezo/shared';
@@ -351,11 +353,26 @@ export async function resolveRunCredential(
 	if (!config) {
 		return {
 			ok: false,
-			reason: `No ${provider} credential configured. Add one in Settings > AI Providers.`,
+			reason: missingCredentialReason(provider, { override: opts.overrideProvider !== null }),
 		};
 	}
 	if (!requiredRuntime) runtime = effectiveRuntime(provider, config.runtime) ?? runtime;
 	return { ok: true, provider, runtime, requiredRuntime, config };
+}
+
+/**
+ * Why a run cannot start: the provider it resolved to has no credential stored.
+ *
+ * **"Add one" is advice nobody can follow for a managed provider**, which only its
+ * hosting plane writes. Its row is missing because the plan withholds it, and the
+ * stored override is kept rather than rewritten, so the admin is told what the plan
+ * leaves out and which setting moves the agent off it.
+ */
+export function missingCredentialReason(provider: AiProvider, opts: { override: boolean }): string {
+	if (opts.override && isManagedAiProvider(provider)) {
+		return `This agent is set to the ${AI_PROVIDER_INFO[provider].name}, which this instance's plan does not include. Clear the agent's model override in its settings.`;
+	}
+	return `No ${provider} credential configured. Add one in Settings > AI Providers.`;
 }
 
 /**
