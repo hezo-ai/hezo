@@ -1414,8 +1414,8 @@ project.
   planning task. It **auto-runs** on the direct (form) creation path; on the CEO-assisted
   path the CEO authors the concrete setup plan into it and then starts it with
   `start_team_setup` (see Creation flows). That initial pass (reasons `initial`/`template_applied`)
-  is the CEO's; **reactive** coherence reviews thereafter — triggered by a prompt, Custom Prompt,
-  role, `reports_to`, hire, or enable/disable change on the established team — are enqueued to that
+  is the CEO's; **reactive** coherence reviews thereafter — triggered by a roster change on the
+  established team: a hire, a removal, a `reports_to` change, or an enable/disable — are enqueued to that
   team's own **Captain** (`enqueueTeamCoherenceReviewTask` picks the assignee by reason, falling
   back to the CEO for HQ, which has no Captain). Coalescing and the change-summary section are unchanged.
   The generated body carries `ACTIVE_ADMIN_MENTION_RULE` (`services/description-tasks.ts`, shared by
@@ -3778,21 +3778,20 @@ agent's stored prompt) is authorized for the **Coach**, the team's **Captain**, 
 CEO and Coach are recognized from any scope (including their cross-team chat/HQ session) via
 `isHqInstanceAgent`, and the Captain via `canCoordinateTeam` — the same set that may write the project
 Custom Prompt with `update_project_custom_prompt`. `update_agent_system_prompts` (plural) applies
-several prompt edits in one call for the same callers. **Coherence review on change.** Any edit that
-reaches agents' prompts — an agent system prompt (MCP singular/batch or the REST `PATCH /agents`) or
-the project Custom Prompt (MCP or REST) — files a team-coherence review via
-`enqueueTeamCoherenceReviewTask`, passing a `changeSummary` that is recorded on the ticket under a
-"Changes that triggered this review" section (accumulated across coalesced changes), so the reviewer
-knows what changed and why the review was triggered — regardless of who made the change (agent or
-admin). The one exception is a change made by a run working that team's coherence review
-(`byRunId` names the calling run): it is part of the review, so it is neither recorded on the
-ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. The two
-prompt tools skip the review, too, for an edit that changes only the `## Learned Rules` section
-(`learnedRulesOnlyChange`, `@hezo/shared`): the role's duties are unchanged, so there is nothing to
-reconcile. The batch tool files one review for the items that changed more. A review filed by an
-agent's run records that run as the ticket's `created_by_run_id`, and each wakeup it raises names
-the run too. A finished coherence review does not wake the Coach, and the missed-review sweep skips
-it too.
+several prompt edits in one call for the same callers. **Coherence review on roster change only.**
+A team-coherence review (`enqueueTeamCoherenceReviewTask`) is filed only for a roster change:
+team setup, a template apply, a hire, a removal, a `reports_to` change, or an enable/disable
+(`TeamCoherenceReviewReason`). An edit to an agent's system prompt or role description, or to the
+project Custom Prompt, files none, whoever makes it (MCP singular/batch or REST): on a real
+instance those per-edit reviews were about a fifth of all tasks filed and produced nothing. A
+roster change passes a `changeSummary` that is
+recorded on the ticket under a "Changes that triggered this review" section (accumulated across
+coalesced changes). The one exception is a change made by a run working that team's coherence
+review (`byRunId` names the calling run): it is part of the review, so it is neither recorded on
+the ticket nor re-wakes its assignee, which would otherwise review its own edits in a loop. A
+review filed by an agent's run records that run as the ticket's `created_by_run_id`, and each
+wakeup it raises names the run too. A finished coherence review does not wake the Coach, and the
+missed-review sweep skips it too.
 
 **Learned Rules cap.** Both prompt tools refuse a write that leaves more than `MAX_LEARNED_RULES`
 (20) top-level bullets under the heading, unless it holds no more than the prompt held before, so

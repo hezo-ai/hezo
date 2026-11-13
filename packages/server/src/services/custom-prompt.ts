@@ -1,16 +1,11 @@
 import { AuthType, checkInjectedTextCap, DocumentType } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { canCoordinateTeam, isHqInstanceAgent } from '../lib/agent-roles';
-import { trackBackground } from '../lib/background';
 import { resolveActorMemberId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
-import { logger } from '../logger';
-import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { type DocumentRow, getDocument, upsertDocument } from './documents';
 import { authoredPromptError, authoredPromptWarning } from './prompt-style-guard';
 import type { WebSocketManager } from './ws';
-
-const log = logger.child('custom-prompt');
 
 export type WriteCustomPromptResult =
 	| { status: 'denied'; error: string }
@@ -70,22 +65,6 @@ export async function writeCustomPrompt(
 		changeSummary,
 		authorMemberId,
 	});
-
-	// The Custom Prompt reaches every agent's prompt, so a real change warrants a
-	// team coherence review — whoever made it.
-	if ((prior?.content ?? '') !== content) {
-		const summary = changeSummary
-			? `Project Custom Prompt updated: ${changeSummary}`
-			: 'The project Custom Prompt was updated.';
-		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
-				changeSummary: summary,
-				byRunId: auth.type === AuthType.Agent ? auth.runId : null,
-			}).catch((e) =>
-				log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
-			),
-		);
-	}
 
 	const warning = authoredPromptWarning(content);
 	return {

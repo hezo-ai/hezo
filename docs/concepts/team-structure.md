@@ -68,7 +68,10 @@ needs a data analyst", "have QA report to the Architect" - and the CEO proposes 
 change and asks you to approve anything consequential. When a team's roster changes, the
 team's own Captain runs a **coherence review** to re-align the reporting lines and role
 descriptions so the new structure hangs together (the CEO runs this pass only for a
-brand-new team's initial setup, or for a team without a Captain). Part of that review is checking that every role's
+brand-new team's initial setup, or for a team without a Captain). A review starts when an
+agent joins or leaves, is turned on or off, or gets a new manager. Editing an agent's system
+prompt or role description, or the project's Custom Prompt, does not start one. Part of that
+review is checking that every role's
 work is still **verified** - reviewed by someone other than the agent who produced it,
 whether by a manager, a dedicated reviewing role, or review steps written into the
 agents' prompts - and closing the gap when it isn't.

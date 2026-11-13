@@ -50,7 +50,6 @@ import {
 	isMarkdownDocSlug,
 	isTextAssetMime,
 	learnedRulesCapError,
-	learnedRulesOnlyChange,
 	MAX_TASK_SUGGESTIONS_PER_TASK,
 	type McpMethodInfo,
 	matchesArchiveFilter,
@@ -193,7 +192,6 @@ import { writeCustomPrompt } from '../services/custom-prompt';
 import {
 	AGREED_TASKS_HEADING,
 	COHERENCE_LABEL,
-	enqueueTeamCoherenceReviewTask,
 	findOpenLabeledTask,
 	startTaskSuggestions,
 } from '../services/description-tasks';
@@ -5196,14 +5194,13 @@ export function registerTools(
 			// (resolveAgentId's fallback) from being editable through a project team.
 			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
 			if (!agentId) return { error: 'Agent not found in this team' };
-			const agentCheck = await db.query<{ id: string; slug: string }>(
-				`SELECT ma.id, ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+			const agentCheck = await db.query(
+				`SELECT 1 FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
 				[agentId, teamId],
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			const targetSlug = agentCheck.rows[0].slug;
 			// The house register: mechanical violations reject, judgement calls come
 			// back as an advisory on the successful write (see prompt-style-guard).
 			// The current length goes in so a prompt provisioned over the ceiling can
@@ -5241,19 +5238,6 @@ export function registerTools(
 				authorMemberId: callerMemberId,
 			});
 
-			// A change to the Learned Rules alone leaves the role's duties as they
-			// were, so there is nothing for a team coherence review to reconcile.
-			if (!learnedRulesOnlyChange(currentPrompt?.content ?? '', args.new_system_prompt as string)) {
-				trackBackground(
-					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-						changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
-						byRunId: auth.type === AuthType.Agent ? auth.runId : null,
-					}).catch((e) =>
-						log.error('Failed to enqueue team coherence review after prompt update:', e),
-					),
-				);
-			}
-
 			const styleWarning = authoredPromptWarning(args.new_system_prompt as string);
 			return {
 				applied: true,
@@ -5268,7 +5252,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_agent_system_prompts',
-		`Apply system prompt changes to MULTIPLE agents in one call - the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises every update changing more than the Learned Rules section, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} at once.`,
+		`Apply system prompt changes to MULTIPLE agents in one call - the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Prefer this over calling update_agent_system_prompt in a loop. Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} at once.`,
 		{
 			project: projectArg(),
 			updates: z
@@ -5308,8 +5292,7 @@ export function registerTools(
 			}>;
 
 			const results: Array<Record<string, unknown>> = [];
-			const applied: Array<{ slug: string; change_summary: string }> = [];
-			const dutiesChanged: Array<{ slug: string; change_summary: string }> = [];
+			let appliedCount = 0;
 			for (let i = 0; i < updates.length; i++) {
 				const u = updates[i];
 				const agentId = await resolveAgentId(db, teamId, u.agent_id);
@@ -5365,29 +5348,10 @@ export function registerTools(
 					authorMemberId: callerMemberId,
 				});
 				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.row.id });
-				applied.push({ slug, change_summary: u.change_summary });
-				// A change to the Learned Rules alone leaves the role's duties as
-				// they were, so there is nothing for a coherence review to reconcile.
-				if (!learnedRulesOnlyChange(currentPrompt?.content ?? '', u.new_system_prompt)) {
-					dutiesChanged.push({ slug, change_summary: u.change_summary });
-				}
+				appliedCount++;
 			}
 
-			if (dutiesChanged.length > 0) {
-				const summary = `Updated ${dutiesChanged.length} agent prompt(s): ${dutiesChanged
-					.map((a) => `${a.slug} (${a.change_summary})`)
-					.join('; ')}`;
-				trackBackground(
-					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-						changeSummary: summary,
-						byRunId: auth.type === AuthType.Agent ? auth.runId : null,
-					}).catch((e) =>
-						log.error('Failed to enqueue team coherence review after batch prompt update:', e),
-					),
-				);
-			}
-
-			return { results, applied_count: applied.length };
+			return { results, applied_count: appliedCount };
 		},
 		db,
 		{ write: true, audience: 'coordinator', batchArrayParam: 'updates' },
@@ -5434,8 +5398,8 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId } = scope;
 
-			// Shared with the REST route so the role gate, the style guard and the
-			// coherence review can never apply on one path and not the other.
+			// Shared with the REST route so the role gate and the style guard can
+			// never apply on one path and not the other.
 			const result = await writeCustomPrompt(db, wsManager, {
 				teamId,
 				content: args.content as string,
@@ -5458,7 +5422,7 @@ export function registerTools(
 	tool(
 		server,
 		'edit_project_custom_prompt',
-		"Replace one span of this project's Custom Prompt, leaving the rest untouched. Prefer this over update_project_custom_prompt for any change to existing guidance: it sends only the text you are changing, so a rewrite cannot silently drop a convention you meant to keep, and the argument stays proportional to the edit rather than to the whole prompt. `old_string` must match the current text EXACTLY, including indentation and line breaks: call get_project_custom_prompt first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the new length, so you can confirm what landed without reading it back. Records a revision, and files a team-coherence review when the content really changed. Only callable by the CEO, Coach, or the project's Captain.",
+		"Replace one span of this project's Custom Prompt, leaving the rest untouched. Prefer this over update_project_custom_prompt for any change to existing guidance: it sends only the text you are changing, so a rewrite cannot silently drop a convention you meant to keep, and the argument stays proportional to the edit rather than to the whole prompt. `old_string` must match the current text EXACTLY, including indentation and line breaks: call get_project_custom_prompt first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the new length, so you can confirm what landed without reading it back. Records a revision. Only callable by the CEO, Coach, or the project's Captain.",
 		{
 			project: projectArg(),
 			old_string: z
@@ -5501,8 +5465,8 @@ export function registerTools(
 			);
 			if (!edited.ok) return { error: edited.error };
 
-			// The shared write path: same role gate, style guard and coherence review
-			// as a full rewrite, so an edit cannot slip past a check a replace runs.
+			// The shared write path: same role gate and style guard as a full
+			// rewrite, so an edit cannot slip past a check a replace runs.
 			const result = await writeCustomPrompt(db, wsManager, {
 				teamId,
 				content: edited.content,

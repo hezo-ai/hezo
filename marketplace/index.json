@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 38,
+			"version": 39,
 			"roster_count": 10,
-			"latest_notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and skips any scoping question an open task already answers."
+			"latest_notes": "The Captain's team coherence review now opens only when the roster changes. An edit to a system prompt, a role description or the Custom Prompt no longer opens one."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 28,
+			"version": 29,
 			"roster_count": 7,
-			"latest_notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and asks the admin only what no open task already asks."
+			"latest_notes": "The Captain's team coherence review now opens only when the roster changes. An edit to a system prompt, a role description or the Custom Prompt no longer opens one."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 30,
+			"version": 31,
 			"roster_count": 6,
-			"latest_notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and asks the admin only what no open task already asks, such as the stocks to watch."
+			"latest_notes": "The Captain's team coherence review now opens only when the roster changes. An edit to a system prompt, a role description or the Custom Prompt no longer opens one."
 		}
 	]
 }

@@ -28,8 +28,8 @@ customPromptRoutes.patch('/projects/:projectId/custom-prompt', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	// Shared with the MCP tool so the role gate, the style guard and the coherence
-	// review can never apply on one path and not the other.
+	// Shared with the MCP tool so the role gate and the style guard can never
+	// apply on one path and not the other.
 	const result = await writeCustomPrompt(db, c.get('wsManager'), {
 		teamId,
 		content: body.content,

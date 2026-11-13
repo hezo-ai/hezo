@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 39,
+			"notes": "The Captain's team coherence review now opens only when the roster changes. An edit to a system prompt, a role description or the Custom Prompt no longer opens one."
+		},
+		{
 			"version": 38,
 			"notes": "The Captain's planning task now starts after the CEO's starter task suggestions. The Captain reads the board first and skips any scoping question an open task already answers."
 		},

@@ -298,13 +298,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id }`, or `{ error }` if denied, if the agent is not in the team, or if the prompt would hold more than 20 Learned Rules and more than it held before. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review or only the Learned Rules section changed.',
+			'`{ applied: true, document_id }`, or `{ error }` if denied, if the agent is not in the team, or if the prompt would hold more than 20 Learned Rules and more than it held before. A revision snapshot is stored so the admin can restore previous versions.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	update_agent_system_prompts: {
 		category: 'Agent prompts & context',
 		returns:
-			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). An item over the Learned Rules cap fails on its own. Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising every change to more than the Learned Rules section, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
+			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). An item over the Learned Rules cap fails on its own. Each applied change stores its own revision. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	get_project_custom_prompt: {
@@ -315,13 +315,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_project_custom_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale - prefer edit_project_custom_prompt to change part of it, so a rewrite cannot drop guidance you meant to keep. A revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
+			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale - prefer edit_project_custom_prompt to change part of it, so a rewrite cannot drop guidance you meant to keep. A revision snapshot is stored so the admin can restore previous versions.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	edit_project_custom_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ edited: true, document_id, replacements, length, hunk }` - `hunk` is the applied change with surrounding context and `length` the new size, so you can confirm what landed without reading the Custom Prompt back. Returns `{ error }` if there is no Custom Prompt yet (author the first version with update_project_custom_prompt), or if `old_string` is absent, unchanged, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over update_project_custom_prompt for any change to existing guidance: the argument scales with the edit rather than the whole prompt, so a rewrite cannot silently drop a convention. Records a revision and files a team-coherence review on a real change, exactly as a full replace does.',
+			'`{ edited: true, document_id, replacements, length, hunk }` - `hunk` is the applied change with surrounding context and `length` the new size, so you can confirm what landed without reading the Custom Prompt back. Returns `{ error }` if there is no Custom Prompt yet (author the first version with update_project_custom_prompt), or if `old_string` is absent, unchanged, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over update_project_custom_prompt for any change to existing guidance: the argument scales with the edit rather than the whole prompt, so a rewrite cannot silently drop a convention. Records a revision, exactly as a full replace does.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	set_agent_name: {
@@ -372,7 +372,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	set_agent_summaries: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. Files a single team-coherence review for the whole batch rather than one per agent.',
+			'`{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. A bad agent_id fails only its own item; the rest of the batch still applies.',
 		auth: 'Any agent or the admin in the same team (the Captain is the expected caller).',
 	},
 	set_agent_reports_to: {

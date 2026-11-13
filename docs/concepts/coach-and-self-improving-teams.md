@@ -34,8 +34,8 @@ and looks for patterns in it.
 1. **A task is completed.** When a task is marked **Done** - in any project, in any
    team - the Coach is woken automatically with that task's full history. If that wake is ever
    missed, the Coach picks the task up on its own heartbeat, so a completed task is not left
-   unreviewed. The one exception is a team coherence review: it checks the Coach's own prompt
-   changes, so the Coach does not review it.
+   unreviewed. The one exception is a team coherence review: it audits the prompts the Coach
+   writes, so the Coach does not review it.
 2. **It reviews the whole thread.** The Coach reads the comments and the agents' work
    end to end, noting where the work went wrong: work that got sent back, an agent that
    received corrective feedback or made a wrong assumption, an approach that was tried and
@@ -107,8 +107,6 @@ The Coach is deliberately conservative about what it writes:
   rule catches a problem. Each agent holds at most 20 learned rules. Hezo refuses a change
   that would take an agent past 20, and an agent already past 20 can only be trimmed, so the
   Coach merges or removes a rule before it adds another.
-- **Rule changes stay small** - a change to an agent's learned rules alone does not start a
-  team coherence review, because the agent's own instructions are unchanged.
 - **No duplicates** - it reads an agent's current prompt first and skips anything already
   covered.
 - **When in doubt, it skips** - a false lesson is worse than a missed one, and a task
