@@ -29,15 +29,17 @@ export const COHERENCE_LABEL_JSON = JSON.stringify([COHERENCE_LABEL]);
 /** Heading under which each triggering change is recorded on the coherence ticket. */
 const COHERENCE_CHANGES_HEADER = '## Changes that triggered this review';
 
+/**
+ * Why a coherence review is filed: the team was set up or its roster changed. An edit
+ * to an agent's system prompt or role description, or to the project Custom Prompt,
+ * files no review.
+ */
 export type TeamCoherenceReviewReason =
 	| 'initial'
 	| 'template_applied'
 	| 'agent_hired'
 	| 'agent_removed'
 	| 'reports_to_changed'
-	| 'prompt_updated'
-	| 'role_updated'
-	| 'custom_prompt_updated'
 	| 'enabled_changed';
 
 /** Each review reason in plain words, for the summary a person reads above the technical details. */
@@ -47,9 +49,6 @@ const COHERENCE_REASON_TEXT: Record<TeamCoherenceReviewReason, string> = {
 	agent_hired: 'an agent joined it',
 	agent_removed: 'an agent left it',
 	reports_to_changed: 'a reporting line changed',
-	prompt_updated: "an agent's instructions changed",
-	role_updated: "an agent's role changed",
-	custom_prompt_updated: "the project's custom instructions changed",
 	enabled_changed: 'an agent was turned on or off',
 };
 
@@ -443,9 +442,8 @@ export async function enqueueTeamCoherenceReviewTask(
 		return existing;
 	}
 
-	// Reactive reviews (hire, template-apply, prompt/summary changes) auto-start by
-	// default. Only the CEO's create_project path passes autoStart=false, leaving the
-	// ticket unassigned for the CEO to draft then kick off via `start_team_setup`.
+	// Reactive reviews (roster changes) auto-start by default. Only the CEO's
+	// create_project path passes autoStart=false, leaving the ticket unassigned for the CEO to draft then kick off via `start_team_setup`.
 	const autoStart = opts.autoStart ?? true;
 	// Initial setup stays owned by the CEO; reactive coherence reviews are owned by the
 	// team's own Captain (falling back to the CEO for HQ / any team without a Captain).

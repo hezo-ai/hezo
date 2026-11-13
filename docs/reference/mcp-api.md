@@ -856,7 +856,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | `new_system_prompt` | `string` | Yes | The full updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Read the current prompt with get_agent_system_prompt(placeholders=false) first so the round-trip is safe. |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
-**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied, if the agent is not in the team, or if the prompt would hold more than 20 Learned Rules and more than it held before. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed unless the calling run is working the team coherence review or only the Learned Rules section changed.
+**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied, if the agent is not in the team, or if the prompt would hold more than 20 Learned Rules and more than it held before. A revision snapshot is stored so the admin can restore previous versions.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -864,7 +864,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 
 _Write tool._
 
-Apply system prompt changes to MULTIPLE agents in one call - the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises every update changing more than the Learned Rules section, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to 50 at once.
+Apply system prompt changes to MULTIPLE agents in one call - the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Prefer this over calling update_agent_system_prompt in a loop. Up to 50 at once.
 
 **Parameters:**
 
@@ -873,7 +873,7 @@ Apply system prompt changes to MULTIPLE agents in one call - the preferred way w
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `updates` | `object[]` | Yes | Up to 50 prompt updates. |
 
-**Returns:** Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). An item over the Learned Rules cap fails on its own. Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising every change to more than the Learned Rules section, unless the calling run is working the team coherence review. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
+**Returns:** Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). An item over the Learned Rules cap fails on its own. Each applied change stores its own revision. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -905,7 +905,7 @@ Replace this project's Custom Prompt - the project-wide instruction block (the p
 | `content` | `string` | Yes | The full new Custom Prompt content (Markdown). Replaces the current value entirely - include the existing guidance you want to keep. |
 | `change_summary` | `string` | No | Short summary of what changed and why (stored on the revision). |
 
-**Returns:** `{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale - prefer edit_project_custom_prompt to change part of it, so a rewrite cannot drop guidance you meant to keep. A revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.
+**Returns:** `{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale - prefer edit_project_custom_prompt to change part of it, so a rewrite cannot drop guidance you meant to keep. A revision snapshot is stored so the admin can restore previous versions.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -913,7 +913,7 @@ Replace this project's Custom Prompt - the project-wide instruction block (the p
 
 _Write tool._
 
-Replace one span of this project's Custom Prompt, leaving the rest untouched. Prefer this over update_project_custom_prompt for any change to existing guidance: it sends only the text you are changing, so a rewrite cannot silently drop a convention you meant to keep, and the argument stays proportional to the edit rather than to the whole prompt. `old_string` must match the current text EXACTLY, including indentation and line breaks: call get_project_custom_prompt first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the new length, so you can confirm what landed without reading it back. Records a revision, and files a team-coherence review when the content really changed. Only callable by the CEO, Coach, or the project's Captain.
+Replace one span of this project's Custom Prompt, leaving the rest untouched. Prefer this over update_project_custom_prompt for any change to existing guidance: it sends only the text you are changing, so a rewrite cannot silently drop a convention you meant to keep, and the argument stays proportional to the edit rather than to the whole prompt. `old_string` must match the current text EXACTLY, including indentation and line breaks: call get_project_custom_prompt first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the new length, so you can confirm what landed without reading it back. Records a revision. Only callable by the CEO, Coach, or the project's Captain.
 
 **Parameters:**
 
@@ -925,7 +925,7 @@ Replace one span of this project's Custom Prompt, leaving the rest untouched. Pr
 | `replace_all` | `boolean` | No | Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous. |
 | `change_summary` | `string` | No | Short summary of what changed and why (stored on the revision). |
 
-**Returns:** `{ edited: true, document_id, replacements, length, hunk }` - `hunk` is the applied change with surrounding context and `length` the new size, so you can confirm what landed without reading the Custom Prompt back. Returns `{ error }` if there is no Custom Prompt yet (author the first version with update_project_custom_prompt), or if `old_string` is absent, unchanged, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over update_project_custom_prompt for any change to existing guidance: the argument scales with the edit rather than the whole prompt, so a rewrite cannot silently drop a convention. Records a revision and files a team-coherence review on a real change, exactly as a full replace does.
+**Returns:** `{ edited: true, document_id, replacements, length, hunk }` - `hunk` is the applied change with surrounding context and `length` the new size, so you can confirm what landed without reading the Custom Prompt back. Returns `{ error }` if there is no Custom Prompt yet (author the first version with update_project_custom_prompt), or if `old_string` is absent, unchanged, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over update_project_custom_prompt for any change to existing guidance: the argument scales with the edit rather than the whole prompt, so a rewrite cannot silently drop a convention. Records a revision, exactly as a full replace does.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
@@ -1047,7 +1047,7 @@ Save short human-readable summaries for MULTIPLE agents in one call (max 50) - t
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `updates` | `object[]` | Yes | Up to 50 summary updates. |
 
-**Returns:** `{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. Files a single team-coherence review for the whole batch rather than one per agent.
+**Returns:** `{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. A bad agent_id fails only its own item; the rest of the batch still applies.
 
 **Authorization:** Any agent or the admin in the same team (the Captain is the expected caller).
 

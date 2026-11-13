@@ -2,6 +2,7 @@ import { checkPromptStyle, MAX_TASK_SUGGESTIONS_PER_TASK, splitSummaryDetails } 
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import {
 	ACTIVE_ADMIN_MENTION_RULE,
@@ -25,6 +26,7 @@ let token: string;
 let teamId: string;
 let ceoMemberId: string;
 let captainMemberId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -40,7 +42,8 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Description Tasks Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
 	// Coordination tasks live in the team's own project, owned by the instance CEO.
-	await createTestProject(db, teamId, { name: 'Description Tasks Project' });
+	const projectRes = await createTestProject(db, teamId, { name: 'Description Tasks Project' });
+	projectSlug = (await projectRes.json()).data.slug;
 
 	ceoMemberId = await instanceCeoId(db);
 	const captain = await db.query<{ id: string }>(
@@ -260,7 +263,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		const first = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [first]);
 
-		const second = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated');
+		const second = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_removed');
 		expect(second).not.toBe(first);
 		expect(second).toBeTruthy();
 	});
@@ -281,8 +284,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 	});
 
 	it('records the change summary under a "Changes that triggered this review" section', async () => {
-		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
-			changeSummary: 'Project Custom Prompt updated: added a house style rule',
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the designer.',
 		});
 		const task = await db.query<{ description: string }>(
 			`SELECT description FROM tasks WHERE id = $1`,
@@ -290,16 +293,16 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		);
 		const body = task.rows[0].description;
 		expect(body).toContain('## Changes that triggered this review');
-		expect(body).toContain('custom_prompt_updated');
-		expect(body).toContain('added a house style rule');
+		expect(body).toContain('reports_to_changed');
+		expect(body).toContain('Reporting line changed for the designer.');
 	});
 
 	it('coalesces a later change onto the open task and appends it to the description', async () => {
-		const first = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Updated the engineer prompt',
+		const first = await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the engineer.',
 		});
-		const second = await enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
-			changeSummary: 'Updated the Custom Prompt',
+		const second = await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the designer.',
 		});
 		expect(second).toBe(first);
 
@@ -309,8 +312,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		);
 		const body = task.rows[0].description;
 		// Both changes are recorded on the single (coalesced) ticket.
-		expect(body).toContain('Updated the engineer prompt');
-		expect(body).toContain('Updated the Custom Prompt');
+		expect(body).toContain('Reporting line changed for the engineer.');
+		expect(body).toContain('Reporting line changed for the designer.');
 
 		// The assignee (the Captain, for a reactive review) is re-woken so the
 		// accumulated change gets reviewed.
@@ -323,8 +326,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 	});
 
 	it('does not re-file or re-wake the review when the run working it makes the change', async () => {
-		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Updated the engineer prompt',
+		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the engineer.',
 		})) as string;
 		const run = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
@@ -336,9 +339,9 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			[review],
 		);
 
-		// The Captain's review run rewrites a prompt as step 4 tells it to.
-		const result = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Rewrote the designer prompt during the review',
+		// The Captain's review run fixes a reporting line as step 4 tells it to.
+		const result = await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Fixed the designer reporting line during the review',
 			byRunId: run.rows[0].id,
 		});
 
@@ -347,7 +350,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			'SELECT description FROM tasks WHERE id = $1',
 			[review],
 		);
-		expect(task.rows[0].description).not.toContain('Rewrote the designer prompt');
+		expect(task.rows[0].description).not.toContain('Fixed the designer reporting line');
 		const wakeupsAfter = await db.query<{ n: number }>(
 			`SELECT count(*)::int AS n FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
 			[review],
@@ -363,8 +366,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 	});
 
 	it('still files a change made by a run on another task', async () => {
-		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Updated the engineer prompt',
+		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the engineer.',
 		})) as string;
 		const run = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at)
@@ -372,8 +375,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			[teamId, captainMemberId],
 		);
 
-		const result = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Coach added a learned rule',
+		const result = await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the designer.',
 			byRunId: run.rows[0].id,
 		});
 
@@ -382,7 +385,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			'SELECT description FROM tasks WHERE id = $1',
 			[review],
 		);
-		expect(task.rows[0].description).toContain('Coach added a learned rule');
+		expect(task.rows[0].description).toContain('Reporting line changed for the designer.');
 		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
 	});
 
@@ -396,8 +399,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		);
 		const [filer, later] = runs.rows.map((r) => r.id);
 
-		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Coach added a learned rule',
+		const review = (await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the engineer.',
 			byRunId: filer,
 		})) as string;
 		const task = await db.query<{ created_by_run_id: string | null }>(
@@ -415,8 +418,8 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			).rows.map((r) => r.created_by_run_id);
 		expect(await wakeFor()).toEqual([filer]);
 
-		await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
-			changeSummary: 'Coach reworded a learned rule',
+		await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+			changeSummary: 'Reporting line changed for the designer.',
 			byRunId: later,
 		});
 		expect(await wakeFor()).toEqual([later]);
@@ -426,6 +429,85 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			review,
 		]);
 		await db.query('DELETE FROM heartbeat_runs WHERE id = ANY($1::uuid[])', [[filer, later]]);
+	});
+});
+
+describe('which team changes file a coherence review', () => {
+	const reviews = async () => {
+		await waitForBackground();
+		const r = await db.query<{ id: string; description: string }>(
+			`SELECT id, description FROM tasks
+			 WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb`,
+			[teamId],
+		);
+		return r.rows;
+	};
+	const agentId = async (slug: string) =>
+		(
+			await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.slug = $1 AND m.team_id = $2`,
+				[slug, teamId],
+			)
+		).rows[0].id;
+	const patch = (path: string, body: Record<string, unknown>) =>
+		app.request(`/api/projects/${projectSlug}${path}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+
+	it("files none when the admin edits an agent's system prompt or role description", async () => {
+		const engineer = await agentId('engineer');
+		const prompt = await patch(`/agents/${engineer}`, {
+			system_prompt: 'You are the engineer. Build the change the architect designed.',
+			system_prompt_change_summary: 'Admin prompt edit',
+		});
+		expect(prompt.status).toBe(200);
+		const role = await patch(`/agents/${engineer}`, {
+			role_description: 'Builds and ships the changes the architect designs.',
+		});
+		expect(role.status).toBe(200);
+		expect(await reviews()).toEqual([]);
+	});
+
+	it('files none when the admin edits the project Custom Prompt', async () => {
+		const res = await patch('/custom-prompt', {
+			content: 'Write every commit message in the imperative mood.',
+			change_summary: 'Admin Custom Prompt edit',
+		});
+		expect(res.status).toBeLessThan(300);
+		expect(await reviews()).toEqual([]);
+	});
+
+	it('does not record a prompt edit on a review that is already open', async () => {
+		const open = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
+		await patch(`/agents/${await agentId('engineer')}`, {
+			system_prompt: 'You are the engineer. Ship small changes behind tests.',
+			system_prompt_change_summary: 'Edit while a review is open',
+		});
+		await patch('/custom-prompt', {
+			content: 'Keep every pull request under four hundred lines.',
+			change_summary: 'Custom Prompt edit while a review is open',
+		});
+		const rows = await reviews();
+		expect(rows.map((r) => r.id)).toEqual([open]);
+		expect(rows[0].description).not.toContain('while a review is open');
+	});
+
+	it('still files one when the admin changes a reporting line', async () => {
+		const engineer = await agentId('engineer');
+		const current = await db.query<{ reports_to: string | null }>(
+			'SELECT reports_to FROM member_agents WHERE id = $1',
+			[engineer],
+		);
+		const manager =
+			current.rows[0].reports_to === captainMemberId ? await agentId('architect') : captainMemberId;
+		const res = await patch(`/agents/${engineer}`, { reports_to: manager });
+		expect(res.status).toBe(200);
+		const rows = await reviews();
+		expect(rows).toHaveLength(1);
+		expect(rows[0].description).toContain('reports_to_changed');
 	});
 });
 

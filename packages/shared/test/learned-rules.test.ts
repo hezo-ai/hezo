@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	countLearnedRules,
 	learnedRulesCapError,
-	learnedRulesOnlyChange,
 	MAX_LEARNED_RULES,
 	splitLearnedRules,
 } from '../src/documents/learned-rules';
@@ -23,14 +22,6 @@ describe('splitLearnedRules', () => {
 		const { body, rules } = splitLearnedRules(withRules(2));
 		expect(body).toBe(ROLE.trimEnd());
 		expect(rules.startsWith('## Learned Rules')).toBe(true);
-	});
-});
-
-describe('learnedRulesOnlyChange', () => {
-	it('is true when only the rules moved, false when the role text did', () => {
-		expect(learnedRulesOnlyChange(withRules(2), withRules(3))).toBe(true);
-		expect(learnedRulesOnlyChange(withRules(2), withRules(2, `${ROLE}- New duty.\n`))).toBe(false);
-		expect(learnedRulesOnlyChange(withRules(2), withRules(2))).toBe(false);
 	});
 });
 

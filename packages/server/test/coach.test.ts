@@ -661,8 +661,8 @@ describe('the agent system-prompt ceiling', () => {
 });
 
 // The cap bounds what the Coach appends, so it counts only the rules under the
-// heading and lets an overfull section be written down towards it. An edit to the
-// rules alone changes no duties, so it files no team coherence review.
+// heading and lets an overfull section be written down towards it. No prompt edit
+// files a team coherence review, whether it touches the rules or the duties.
 describe('the Learned Rules cap', () => {
 	const body = 'You are the architect. Design the change before anyone builds it.';
 	const withRules = (count: number, tag: string) =>
@@ -698,6 +698,14 @@ describe('the Learned Rules cap', () => {
 		);
 		return r.rows.length;
 	};
+	const openReviews = async () => {
+		await waitForBackground();
+		const r = await db.query<{ id: string }>(
+			`SELECT id FROM tasks WHERE labels ? $1 AND status NOT IN ('done', 'cancelled') ORDER BY id`,
+			[COHERENCE_LABEL],
+		);
+		return r.rows.map((row) => row.id);
+	};
 
 	it('refuses a write that takes the rules past the cap', async () => {
 		expect((await write(withRules(MAX_LEARNED_RULES, 'cap'), 'cap at the limit')).applied).toBe(
@@ -718,17 +726,39 @@ describe('the Learned Rules cap', () => {
 		expect((await write(withRules(25, 'overfull'), 'overfull trimmed')).applied).toBe(true);
 	});
 
-	it('files no coherence review for an edit to the rules alone', async () => {
+	it('files no coherence review for an edit to the rules or to the duties', async () => {
+		const before = await openReviews();
 		await write(withRules(3, 'review'), 'review baseline');
 		expect((await write(withRules(4, 'review'), 'review rules only')).applied).toBe(true);
-		expect(await reviewMentions('review rules only')).toBe(0);
-
 		const reworded = withRules(4, 'review').replace(body, `${body} Keep designs short.`);
 		expect((await write(reworded, 'review duties changed')).applied).toBe(true);
-		expect(await reviewMentions('review duties changed')).toBe(1);
+
+		expect(await reviewMentions('review rules only')).toBe(0);
+		expect(await reviewMentions('review duties changed')).toBe(0);
+		expect(await openReviews()).toEqual(before);
 	});
 
-	it('applies both kinds in a batch but reviews only the change to duties', async () => {
+	it('files no coherence review for the Custom Prompt tools', async () => {
+		const before = await openReviews();
+		const replaced = await callTool('update_project_custom_prompt', {
+			content: 'Name the file each change touched.',
+			change_summary: 'custom prompt replaced',
+		});
+		expect(replaced.applied).toBe(true);
+		const edited = await callTool('edit_project_custom_prompt', {
+			old_string: 'Name the file',
+			new_string: 'Always name the file',
+			change_summary: 'custom prompt edited',
+		});
+		expect(edited.edited).toBe(true);
+
+		expect(await reviewMentions('custom prompt replaced')).toBe(0);
+		expect(await reviewMentions('custom prompt edited')).toBe(0);
+		expect(await openReviews()).toEqual(before);
+	});
+
+	it('applies both kinds in a batch and files no coherence review', async () => {
+		const before = await openReviews();
 		await write(withRules(2, 'batch'), 'batch baseline');
 		const result = await callTool('update_agent_system_prompts', {
 			updates: [
@@ -752,7 +782,8 @@ describe('the Learned Rules cap', () => {
 		expect(result.applied_count).toBe(2);
 		expect(result.results[2].error).toContain('at most');
 		expect(await reviewMentions('batch rules only')).toBe(0);
-		expect(await reviewMentions('batch duties changed')).toBe(1);
+		expect(await reviewMentions('batch duties changed')).toBe(0);
+		expect(await openReviews()).toEqual(before);
 	});
 });
 

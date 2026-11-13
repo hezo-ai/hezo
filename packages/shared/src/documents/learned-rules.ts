@@ -23,11 +23,6 @@ export function countLearnedRules(prompt: string): number {
 	return (splitLearnedRules(prompt).rules.match(/^[-*] /gm) ?? []).length;
 }
 
-/** Whether an edit changed only the Learned Rules section, leaving the role's own text alone. */
-export function learnedRulesOnlyChange(before: string, after: string): boolean {
-	return before !== after && splitLearnedRules(before).body === splitLearnedRules(after).body;
-}
-
 /**
  * Why a prompt write cannot be stored, or null when it can: it would leave more
  * than {@link MAX_LEARNED_RULES} rules, and more than the prompt had before. A
