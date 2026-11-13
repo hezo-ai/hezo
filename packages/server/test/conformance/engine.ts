@@ -421,6 +421,9 @@ export function describeEngineConformance(
 			expect(stopped?.State.Running).toBe(false);
 			expect(stopped?.State.Transitioning ?? false).toBe(false);
 			await engine.startContainer(containerId);
+			// Running when the call resolves: the pool hands a resumed container to
+			// a run at that moment.
+			expect((await engine.inspectContainer(containerId))?.State.Running).toBe(true);
 
 			const read = await engine.execCreate(containerId, {
 				Cmd: ['sh', '-c', `cat ${marker}`],

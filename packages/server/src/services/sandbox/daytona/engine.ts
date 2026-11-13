@@ -235,6 +235,12 @@ export class DaytonaEngine implements ContainerEngine {
 			timeoutMs: STOP_WAIT_TIMEOUT_MS,
 			pollMs: STOP_WAIT_POLL_MS,
 		},
+		/** The same, for confirming a start; see {@link DAYTONA_START_ATTEMPTS}. */
+		private readonly startWait: { dropGraceMs: number; timeoutMs: number; pollMs: number } = {
+			dropGraceMs: START_DROP_GRACE_MS,
+			timeoutMs: SETTLE_TIMEOUT_MS,
+			pollMs: SETTLE_POLL_MS,
+		},
 	) {}
 
 	// ---- lifecycle ---------------------------------------------------------
@@ -350,9 +356,59 @@ export class DaytonaEngine implements ContainerEngine {
 		// sandbox is an error there, so the state check is required rather than
 		// an optimization.
 		if (settled && isRunning(settled.state)) return;
-		await this.client.start(containerId);
-		this.sandboxes.delete(containerId);
-		await this.settle(containerId);
+		// The caller hands the container to a run the moment this resolves, so it
+		// resolves only once the sandbox is running. Measured against the live API:
+		// a start answered 200 can still be dropped, leaving the sandbox `stopped`
+		// with `desiredState: stopped` indefinitely (one stop-then-start in four).
+		// A dropped start is asked again, bounded; one never honoured fails loudly.
+		let last = settled;
+		for (let attempt = 1; attempt <= DAYTONA_START_ATTEMPTS; attempt++) {
+			if (attempt > 1) {
+				log.warn(
+					`Daytona dropped the start of sandbox ${containerId} (state "${last?.state}", ` +
+						`desired "${last?.desiredState ?? 'unknown'}"); asking again, attempt ${attempt} of ${DAYTONA_START_ATTEMPTS}`,
+				);
+			}
+			await this.client.start(containerId);
+			this.sandboxes.delete(containerId);
+			const outcome = await this.waitForStart(containerId);
+			last = outcome.sandbox;
+			if (outcome.kind === 'started') return;
+			if (outcome.kind !== 'dropped') break;
+		}
+		throw new Error(
+			`Daytona sandbox ${containerId} did not start (last state "${last?.state ?? 'gone'}", ` +
+				`desired "${last?.desiredState ?? 'unknown'}"${last?.errorReason ? `, reason: ${last.errorReason}` : ''}). ` +
+				'Check the sandbox in the Daytona dashboard, and the account quota if it will not start there either.',
+		);
+	}
+
+	/**
+	 * Wait, bounded, for a start the provider has accepted to bring the sandbox up.
+	 *
+	 * `dropped` means the sandbox is at rest and the provider is not moving it, so
+	 * asking again is safe. Anything still moving, or still wanting `started`, is
+	 * waited on instead: a start asked of a sandbox mid-transition answers 409. The
+	 * grace covers the beat between an accepted start and the provider acting on
+	 * it, which is what an absent `desiredState` leaves as the only signal.
+	 */
+	private async waitForStart(containerId: string): Promise<{
+		kind: 'started' | 'dropped' | 'failed' | 'timeout';
+		sandbox: DaytonaSandbox | null;
+	}> {
+		const begun = Date.now();
+		const deadline = begun + this.startWait.timeoutMs;
+		for (;;) {
+			const sandbox = await this.fetch(containerId, { refresh: true });
+			if (sandbox && isRunning(sandbox.state)) return { kind: 'started', sandbox };
+			if (!sandbox || isFailed(sandbox.state)) return { kind: 'failed', sandbox };
+			const atRest = isSettled(sandbox.state) && sandbox.desiredState !== 'started';
+			if (atRest && Date.now() - begun >= this.startWait.dropGraceMs) {
+				return { kind: 'dropped', sandbox };
+			}
+			if (Date.now() >= deadline) return { kind: 'timeout', sandbox };
+			await new Promise((resolve) => setTimeout(resolve, this.startWait.pollMs));
+		}
 	}
 
 	async stopContainer(containerId: string): Promise<void> {
@@ -948,6 +1004,23 @@ const DAYTONA_IDLE_STOP_MIN = 10;
  */
 const SETTLE_TIMEOUT_MS = 180_000;
 const SETTLE_POLL_MS = 500;
+
+/**
+ * How many times a start is asked for before `startContainer` gives up.
+ *
+ * Measured against the live API: one stop-then-start in four answered 200 and
+ * never moved the sandbox, and asking again moved it. Three attempts turn that
+ * into a fault that has to repeat three times running before a run sees it.
+ */
+export const DAYTONA_START_ATTEMPTS = 3;
+
+/**
+ * How long a sandbox may sit at rest after an accepted start before the start
+ * counts as dropped. A warm start is under way within a second or so; this is
+ * several times that, and a dropped start stayed put for the whole two minutes
+ * it was watched, so the grace only ever delays the retry, never misjudges it.
+ */
+const START_DROP_GRACE_MS = 5_000;
 
 /**
  * How long a stop or removal is waited on before the call fails, and how often

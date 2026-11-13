@@ -269,6 +269,14 @@ export interface ContainerEngine {
 		name: string,
 		config: ContainerConfig,
 	): Promise<{ Id: string; Warnings: string[] }>;
+	/**
+	 * Resolves only once the container is **running** - not when the backend
+	 * accepted the request. The caller hands the container to a run the moment
+	 * this resolves, so a start that returned on a container still at rest starts
+	 * that run on a stopped container. A backend whose start is asynchronous waits
+	 * for it, bounded, and rejects with an error naming the container when it does
+	 * not come up.
+	 */
 	startContainer(containerId: string): Promise<void>;
 	/**
 	 * Resolves only once the container has **finished** stopping - not when the

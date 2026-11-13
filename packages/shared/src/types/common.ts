@@ -1142,6 +1142,33 @@ export const HeartbeatRunStatus = {
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
 
 /**
+ * Why a run ended because its container did, stored verbatim as the run's
+ * `error` and read back by the web to say it in words.
+ *
+ * - `container_error`: the container failed, or Hezo stopped it for using more
+ *   memory than its limit.
+ * - `container_stopped`: Hezo stopped or removed the container on purpose - an
+ *   idle or reclaim suspend, an operator destroy, a teardown.
+ * - `container_lost`: the container stopped and nothing in Hezo asked it to - a
+ *   provider reclaiming or dropping a sandbox, a daemon restart. The run did not
+ *   get a fair attempt, so it spends the bounded lost-run retry budget rather
+ *   than ending the work.
+ */
+export const ContainerExitReason = {
+	Error: 'container_error',
+	Stopped: 'container_stopped',
+	Lost: 'container_lost',
+} as const;
+export type ContainerExitReason = (typeof ContainerExitReason)[keyof typeof ContainerExitReason];
+
+export const CONTAINER_EXIT_REASONS: readonly ContainerExitReason[] =
+	Object.values(ContainerExitReason);
+
+export function isContainerExitReason(value: unknown): value is ContainerExitReason {
+	return (CONTAINER_EXIT_REASONS as readonly unknown[]).includes(value);
+}
+
+/**
  * Classifies a heartbeat run.
  *
  * 'task' is the normal task-scoped run. The other two carry no task and look

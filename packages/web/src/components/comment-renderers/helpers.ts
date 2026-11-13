@@ -1,4 +1,4 @@
-import { HeartbeatRunStatus } from '@hezo/shared';
+import { ContainerExitReason, HeartbeatRunStatus, isContainerExitReason } from '@hezo/shared';
 import {
 	AlertTriangle,
 	ArrowRightLeft,
@@ -51,6 +51,28 @@ export function runStatusLabel(status: string): string {
 }
 
 /**
+ * The sentence each container exit reason is shown as. The server stores the
+ * reason as the run's whole `error`, so a reader would otherwise see the code.
+ */
+const CONTAINER_EXIT_REASON_KEYS: Record<ContainerExitReason, MessageKey> = {
+	[ContainerExitReason.Error]: 'comment.runExit.containerError',
+	[ContainerExitReason.Stopped]: 'comment.runExit.containerStopped',
+	[ContainerExitReason.Lost]: 'comment.runExit.containerLost',
+};
+
+type Translate = (key: MessageKey) => string;
+
+/**
+ * A run's `error` in words: a container exit reason becomes its sentence, and
+ * anything else is already written for a reader and passes through. The stored
+ * code stays on the row, where the expanded error block and the run page show it.
+ */
+export function runErrorText(error: string, t: Translate): string {
+	const code = error.trim();
+	return isContainerExitReason(code) ? t(CONTAINER_EXIT_REASON_KEYS[code]) : error;
+}
+
+/**
  * The one-line form of a run's `error`, for a place with a line to spare.
  *
  * The stored value is multi-line by design - a runner failure carries a stack,
@@ -60,9 +82,9 @@ export function runStatusLabel(status: string): string {
  */
 export const RUN_ERROR_SUMMARY_MAX_CHARS = 180;
 
-export function runErrorSummary(error: string | null | undefined): string | null {
+export function runErrorSummary(error: string | null | undefined, t: Translate): string | null {
 	if (!error) return null;
-	const first = error.split('\n', 1)[0].trim();
+	const first = runErrorText(error.split('\n', 1)[0].trim(), t);
 	if (!first) return null;
 	return first.length > RUN_ERROR_SUMMARY_MAX_CHARS
 		? `${first.slice(0, RUN_ERROR_SUMMARY_MAX_CHARS).trimEnd()}...`

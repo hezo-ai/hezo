@@ -101,6 +101,11 @@ the one that has it.
   does not fail a container that is starting up, a project resuming, or a run in progress. If
   it lasts longer than that the operation fails with the status Daytona returned, and the
   container list shows the project's real state on the next refresh.
+- **Daytona can accept a start and then not carry it out.** The sandbox stays stopped even
+  though the request succeeded. Hezo checks that a resumed sandbox is actually running
+  before it hands it to a run, and tries the start up to three times in all. If the sandbox
+  still does not start, the run fails with a message that names the sandbox and its state,
+  and the sandbox is worth a look in the Daytona dashboard.
 - **Suspended sandboxes still count.** A suspended container holds its memory and disk
   against your account quota. On a small plan, idle projects can hold the whole allowance.
 

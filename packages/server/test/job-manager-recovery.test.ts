@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import {
 	AgentRuntimeStatus,
+	ContainerExitReason,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	WakeupStatus,
@@ -8,8 +9,10 @@ import {
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { waitForBackground } from '../src/lib/background';
 import { ContainerLogStreamer } from '../src/services/container-logs';
+import { type ContainerDeps, stopContainerGracefully } from '../src/services/containers';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { MAX_RETRIES } from '../src/services/orphan-detector';
 import {
 	authHeader,
 	createStubDocker,
@@ -41,6 +44,7 @@ interface JmInternals {
 	sweepStaleDispatches(): Promise<void>;
 	detectOrphanedRuns(): Promise<void>;
 	syncContainerStatuses(): Promise<void>;
+	buildContainerDeps(): ContainerDeps;
 	archiveInboxItems(): Promise<void>;
 	checkForUpdate(): Promise<void>;
 	runTelemetry(): Promise<void>;
@@ -728,6 +732,80 @@ describe('JobManager recovery & maintenance', () => {
 	});
 
 	describe('container status sync', () => {
+		/** A project whose named container reads running, with one running run on it. */
+		const seedRunOnContainer = async (containerId: string, priorRetries = 0) => {
+			const { db } = ctx;
+			await db.query(
+				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id <> $1',
+				[projectId],
+			);
+			await db.query(
+				`UPDATE projects SET container_status = 'running'::container_status, container_id = $2
+				 WHERE id = $1`,
+				[projectId, containerId],
+			);
+			return (
+				await db.query<{ id: string }>(
+					`INSERT INTO heartbeat_runs
+					   (team_id, member_id, task_id, status, started_at, container_id, process_loss_retry_count)
+					 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), $5, $6)
+					 RETURNING id`,
+					[teamId, agentId, taskId, HeartbeatRunStatus.Running, containerId, priorRetries],
+				)
+			).rows[0].id;
+		};
+
+		const stoppedOnTheBackend = () =>
+			createStubDocker({
+				inspectContainer: async (id: string) => ({
+					Id: id,
+					State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+					Config: { Image: 'stub' },
+				}),
+			});
+
+		const runRow = async (runId: string) =>
+			(
+				await ctx.db.query<{
+					status: string;
+					error: string | null;
+					process_loss_retry_count: number;
+				}>(
+					'SELECT status::text AS status, error, process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+					[runId],
+				)
+			).rows[0];
+
+		const orphanRetryCount = async () =>
+			(
+				await ctx.db.query<{ c: number }>(
+					`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+					 WHERE member_id = $1 AND status = $2::wakeup_status
+					   AND payload->>'reason' = 'orphan_retry' AND payload->>'task_id' = $3`,
+					[agentId, WakeupStatus.Queued, taskId],
+				)
+			).rows[0].c;
+
+		const lostRunApprovals = async () =>
+			(
+				await ctx.db.query<{ run_id: string }>(
+					`SELECT payload->>'run_id' AS run_id FROM approvals
+					 WHERE team_id = $1 AND status = 'pending' AND payload->>'type' = 'agent_error'`,
+					[teamId],
+				)
+			).rows.map((r) => r.run_id);
+
+		const resetProject = async () => {
+			await ctx.db.query(
+				"DELETE FROM approvals WHERE team_id = $1 AND payload->>'type' = 'agent_error'",
+				[teamId],
+			);
+			await ctx.db.query(
+				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1',
+				[projectId],
+			);
+		};
+
 		it('fails project runs and cancels live runs when a running container drops to stopped', async () => {
 			const { db } = ctx;
 			await db.query(
@@ -782,7 +860,10 @@ describe('JobManager recovery & maintenance', () => {
 			await (manager as unknown as JmInternals).syncContainerStatuses();
 			await waitForBackground();
 
-			expect(aborted).toBe('container_stopped');
+			// Nothing in Hezo stopped it, so the run is told it was lost, and the
+			// runner holding it spends the retry. This pass queues none of its own.
+			expect(aborted).toBe(ContainerExitReason.Lost);
+			expect(await orphanRetryCount()).toBe(0);
 			expect(manager.getLiveRunIds().has(run.rows[0].id)).toBe(false);
 			const runRow = await db.query<{ status: string }>(
 				'SELECT status::text AS status FROM heartbeat_runs WHERE id = $1',
@@ -800,6 +881,74 @@ describe('JobManager recovery & maintenance', () => {
 				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1',
 				[projectId],
 			);
+		});
+
+		// The incident: a provider dropped a sandbox's start, the run began on a
+		// stopped sandbox, and the sync failed it. Nothing in Hezo had stopped the
+		// container, so the work is retried rather than ended.
+		it('retries a run whose container stopped with nothing in Hezo asking', async () => {
+			const runId = await seedRunOnContainer('lost-box');
+			const manager = createJobManager({ docker: stoppedOnTheBackend() });
+
+			await internals(manager).syncContainerStatuses();
+			await waitForBackground();
+
+			expect(await runRow(runId)).toEqual({
+				status: HeartbeatRunStatus.Failed,
+				error: ContainerExitReason.Lost,
+				process_loss_retry_count: 1,
+			});
+			expect(await orphanRetryCount()).toBe(1);
+			expect(await lostRunApprovals()).toEqual([]);
+
+			manager.shutdown();
+			await resetProject();
+		});
+
+		it('escalates to a person once the lost-run budget is spent, instead of retrying forever', async () => {
+			// Each lap is the retry the lap before it queued, carrying the count the
+			// way a retried run inherits it.
+			const runIds: string[] = [];
+			for (let lap = 0; lap < MAX_RETRIES; lap++) {
+				await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+				const runId = await seedRunOnContainer(`lost-box-${lap}`, lap);
+				runIds.push(runId);
+				const manager = createJobManager({ docker: stoppedOnTheBackend() });
+				await internals(manager).syncContainerStatuses();
+				await waitForBackground();
+				manager.shutdown();
+
+				const last = lap === MAX_RETRIES - 1;
+				expect((await runRow(runId)).error).toBe(ContainerExitReason.Lost);
+				expect(await orphanRetryCount()).toBe(last ? 0 : 1);
+				expect(await lostRunApprovals()).toEqual(last ? [runId] : []);
+			}
+
+			await resetProject();
+		});
+
+		it('does not retry a run when Hezo stopped its container on purpose', async () => {
+			const runId = await seedRunOnContainer('suspended-box');
+			const docker = stoppedOnTheBackend();
+			const manager = createJobManager({ docker });
+			const deps = internals(manager).buildContainerDeps();
+
+			await stopContainerGracefully(deps, projectId, projectSlug, teamId, 'suspended-box');
+			// The sync that runs afterwards reads the status the stop wrote, so it
+			// sees no transition and adds nothing.
+			await internals(manager).syncContainerStatuses();
+			await waitForBackground();
+
+			expect(await runRow(runId)).toEqual({
+				status: HeartbeatRunStatus.Failed,
+				error: ContainerExitReason.Stopped,
+				process_loss_retry_count: 0,
+			});
+			expect(await orphanRetryCount()).toBe(0);
+			expect(await lostRunApprovals()).toEqual([]);
+
+			manager.shutdown();
+			await resetProject();
 		});
 
 		// The prod incident: a run parked on the credential lock (a live run with no

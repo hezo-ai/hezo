@@ -1,4 +1,6 @@
+import { ContainerExitReason } from '@hezo/shared';
 import { expect, test } from 'vitest';
+import en from '../src/lib/i18n/catalog/en.json';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 import { expandEventGroups } from './helpers/thread';
@@ -55,7 +57,15 @@ async function setup(
 	});
 }
 
-function runFailedComment(taskRowId: string, agentSlug: string, agentId: string): Comment {
+function runFailedComment(
+	taskRowId: string,
+	agentSlug: string,
+	agentId: string,
+	failure: { status: string; error: string } = {
+		status: 'timed_out',
+		error: 'The operation timed out.',
+	},
+): Comment {
 	return {
 		id: 'aaaa0000-0000-0000-0000-000000000001',
 		task_id: taskRowId,
@@ -63,8 +73,8 @@ function runFailedComment(taskRowId: string, agentSlug: string, agentId: string)
 		content: {
 			kind: 'run_failed',
 			run_id: FAILED_RUN_ID,
-			status: 'timed_out',
-			error: 'The operation timed out.',
+			status: failure.status,
+			error: failure.error,
 			member_id: agentId,
 			agent_slug: agentSlug,
 		},
@@ -106,4 +116,25 @@ test('run_failed comment shows the failure and agent link, without a Retry butto
 	);
 
 	expect(queryByTestId('retry-failed-run')).toBeNull();
+});
+
+test('run_failed comment says what a container exit reason means instead of printing its code', async () => {
+	const seeded: Seeded = { teamId: '', projectSlug: '', taskId: '', agentId: '', agentSlug: '' };
+
+	const { findByTestId, router, user } = await setup(seeded, ({ task, agent }) => [
+		runFailedComment(task.id, agent.slug, agent.id, {
+			status: 'failed',
+			error: ContainerExitReason.Stopped,
+		}),
+	]);
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+	await expandEventGroups(user);
+
+	const failureComment = await findByTestId('run-failed-comment', undefined, { timeout: 20_000 });
+	expect(failureComment.textContent ?? '').toContain(en['comment.runExit.containerStopped']);
+	expect(failureComment.textContent ?? '').not.toContain(ContainerExitReason.Stopped);
 });
