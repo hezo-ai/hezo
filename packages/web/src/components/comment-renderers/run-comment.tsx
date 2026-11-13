@@ -281,9 +281,9 @@ export function RunCommentBody({
 	// reason too ("the container it was on stopped", "server shut down while this
 	// run was in flight"), and that is exactly the sentence a reader is looking
 	// for. The colour follows the status; the presence does not.
-	const errorSummary = runErrorSummary(run?.error);
-	const errored = status === HeartbeatRunStatus.Failed || status === HeartbeatRunStatus.TimedOut;
 	const { t } = useI18n();
+	const errorSummary = runErrorSummary(run?.error, t);
+	const errored = status === HeartbeatRunStatus.Failed || status === HeartbeatRunStatus.TimedOut;
 	// Ticks live while the run is in flight; empty until it actually starts, so a
 	// queued run does not show a stopwatch for work that has not begun.
 	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);

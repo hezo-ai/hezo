@@ -2015,6 +2015,17 @@ and draining it with a bounded `tail -c`. On the streaming path that means stder
 as one chunk at the end rather than interleaved: the honest cost of a provider that merges
 the two.
 
+**A start is confirmed, not assumed.** `startContainer` resolves only once the sandbox reads
+`started`, because the pool hands a resumed container to a run the moment it returns. Measured
+against the live API, one stop-then-start in four answered `200` and never moved the sandbox:
+it stayed `stopped` with `desiredState: stopped` for the whole two minutes it was watched, the
+run began on a stopped sandbox, and the status sync failed it ten seconds later. The adapter
+waits for `started`; a sandbox still moving, or still wanting `started`, is waited on (a second
+start mid-transition answers 409), while one back at rest with nothing in flight after a short
+grace counts as a dropped start and is asked again, up to `DAYTONA_START_ATTEMPTS`. A start
+never honoured, or one that lands in a failed state, rejects with an error naming the sandbox
+and its state rather than returning as if it had started.
+
 **A transient gateway failure is retried inside the client, not surfaced.** Daytona's front
 door answers a bare nginx `502 Bad Gateway` from time to time, and the first non-2xx used to
 be final at every call site — so one blip during a create settle (which polls twice a second
@@ -2519,13 +2530,29 @@ exists for rows recorded before 049 and nothing else). Taking unclaimed runs the
 merely waiting for a credential whenever the surplus-idle pass suspends its project's *spare*
 container: on a managed backend the stop takes seconds, the status sync sees the engine say
 stopped while the row still says running, and the transition sweeps the waiter in on the null
-arm. That sync-versus-graceful-stop race still produces a transition (a stopped container is a
-fact whoever stopped it), and it is harmless for the reason above: nothing live is on an idle
-container. Handling a container's death by *project* is the shared-fate blast radius the pool
+arm. That sync-versus-graceful-stop race can still produce a transition, and it is harmless for
+the reason above: nothing live is on an idle container. Handling a container's death by *project* is the shared-fate blast radius the pool
 exists to remove - by project, an idle member being auto-stopped kills a run executing in a
 healthy sibling container. Two sources emit transitions in this one shape:
 `syncAllContainerStatuses` answers for the container `projects.container_id` names, and
 `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
+
+**The reason a run records says who stopped its container** (`ContainerExitReason`,
+`@hezo/shared`, stored as the run's whole `error`). `container_stopped` is Hezo's own stop: an
+idle or reclaim suspend, an operator removal, a teardown. Those paths write the new state and
+fail the container's runs themselves, while both liveness passes leave a container alone whose
+stop or removal is in flight, so a transition to *stopped* that the passes report is a stop
+nothing in Hezo asked for, and its runs record `container_lost`. A container found in error
+(it failed, was removed behind Hezo's back, or was stopped for its memory) records
+`container_error`. **Only `container_lost` spends a strike of the lost-run budget**
+(`CONTAINER_EXIT_SPENDS_LOST_RUN_STRIKE`, `spendLostRunStrike`): the run never got a fair
+attempt, so the task is re-dispatched through `retryOrEscalateLostRun` and escalates to an
+Inbox approval once `MAX_RETRIES` is spent. Exactly one side spends it. A run this process
+drives is aborted with the reason and its runner spends the strike (the same verdict a lost
+output stream gets); a failed row no driver holds is spent by the transition handler.
+`container_error` keeps its own one-shot recovery, queued by `requeueContainerKilledRuns` when
+the container next comes up, and `container_stopped` is never retried. The web shows each
+reason as a sentence (`runErrorText`) and keeps the code in the run's full error block.
 
 **The memory budget is instance-wide, so no project may sit on a share of it that it is not
 using.** Two mechanisms enforce that, and both exist because a container is pinned to its

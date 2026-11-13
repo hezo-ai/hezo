@@ -6,6 +6,7 @@ import {
 	CHAT_IDLE_TIMEOUT_MIN,
 	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
+	ContainerExitReason,
 	ContainerStatus,
 	ContainerUptimeEndReason,
 	HeartbeatRunStatus,
@@ -96,8 +97,6 @@ import {
 	removeProjectWorkspace,
 } from './workspace';
 import type { WebSocketManager } from './ws';
-
-export type ContainerExitReason = 'container_error' | 'container_stopped';
 
 /**
  * One container changing liveness, and the project it belongs to.
@@ -1954,7 +1953,7 @@ export async function destroyContainer(
 		projectId,
 		projectSlug,
 		teamId,
-		'container_stopped',
+		ContainerExitReason.Stopped,
 		containerId,
 	).catch((e) => log.error('Failed to fail runs on container removal:', e));
 
@@ -2041,7 +2040,7 @@ export async function stopContainerGracefully(
 	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
 	const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(projectId));
 
-	let exitReason: ContainerExitReason = 'container_stopped';
+	let exitReason: ContainerExitReason = ContainerExitReason.Stopped;
 	try {
 		await docker.stopContainer(containerId);
 		// Conditional on the id, exactly as `clearProjectContainerIfNamed` is on the
@@ -2082,7 +2081,7 @@ export async function stopContainerGracefully(
 			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId, containerId],
 		);
 		await setPoolMemberOutcome(db, containerId, annotatedLogs, errorMessage);
-		exitReason = 'container_error';
+		exitReason = ContainerExitReason.Error;
 		log.warn(
 			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stop failed: ${errorMessage}`,
 		);
@@ -2689,9 +2688,14 @@ async function enforceContainerMemoryLimit(
 	// Scoped to the container that actually exceeded its cap. Failing the whole
 	// project here is what the pool was built to stop: a sibling run in its own
 	// container is unaffected by this one's memory use and must not die with it.
-	await failProjectRuns(deps, projectId, projectSlug, teamId, 'container_error', containerId).catch(
-		(e) => log.error('Failed to fail project runs after memory-limit stop:', e),
-	);
+	await failProjectRuns(
+		deps,
+		projectId,
+		projectSlug,
+		teamId,
+		ContainerExitReason.Error,
+		containerId,
+	).catch((e) => log.error('Failed to fail project runs after memory-limit stop:', e));
 
 	return ContainerStatus.Error;
 }
@@ -2792,6 +2796,15 @@ function dueForMemoryCheck(projectId: string, now: number, intervalMs?: number):
 	return true;
 }
 
+/** A run {@link failProjectRuns} ended, as its row names it. */
+export interface FailedContainerRun {
+	id: string;
+	member_id: string;
+	/** The run's own team, which a cross-team run takes from its task's project. */
+	team_id: string;
+	task_id: string | null;
+}
+
 /**
  * Fail the in-flight runs a dead container was carrying, reset their agents to
  * idle, release their execution locks and broadcast the changes. The caller
@@ -2820,13 +2833,13 @@ export async function failProjectRuns(
 	teamId: string,
 	reason: ContainerExitReason,
 	containerId: string | null = null,
-): Promise<void> {
+): Promise<FailedContainerRun[]> {
 	const { db, wsManager } = deps;
 
 	// `$5::text IS NULL` rather than building the SQL in two shapes: one
 	// statement, one plan, and the scoped/unscoped difference stays visible.
 	const scope = `AND ($5::text IS NULL OR container_id = $5::text OR container_id IS NULL)`;
-	const failedRuns = await db.query<{ id: string; member_id: string; task_id: string | null }>(
+	const failedRuns = await db.query<FailedContainerRun>(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
 		     finished_at = now(),
@@ -2835,11 +2848,11 @@ export async function failProjectRuns(
 		 WHERE status = $3::heartbeat_run_status
 		   AND task_id IN (SELECT id FROM tasks WHERE project_id = $4)
 		   ${scope}
-		 RETURNING id, member_id, task_id`,
+		 RETURNING id, member_id, team_id, task_id`,
 		[HeartbeatRunStatus.Failed, reason, HeartbeatRunStatus.Running, projectId, containerId],
 	);
 
-	if (failedRuns.rows.length === 0) return;
+	if (failedRuns.rows.length === 0) return [];
 
 	const memberIds = Array.from(new Set(failedRuns.rows.map((r) => r.member_id)));
 
@@ -2879,6 +2892,7 @@ export async function failProjectRuns(
 	log.info(
 		`Failed ${failedRuns.rows.length} run(s) in project ${ref(projectSlug, projectId)} due to ${reason}; ${idleCount}/${memberIds.length} agent(s) marked idle`,
 	);
+	return failedRuns.rows;
 }
 
 const REQUEUE_LIMIT = 50;
@@ -2887,7 +2901,10 @@ const REQUEUE_LOOKBACK_HOURS = 24;
 /**
  * After a container is brought back to running, enqueue wakeups for any runs
  * that were killed by a `container_error` and have not been retried since.
- * Runs killed via a graceful `container_stopped` are intentionally skipped.
+ * Runs Hezo stopped on purpose (`container_stopped`) are intentionally skipped,
+ * and so are runs whose container stopped with nothing in Hezo asking
+ * (`container_lost`): those were already retried, against the lost-run budget,
+ * at the moment the stop was seen.
  */
 export async function requeueContainerKilledRuns(
 	deps: ContainerDeps,
@@ -2915,7 +2932,7 @@ export async function requeueContainerKilledRuns(
 		   )
 		 ORDER BY member_id, task_id, finished_at DESC
 		 LIMIT $4`,
-		[projectId, 'container_error', String(REQUEUE_LOOKBACK_HOURS), REQUEUE_LIMIT],
+		[projectId, ContainerExitReason.Error, String(REQUEUE_LOOKBACK_HOURS), REQUEUE_LIMIT],
 	);
 
 	for (const run of killed.rows) {

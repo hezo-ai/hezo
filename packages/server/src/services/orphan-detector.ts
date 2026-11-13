@@ -2,6 +2,7 @@ import {
 	AgentRuntimeStatus,
 	ApprovalStatus,
 	ApprovalType,
+	ContainerExitReason,
 	HeartbeatRunStatus,
 	WakeupSkipReason,
 	WakeupSource,
@@ -541,6 +542,44 @@ export async function retryOrEscalateLostRun(
 	);
 	return 'escalated';
 }
+
+/**
+ * Spend one strike of the lost-run budget on a run that has already ended, then
+ * retry or escalate.
+ *
+ * The count is bumped on the run's own row and the ceiling read from what that
+ * write returns, so whichever path noticed the loss - the runner holding the run,
+ * or the container pass failing a run no driver holds - converges on the one
+ * ceiling the orphan detector counts against.
+ */
+export async function spendLostRunStrike(
+	db: Db,
+	run: { runId: string; memberId: string; teamId: string; taskId: string | null },
+): Promise<'retried' | 'escalated'> {
+	const bumped = await db.query<{ process_loss_retry_count: number }>(
+		`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
+		 WHERE id = $1 RETURNING process_loss_retry_count`,
+		[run.runId],
+	);
+	return retryOrEscalateLostRun(db, {
+		...run,
+		priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
+	});
+}
+
+/**
+ * Whether a run its container took down spends a strike of the lost-run budget.
+ *
+ * Only a container that went away with nothing in Hezo asking costs one: that run
+ * never got a fair attempt, so the work is retried and escalates once the budget
+ * is spent. A stop Hezo chose ends the run on purpose. A failed container has its
+ * own one-shot recovery, queued when the container next comes back up.
+ */
+export const CONTAINER_EXIT_SPENDS_LOST_RUN_STRIKE: Record<ContainerExitReason, boolean> = {
+	[ContainerExitReason.Error]: false,
+	[ContainerExitReason.Stopped]: false,
+	[ContainerExitReason.Lost]: true,
+};
 
 /**
  * Record that an agent needs a human, once per stuck agent rather than once per

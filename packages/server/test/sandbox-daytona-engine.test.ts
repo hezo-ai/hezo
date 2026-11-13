@@ -9,7 +9,11 @@ import {
 	type DaytonaFileEntry,
 	type DaytonaSandbox,
 } from '../src/services/sandbox/daytona/client';
-import { bindMountDirs, DaytonaEngine } from '../src/services/sandbox/daytona/engine';
+import {
+	bindMountDirs,
+	DAYTONA_START_ATTEMPTS,
+	DaytonaEngine,
+} from '../src/services/sandbox/daytona/engine';
 import { clearImageDigestCache } from '../src/services/sandbox/image-ref';
 
 interface Recorded {
@@ -909,6 +913,125 @@ describe('DaytonaEngine settles a transition before returning', () => {
 				new Promise((resolve) => setTimeout(() => resolve('still waiting'), 300)),
 			]),
 		).resolves.toBe('still waiting');
+	});
+});
+
+/** Start confirmation that judges a start dropped in milliseconds rather than seconds. */
+const FAST_START_WAIT = { dropGraceMs: 20, timeoutMs: 2_000, pollMs: 5 };
+
+describe('DaytonaEngine confirms a start before returning', () => {
+	/**
+	 * A stopped sandbox whose provider honours only the starts `honoured` says
+	 * yes to. A dropped start answers like an accepted one and leaves the sandbox
+	 * at rest with nothing in flight, which is what the live API was measured
+	 * doing.
+	 */
+	function startingApi(honoured: (attempt: number) => boolean) {
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-wake',
+			state: 'stopped',
+			desiredState: 'stopped',
+			labels: {},
+			toolboxProxyUrl: 'https://p/toolbox',
+		};
+		let attempts = 0;
+		const { api, rec } = fakeApi(
+			{
+				start: async (id) => {
+					rec.started.push(id);
+					attempts += 1;
+					if (honoured(attempts)) {
+						sandbox.state = 'started';
+						sandbox.desiredState = 'started';
+					}
+				},
+			},
+			[sandbox],
+		);
+		return { api, rec, sandbox };
+	}
+
+	it('asks once when the start is honoured', async () => {
+		const { api, rec } = startingApi(() => true);
+		const engine = new DaytonaEngine(api, FAST_STOP_WAIT, FAST_START_WAIT);
+		await engine.startContainer('sbx-wake');
+		expect(rec.started).toEqual(['sbx-wake']);
+		expect((await engine.inspectContainer('sbx-wake'))?.State.Running).toBe(true);
+	});
+
+	it('asks again when the provider drops a start, and resolves once it is running', async () => {
+		const { api, rec } = startingApi((attempt) => attempt > 1);
+		const engine = new DaytonaEngine(api, FAST_STOP_WAIT, FAST_START_WAIT);
+		await engine.startContainer('sbx-wake');
+		expect(rec.started).toEqual(['sbx-wake', 'sbx-wake']);
+		expect((await engine.inspectContainer('sbx-wake'))?.State.Running).toBe(true);
+	});
+
+	it('fails loudly, naming the sandbox and its state, when no start is honoured', async () => {
+		// Returning here is what handed a run a stopped sandbox: the caller marks
+		// the container ready and the run dies seconds later, failed by the status
+		// sync, with nothing in Hezo having stopped it.
+		const { api, rec } = startingApi(() => false);
+		const engine = new DaytonaEngine(api, FAST_STOP_WAIT, FAST_START_WAIT);
+		await expect(engine.startContainer('sbx-wake')).rejects.toThrow(
+			/sbx-wake did not start \(last state "stopped", desired "stopped"\)/,
+		);
+		expect(rec.started).toHaveLength(DAYTONA_START_ATTEMPTS);
+	});
+
+	it('waits on a start the provider is still acting on rather than asking again', async () => {
+		// The provider has recorded the start but not moved the sandbox yet. A
+		// second request now would answer 409 ("state change in progress").
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-slow',
+			state: 'stopped',
+			labels: {},
+			toolboxProxyUrl: 'https://p/toolbox',
+		};
+		let pollsAfterStart = 0;
+		const { api, rec } = fakeApi(
+			{
+				start: async (id) => {
+					rec.started.push(id);
+					sandbox.desiredState = 'started';
+				},
+				getSandbox: async () => {
+					if (sandbox.desiredState === 'started') {
+						pollsAfterStart += 1;
+						// Well past the drop grace before the sandbox moves.
+						if (pollsAfterStart > 12) sandbox.state = 'started';
+					}
+					return sandbox;
+				},
+			},
+			[sandbox],
+		);
+		await new DaytonaEngine(api, FAST_STOP_WAIT, FAST_START_WAIT).startContainer('sbx-slow');
+		expect(rec.started).toEqual(['sbx-slow']);
+		expect(sandbox.state).toBe('started');
+	});
+
+	it('does not ask again when the sandbox fails to start, and says why', async () => {
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-broken',
+			state: 'stopped',
+			labels: {},
+			toolboxProxyUrl: 'https://p/toolbox',
+		};
+		const { api, rec } = fakeApi(
+			{
+				start: async (id) => {
+					rec.started.push(id);
+					sandbox.state = 'error';
+					sandbox.errorReason = 'disk quota exceeded';
+				},
+			},
+			[sandbox],
+		);
+		await expect(
+			new DaytonaEngine(api, FAST_STOP_WAIT, FAST_START_WAIT).startContainer('sbx-broken'),
+		).rejects.toThrow(/sbx-broken did not start .*"error".*disk quota exceeded/);
+		expect(rec.started).toEqual(['sbx-broken']);
 	});
 });
 

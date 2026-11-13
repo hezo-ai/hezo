@@ -204,6 +204,12 @@ export interface DaytonaSandbox {
 	id: string;
 	name?: string;
 	state: DaytonaState;
+	/**
+	 * The state the provider is moving the sandbox towards. Equal to `state` once
+	 * nothing is in flight; a start it has accepted reads `started` here before
+	 * `state` catches up.
+	 */
+	desiredState?: DaytonaState;
 	labels?: Record<string, string>;
 	errorReason?: string | null;
 	toolboxProxyUrl?: string;

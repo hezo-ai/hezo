@@ -9,6 +9,7 @@ import {
 	COACH_REVIEW_TRIGGER,
 	COMMENT_ATTACHMENTS_MAX,
 	CommentContentType,
+	type ContainerExitReason,
 	ContainerStatus,
 	credentialSerializesRuns,
 	DEFAULT_THREAD_ROW_CATEGORIES,
@@ -19,6 +20,7 @@ import {
 	formatRunLink,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
+	isContainerExitReason,
 	MAX_SINGLE_ARG_BYTES,
 	type PromptDelivery,
 	providerDirectUpstreamHosts,
@@ -159,14 +161,15 @@ import {
 	type TaskUsageSoFar,
 } from './no-work-backoff';
 import {
+	CONTAINER_EXIT_SPENDS_LOST_RUN_STRIKE,
 	clearAgentErrorApprovalsOnRecovery,
 	fileAllowancePaceNotice,
 	fileProviderCredentialRejectedApproval,
 	fileProviderRefusalApproval,
 	fileProviderUsageLimitNotice,
 	PROVIDER_REFUSAL_GIVEUP_MIN,
-	retryOrEscalateLostRun,
 	STALE_STATE_GRACE_SECONDS,
+	spendLostRunStrike,
 } from './orphan-detector';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
 import type { RetrospectiveSignals } from './project-retrospective';
@@ -1377,7 +1380,6 @@ async function buildRunContext(
 	};
 }
 
-export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 /**
  * Reasons the runner tags on a run's AbortSignal. A bare abort — a user cancel via
  * `cancelTask`, or the stale-dispatch reaper — carries none. Shutdown is tagged, and
@@ -1389,21 +1391,29 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
  * so no `container_*` transition fires and nothing else would notice.
  */
 export type RunAbortReason =
-	| ContainerExitAbortReason
+	| ContainerExitReason
 	| 'run_timeout'
 	| RunSizeStopReason
 	| 'tunnel_lost'
 	| 'server_shutdown';
 
-const RUN_ABORT_REASONS: readonly string[] = [
-	'container_error',
-	'container_stopped',
-	'run_timeout',
-	'tool_call_ceiling',
-	'token_ceiling',
-	'tunnel_lost',
-	'server_shutdown',
-];
+/**
+ * Every abort reason, and whether a run ended for it spends a strike of the
+ * lost-run budget. Keyed by the union, so a new reason does not compile until it
+ * says. The container reasons are read from the table that decides them for
+ * every path, so a run the runner ends and a run the container pass ends are
+ * judged the same way.
+ */
+const RUN_ABORT_SPENDS_LOST_RUN_STRIKE: Record<RunAbortReason, boolean> = {
+	...CONTAINER_EXIT_SPENDS_LOST_RUN_STRIKE,
+	run_timeout: false,
+	tool_call_ceiling: false,
+	token_ceiling: false,
+	tunnel_lost: false,
+	server_shutdown: false,
+};
+
+const RUN_ABORT_REASONS: readonly string[] = Object.keys(RUN_ABORT_SPENDS_LOST_RUN_STRIKE);
 
 /**
  * What a run killed by a clean shutdown records.
@@ -1439,7 +1449,7 @@ function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
  */
 function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 	if (reason === 'run_timeout') return HeartbeatRunStatus.TimedOut;
-	if (reason) return HeartbeatRunStatus.Failed; // container_error / container_stopped
+	if (reason) return HeartbeatRunStatus.Failed; // a container exit, a lost tunnel, a size stop
 	return HeartbeatRunStatus.Cancelled;
 }
 
@@ -2087,7 +2097,7 @@ export async function runAgent(
 	 */
 	const throwVerdict = (
 		error: unknown,
-	): { status: HeartbeatRunStatus; message: string; timedOut: boolean } => {
+	): { status: HeartbeatRunStatus; message: string; timedOut: boolean; lostRun: boolean } => {
 		const isAbort = error instanceof Error && error.name === 'AbortError';
 		const reason = runAbortReason(runAbort.signal);
 		return {
@@ -2099,6 +2109,12 @@ export async function runAgent(
 			message:
 				abortErrorMessage(reason) ?? (error instanceof Error ? error.message : String(error)),
 			timedOut: reason === 'run_timeout',
+			// The infrastructure lost the run rather than the agent failing it: a
+			// dropped transport, or a container that went away with nothing in Hezo
+			// asking. Either earns a bounded retry instead of ending the work.
+			lostRun:
+				classifyRunFailure(error) === RunFailureClass.Transient ||
+				(reason !== null && RUN_ABORT_SPENDS_LOST_RUN_STRIKE[reason]),
 		};
 	};
 
@@ -2110,22 +2126,16 @@ export async function runAgent(
 	 * retrying forever. Best-effort: failing to queue the retry must never replace
 	 * the real error already on the row.
 	 */
-	const spendLostRunStrike = async (): Promise<void> => {
+	const spendStrike = async (): Promise<void> => {
 		try {
-			const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
-				`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
-				 WHERE id = $1 RETURNING process_loss_retry_count`,
-				[heartbeatRunId],
-			);
-			await retryOrEscalateLostRun(deps.db, {
+			await spendLostRunStrike(deps.db, {
 				runId: heartbeatRunId,
 				memberId: agent.id,
 				teamId: runTeamId,
 				taskId: task?.id ?? null,
-				priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
 			});
 		} catch (e) {
-			log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e);
+			log.error(`Run ${heartbeatRunId}: could not queue a lost-run retry:`, e);
 		}
 	};
 
@@ -3648,7 +3658,7 @@ export async function runAgent(
 			const reason = runAbortReason(runAbort.signal);
 			// Same verdict the setup window records, from one implementation - see
 			// `throwVerdict`, which carries the reasoning.
-			const { status, message: errorMessage } = throwVerdict(error);
+			const { status, message: errorMessage, lostRun } = throwVerdict(error);
 
 			// Aborting the exec only tears down its attach stream — Docker leaves the
 			// agent CLI running in the container, so a user-terminated or timed-out run
@@ -3657,7 +3667,7 @@ export async function runAgent(
 			// UI promises: immediate, with in-progress work lost. Skipped when the
 			// container itself died (`container_*`) — the process is already gone with
 			// it — and best-effort so a kill failure never masks the run result.
-			if (isAbort && reason !== 'container_stopped' && reason !== 'container_error') {
+			if (isAbort && !isContainerExitReason(reason)) {
 				try {
 					await deps.docker.killRunProcesses(containerId, heartbeatRunId);
 				} catch (killError) {
@@ -3728,10 +3738,13 @@ export async function runAgent(
 			// retrying - so it takes that path instead of burning the agent's turn on
 			// a transport fault.
 			//
-			// Read from the shared classifier rather than a local `instanceof`, so the
-			// exec path and the setup window agree on what a retry is for and widening
-			// the set is one row rather than a second condition here.
-			if (classifyRunFailure(error) === RunFailureClass.Transient) await spendLostRunStrike();
+			// A container that stopped with nothing in Hezo asking is the same class,
+			// told apart by the reason the container pass aborted the run with.
+			//
+			// Read from the verdict rather than a local `instanceof`, so the exec path
+			// and the setup window agree on what a retry is for and widening the set is
+			// one row rather than a second condition here.
+			if (lostRun) await spendStrike();
 
 			await cleanupRunArtifacts();
 			return {
@@ -3793,11 +3806,8 @@ export async function runAgent(
 		// that used to be minted for one - by the orphan pass, on a row this path had
 		// abandoned - turned a single bad MCP injection into hundreds of failed runs
 		// on one task, each having claimed a container first.
-		if (
-			verdict.status === HeartbeatRunStatus.Failed &&
-			classifyRunFailure(error) === RunFailureClass.Transient
-		) {
-			await spendLostRunStrike();
+		if (verdict.status === HeartbeatRunStatus.Failed && verdict.lostRun) {
+			await spendStrike();
 		}
 		return {
 			success: false,

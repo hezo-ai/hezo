@@ -9,6 +9,7 @@ import {
 	COACH_REVIEW_TRIGGER,
 	CONTAINER_DORMANT_RETIRE_MIN,
 	CONTAINER_RELEASE_GRACE_SEC,
+	ContainerExitReason,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
 	HeartbeatRunKind,
@@ -57,7 +58,6 @@ import type { ContainerLogStreamer } from './container-logs';
 import {
 	budgetAllowsContainerStart,
 	type ContainerDeps,
-	type ContainerExitReason,
 	type ContainerTransition,
 	destroyContainer,
 	ensureProjectContainerRunning,
@@ -104,10 +104,12 @@ import {
 	tokenCeilingHold,
 } from './no-work-backoff';
 import {
+	CONTAINER_EXIT_SPENDS_LOST_RUN_STRIKE,
 	detectOrphans,
 	fileExhaustedAttemptsApproval,
 	healStaleRunState,
 	STALE_STATE_GRACE_SECONDS,
+	spendLostRunStrike,
 } from './orphan-detector';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { buildProgressActivityCandidates } from './project-activity';
@@ -147,6 +149,21 @@ import {
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
+
+/**
+ * What a run records when the liveness passes see its container leave the
+ * running state, by the state it was found in.
+ *
+ * A container found stopped was stopped by nothing in Hezo. Hezo's own suspends
+ * and removals write the new state themselves, and both passes leave a container
+ * alone while such a call is in flight, so neither reports one of them as a stop.
+ * The memory-limit stop does arrive here, as an error, together with a container
+ * that failed or was removed behind Hezo's back.
+ */
+const OBSERVED_CONTAINER_EXIT_REASON: Partial<Record<string, ContainerExitReason>> = {
+	[ContainerStatus.Stopped]: ContainerExitReason.Lost,
+	[ContainerStatus.Error]: ContainerExitReason.Error,
+};
 
 const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
 // How stale the progress summary may get before the Captain rebuilds it, independently of goals.
@@ -4586,14 +4603,17 @@ export class JobManager {
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
 		const { projectId, projectSlug, teamId, containerId, oldStatus, newStatus } = transition;
 
-		if (
-			oldStatus === ContainerStatus.Running &&
-			(newStatus === ContainerStatus.Error || newStatus === ContainerStatus.Stopped)
-		) {
-			const reason: ContainerExitReason =
-				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
+		const reason =
+			oldStatus === ContainerStatus.Running && newStatus !== null
+				? OBSERVED_CONTAINER_EXIT_REASON[newStatus]
+				: undefined;
+		if (reason) {
+			// Read before the cancel below takes these runs out of the registry. A run
+			// this process drives decides its own retry from the reason it is aborted
+			// with; only a row no driver holds is this pass's to retry.
+			const driven = this.getLiveRunIds();
 			this.cancelLiveRunsForContainer(projectId, containerId, reason);
-			await failProjectRuns(
+			const failed = await failProjectRuns(
 				this.buildContainerDeps(),
 				projectId,
 				projectSlug,
@@ -4601,6 +4621,16 @@ export class JobManager {
 				reason,
 				containerId,
 			);
+			if (CONTAINER_EXIT_SPENDS_LOST_RUN_STRIKE[reason]) {
+				for (const run of failed.filter((r) => !driven.has(r.id))) {
+					await spendLostRunStrike(this.deps.db, {
+						runId: run.id,
+						memberId: run.member_id,
+						teamId: run.team_id,
+						taskId: run.task_id,
+					}).catch((e) => log.error(`Run ${run.id}: could not queue a lost-run retry:`, e));
+				}
+			}
 			// Last, and only now: the runs that could still have been holding this
 			// container are terminal, so a claim still standing belongs to none of
 			// them. Ordered after the failure on purpose - asked any earlier, the

@@ -1,5 +1,7 @@
+import { ContainerExitReason } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import en from '../src/lib/i18n/catalog/en.json';
 import { getTestContext, renderApp } from './helpers/render';
 import {
 	type SeededTask,
@@ -199,4 +201,39 @@ test('the banner falls back to the bare label when the run recorded no reason', 
 
 	const banner = await findByTestId('last-run-failed-banner', undefined, { timeout: 10_000 });
 	expect(banner.textContent).toContain('Last run timed out');
+});
+
+test('a container exit reason reads as a sentence, with the raw code kept in the full error', async () => {
+	// The server records the reason as the run's whole error. Shown as is, the
+	// banner and the run row both said "container_lost" and nothing else.
+	const seeded = { projectSlug: '', taskIdentifier: '' };
+	const { findByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'Lost Container Task' });
+			await insertFailedRunWithComment(ws, task, 'failed', ContainerExitReason.Lost);
+			seeded.projectSlug = project.slug;
+			seeded.taskIdentifier = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskIdentifier },
+	});
+
+	const sentence = en['comment.runExit.containerLost'];
+	const banner = await findByTestId('last-run-failed-banner', undefined, { timeout: 10_000 });
+	expect(banner.textContent).toContain(sentence);
+	expect(banner.textContent).not.toContain(ContainerExitReason.Lost);
+
+	const summary = await findByTestId('run-comment-error', undefined, { timeout: 10_000 });
+	expect(summary.textContent).toContain(sentence);
+	expect(summary.textContent).not.toContain(ContainerExitReason.Lost);
+
+	await user.click(summary);
+	const full = await findByTestId('run-comment-error-full');
+	expect(full.textContent).toContain(ContainerExitReason.Lost);
 });

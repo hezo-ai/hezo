@@ -132,6 +132,11 @@ of the system is sized against that promise.
   managed backend it is a sandbox destroyed and later recreated rather than resumed. If you
   see more provisioning than you expect, the memory budget is set tighter than the work you
   are asking the instance to do.
+- **The provider can stop a container that Hezo did not ask it to stop.** The runs on that
+  container end, and Hezo starts each one again on its own, a limited number of times. If a
+  run keeps losing its container, Hezo stops retrying and puts an item in your Inbox. The
+  run's error says the container stopped unexpectedly, which tells it apart from a container
+  that Hezo stopped on purpose or one that failed.
 - **The first container of a project is slower to start** than a local one, because the
   provider builds it. Later ones start in a few seconds.
 - **A local model provider is not reachable.** Pointing an AI provider at

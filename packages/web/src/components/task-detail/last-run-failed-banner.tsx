@@ -16,7 +16,7 @@ export function LastRunFailedBanner({ task }: Props) {
 	if (task.has_active_run || !failed || !task.last_run_comment_public_id) return null;
 
 	const commentId = task.last_run_comment_public_id;
-	const reason = runErrorSummary(task.last_run_error);
+	const reason = runErrorSummary(task.last_run_error, t);
 	// Four keys rather than two plus a {status} variable: the status word inflects
 	// with the sentence in several of these languages.
 	const label = reason

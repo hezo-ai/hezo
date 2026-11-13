@@ -10,6 +10,7 @@ import {
 	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
+	ContainerExitReason,
 	ContainerStatus,
 	fallbackPinnedModel,
 	HeartbeatRunStatus,
@@ -1011,6 +1012,69 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 			[fallbackPinnedModel(AiProvider.Anthropic)],
 		);
 		await db.query('DELETE FROM usage_entries WHERE member_id = $1', [agentId]);
+	});
+
+	/**
+	 * A run aborted with a container reason, mid-exec, and what it left behind:
+	 * the row, and the retries queued for its agent. Starts and ends with none
+	 * queued, since a queued retry absorbs the next one for the same task.
+	 */
+	const abortMidExecWith = async (reason: ContainerExitReason) => {
+		const clearRetries = () =>
+			db.query(
+				"DELETE FROM agent_wakeup_requests WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'",
+				[agentId],
+			);
+		await clearRetries();
+		const ac = new AbortController();
+		const docker = makeDocker({
+			execCreate: async () => {
+				ac.abort(reason);
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+		const row = await db.query<{
+			status: string;
+			error: string | null;
+			process_loss_retry_count: number;
+		}>('SELECT status, error, process_loss_retry_count FROM heartbeat_runs WHERE id = $1', [
+			result.heartbeatRunId,
+		]);
+		const retries = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'`,
+			[agentId],
+		);
+		await clearRetries();
+		return { row: row.rows[0], retriesQueued: retries.rows[0].c };
+	};
+
+	it('retries, against the lost-run budget, a run whose container stopped with nothing in Hezo asking', async () => {
+		const { row, retriesQueued } = await abortMidExecWith(ContainerExitReason.Lost);
+		expect(row).toEqual({
+			status: HeartbeatRunStatus.Failed,
+			error: ContainerExitReason.Lost,
+			process_loss_retry_count: 1,
+		});
+		expect(retriesQueued).toBe(1);
+	});
+
+	it('does not retry a run whose container Hezo stopped on purpose', async () => {
+		const { row, retriesQueued } = await abortMidExecWith(ContainerExitReason.Stopped);
+		expect(row).toEqual({
+			status: HeartbeatRunStatus.Failed,
+			error: ContainerExitReason.Stopped,
+			process_loss_retry_count: 0,
+		});
+		expect(retriesQueued).toBe(0);
 	});
 });
 

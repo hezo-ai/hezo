@@ -31,6 +31,7 @@ import type {
 import { ActorBadge } from '../ui/actor-badge';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
+import { runErrorText } from './helpers';
 
 interface Props {
 	comment: CommentDataOf<'system'>;
@@ -378,7 +379,9 @@ function RunFailedBody({
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 	const status = typeof content.status === 'string' ? content.status : 'failed';
 	const error =
-		typeof content.error === 'string' && content.error.length > 0 ? content.error : null;
+		typeof content.error === 'string' && content.error.length > 0
+			? runErrorText(content.error, t)
+			: null;
 	const timedOut = status === 'timed_out';
 	const agentNode =
 		agentSlug && projectId ? (
