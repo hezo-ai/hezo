@@ -106,6 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} aggiunte",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} rimosse",
 	"approval.roleUpdate.dialog.loadFailed": "Impossibile caricare le modifiche. Chiudi questa finestra e riprova.",
+	"approval.roleUpdate.dialog.promptMoved": "Il prompt di {who} è cambiato mentre questa finestra era aperta. Le modifiche qui sotto ora sono aggiornate. Controllale, poi applica di nuovo.",
 	"approval.roleUpdate.dialog.srAdded": "Riga aggiunta",
 	"approval.roleUpdate.dialog.srRemoved": "Riga rimossa",
 	"approval.roleUpdate.dialog.title": "Ruolo aggiornato per {who}",

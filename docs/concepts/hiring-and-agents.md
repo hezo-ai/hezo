@@ -119,6 +119,9 @@ rules while dropping your edits. **Keep current** keeps exactly what you have, a
 not ask again for that version - though it will offer the next improvement when one
 arrives.
 
+If the agent's prompt changes while the preview is open, **Apply update** shows you the new
+changes instead of applying, so you decide on what is really there.
+
 A card appears only when the role really changed. If an agent already runs the newest role,
 Hezo closes any card still waiting for it and marks it **Already up to date**.
 

@@ -106,6 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} 行新增",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} 行删除",
 	"approval.roleUpdate.dialog.loadFailed": "无法加载更改。请关闭此窗口后重试。",
+	"approval.roleUpdate.dialog.promptMoved": "此窗口打开期间，{who} 的提示词已更改。下方的更改现已更新。请查看后再次应用。",
 	"approval.roleUpdate.dialog.srAdded": "新增行",
 	"approval.roleUpdate.dialog.srRemoved": "删除行",
 	"approval.roleUpdate.dialog.title": "{who} 的角色更新",

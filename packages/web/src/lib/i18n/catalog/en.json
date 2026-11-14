@@ -106,6 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} added",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} removed",
 	"approval.roleUpdate.dialog.loadFailed": "The changes could not be loaded. Close this window and try again.",
+	"approval.roleUpdate.dialog.promptMoved": "{who}'s prompt changed while this window was open. The changes below are now up to date. Look them over, then apply again.",
 	"approval.roleUpdate.dialog.srAdded": "Added line",
 	"approval.roleUpdate.dialog.srRemoved": "Removed line",
 	"approval.roleUpdate.dialog.title": "Updated role for {who}",

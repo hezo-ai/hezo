@@ -410,6 +410,47 @@ test('a card filed as clean still warns when the prompt was edited since', async
 	within(dialog).getByText('1 edited here');
 });
 
+test('Apply update re-reads the prompt, and refuses to write over an edit made since', async () => {
+	let memberId = '';
+	let cardId = '';
+	const live = LIVE_ROLE.join('\n');
+	const { findByRole, findByTestId, user } = await renderTeamInbox(async ({ ws }) => {
+		memberId = ws.agents[0].id;
+		await setPromptHistory(memberId, live, live);
+		cardId = (
+			await insertApproval(ws, {
+				type: 'role_update',
+				requestedByMemberId: memberId,
+				payload: {
+					member_id: memberId,
+					agent_title: 'Captain',
+					outcome: 'clean',
+					content: [...LIVE_ROLE, '- A new rule'].join('\n'),
+				},
+			})
+		).id;
+	});
+
+	await user.click(await findByRole('button', { name: /Preview changes/ }, { timeout: 15_000 }));
+	const dialog = await findByTestId('role-update-preview');
+	await within(dialog).findByTestId('role-update-diff');
+
+	// Someone edits the prompt while the window is open.
+	const edited = `${live}\n- Written while the window was open`;
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE documents SET content = $1 WHERE member_agent_id = $2 AND type = 'agent_system_prompt'`,
+		[edited, memberId],
+	);
+
+	await user.click(within(dialog).getByRole('button', { name: /Apply update/ }));
+	await within(dialog).findByText(/prompt changed while this window was open/);
+	// The redrawn diff shows the edit, and nothing was written.
+	await within(dialog).findByText('- Written while the window was open');
+	expect(await cardStatus(cardId)).toBe('pending');
+	expect(await livePrompt(memberId)).toBe(edited);
+});
+
 test('a role-update card the instance withdrew reads as already up to date', async () => {
 	const { findByText, queryByText, user } = await renderTeamInbox(async ({ ws }) => {
 		await insertApproval(ws, {

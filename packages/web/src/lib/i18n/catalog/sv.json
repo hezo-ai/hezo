@@ -106,6 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} tillagda",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} borttagna",
 	"approval.roleUpdate.dialog.loadFailed": "Ändringarna kunde inte läsas in. Stäng fönstret och försök igen.",
+	"approval.roleUpdate.dialog.promptMoved": "Prompten för {who} ändrades medan fönstret var öppet. Ändringarna nedan är nu uppdaterade. Titta igenom dem och tillämpa sedan igen.",
 	"approval.roleUpdate.dialog.srAdded": "Tillagd rad",
 	"approval.roleUpdate.dialog.srRemoved": "Borttagen rad",
 	"approval.roleUpdate.dialog.title": "Uppdaterad roll för {who}",

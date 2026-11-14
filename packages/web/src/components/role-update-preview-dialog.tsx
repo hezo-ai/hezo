@@ -121,6 +121,28 @@ export function RoleUpdatePreviewDialog({
 	const editedTag = t('approval.roleUpdate.dialog.editedTag');
 	const editedCount = taggedLines.size;
 
+	const [promptMoved, setPromptMoved] = useState(false);
+	const [checking, setChecking] = useState(false);
+
+	/**
+	 * Apply writes the card's text over whatever the prompt holds, so the prompt is
+	 * read again first. If it changed since this window showed it, the fresh read
+	 * redraws the diff and the warning, and the admin decides again on what is
+	 * actually there.
+	 */
+	async function applyChecked() {
+		const shown = current;
+		setChecking(true);
+		const fresh = await detail.refetch();
+		setChecking(false);
+		if (fresh.isError) return;
+		if (fresh.data?.current_prompt !== shown) {
+			setPromptMoved(true);
+			return;
+		}
+		decide(ApprovalStatus.Approved);
+	}
+
 	function decide(status: typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied) {
 		resolve.mutate(
 			{
@@ -162,6 +184,12 @@ export function RoleUpdatePreviewDialog({
 									keep: <span className="font-medium">{t('approval.roleUpdate.dialog.keep')}</span>,
 								}}
 							/>
+						</Callout>
+					)}
+
+					{promptMoved && (
+						<Callout tone="info" role="status">
+							{t('approval.roleUpdate.dialog.promptMoved', { who })}
 						</Callout>
 					)}
 
@@ -249,11 +277,13 @@ export function RoleUpdatePreviewDialog({
 							</Button>
 							<Button
 								variant="primary"
-								disabled={resolve.isPending || !diff}
+								disabled={resolve.isPending || checking || !diff}
 								data-testid="role-update-apply"
-								onClick={() => decide(ApprovalStatus.Approved)}
+								onClick={() => {
+									void applyChecked();
+								}}
 							>
-								{resolve.isPending ? (
+								{resolve.isPending || checking ? (
 									<Loader2 className="size-3.5 animate-spin" />
 								) : (
 									<Check className="size-3.5" />
