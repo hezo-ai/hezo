@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.83.0 - 2026-11-13
+
+### Features
+
+- **teams:** file a coherence review only when the roster changes ([#1213](https://github.com/hezo-ai/hezo/pull/1213))
+
+### Bug Fixes
+
+- **containers:** confirm a Daytona start, and retry a run whose container stopped unasked ([#1214](https://github.com/hezo-ai/hezo/pull/1214))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.82.0...0.83.0
+
 ## 0.82.0 - 2026-11-08
 
 ### Features
