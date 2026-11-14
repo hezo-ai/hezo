@@ -106,7 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} adicionadas",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} removidas",
 	"approval.roleUpdate.dialog.loadFailed": "Não foi possível carregar as mudanças. Feche esta janela e tente de novo.",
-	"approval.roleUpdate.dialog.promptMoved": "O prompt de {who} mudou enquanto esta janela estava aberta. As mudanças abaixo agora estão atualizadas. Revise-as e aplique de novo.",
+	"approval.roleUpdate.dialog.promptMoved": "A atualização da função de {who} mudou enquanto esta janela estava aberta. As mudanças abaixo agora estão atualizadas. Revise-as e aplique de novo.",
 	"approval.roleUpdate.dialog.srAdded": "Linha adicionada",
 	"approval.roleUpdate.dialog.srRemoved": "Linha removida",
 	"approval.roleUpdate.dialog.title": "Função atualizada para {who}",

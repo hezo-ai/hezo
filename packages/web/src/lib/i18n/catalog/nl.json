@@ -106,7 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} toegevoegd",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} verwijderd",
 	"approval.roleUpdate.dialog.loadFailed": "De wijzigingen konden niet worden geladen. Sluit dit venster en probeer het opnieuw.",
-	"approval.roleUpdate.dialog.promptMoved": "De prompt van {who} is gewijzigd terwijl dit venster open was. De wijzigingen hieronder zijn nu bijgewerkt. Bekijk ze en pas de update daarna opnieuw toe.",
+	"approval.roleUpdate.dialog.promptMoved": "De rolupdate voor {who} is gewijzigd terwijl dit venster open was. De wijzigingen hieronder zijn nu bijgewerkt. Bekijk ze en pas de update daarna opnieuw toe.",
 	"approval.roleUpdate.dialog.srAdded": "Toegevoegde regel",
 	"approval.roleUpdate.dialog.srRemoved": "Verwijderde regel",
 	"approval.roleUpdate.dialog.title": "Bijgewerkte rol voor {who}",

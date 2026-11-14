@@ -512,8 +512,11 @@ update; `GET /api/approvals/:approvalId` returns the whole card plus the agent's
 (`editedLinesLost`): the lines of that live prompt in neither the base nor the offer. The
 preview's warning follows `lost_lines` rather than the card's `outcome`, because an edit made
 after the card was filed is lost on Apply too. Apply re-reads the single card first and
-refuses to resolve when the live prompt differs from the one the preview drew; the check is
-in the client, so an edit landing between that read and the resolve is not caught. The card offers no inline
+refuses to resolve when the live prompt or the offered `content` differs from what the
+preview drew; the check is in the client, so a change landing between that read and the
+resolve is not caught. No agent run decides a role update: the REST route refuses agent
+tokens, and `resolve_approval` refuses any agent auth for this type, the cross-project CEO
+included. The card offers no inline
 answer: Apply update and Keep current live only in the preview.
 `approval-handlers/role-update.ts` writes the content the card carried (not a fresh splice:
 the admin approved a specific text) through `upsertDocument`, which records a revision, so

@@ -131,12 +131,15 @@ export function RoleUpdatePreviewDialog({
 	 * actually there.
 	 */
 	async function applyChecked() {
-		const shown = current;
+		const shownPrompt = current;
+		const shownOffer = offered;
 		setChecking(true);
 		const fresh = await detail.refetch();
 		setChecking(false);
 		if (fresh.isError) return;
-		if (fresh.data?.current_prompt !== shown) {
+		// Either side of the diff can move: the prompt by an edit, the offer by a
+		// restart that rewrote the card.
+		if (fresh.data?.current_prompt !== shownPrompt || fresh.data?.payload.content !== shownOffer) {
 			setPromptMoved(true);
 			return;
 		}

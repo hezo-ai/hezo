@@ -106,7 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} 行追加",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} 行削除",
 	"approval.roleUpdate.dialog.loadFailed": "変更を読み込めませんでした。このウィンドウを閉じて、もう一度お試しください。",
-	"approval.roleUpdate.dialog.promptMoved": "このウィンドウを開いている間に {who} のプロンプトが変更されました。下の変更点は最新の内容になっています。確認してから、もう一度適用してください。",
+	"approval.roleUpdate.dialog.promptMoved": "このウィンドウを開いている間に {who} の役割の更新が変わりました。下の変更点は最新の内容になっています。確認してから、もう一度適用してください。",
 	"approval.roleUpdate.dialog.srAdded": "追加された行",
 	"approval.roleUpdate.dialog.srRemoved": "削除された行",
 	"approval.roleUpdate.dialog.title": "{who} の役割の更新",

@@ -106,7 +106,7 @@
 	"approval.roleUpdate.dialog.linesAdded": "+{count} hinzugefügt",
 	"approval.roleUpdate.dialog.linesRemoved": "-{count} entfernt",
 	"approval.roleUpdate.dialog.loadFailed": "Die Änderungen konnten nicht geladen werden. Schließen Sie dieses Fenster und versuchen Sie es erneut.",
-	"approval.roleUpdate.dialog.promptMoved": "Der Prompt von {who} wurde geändert, während dieses Fenster offen war. Die Änderungen unten sind jetzt aktuell. Sehen Sie sie sich an und übernehmen Sie die Aktualisierung dann erneut.",
+	"approval.roleUpdate.dialog.promptMoved": "Die Rollenaktualisierung für {who} wurde geändert, während dieses Fenster offen war. Die Änderungen unten sind jetzt aktuell. Sehen Sie sie sich an und übernehmen Sie die Aktualisierung dann erneut.",
 	"approval.roleUpdate.dialog.srAdded": "Hinzugefügte Zeile",
 	"approval.roleUpdate.dialog.srRemoved": "Entfernte Zeile",
 	"approval.roleUpdate.dialog.title": "Aktualisierte Rolle für {who}",
