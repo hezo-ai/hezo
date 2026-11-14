@@ -93,6 +93,8 @@ export interface ApprovalDetail {
 	status: string;
 	payload: Record<string, unknown>;
 	current_prompt: string | null;
+	/** The admin's own lines applying would drop, against the live prompt; null when not a role update. */
+	lost_lines: string[] | null;
 }
 
 /**

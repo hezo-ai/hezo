@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import { resolveApproval } from '../src/services/approval-resolve';
 import { upsertDocument } from '../src/services/documents';
 import {
+	editedLinesLost,
 	fileRolePromptUpdates,
 	findRolePromptUpdates,
 	recoverBaseTemplate,
@@ -135,6 +136,16 @@ describe('spliceRolePrompt', () => {
 			'ROLE v2',
 		);
 		expect(out).toEqual({ outcome: 'conflict', content: 'ROLE v2' });
+	});
+});
+
+describe('editedLinesLost', () => {
+	it('names lines the admin wrote that the offer drops, and nothing the release moved', () => {
+		const base = 'ROLE\n- old rule';
+		const current = 'ROLE\n- old rule\n- my own rule\n\n## Learned Rules\n- keep me';
+		const offered = 'ROLE v2\n- new rule\n\n## Learned Rules\n- keep me';
+		// '- old rule' goes too, but the release removed it: it is not the admin's.
+		expect(editedLinesLost(base, current, offered)).toEqual(['- my own rule']);
 	});
 });
 
@@ -295,33 +306,17 @@ describe('fileRolePromptUpdates', () => {
 		await setTemplate(base);
 	});
 
-	it('names the lines an admin wrote inside the role, which accepting would drop', async () => {
-		const teamId = await coachTeam();
-		const [first, ...rest] = base.split('\n');
-		await setPrompt(
-			[first, 'EDITED BY THE ADMIN', ...rest, '', '## Learned Rules', '- keep me'].join('\n'),
-			teamId,
-		);
-		await setTemplate(`${base}\nv2`);
-		await fileRolePromptUpdates(db);
-
-		const card = (await pendingCards())[0].payload;
-		expect(card.outcome).toBe('conflict');
-		expect(card.edited_lines).toEqual(['EDITED BY THE ADMIN']);
-		await setTemplate(base);
-	});
-
 	it('fills in the preview fields on a card an earlier release left waiting', async () => {
-		// A genuine conflict filed before cards carried `edited_lines` and `template`:
-		// same role doc, same offer, so only the missing fields differ. Left as it
-		// was, the preview would warn about edited lines and tag none of them.
+		// A genuine conflict filed before cards carried `template`: same role doc,
+		// same offer, so only the missing field differs. Left as it was, accepting
+		// it would leave the next boot to recover the base from the hash.
 		const teamId = await coachTeam();
 		const [first, ...rest] = base.split('\n');
 		await setPrompt([first, 'EDITED BY THE ADMIN', ...rest].join('\n'), teamId);
 		await setTemplate(`${base}\nv2`);
 		await fileRolePromptUpdates(db);
 		await db.query(
-			`UPDATE approvals SET payload = payload - 'edited_lines' - 'template',
+			`UPDATE approvals SET payload = payload - 'template',
 			        created_at = now() - interval '1 day'
 			  WHERE type = $1::approval_type AND payload->>'member_id' = $2`,
 			[ApprovalType.RoleUpdate, coachId],
@@ -335,17 +330,9 @@ describe('fileRolePromptUpdates', () => {
 			[ApprovalType.RoleUpdate, ApprovalStatus.Pending, coachId],
 		);
 		expect(cards.rows).toHaveLength(1);
-		expect(cards.rows[0].payload.edited_lines).toEqual(['EDITED BY THE ADMIN']);
 		expect(cards.rows[0].payload.template).toBe(`${base}\nv2`);
 		// The same offer keeps its place in the inbox.
 		expect(cards.rows[0].age).toBe(true);
-		await setTemplate(base);
-	});
-
-	it('names no edited lines on a clean offer', async () => {
-		await setTemplate(`${base}\nv2`);
-		await fileRolePromptUpdates(db);
-		expect((await pendingCards())[0].payload.edited_lines).toEqual([]);
 		await setTemplate(base);
 	});
 
@@ -456,6 +443,26 @@ describe('after an update was accepted', () => {
 		expect(cards[0].payload.content).toContain('v3');
 		expect(cards[0].payload.content).not.toContain('v2');
 		expect(cards[0].payload.content).toContain('- keep me');
+		await setTemplate(base);
+	});
+
+	it('offers the role again when an earlier release accepted it without writing it', async () => {
+		// The previous handler logged a failed write and left the card accepted. Such
+		// a card proves nothing about the prompt, so it is not the base.
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		await db.query(
+			`UPDATE approvals SET status = $1::approval_status, resolved_at = now(),
+			        payload = payload - 'template'
+			  WHERE type = $2::approval_type AND payload->>'member_id' = $3`,
+			[ApprovalStatus.Approved, ApprovalType.RoleUpdate, coachId],
+		);
+		expect(await livePrompt()).toBe(base);
+
+		await fileRolePromptUpdates(db);
+		const cards = await pendingCards();
+		expect(cards).toHaveLength(1);
+		expect(cards[0].payload.content).toContain('v2');
 		await setTemplate(base);
 	});
 

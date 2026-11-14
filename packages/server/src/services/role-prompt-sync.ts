@@ -114,10 +114,15 @@ interface AdoptedCardRow {
  * agent whose last accept predates `template` and whose role has moved since.
  * A withdrawn card (`auto_closed`) never ran, so it is never the base.
  */
+/** Accepted cards read per agent while looking for one whose text reached the prompt. */
+const ADOPTED_CARD_LOOKBACK = 20;
+
 async function adoptedRoleText(
 	db: Db,
 	memberId: string,
 	currentTemplate: string,
+	documentId: string,
+	currentContent: string,
 ): Promise<string | null> {
 	const r = await db.query<AdoptedCardRow>(
 		`SELECT payload->>'template' AS template, payload->>'target_hash' AS target_hash,
@@ -126,15 +131,57 @@ async function adoptedRoleText(
 		  WHERE type = $1::approval_type AND status = $2::approval_status
 		    AND payload->>'member_id' = $3 AND NOT (payload ? 'auto_closed')
 		  ORDER BY resolved_at DESC NULLS LAST, created_at DESC
-		  LIMIT 1`,
+		  LIMIT ${ADOPTED_CARD_LOOKBACK}`,
 		[ApprovalType.RoleUpdate, ApprovalStatus.Approved, memberId],
 	);
-	const card = r.rows[0];
-	if (!card) return null;
-	if (card.template !== null) return card.template;
-	if (!card.target_hash || card.content === null) return null;
-	if (hashTemplate(currentTemplate) === card.target_hash) return currentTemplate;
-	return prefixWithHash(card.content, card.target_hash);
+	for (const card of r.rows) {
+		if (card.content === null) continue;
+		// An accept counts only if its text reached the prompt. A release before
+		// this one marked a card accepted even when the write failed, so the card
+		// alone proves nothing: the text is the live prompt, or a revision holds it
+		// because a later edit replaced it.
+		if (!(await promptHeld(db, documentId, currentContent, card.content))) continue;
+		if (card.template !== null) return card.template;
+		if (!card.target_hash) continue;
+		if (hashTemplate(currentTemplate) === card.target_hash) return currentTemplate;
+		const recovered = prefixWithHash(card.content, card.target_hash);
+		if (recovered !== null) return recovered;
+	}
+	return null;
+}
+
+/** Whether `content` is, or once was, this prompt document's text. */
+async function promptHeld(
+	db: Db,
+	documentId: string,
+	currentContent: string,
+	content: string,
+): Promise<boolean> {
+	if (currentContent === content) return true;
+	const r = await db.query(
+		'SELECT 1 FROM document_revisions WHERE document_id = $1 AND content = $2 LIMIT 1',
+		[documentId, content],
+	);
+	return r.rows.length > 0;
+}
+
+/**
+ * The role text an agent's prompt is measured against: the last accepted role
+ * text that reached its prompt, else the text it was hired on.
+ */
+export async function resolveRoleBase(
+	db: Db,
+	agent: { memberId: string; documentId: string; currentContent: string; currentTemplate: string },
+): Promise<string> {
+	return (
+		(await adoptedRoleText(
+			db,
+			agent.memberId,
+			agent.currentTemplate,
+			agent.documentId,
+			agent.currentContent,
+		)) ?? (await recoverBaseTemplate(db, agent.documentId, agent.currentContent))
+	);
 }
 
 /** The prefix of `content` ending at a line break (either side of it) whose hash is `hash`. */
@@ -150,18 +197,18 @@ function prefixWithHash(content: string, hash: string): string | null {
 }
 
 /**
- * The payload fields of a role update card that only its preview reads: two
- * whole prompts and the admin's edited lines. Lists leave them out.
+ * The payload fields of a role update card that only its preview reads: the
+ * offered prompt and the role text it was built from. Lists leave them out.
  */
-export const ROLE_UPDATE_PREVIEW_FIELDS = ['content', 'template', 'edited_lines'] as const;
+export const ROLE_UPDATE_PREVIEW_FIELDS = ['content', 'template'] as const;
 
-/** Most edited lines a card names; the preview still shows every removed line. */
+/** Most lost lines the preview is told about; it still shows every removed line. */
 export const MAX_EDITED_LINES = 200;
 
 /**
- * The lines an admin wrote inside the role's own text that the offer drops: in
- * the live prompt, but in neither the role text it was built on nor the offer.
- * The preview tags them, because they are the cost of accepting.
+ * The lines an admin wrote that the offer drops: in the live prompt, but in
+ * neither the role text it is measured against nor the offer. The preview tags
+ * them, because they are the cost of accepting.
  */
 export function editedLinesLost(base: string, current: string, offered: string): string[] {
 	const known = new Set([...base.split('\n'), ...offered.split('\n')]);
@@ -184,8 +231,6 @@ export interface RolePromptUpdate {
 	targetHash: string;
 	/** The role doc being offered, which becomes this agent's base once accepted. */
 	template: string;
-	/** For a conflict, the admin's own lines the offer drops. */
-	editedLines: string[];
 }
 
 interface RolePromptScan {
@@ -236,9 +281,12 @@ async function scanRolePrompts(db: Db): Promise<RolePromptScan> {
 
 	const scan: RolePromptScan = { updates: [], upToDate: [] };
 	for (const row of rows.rows) {
-		const base =
-			(await adoptedRoleText(db, row.member_id, row.template)) ??
-			(await recoverBaseTemplate(db, row.document_id, row.content));
+		const base = await resolveRoleBase(db, {
+			memberId: row.member_id,
+			documentId: row.document_id,
+			currentContent: row.content,
+			currentTemplate: row.template,
+		});
 		const splice = spliceRolePrompt(base, row.content, row.template);
 		if (splice.outcome === 'unchanged') {
 			scan.upToDate.push(row.member_id);
@@ -253,10 +301,6 @@ async function scanRolePrompts(db: Db): Promise<RolePromptScan> {
 			content: splice.content,
 			targetHash: hashTemplate(row.template),
 			template: row.template,
-			editedLines:
-				splice.outcome === RoleUpdateOutcome.Conflict
-					? editedLinesLost(base, row.content, splice.content)
-					: [],
 		});
 	}
 	return scan;
@@ -307,7 +351,6 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 			target_hash: u.targetHash,
 			template: u.template,
 			content: u.content,
-			edited_lines: u.editedLines,
 		};
 		try {
 			const declined = await db.query(
@@ -321,7 +364,7 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 
 			// Any difference rewrites the card: a new role doc, an offer worked out
 			// wrongly, or a card filed by an earlier release without the fields the
-			// preview reads (`template`, `edited_lines`). It keeps its place in the
+			// preview reads (`template`). It keeps its place in the
 			// inbox unless the role doc itself moved.
 			const updated = await db.query(
 				`UPDATE approvals

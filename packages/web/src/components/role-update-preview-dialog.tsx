@@ -83,8 +83,14 @@ export function RoleUpdatePreviewDialog({
 }: RoleUpdatePreviewDialogProps) {
 	const { t } = useI18n();
 	const who = roleUpdateAgentName(approval.payload);
-	const edited = approval.payload.outcome === RoleUpdateOutcome.Conflict;
 	const detail = useApprovalDetail(approval.id, open);
+	// Once loaded, the warning follows the live prompt: an edit made after the card
+	// was filed is lost on Apply too. Until then, the card's own verdict stands.
+	const lostLines = detail.data?.lost_lines ?? null;
+	const edited =
+		lostLines !== null
+			? lostLines.length > 0
+			: approval.payload.outcome === RoleUpdateOutcome.Conflict;
 	const resolve = useResolveApproval();
 	const [openFolds, setOpenFolds] = useState<ReadonlySet<number>>(new Set());
 
@@ -96,10 +102,7 @@ export function RoleUpdatePreviewDialog({
 		[ready, current, offered],
 	);
 	const items = useMemo(() => (diff ? foldUnchanged(diff.lines) : []), [diff]);
-	const editedLines = useMemo(
-		() => new Set((detail.data?.payload.edited_lines as string[] | undefined) ?? []),
-		[detail.data],
-	);
+	const editedLines = useMemo(() => new Set(lostLines ?? []), [lostLines]);
 	const editedTag = t('approval.roleUpdate.dialog.editedTag');
 	const editedCount = diff
 		? diff.lines.filter((l) => l.kind === 'removed' && editedLines.has(l.text)).length

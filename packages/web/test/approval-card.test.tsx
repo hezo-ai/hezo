@@ -219,15 +219,27 @@ test('a designated-repo request with no reason links to the team general setting
 	expect((repoCard as HTMLElement).getAttribute('href')).toContain('/team-settings/general');
 });
 
-/** Set the agent's live prompt, which the preview compares the offer against. */
-async function setLivePrompt(memberId: string, content: string): Promise<void> {
+/**
+ * Set the agent's prompt history: `base` is the text it took on, `live` what it
+ * runs now. The preview diffs the offer against `live`, and tags as lost the
+ * lines of `live` that are in neither `base` nor the offer.
+ */
+async function setPromptHistory(memberId: string, base: string, live: string): Promise<void> {
 	const { db } = getTestContext();
-	const r = await db.query(
+	const doc = await db.query<{ id: string }>(
 		`UPDATE documents SET content = $1
 		  WHERE member_agent_id = $2 AND type = 'agent_system_prompt' RETURNING id`,
-		[content, memberId],
+		[live, memberId],
 	);
-	expect(r.rows).toHaveLength(1);
+	expect(doc.rows).toHaveLength(1);
+	await db.query('DELETE FROM document_revisions WHERE document_id = $1', [doc.rows[0].id]);
+	if (base !== live) {
+		await db.query(
+			`INSERT INTO document_revisions (document_id, revision_number, content, change_summary)
+			 VALUES ($1, 1, $2, '')`,
+			[doc.rows[0].id, base],
+		);
+	}
 }
 
 async function livePrompt(memberId: string): Promise<string> {
@@ -291,7 +303,8 @@ test('the preview shows the changed lines, and Apply update writes the offered t
 	].join('\n');
 	const { findByRole, findByTestId, user } = await renderTeamInbox(async ({ ws }) => {
 		memberId = ws.agents[0].id;
-		await setLivePrompt(memberId, [...LIVE_ROLE, '', '## Learned Rules', '- keep me'].join('\n'));
+		const live = [...LIVE_ROLE, '', '## Learned Rules', '- keep me'].join('\n');
+		await setPromptHistory(memberId, live, live);
 		cardId = (
 			await insertApproval(ws, {
 				type: 'role_update',
@@ -301,7 +314,6 @@ test('the preview shows the changed lines, and Apply update writes the offered t
 					agent_title: 'Captain',
 					outcome: 'clean',
 					content: offered,
-					edited_lines: [],
 				},
 			})
 		).id;
@@ -338,7 +350,7 @@ test('an edited role warns, tags the lines it drops, and Keep current leaves the
 	].join('\n');
 	const { findByRole, findByTestId, user } = await renderTeamInbox(async ({ ws }) => {
 		memberId = ws.agents[0].id;
-		await setLivePrompt(memberId, live);
+		await setPromptHistory(memberId, LIVE_ROLE.join('\n'), live);
 		cardId = (
 			await insertApproval(ws, {
 				type: 'role_update',
@@ -348,7 +360,6 @@ test('an edited role warns, tags the lines it drops, and Keep current leaves the
 					agent_title: 'Coach',
 					outcome: 'conflict',
 					content: [...LIVE_ROLE.slice(0, 4), '- Escalate to the CEO first'].join('\n'),
-					edited_lines: ['- Post a weekly summary every Friday'],
 				},
 			})
 		).id;
@@ -369,6 +380,34 @@ test('an edited role warns, tags the lines it drops, and Keep current leaves the
 	await user.click(within(dialog).getByRole('button', { name: 'Keep current' }));
 	await waitFor(async () => expect(await cardStatus(cardId)).toBe('denied'), { timeout: 15_000 });
 	expect(await livePrompt(memberId)).toBe(live);
+});
+
+test('a card filed as clean still warns when the prompt was edited since', async () => {
+	// The card was worked out at boot. A line the admin wrote after that is lost on
+	// Apply just the same, so the warning follows the live prompt, not the card.
+	const { findByRole, findByTestId, user } = await renderTeamInbox(async ({ ws }) => {
+		const memberId = ws.agents[0].id;
+		await setPromptHistory(
+			memberId,
+			LIVE_ROLE.join('\n'),
+			[...LIVE_ROLE, '- Written after the card was filed'].join('\n'),
+		);
+		await insertApproval(ws, {
+			type: 'role_update',
+			requestedByMemberId: memberId,
+			payload: {
+				member_id: memberId,
+				agent_title: 'Captain',
+				outcome: 'clean',
+				content: [...LIVE_ROLE, '- A new rule'].join('\n'),
+			},
+		});
+	});
+
+	await user.click(await findByRole('button', { name: /Preview changes/ }, { timeout: 15_000 }));
+	const dialog = await findByTestId('role-update-preview');
+	await within(dialog).findByText('Someone edited this role here.');
+	within(dialog).getByText('1 edited here');
 });
 
 test('a role-update card the instance withdrew reads as already up to date', async () => {

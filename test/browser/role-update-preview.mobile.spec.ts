@@ -26,7 +26,6 @@ test.describe('role update preview - mobile (390px)', () => {
 					agent_title: agent.title,
 					outcome: 'clean',
 					content: `# ${agent.title}\n\n- ${long}\n`,
-					edited_lines: [],
 				},
 			},
 		});

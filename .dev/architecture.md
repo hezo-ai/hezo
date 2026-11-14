@@ -490,12 +490,13 @@ no revisions is its own original. A card accepted before `template` existed is r
 from its `target_hash`: today's role text when the hashes match, else the prefix of its
 `content` ending at a line break whose hash matches. Measuring against the hire-time text
 after an accept read every later boot as an edit and filed the same role again; the base is
-what stops that. `spliceRolePrompt(base, current, target)` then separates the release's text
+what stops that. An accepted card counts only if its `content` reached the prompt (it is the
+live text, or a revision holds it): the release before this marked a card accepted even when
+its write failed. `spliceRolePrompt(base, current, target)` then separates the release's text
 from everyone else's: `current === base` takes the new role whole, `current.startsWith(base)`
 reproduces the appendix byte for byte (agents are instructed to append only, so this is the
 designed case, not a heuristic), and anything else is a conflict offering the new role plus
-the learned rules, with `payload.edited_lines` naming the admin's own lines it drops. The
-outcome values are `RoleUpdateOutcome` in `@hezo/shared`. Scoped to `is_builtin` agent
+the learned rules. The outcome values are `RoleUpdateOutcome` in `@hezo/shared`. Scoped to `is_builtin` agent
 types - a hire, a marketplace role and a template snapshot all carry a `custom` type whose
 template records what was provisioned, not what the release ships.
 
@@ -506,9 +507,11 @@ in `runSeed` and files one `ApprovalType.RoleUpdate` per agent. A standing offer
 still offered. A standing card for an agent that already runs its role is withdrawn: closed
 as approved with `payload.auto_closed`, no handler run, and never read as a base; the inbox
 labels it "Already up to date". The card's sentence is the web catalog's, chosen by
-`outcome`. The inbox list drops `ROLE_UPDATE_PREVIEW_FIELDS` (both prompts and the edited
-lines) from each role update; `GET /api/approvals/:approvalId` returns the whole card plus the
-agent's live prompt, which the preview diffs against the offer. The card offers no inline
+`outcome`. The inbox list drops `ROLE_UPDATE_PREVIEW_FIELDS` (both prompts) from each role
+update; `GET /api/approvals/:approvalId` returns the whole card plus the agent's live prompt, which the preview diffs against the offer, and `lost_lines`
+(`editedLinesLost`): the lines of that live prompt in neither the base nor the offer. The
+preview's warning follows `lost_lines` rather than the card's `outcome`, because an edit made
+after the card was filed is lost on Apply too. The card offers no inline
 answer: Apply update and Keep current live only in the preview.
 `approval-handlers/role-update.ts` writes the content the card carried (not a fresh splice:
 the admin approved a specific text) through `upsertDocument`, which records a revision, so

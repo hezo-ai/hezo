@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ApprovalType, DocumentType } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { signAdminJwt } from '../src/middleware/auth';
+import { upsertDocument } from '../src/services/documents';
 import { authHeader, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -16,6 +17,8 @@ let projectSlug: string;
 let outsiderToken: string;
 let cardId: string;
 let livePrompt: string;
+let agentId: string;
+let teamId: string;
 
 async function teamWithProject(name: string): Promise<{ teamId: string; slug: string }> {
 	const teamRes = await createTestTeam(ctx.db, { name });
@@ -52,6 +55,8 @@ beforeAll(async () => {
 		[own.teamId, DocumentType.AgentSystemPrompt],
 	);
 	livePrompt = agent.rows[0].content;
+	agentId = agent.rows[0].id;
+	teamId = own.teamId;
 	const card = await ctx.db.query<{ id: string }>(
 		`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 		 VALUES ($1, $2::approval_type, $3, $4::jsonb) RETURNING id`,
@@ -65,7 +70,6 @@ beforeAll(async () => {
 				agent_title: 'Captain',
 				outcome: 'clean',
 				target_hash: 'abc',
-				edited_lines: [],
 				template: 'NEW ROLE',
 				content: 'NEW ROLE\n\n## Learned Rules\n- keep me',
 			}),
@@ -89,7 +93,6 @@ describe('role update cards over REST', () => {
 		expect(row.payload.agent_title).toBe('Captain');
 		expect(row.payload).not.toHaveProperty('content');
 		expect(row.payload).not.toHaveProperty('template');
-		expect(row.payload).not.toHaveProperty('edited_lines');
 	});
 
 	it('reads the card whole, with the prompt it would replace', async () => {
@@ -100,6 +103,46 @@ describe('role update cards over REST', () => {
 		const card = (await res.json()).data;
 		expect(card.payload.content).toBe('NEW ROLE\n\n## Learned Rules\n- keep me');
 		expect(card.current_prompt).toBe(livePrompt);
+	});
+
+	it('names the lines applying would drop, against the prompt as it is now', async () => {
+		// The card was worked out at boot; an admin line written since is lost on
+		// Apply too, so the preview's warning has to see it.
+		const doc = await ctx.db.query<{ id: string }>(
+			`SELECT id FROM documents WHERE member_agent_id = $1 AND type = $2::document_type`,
+			[agentId, DocumentType.AgentSystemPrompt],
+		);
+		const docId = doc.rows[0].id;
+		await ctx.db.query('DELETE FROM document_revisions WHERE document_id = $1', [docId]);
+		await ctx.db.query('UPDATE documents SET content = $1 WHERE id = $2', ['ROLE\n- a', docId]);
+		await upsertDocument(ctx.db, undefined, {
+			scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: agentId },
+			content: 'ROLE\n- a\n- written after the card',
+			authorMemberId: null,
+		});
+		const card = await ctx.db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb) RETURNING id`,
+			[
+				teamId,
+				ApprovalType.RoleUpdate,
+				agentId,
+				JSON.stringify({
+					type: 'role_update',
+					member_id: agentId,
+					outcome: 'clean',
+					target_hash: 'def',
+					template: 'ROLE v2\n- a',
+					content: 'ROLE v2\n- a',
+				}),
+			],
+		);
+
+		const res = await ctx.app.request(`/api/approvals/${card.rows[0].id}`, {
+			headers: authHeader(ctx.token),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.lost_lines).toEqual(['- written after the card']);
 	});
 
 	it('refuses a user from another team', async () => {
