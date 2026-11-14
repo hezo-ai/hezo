@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import { ApprovalStatus, ApprovalType, DocumentType, LEARNED_RULES_HEADING } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	DocumentType,
+	LEARNED_RULES_HEADING,
+	RoleUpdateOutcome,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { logger } from '../logger';
 
@@ -28,9 +34,9 @@ export type RolePromptSplice =
 	/** The role doc has not moved since this agent was hired. */
 	| { outcome: 'unchanged' }
 	/** Everything the agent and the admin added survives, exactly. */
-	| { outcome: 'clean'; content: string }
+	| { outcome: typeof RoleUpdateOutcome.Clean; content: string }
 	/** The admin edited inside the role doc's own text; something will be lost. */
-	| { outcome: 'conflict'; content: string };
+	| { outcome: typeof RoleUpdateOutcome.Conflict; content: string };
 
 /**
  * What this agent's prompt becomes if the role doc's changes are carried into it.
@@ -53,13 +59,13 @@ export type RolePromptSplice =
  */
 export function spliceRolePrompt(base: string, current: string, target: string): RolePromptSplice {
 	if (base === target) return { outcome: 'unchanged' };
-	if (current === base) return { outcome: 'clean', content: target };
+	if (current === base) return { outcome: RoleUpdateOutcome.Clean, content: target };
 	if (base.length > 0 && current.startsWith(base)) {
-		return { outcome: 'clean', content: target + current.slice(base.length) };
+		return { outcome: RoleUpdateOutcome.Clean, content: target + current.slice(base.length) };
 	}
 	const learned = current.indexOf(LEARNED_RULES_HEADING);
 	const appendix = learned === -1 ? '' : `\n\n${current.slice(learned).trim()}\n`;
-	return { outcome: 'conflict', content: target + appendix };
+	return { outcome: RoleUpdateOutcome.Conflict, content: target + appendix };
 }
 
 /**
@@ -84,17 +90,169 @@ export async function recoverBaseTemplate(
 	return first.rows[0]?.content ?? currentContent;
 }
 
+interface AdoptedCardRow {
+	template: string | null;
+	target_hash: string | null;
+	content: string | null;
+}
+
+/**
+ * The role text a person last accepted for this agent, or null when none was.
+ *
+ * Accepting a card moves the agent onto that card's role text, so from then on it
+ * is the base later releases are measured against - not the text the agent was
+ * hired on. Measured against the hire-time text, an agent that had accepted one
+ * update read as "edited here" on every later boot and was offered the same role
+ * again each time.
+ *
+ * A card filed since this landed carries the text it offered as `template`. One
+ * accepted before carries only `target_hash`, the hash of that text, and the text
+ * is the prefix of the `content` it wrote: equal to today's role text when the
+ * role has not moved since, otherwise found by hashing `content` up to each line
+ * break. That search costs two hashes per line of one prompt (80 ms for a 50 KB
+ * prompt on Bun 1.4; the shipped role docs are under 11 KB), and runs only for an
+ * agent whose last accept predates `template` and whose role has moved since.
+ * A withdrawn card (`auto_closed`) never ran, so it is never the base.
+ */
+/** Accepted cards read per agent while looking for one whose text reached the prompt. */
+const ADOPTED_CARD_LOOKBACK = 20;
+
+async function adoptedRoleText(
+	db: Db,
+	memberId: string,
+	currentTemplate: string,
+	documentId: string,
+	currentContent: string,
+): Promise<string | null> {
+	const r = await db.query<AdoptedCardRow>(
+		`SELECT payload->>'template' AS template, payload->>'target_hash' AS target_hash,
+		        payload->>'content' AS content
+		   FROM approvals
+		  WHERE type = $1::approval_type AND status = $2::approval_status
+		    AND payload->>'member_id' = $3 AND NOT (payload ? 'auto_closed')
+		  ORDER BY resolved_at DESC NULLS LAST, created_at DESC
+		  LIMIT ${ADOPTED_CARD_LOOKBACK}`,
+		[ApprovalType.RoleUpdate, ApprovalStatus.Approved, memberId],
+	);
+	for (const card of r.rows) {
+		if (card.content === null) continue;
+		// An accept counts only if its text reached the prompt. A release before
+		// this one marked a card accepted even when the write failed, so the card
+		// alone proves nothing: the text is the live prompt, or a revision holds it
+		// because a later edit replaced it.
+		if (!(await promptHeld(db, documentId, currentContent, card.content))) continue;
+		if (card.template !== null) return card.template;
+		if (!card.target_hash) continue;
+		if (hashTemplate(currentTemplate) === card.target_hash) return currentTemplate;
+		const recovered = prefixWithHash(card.content, card.target_hash);
+		if (recovered !== null) return recovered;
+	}
+	return null;
+}
+
+/** Whether `content` is, or once was, this prompt document's text. */
+async function promptHeld(
+	db: Db,
+	documentId: string,
+	currentContent: string,
+	content: string,
+): Promise<boolean> {
+	if (currentContent === content) return true;
+	const r = await db.query(
+		'SELECT 1 FROM document_revisions WHERE document_id = $1 AND content = $2 LIMIT 1',
+		[documentId, content],
+	);
+	return r.rows.length > 0;
+}
+
+/**
+ * The role text an agent's prompt is measured against: the last accepted role
+ * text that reached its prompt, else the text it was hired on.
+ */
+export async function resolveRoleBase(
+	db: Db,
+	agent: { memberId: string; documentId: string; currentContent: string; currentTemplate: string },
+): Promise<string> {
+	return (
+		(await adoptedRoleText(
+			db,
+			agent.memberId,
+			agent.currentTemplate,
+			agent.documentId,
+			agent.currentContent,
+		)) ?? (await recoverBaseTemplate(db, agent.documentId, agent.currentContent))
+	);
+}
+
+/** The prefix of `content` ending at a line break (either side of it) whose hash is `hash`. */
+function prefixWithHash(content: string, hash: string): string | null {
+	if (hashTemplate(content) === hash) return content;
+	for (let i = content.indexOf('\n'); i !== -1; i = content.indexOf('\n', i + 1)) {
+		for (const cut of [i, i + 1]) {
+			const prefix = content.slice(0, cut);
+			if (hashTemplate(prefix) === hash) return prefix;
+		}
+	}
+	return null;
+}
+
+/**
+ * The payload fields of a role update card that only its preview reads: the
+ * offered prompt and the role text it was built from. Lists leave them out.
+ */
+export const ROLE_UPDATE_PREVIEW_FIELDS = ['content', 'template'] as const;
+
+/** Most lost lines the preview is told about; it still shows every removed line. */
+export const MAX_EDITED_LINES = 200;
+
+function lineCounts(text: string): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const line of text.split('\n')) counts.set(line, (counts.get(line) ?? 0) + 1);
+	return counts;
+}
+
+/**
+ * The lines an admin wrote that the offer drops, one entry per occurrence. A line
+ * is the admin's when the live prompt holds it more times than the role text it
+ * is measured against, and lost when the offer holds it fewer times than that.
+ * Counted, not looked up: an admin line that repeats a line the role already
+ * has is still theirs. The preview tags them, because they are the cost of
+ * accepting.
+ */
+export function editedLinesLost(base: string, current: string, offered: string): string[] {
+	const inBase = lineCounts(base);
+	const inOffer = lineCounts(offered);
+	const seen = new Map<string, number>();
+	const lost: string[] = [];
+	for (const line of current.split('\n')) {
+		if (line.trim() === '') continue;
+		const nth = (seen.get(line) ?? 0) + 1;
+		seen.set(line, nth);
+		if (nth > Math.max(inBase.get(line) ?? 0, inOffer.get(line) ?? 0)) lost.push(line);
+		if (lost.length >= MAX_EDITED_LINES) break;
+	}
+	return lost;
+}
+
 /** One agent whose role doc has moved on without it. */
 export interface RolePromptUpdate {
 	memberId: string;
 	teamId: string;
 	agentSlug: string;
 	agentTitle: string;
-	outcome: 'clean' | 'conflict';
+	outcome: RoleUpdateOutcome;
 	/** The prompt that will be written if a person accepts. */
 	content: string;
 	/** Identifies the role doc revision being offered, so a refusal can be remembered. */
 	targetHash: string;
+	/** The role doc being offered, which becomes this agent's base once accepted. */
+	template: string;
+}
+
+interface RolePromptScan {
+	updates: RolePromptUpdate[];
+	/** Agents already running their current role doc. */
+	upToDate: string[];
 }
 
 interface BuiltinAgentRow {
@@ -121,6 +279,10 @@ function hashTemplate(target: string): string {
  * release artifact - carrying "changes" into those would be inventing them.
  */
 export async function findRolePromptUpdates(db: Db): Promise<RolePromptUpdate[]> {
+	return (await scanRolePrompts(db)).updates;
+}
+
+async function scanRolePrompts(db: Db): Promise<RolePromptScan> {
 	const rows = await db.query<BuiltinAgentRow>(
 		`SELECT ma.id AS member_id, m.team_id, ma.slug, ma.title,
 		        at.system_prompt_template AS template,
@@ -133,12 +295,20 @@ export async function findRolePromptUpdates(db: Db): Promise<RolePromptUpdate[]>
 		[DocumentType.AgentSystemPrompt],
 	);
 
-	const updates: RolePromptUpdate[] = [];
+	const scan: RolePromptScan = { updates: [], upToDate: [] };
 	for (const row of rows.rows) {
-		const base = await recoverBaseTemplate(db, row.document_id, row.content);
+		const base = await resolveRoleBase(db, {
+			memberId: row.member_id,
+			documentId: row.document_id,
+			currentContent: row.content,
+			currentTemplate: row.template,
+		});
 		const splice = spliceRolePrompt(base, row.content, row.template);
-		if (splice.outcome === 'unchanged') continue;
-		updates.push({
+		if (splice.outcome === 'unchanged') {
+			scan.upToDate.push(row.member_id);
+			continue;
+		}
+		scan.updates.push({
 			memberId: row.member_id,
 			teamId: row.team_id,
 			agentSlug: row.slug,
@@ -146,33 +316,46 @@ export async function findRolePromptUpdates(db: Db): Promise<RolePromptUpdate[]>
 			outcome: splice.outcome,
 			content: splice.content,
 			targetHash: hashTemplate(row.template),
+			template: row.template,
 		});
 	}
-	return updates;
-}
-
-function describe(update: RolePromptUpdate): string {
-	return update.outcome === 'clean'
-		? `${update.agentTitle}'s role has been improved in this release. Accepting rewrites the role's own instructions and keeps everything added since - learned rules and your own additions alike.`
-		: `${update.agentTitle}'s role has been improved in this release, but its instructions have been edited here since it was hired. Accepting replaces them with the new role and keeps only the learned rules; declining keeps what you have.`;
+	return scan;
 }
 
 /**
- * File one pending decision per agent whose role doc has moved.
+ * File one pending decision per agent whose role doc has moved, and withdraw the
+ * ones that no longer apply.
  *
- * Three states are kept apart, and each matters:
+ * Four states are kept apart, and each matters:
  *
- * - **Already offered, same role doc.** Left alone, so a restart does not reissue
+ * - **Already offered, same offer.** Left alone, so a restart does not reissue
  *   a decision the admin is already looking at.
- * - **Already offered, role doc moved again.** The standing card is rewritten
- *   rather than joined by a second one. A superseded offer would apply text two
- *   releases old, and two cards for one agent make the admin pick between them.
+ * - **Already offered, offer changed.** The standing card is rewritten rather
+ *   than joined by a second one: the role doc moved again, or the card was
+ *   worked out wrongly or filed without the preview's fields by an earlier
+ *   release. A stale offer would apply text the
+ *   admin is not being shown, and two cards for one agent make them pick.
  * - **Declined for this role doc.** Never re-offered. The declined record is the
  *   memory - keyed on the version refused, so the *next* improvement is still
  *   offered rather than the refusal silencing the agent forever.
+ * - **Offered, but the agent already runs this role doc.** Withdrawn: closed
+ *   with no side effect and marked `auto_closed`. Earlier releases filed such
+ *   cards after every accept, and accepting one would replace the role and keep
+ *   only the learned rules, dropping the admin's own additions.
+ *
+ * The card's wording is the web client's, chosen by `outcome`, so it reads in
+ * the admin's language rather than the server's.
  */
 export async function fileRolePromptUpdates(db: Db): Promise<number> {
-	const updates = await findRolePromptUpdates(db);
+	const { updates, upToDate } = await scanRolePrompts(db);
+	for (const memberId of upToDate) {
+		try {
+			await withdrawStandingCard(db, memberId);
+		} catch (e) {
+			log.error(`Failed to withdraw a role update card for member ${memberId}:`, e);
+		}
+	}
+
 	let filed = 0;
 	for (const u of updates) {
 		const payload = {
@@ -182,8 +365,8 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 			agent_title: u.agentTitle,
 			outcome: u.outcome,
 			target_hash: u.targetHash,
+			template: u.template,
 			content: u.content,
-			message: describe(u),
 		};
 		try {
 			const declined = await db.query(
@@ -195,11 +378,18 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 			);
 			if (declined.rows.length > 0) continue;
 
+			// Any difference rewrites the card: a new role doc, an offer worked out
+			// wrongly, or a card filed by an earlier release without the fields the
+			// preview reads (`template`). It keeps its place in the
+			// inbox unless the role doc itself moved.
 			const updated = await db.query(
-				`UPDATE approvals SET payload = $1::jsonb, created_at = now()
+				`UPDATE approvals
+				    SET payload = $1::jsonb,
+				        created_at = CASE WHEN payload->>'target_hash' IS DISTINCT FROM $5
+				                          THEN now() ELSE created_at END
 				  WHERE type = $2::approval_type AND status = $3::approval_status
 				    AND payload->>'member_id' = $4
-				    AND payload->>'target_hash' IS DISTINCT FROM $5
+				    AND payload IS DISTINCT FROM $1::jsonb
 				  RETURNING id`,
 				[
 					JSON.stringify(payload),
@@ -240,4 +430,26 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 	}
 	if (filed > 0) log.info(`Filed ${filed} role prompt update(s) for review`);
 	return filed;
+}
+
+/**
+ * Close a standing card for an agent that already runs its current role doc.
+ *
+ * Written directly rather than through the resolve path, because resolving runs
+ * the handler and the handler writes the card's text into the prompt - the very
+ * thing a withdrawn card must not do.
+ */
+async function withdrawStandingCard(db: Db, memberId: string): Promise<void> {
+	const closed = await db.query(
+		`UPDATE approvals
+		    SET status = $1::approval_status, resolved_at = now(),
+		        payload = payload || '{"auto_closed": true}'::jsonb
+		  WHERE type = $2::approval_type AND status = $3::approval_status
+		    AND payload->>'member_id' = $4
+		  RETURNING id`,
+		[ApprovalStatus.Approved, ApprovalType.RoleUpdate, ApprovalStatus.Pending, memberId],
+	);
+	if (closed.rows.length > 0) {
+		log.info(`Withdrew a role update card for member ${memberId}: it already runs that role`);
+	}
 }

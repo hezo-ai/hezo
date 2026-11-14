@@ -481,25 +481,49 @@ role docs, but nothing carried that forward, so **every role-doc change reached 
 instances and no existing one** - hardest for the CEO and Coach, hired on an instance's
 first boot and never hired again.
 
-`services/role-prompt-sync.ts` closes that. The base (the role doc as it stood at hire time)
-is exact and free: `document_revisions` holds content as it was *before* each change and
-`insertDocument` records none, so the first revision is the original and a document with no
-revisions is its own original. No column records which release a prompt came from, so
-nothing can fall out of step with it. `spliceRolePrompt(base, current, target)` then
-separates the release's text from everyone else's: `current === base` takes the new role
-whole, `current.startsWith(base)` reproduces the appendix byte for byte (agents are
-instructed to append only, so this is the designed case, not a heuristic), and anything else
-is a conflict offering the new role plus the learned rules. Scoped to `is_builtin` agent
+`services/role-prompt-sync.ts` closes that. The base is the role text the agent last
+adopted. An accepted card records the role text it offered as `payload.template`, and that
+is the base from then on. Before any accept it is the role doc as it stood at hire time,
+which is exact and free: `document_revisions` holds content as it was *before* each change
+and `insertDocument` records none, so the first revision is the original and a document with
+no revisions is its own original. A card accepted before `template` existed is recovered
+from its `target_hash`: today's role text when the hashes match, else the prefix of its
+`content` ending at a line break whose hash matches. Measuring against the hire-time text
+after an accept read every later boot as an edit and filed the same role again; the base is
+what stops that. An accepted card counts only if its `content` reached the prompt (it is the
+live text, or a revision holds it): the release before this marked a card accepted even when
+its write failed. `spliceRolePrompt(base, current, target)` then separates the release's text
+from everyone else's: `current === base` takes the new role whole, `current.startsWith(base)`
+reproduces the appendix byte for byte (agents are instructed to append only, so this is the
+designed case, not a heuristic), and anything else is a conflict offering the new role plus
+the learned rules. The outcome values are `RoleUpdateOutcome` in `@hezo/shared`. Scoped to `is_builtin` agent
 types - a hire, a marketplace role and a template snapshot all carry a `custom` type whose
 template records what was provisioned, not what the release ships.
 
 Nothing is written without a person accepting. `fileRolePromptUpdates` runs after the seed
-in `runSeed` and files one `ApprovalType.RoleUpdate` per agent, keyed on a hash of the
-target so a standing offer is *rewritten* when the role doc moves again rather than joined
-by a second, and a **declined** row is the memory - keyed on the version refused, so the
-next improvement is still offered. `approval-handlers/role-update.ts` writes the content the
-card carried (not a fresh splice: the admin approved a specific text) through
-`upsertDocument`, which records a revision, so the existing rollback undoes it.
+in `runSeed` and files one `ApprovalType.RoleUpdate` per agent. A standing offer is
+*rewritten* when its hash, content or outcome changes rather than joined by a second, and a
+**declined** row is the memory - keyed on the version refused, so the next improvement is
+still offered. A standing card for an agent that already runs its role is withdrawn: closed
+as approved with `payload.auto_closed`, no handler run, and never read as a base; the inbox
+labels it "Already up to date". The card's sentence is the web catalog's, chosen by
+`outcome`. The inbox list drops `ROLE_UPDATE_PREVIEW_FIELDS` (both prompts) from each role
+update; `GET /api/approvals/:approvalId` returns the whole card plus the agent's live prompt, which the preview diffs against the offer, and `lost_lines`
+(`editedLinesLost`): the lines of that live prompt in neither the base nor the offer. The
+preview's warning follows `lost_lines` rather than the card's `outcome`, because an edit made
+after the card was filed is lost on Apply too. Apply re-reads the single card first and
+refuses to resolve when the live prompt or the offered `content` differs from what the
+preview drew; the check is in the client, so a change landing between that read and the
+resolve is not caught. No agent run decides a role update: the REST route refuses agent
+tokens, and `resolve_approval` refuses any agent auth for this type, the cross-project CEO
+included. The card offers no inline
+answer: Apply update and Keep current live only in the preview.
+`approval-handlers/role-update.ts` writes the content the card carried (not a fresh splice:
+the admin approved a specific text) through `upsertDocument`, which records a revision, so
+the existing rollback undoes it. A write that throws or is refused (an archived prompt)
+raises `ApprovalSideEffectError` and the card waits again: an accepted card is what later
+boots read as the agent's role text, so one accepted with nothing written would never be
+offered again.
 
 `services/project-retrospective.ts` computes the signals — the deterministic half — and the Coach
 judges them; the block is composed by the server into the run prompt (`buildRetrospectivePrompt`)

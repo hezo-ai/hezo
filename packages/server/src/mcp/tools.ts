@@ -4845,11 +4845,20 @@ export function registerTools(
 			resolution_note: z.string().optional().describe('Note'),
 		},
 		async (args, db, auth) => {
-			const existing = await db.query<{ team_id: string; payload: Record<string, unknown> }>(
-				'SELECT team_id, payload FROM approvals WHERE id = $1',
-				[args.approval_id],
-			);
+			const existing = await db.query<{
+				team_id: string;
+				type: string;
+				payload: Record<string, unknown>;
+			}>('SELECT team_id, type, payload FROM approvals WHERE id = $1', [args.approval_id]);
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
+			// A role update rewrites an agent's prompt and is decided by a person who has
+			// seen the text, in the inbox preview. The REST route already refuses agent
+			// tokens; this is the same rule on the tool, for any agent run.
+			if (auth.type === AuthType.Agent && existing.rows[0].type === ApprovalType.RoleUpdate) {
+				return {
+					error: 'Role updates are decided by a person in the inbox preview, not by an agent.',
+				};
+			}
 			const approvalTeamId = existing.rows[0].team_id;
 			const approvalProjectId = existing.rows[0].payload?.project_id;
 			if (typeof approvalProjectId === 'string') {

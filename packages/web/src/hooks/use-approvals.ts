@@ -85,6 +85,30 @@ export function useAllApprovals(projectSlugs: string[], { archived = false } = {
 	});
 }
 
+/** One approval with its whole payload; a role update also carries the agent's live prompt. */
+export interface ApprovalDetail {
+	id: string;
+	team_id: string;
+	type: string;
+	status: string;
+	payload: Record<string, unknown>;
+	current_prompt: string | null;
+	/** The admin's own lines applying would drop, against the live prompt; null when not a role update. */
+	lost_lines: string[] | null;
+}
+
+/**
+ * The single-card read. The inbox list leaves a role update's prompts out, so
+ * the preview fetches them here when it opens.
+ */
+export function useApprovalDetail(approvalId: string, enabled = true) {
+	return useQuery({
+		queryKey: queryKeys.approvals.detail(approvalId),
+		queryFn: () => api.get<ApprovalDetail>(`/api/approvals/${approvalId}`),
+		enabled,
+	});
+}
+
 export function useBlockedTickets(
 	projectId: string | null | undefined,
 	approvalId: string | null | undefined,

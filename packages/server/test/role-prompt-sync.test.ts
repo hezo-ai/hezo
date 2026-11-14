@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import { resolveApproval } from '../src/services/approval-resolve';
 import { upsertDocument } from '../src/services/documents';
 import {
+	editedLinesLost,
 	fileRolePromptUpdates,
 	findRolePromptUpdates,
 	recoverBaseTemplate,
@@ -135,6 +136,25 @@ describe('spliceRolePrompt', () => {
 			'ROLE v2',
 		);
 		expect(out).toEqual({ outcome: 'conflict', content: 'ROLE v2' });
+	});
+});
+
+describe('editedLinesLost', () => {
+	it('names lines the admin wrote that the offer drops, and nothing the release moved', () => {
+		const base = 'ROLE\n- old rule';
+		const current = 'ROLE\n- old rule\n- my own rule\n\n## Learned Rules\n- keep me';
+		const offered = 'ROLE v2\n- new rule\n\n## Learned Rules\n- keep me';
+		// '- old rule' goes too, but the release removed it: it is not the admin's.
+		expect(editedLinesLost(base, current, offered)).toEqual(['- my own rule']);
+	});
+
+	it('counts an admin line that repeats a line the role already has', () => {
+		// B was replaced by a second C. The role holds C once, so one C is the
+		// admin's, and the offer drops it.
+		expect(editedLinesLost('A\nB\nC', 'A\nC\nC', 'A\nD')).toEqual(['C']);
+		// The offer keeping one C still drops the admin's second one.
+		expect(editedLinesLost('A\nB\nC', 'A\nC\nC', 'A\nC')).toEqual(['C']);
+		expect(editedLinesLost('A\nB\nC', 'A\nC\nC', 'A\nC\nC')).toEqual([]);
 	});
 });
 
@@ -295,9 +315,211 @@ describe('fileRolePromptUpdates', () => {
 		await setTemplate(base);
 	});
 
+	it('fills in the preview fields on a card an earlier release left waiting', async () => {
+		// A genuine conflict filed before cards carried `template`: same role doc,
+		// same offer, so only the missing field differs. Left as it was, accepting
+		// it would leave the next boot to recover the base from the hash.
+		const teamId = await coachTeam();
+		const [first, ...rest] = base.split('\n');
+		await setPrompt([first, 'EDITED BY THE ADMIN', ...rest].join('\n'), teamId);
+		await setTemplate(`${base}\nv2`);
+		await fileRolePromptUpdates(db);
+		await db.query(
+			`UPDATE approvals SET payload = payload - 'template',
+			        created_at = now() - interval '1 day'
+			  WHERE type = $1::approval_type AND payload->>'member_id' = $2`,
+			[ApprovalType.RoleUpdate, coachId],
+		);
+
+		await fileRolePromptUpdates(db);
+		const cards = await db.query<{ payload: Record<string, unknown>; age: boolean }>(
+			`SELECT payload, created_at < now() - interval '1 hour' AS age FROM approvals
+			  WHERE type = $1::approval_type AND status = $2::approval_status
+			    AND payload->>'member_id' = $3`,
+			[ApprovalType.RoleUpdate, ApprovalStatus.Pending, coachId],
+		);
+		expect(cards.rows).toHaveLength(1);
+		expect(cards.rows[0].payload.template).toBe(`${base}\nv2`);
+		// The same offer keeps its place in the inbox.
+		expect(cards.rows[0].age).toBe(true);
+		await setTemplate(base);
+	});
+
 	it('files nothing on an instance already running this release', async () => {
 		expect(await fileRolePromptUpdates(db)).toBe(0);
 		expect(await pendingCards()).toHaveLength(0);
+	});
+});
+
+/** Accept the one standing card for the Coach through the real resolve path. */
+async function acceptStandingCard(): Promise<void> {
+	const card = await db.query<{ id: string }>(
+		`SELECT id FROM approvals
+		  WHERE type = $1::approval_type AND status = $2::approval_status
+		    AND payload->>'member_id' = $3`,
+		[ApprovalType.RoleUpdate, ApprovalStatus.Pending, coachId],
+	);
+	expect(card.rows).toHaveLength(1);
+	const resolved = await resolveApproval(db, card.rows[0].id, {
+		status: ApprovalStatus.Approved,
+		resolutionNote: null,
+		dataDir: '',
+		actorMemberId: null,
+		decider: { user_id: null, api_key_id: null },
+	});
+	expect(resolved.ok).toBe(true);
+}
+
+async function livePrompt(): Promise<string> {
+	const r = await db.query<{ content: string }>(
+		`SELECT content FROM documents WHERE member_agent_id = $1 AND type = $2::document_type`,
+		[coachId, DocumentType.AgentSystemPrompt],
+	);
+	return r.rows[0].content;
+}
+
+describe('after an update was accepted', () => {
+	let base: string;
+	let teamId: string;
+
+	beforeEach(async () => {
+		teamId = await coachTeam();
+		base = (
+			await db.query<{ system_prompt_template: string }>(
+				'SELECT system_prompt_template FROM agent_types WHERE id = $1',
+				[coachTypeId],
+			)
+		).rows[0].system_prompt_template;
+		await setPrompt(base, teamId);
+	});
+
+	it('files nothing on later boots while the role doc stays the same', async () => {
+		// Accepting moves the agent onto the new role text, so that text - not the one
+		// it was hired on - is what later releases are measured against. Measured
+		// against the hire-time text, every boot after an accept read as "edited here"
+		// and filed a fresh card.
+		await setPrompt(`${base}\n\n## Learned Rules\n- keep me`, teamId);
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		await acceptStandingCard();
+
+		expect(await fileRolePromptUpdates(db)).toBe(0);
+		expect(await fileRolePromptUpdates(db)).toBe(0);
+		expect(await pendingCards()).toHaveLength(0);
+		await setTemplate(base);
+	});
+
+	it('offers the next release as a clean update that keeps everything added', async () => {
+		await setPrompt(`${base}\n\n## Learned Rules\n- keep me`, teamId);
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		await acceptStandingCard();
+
+		// An admin's own paragraph, written after the accept, is an addition like any
+		// other and must survive the next update.
+		await setPrompt(`${await livePrompt()}\n\nmy own note`, teamId);
+		await setTemplate(`${base}\n\n## New Section\nv3`);
+		await fileRolePromptUpdates(db);
+
+		const cards = await pendingCards();
+		expect(cards).toHaveLength(1);
+		expect(cards[0].payload.outcome).toBe('clean');
+		expect(cards[0].payload.content).toContain('v3');
+		expect(cards[0].payload.content).not.toContain('v2');
+		expect(cards[0].payload.content).toContain('- keep me');
+		expect(cards[0].payload.content).toContain('my own note');
+		await setTemplate(base);
+	});
+
+	it('recovers the adopted role text from a card accepted before cards recorded it', async () => {
+		// Cards filed by the release that introduced this carry no `template`; the role
+		// text they offered is the prefix of `content` whose hash the card recorded.
+		await setPrompt(`${base}\n\n## Learned Rules\n- keep me`, teamId);
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		await db.query(
+			`UPDATE approvals SET payload = payload - 'template'
+			  WHERE type = $1::approval_type AND payload->>'member_id' = $2`,
+			[ApprovalType.RoleUpdate, coachId],
+		);
+		await acceptStandingCard();
+
+		await setTemplate(`${base}\n\n## New Section\nv3`);
+		await fileRolePromptUpdates(db);
+		const cards = await pendingCards();
+		expect(cards).toHaveLength(1);
+		expect(cards[0].payload.outcome).toBe('clean');
+		expect(cards[0].payload.content).toContain('v3');
+		expect(cards[0].payload.content).not.toContain('v2');
+		expect(cards[0].payload.content).toContain('- keep me');
+		await setTemplate(base);
+	});
+
+	it('offers the role again when an earlier release accepted it without writing it', async () => {
+		// The previous handler logged a failed write and left the card accepted. Such
+		// a card proves nothing about the prompt, so it is not the base.
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		await db.query(
+			`UPDATE approvals SET status = $1::approval_status, resolved_at = now(),
+			        payload = payload - 'template'
+			  WHERE type = $2::approval_type AND payload->>'member_id' = $3`,
+			[ApprovalStatus.Approved, ApprovalType.RoleUpdate, coachId],
+		);
+		expect(await livePrompt()).toBe(base);
+
+		await fileRolePromptUpdates(db);
+		const cards = await pendingCards();
+		expect(cards).toHaveLength(1);
+		expect(cards[0].payload.content).toContain('v2');
+		await setTemplate(base);
+	});
+
+	it('closes a card that was filed in error, without writing the prompt', async () => {
+		// The card an instance on the previous release filed after an accept: same role
+		// doc, wrongly called a conflict. Accepting it would have dropped the admin's
+		// own additions, so it is withdrawn rather than left for someone to click.
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		await acceptStandingCard();
+		await setPrompt(`${await livePrompt()}\n\nmy own note`, teamId);
+		const before = await livePrompt();
+		await db.query(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
+			[
+				teamId,
+				ApprovalType.RoleUpdate,
+				coachId,
+				JSON.stringify({
+					type: 'role_update',
+					member_id: coachId,
+					outcome: 'conflict',
+					target_hash: 'stale',
+					content: `${base}\n\n## New Section\nv2`,
+				}),
+			],
+		);
+
+		expect(await fileRolePromptUpdates(db)).toBe(0);
+		expect(await pendingCards()).toHaveLength(0);
+		const closed = await db.query<{ status: string; payload: Record<string, unknown> }>(
+			`SELECT status, payload FROM approvals
+			  WHERE type = $1::approval_type AND payload->>'target_hash' = 'stale'`,
+			[ApprovalType.RoleUpdate],
+		);
+		expect(closed.rows[0].status).toBe(ApprovalStatus.Approved);
+		expect(closed.rows[0].payload.auto_closed).toBe(true);
+		expect(await livePrompt()).toBe(before);
+
+		// A withdrawn card is never read as the role text the agent adopted.
+		await setTemplate(`${base}\n\n## New Section\nv3`);
+		await fileRolePromptUpdates(db);
+		const next = (await pendingCards())[0].payload;
+		expect(next.outcome).toBe('clean');
+		expect(next.content).not.toContain('v2');
+		expect(next.content).toContain('my own note');
+		await setTemplate(base);
 	});
 });
 
@@ -352,6 +574,44 @@ describe('accepting an offered role update', () => {
 
 		await setTemplate(base);
 		await setPrompt(base, teamId);
+	});
+
+	it('leaves the card waiting when the prompt cannot be written', async () => {
+		// An accepted card is what later boots read as the role text the agent runs.
+		// Accepted with nothing written, the update would never be offered again.
+		const teamId = await coachTeam();
+		const base = (
+			await db.query<{ system_prompt_template: string }>(
+				'SELECT system_prompt_template FROM agent_types WHERE id = $1',
+				[coachTypeId],
+			)
+		).rows[0].system_prompt_template;
+		await setPrompt(base, teamId);
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		const card = (
+			await db.query<{ id: string }>(
+				`SELECT id FROM approvals
+				  WHERE type = $1::approval_type AND status = $2::approval_status
+				    AND payload->>'member_id' = $3`,
+				[ApprovalType.RoleUpdate, ApprovalStatus.Pending, coachId],
+			)
+		).rows[0];
+		// An archived prompt refuses the write without throwing.
+		await db.query('UPDATE documents SET archived_at = now() WHERE id = $1', [await promptDocId()]);
+
+		const resolved = await resolveApproval(db, card.id, {
+			status: ApprovalStatus.Approved,
+			resolutionNote: null,
+			dataDir: '',
+			actorMemberId: null,
+			decider: { user_id: null, api_key_id: null },
+		});
+		expect(resolved).toMatchObject({ ok: false, error: 'SIDE_EFFECT_FAILED' });
+		expect(await pendingCards()).toHaveLength(1);
+
+		await db.query('UPDATE documents SET archived_at = NULL WHERE id = $1', [await promptDocId()]);
+		await setTemplate(base);
 	});
 
 	it('writes nothing and does not throw when the card names no agent', async () => {

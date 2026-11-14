@@ -97,22 +97,34 @@ deliberate: an agent's prompt is yours once it is hired. It carries whatever the
 taught it and whatever you have edited, and a release has no business overwriting either.
 
 So Hezo offers the improvement instead of applying it. After an upgrade, any built-in agent
-whose role has moved on gets a card in your inbox: **Updated role available**. Accepting
-rewrites the role's own instructions and keeps everything added since, learned rules and
-your own additions alike.
+whose role has moved on gets a card in your inbox: **Updated role available**. Select
+**Preview changes** to see the agent's current prompt against the new one, line by line,
+then choose **Apply update** or **Keep current** in that window. Applying rewrites the
+role's own instructions and keeps everything added since, learned rules and your own
+additions alike.
 
-Two things make this safe to accept:
+Two things make this safe to apply:
 
 - **Your additions are kept exactly**, not re-formatted or summarised. Hezo knows the role
-  text the agent was hired on, so it can tell the release's words from everyone else's.
+  text the agent last took on (the one it was hired on, or the last update you applied), so
+  it can tell the release's words from everyone else's.
 - **It is one click back.** The change is recorded as a revision like any other prompt
-  edit, so the agent's settings page can roll it back if you don't like the result.
+  edit, so the revision history on the agent's settings page can roll it back if you don't
+  like the result.
 
-If you have edited the role's own instructions rather than adding to them, the card says
-so: the two versions disagree about the same lines, and accepting keeps the new role and
-the learned rules while dropping your edits. Declining keeps exactly what you have, and
-Hezo does not ask again for that version - though it will offer the next improvement when
-one arrives.
+If you have edited the role's own instructions rather than adding to them, the preview says
+so and tags each of your lines the update would remove with **Edited here**: the two
+versions disagree about the same lines, and applying keeps the new role and the learned
+rules while dropping your edits. **Keep current** keeps exactly what you have, and Hezo does
+not ask again for that version - though it will offer the next improvement when one
+arrives.
+
+If the agent's prompt or the update itself changes while the preview is open, **Apply
+update** shows you the new changes instead of applying, so you decide on what is really
+there. Only a person decides a role update: agents, the CEO included, cannot.
+
+A card appears only when the role really changed. If an agent already runs the newest role,
+Hezo closes any card still waiting for it and marks it **Already up to date**.
 
 ## Reviewing an agent's runs
 

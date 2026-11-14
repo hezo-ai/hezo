@@ -830,6 +830,17 @@ export const ApprovalStatus = {
 export type ApprovalStatus = (typeof ApprovalStatus)[keyof typeof ApprovalStatus];
 
 /**
+ * What accepting a role update costs. `Clean` keeps everything added since the
+ * role text was adopted; `Conflict` means the role text itself was edited here,
+ * and accepting keeps only the learned rules.
+ */
+export const RoleUpdateOutcome = {
+	Clean: 'clean',
+	Conflict: 'conflict',
+} as const;
+export type RoleUpdateOutcome = (typeof RoleUpdateOutcome)[keyof typeof RoleUpdateOutcome];
+
+/**
  * One row of the admin's inbox, anchored to the comment that needs them. Most
  * are literal `@admin` mentions; `fireAdminMention` also raises one for an
  * actionable comment carrying no `@admin` text, so read `content_type` to know

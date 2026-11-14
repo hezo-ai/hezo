@@ -110,6 +110,7 @@ export const queryKeys = {
 	approvals: {
 		root: () => ['approvals'],
 		all: (projectKey: string, opts: KeyParam) => ['approvals', 'all', projectKey, opts],
+		detail: (approvalId: string) => ['approvals', 'detail', approvalId],
 	},
 
 	inboxMentions: {

@@ -2,6 +2,7 @@ import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
+	DocumentType,
 	summaryPreviewLine,
 	validateCadenceChoice,
 	wsRoom,
@@ -25,12 +26,26 @@ import {
 } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
 import {
+	editedLinesLost,
+	ROLE_UPDATE_PREVIEW_FIELDS,
+	resolveRoleBase,
+} from '../services/role-prompt-sync';
+import {
 	broadcastTaskSuggestionCards,
 	refreshTaskSuggestionComment,
 } from '../services/task-suggestion';
 import type { WebSocketManager } from '../services/ws';
 
 export const approvalsRoutes = new Hono<Env>();
+
+/**
+ * The list's payload column. A role update card carries two whole prompts, which
+ * the inbox never draws: the list leaves them out and the preview reads them from
+ * the single-card read below.
+ */
+const LIST_PAYLOAD_SQL = `CASE WHEN a.type = '${ApprovalType.RoleUpdate}'::approval_type
+            THEN a.payload${ROLE_UPDATE_PREVIEW_FIELDS.map((f) => ` - '${f}'`).join('')}
+            ELSE a.payload END AS payload`;
 
 approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -45,7 +60,7 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 				: '';
 
 	const result = await db.query(
-		`SELECT a.id, a.team_id, a.type, a.status, a.payload, a.resolution_note,
+		`SELECT a.id, a.team_id, a.type, a.status, ${LIST_PAYLOAD_SQL}, a.resolution_note,
             a.resolved_at, a.archived_at, a.created_at,
             co.name AS team_name,
             co.slug AS team_slug,
@@ -106,6 +121,71 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 	}
 
 	return ok(c, result.rows);
+});
+
+/**
+ * One approval with its whole payload. For a role update card it also returns the
+ * agent's live prompt, which is what the preview compares the offered text with,
+ * and `lost_lines`: the admin's own lines that applying would drop, worked out
+ * against that live prompt rather than the one the card was filed from.
+ * Addressed by id like the other single-approval routes, because a card's team
+ * slug need not be any project's slug; access is checked against the card's team,
+ * and the agent must belong to that team, so a card never reads another team's
+ * prompt.
+ */
+approvalsRoutes.get('/approvals/:approvalId', async (c) => {
+	const db = c.get('db');
+	const result = await db.query<{
+		id: string;
+		team_id: string;
+		type: string;
+		status: string;
+		payload: Record<string, unknown>;
+		resolution_note: string | null;
+		resolved_at: string | null;
+		created_at: string;
+		current_prompt: string | null;
+		prompt_document_id: string | null;
+		role_template: string | null;
+	}>(
+		`SELECT a.id, a.team_id, a.type, a.status, a.payload, a.resolution_note,
+		        a.resolved_at, a.created_at,
+		        d.content AS current_prompt, d.id AS prompt_document_id,
+		        at.system_prompt_template AS role_template
+		   FROM approvals a
+		   LEFT JOIN members m ON a.type = $2::approval_type
+		        AND m.id = (a.payload->>'member_id')::uuid AND m.team_id = a.team_id
+		   LEFT JOIN member_agents ma ON ma.id = m.id
+		   LEFT JOIN agent_types at ON at.id = ma.agent_type_id
+		   LEFT JOIN documents d ON d.member_agent_id = m.id AND d.type = $3::document_type
+		  WHERE a.id = $1`,
+		[c.req.param('approvalId'), ApprovalType.RoleUpdate, DocumentType.AgentSystemPrompt],
+	);
+	const row = result.rows[0];
+	if (!row) return err(c, 'NOT_FOUND', 'Approval not found', 404);
+	const access = await requireTeamAccessForResource(db, c, row.team_id);
+	if (access instanceof Response) return access;
+
+	const { prompt_document_id, role_template, ...card } = row;
+	// The warning is worked out against the prompt as it is now, not as it was at
+	// boot: an edit made since the card was filed is lost on Apply too.
+	let lostLines: string[] | null = null;
+	const offered = row.payload.content;
+	if (
+		row.current_prompt !== null &&
+		prompt_document_id !== null &&
+		role_template !== null &&
+		typeof offered === 'string'
+	) {
+		const base = await resolveRoleBase(db, {
+			memberId: row.payload.member_id as string,
+			documentId: prompt_document_id,
+			currentContent: row.current_prompt,
+			currentTemplate: role_template,
+		});
+		lostLines = editedLinesLost(base, row.current_prompt, offered);
+	}
+	return ok(c, { ...card, lost_lines: lostLines });
 });
 
 /** Chars of the previous comment scanned for a blocked task's preview line. */

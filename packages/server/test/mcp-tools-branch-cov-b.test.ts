@@ -248,6 +248,34 @@ describe('resolve_approval', () => {
 		expect(skill.rows.length).toBe(1);
 	});
 
+	it('refuses an agent run a role update, even the cross-project CEO', async () => {
+		// Accepting rewrites an agent's prompt, so a person decides it after seeing
+		// the text. The route refuses agent tokens; the tool must too.
+		const card = await db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, payload)
+			 VALUES ($1, 'role_update'::approval_type, $2::jsonb) RETURNING id`,
+			[DEFAULT_TEAM_ID, JSON.stringify({ type: 'role_update', member_id: ceoId, content: 'X' })],
+		);
+		const approvalId = card.rows[0].id;
+
+		const r = await call(await ceoToken(), 'resolve_approval', {
+			approval_id: approvalId,
+			status: ApprovalStatus.Approved,
+		});
+		expect(String(r.error)).toMatch(/decided by a person/);
+		const row = await db.query<{ status: string }>('SELECT status FROM approvals WHERE id = $1', [
+			approvalId,
+		]);
+		expect(row.rows[0].status).toBe(ApprovalStatus.Pending);
+
+		// A person's API key still decides it.
+		const denied = (await viaKey('resolve_approval', {
+			approval_id: approvalId,
+			status: ApprovalStatus.Denied,
+		})) as Record<string, unknown>;
+		expect(denied.status).toBe(ApprovalStatus.Denied);
+	});
+
 	it('errors on an unknown approval id', async () => {
 		const r = await admin('resolve_approval', {
 			approval_id: crypto.randomUUID(),
