@@ -219,11 +219,44 @@ test('a designated-repo request with no reason links to the team general setting
 	expect((repoCard as HTMLElement).getAttribute('href')).toContain('/team-settings/general');
 });
 
-test('a role-update approval names the agent and what accepting does', async () => {
-	// The card is the whole interface for carrying a role-doc improvement into an
-	// agent hired before it. Without its own branch it renders as "role update" and
-	// the admin is asked to approve something the page never describes.
-	const { findByText } = await renderTeamInbox(async ({ ws }) => {
+/** Set the agent's live prompt, which the preview compares the offer against. */
+async function setLivePrompt(memberId: string, content: string): Promise<void> {
+	const { db } = getTestContext();
+	const r = await db.query(
+		`UPDATE documents SET content = $1
+		  WHERE member_agent_id = $2 AND type = 'agent_system_prompt' RETURNING id`,
+		[content, memberId],
+	);
+	expect(r.rows).toHaveLength(1);
+}
+
+async function livePrompt(memberId: string): Promise<string> {
+	const { db } = getTestContext();
+	const r = await db.query<{ content: string }>(
+		`SELECT content FROM documents WHERE member_agent_id = $1 AND type = 'agent_system_prompt'`,
+		[memberId],
+	);
+	return r.rows[0].content;
+}
+
+async function cardStatus(id: string): Promise<string> {
+	const { db } = getTestContext();
+	const r = await db.query<{ status: string }>('SELECT status FROM approvals WHERE id = $1', [id]);
+	return r.rows[0].status;
+}
+
+const LIVE_ROLE = [
+	'# Captain',
+	'',
+	'## Responsibilities',
+	'- Resolve disputes',
+	'- Escalate to the admin',
+];
+
+test('a role-update card is decided only in its preview', async () => {
+	// Accepting rewrites an agent's prompt, so the card offers no inline answer:
+	// the admin opens the preview and sees the text first.
+	const { findByText, findByRole, queryByRole } = await renderTeamInbox(async ({ ws }) => {
 		await insertApproval(ws, {
 			type: 'role_update',
 			payload: {
@@ -233,14 +266,128 @@ test('a role-update approval names the agent and what accepting does', async () 
 				agent_slug: 'coach',
 				agent_title: 'Coach',
 				outcome: 'clean',
-				message: 'Accepting keeps everything added since.',
+				content: 'ROLE',
 			},
 		});
 	});
 
-	await findByText(/Updated role available/, undefined, { timeout: 15_000 });
+	await findByText(/Updated role available for/, undefined, { timeout: 15_000 });
 	await findByText('Coach');
-	await findByText('Accepting keeps everything added since.');
+	await findByText(/This release improves Coach's role\. Look over the changes/);
+	await findByRole('button', { name: /Preview changes/ });
+	expect(queryByRole('button', { name: 'Approve' })).toBeNull();
+	expect(queryByRole('button', { name: 'Deny' })).toBeNull();
+});
+
+test('the preview shows the changed lines, and Apply update writes the offered text', async () => {
+	let memberId = '';
+	let cardId = '';
+	const offered = [
+		...LIVE_ROLE.slice(0, 4),
+		'- Escalate to the CEO first',
+		'',
+		'## Learned Rules',
+		'- keep me',
+	].join('\n');
+	const { findByRole, findByTestId, user } = await renderTeamInbox(async ({ ws }) => {
+		memberId = ws.agents[0].id;
+		await setLivePrompt(memberId, [...LIVE_ROLE, '', '## Learned Rules', '- keep me'].join('\n'));
+		cardId = (
+			await insertApproval(ws, {
+				type: 'role_update',
+				requestedByMemberId: memberId,
+				payload: {
+					member_id: memberId,
+					agent_title: 'Captain',
+					outcome: 'clean',
+					content: offered,
+					edited_lines: [],
+				},
+			})
+		).id;
+	});
+
+	await user.click(await findByRole('button', { name: /Preview changes/ }, { timeout: 15_000 }));
+	const dialog = await findByTestId('role-update-preview');
+	const diff = await within(dialog).findByTestId('role-update-diff');
+	const removed = within(diff).getAllByTestId('diff-line-removed');
+	const added = within(diff).getAllByTestId('diff-line-added');
+	expect(removed.map((r) => r.textContent)).toEqual([
+		expect.stringContaining('- Escalate to the admin'),
+	]);
+	expect(added.map((r) => r.textContent)).toEqual([
+		expect.stringContaining('- Escalate to the CEO first'),
+	]);
+	within(dialog).getByText('+1 added');
+	within(dialog).getByText('-1 removed');
+	// No warning: nothing the admin wrote is lost.
+	expect(within(dialog).queryByText('Someone edited this role here.')).toBeNull();
+
+	await user.click(within(dialog).getByRole('button', { name: /Apply update/ }));
+	await waitFor(async () => expect(await cardStatus(cardId)).toBe('approved'), { timeout: 15_000 });
+	expect(await livePrompt(memberId)).toBe(offered);
+});
+
+test('an edited role warns, tags the lines it drops, and Keep current leaves the prompt alone', async () => {
+	let memberId = '';
+	let cardId = '';
+	const live = [
+		...LIVE_ROLE.slice(0, 4),
+		'- Post a weekly summary every Friday',
+		LIVE_ROLE[4],
+	].join('\n');
+	const { findByRole, findByTestId, user } = await renderTeamInbox(async ({ ws }) => {
+		memberId = ws.agents[0].id;
+		await setLivePrompt(memberId, live);
+		cardId = (
+			await insertApproval(ws, {
+				type: 'role_update',
+				requestedByMemberId: memberId,
+				payload: {
+					member_id: memberId,
+					agent_title: 'Coach',
+					outcome: 'conflict',
+					content: [...LIVE_ROLE.slice(0, 4), '- Escalate to the CEO first'].join('\n'),
+					edited_lines: ['- Post a weekly summary every Friday'],
+				},
+			})
+		).id;
+	});
+
+	await user.click(await findByRole('button', { name: /Preview changes/ }, { timeout: 15_000 }));
+	const dialog = await findByTestId('role-update-preview');
+	await within(dialog).findByText('Someone edited this role here.');
+	within(dialog).getByText('1 edited here');
+	const removed = within(await within(dialog).findByTestId('role-update-diff')).getAllByTestId(
+		'diff-line-removed',
+	);
+	const tagged = removed.filter((r) => within(r).queryByText('Edited here'));
+	expect(tagged.map((r) => r.textContent)).toEqual([
+		expect.stringContaining('- Post a weekly summary every Friday'),
+	]);
+
+	await user.click(within(dialog).getByRole('button', { name: 'Keep current' }));
+	await waitFor(async () => expect(await cardStatus(cardId)).toBe('denied'), { timeout: 15_000 });
+	expect(await livePrompt(memberId)).toBe(live);
+});
+
+test('a role-update card the instance withdrew reads as already up to date', async () => {
+	const { findByText, queryByText, user } = await renderTeamInbox(async ({ ws }) => {
+		await insertApproval(ws, {
+			type: 'role_update',
+			status: 'approved',
+			payload: {
+				member_id: ws.agents[0].id,
+				agent_title: 'Captain',
+				outcome: 'conflict',
+				auto_closed: true,
+			},
+		});
+	});
+
+	await user.click(await findByText('All', undefined, { timeout: 15_000 }));
+	await findByText('Already up to date', undefined, { timeout: 15_000 });
+	expect(queryByText('approved')).toBeNull();
 });
 
 test('a task suggestion names the task and, when it repeats, the current choice', async () => {

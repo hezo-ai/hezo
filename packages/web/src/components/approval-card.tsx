@@ -4,9 +4,10 @@ import {
 	isRepeatingCadence,
 	isTaskSuggestionCadence,
 	OAuthRequestReason,
+	RoleUpdateOutcome,
 } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Check, Loader2, Pencil, X } from 'lucide-react';
+import { Check, Eye, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
@@ -16,6 +17,7 @@ import { AGENT_ERROR_ROW, isAgentErrorApproval } from '../lib/inbox-row-kind';
 import { approvalTypeColor } from '../lib/status-meta';
 import { TASK_SUGGESTION_REPEATS_NOTE } from '../lib/task-suggestion-labels';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
+import { RoleUpdatePreviewDialog, roleUpdateAgentName } from './role-update-preview-dialog';
 import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -198,15 +200,23 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			);
 		}
 		case ApprovalType.RoleUpdate: {
-			const who = (p.agent_title as string) ?? (p.agent_slug as string) ?? 'an agent';
+			const who = roleUpdateAgentName(p);
 			return (
 				<>
 					<span>
-						Updated role available for <span className="font-medium">{who}</span>
+						<Trans
+							k="approval.roleUpdate.title"
+							vars={{ who: <span className="font-medium">{who}</span> }}
+						/>
 					</span>
-					{p.message && (
-						<span className="block text-xs text-text-2 mt-1">{p.message as string}</span>
-					)}
+					<span className="block text-xs text-text-2 mt-1">
+						{t(
+							p.outcome === RoleUpdateOutcome.Conflict
+								? 'approval.roleUpdate.edited'
+								: 'approval.roleUpdate.clean',
+							{ who },
+						)}
+					</span>
 				</>
 			);
 		}
@@ -254,7 +264,11 @@ function CardBody({
 					</Badge>
 				)}
 				{resolved &&
-					(isAgentErrorApproval(approval) ? (
+					(approval.payload.auto_closed === true ? (
+						// Withdrawn by the instance because the agent already runs that role:
+						// nobody approved it, so the badge does not say "approved".
+						<Badge color="neutral">{t('approval.roleUpdate.withdrawn')}</Badge>
+					) : isAgentErrorApproval(approval) ? (
 						// A notice has one way out - Dismiss - so its history badge says
 						// that, whichever status the row was closed with.
 						<Badge color="neutral">{t('approval.agentError.dismissed')}</Badge>
@@ -444,6 +458,32 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						{t('approval.agentError.dismiss')}
 					</Button>
 				</div>
+			</div>
+		);
+	}
+
+	if (approval.type === ApprovalType.RoleUpdate) {
+		// Decided only in the preview, never inline: accepting rewrites an agent's
+		// prompt, so the admin sees the text before either answer is offered.
+		return (
+			<div
+				className={`${baseCardClass}${highlight}`}
+				data-testid="approval-card"
+				data-unread={true}
+			>
+				<CardBody approval={approval} showTeam={showTeam} unread />
+				<div className="flex gap-2 mt-3 flex-wrap">
+					<Button
+						size="sm"
+						variant="secondary"
+						data-testid="role-update-preview-open"
+						onClick={() => setModalOpen(true)}
+					>
+						<Eye className="w-3 h-3" />
+						{t('approval.roleUpdate.preview')}
+					</Button>
+				</div>
+				<RoleUpdatePreviewDialog approval={approval} open={modalOpen} onOpenChange={setModalOpen} />
 			</div>
 		);
 	}

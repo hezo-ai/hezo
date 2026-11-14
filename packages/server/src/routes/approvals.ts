@@ -2,6 +2,7 @@ import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
+	DocumentType,
 	summaryPreviewLine,
 	validateCadenceChoice,
 	wsRoom,
@@ -24,6 +25,7 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
+import { ROLE_UPDATE_PREVIEW_FIELDS } from '../services/role-prompt-sync';
 import {
 	broadcastTaskSuggestionCards,
 	refreshTaskSuggestionComment,
@@ -31,6 +33,15 @@ import {
 import type { WebSocketManager } from '../services/ws';
 
 export const approvalsRoutes = new Hono<Env>();
+
+/**
+ * The list's payload column. A role update card carries two whole prompts, which
+ * the inbox never draws: the list leaves them out and the preview reads them from
+ * the single-card read below.
+ */
+const LIST_PAYLOAD_SQL = `CASE WHEN a.type = '${ApprovalType.RoleUpdate}'::approval_type
+            THEN a.payload${ROLE_UPDATE_PREVIEW_FIELDS.map((f) => ` - '${f}'`).join('')}
+            ELSE a.payload END AS payload`;
 
 approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -45,7 +56,7 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 				: '';
 
 	const result = await db.query(
-		`SELECT a.id, a.team_id, a.type, a.status, a.payload, a.resolution_note,
+		`SELECT a.id, a.team_id, a.type, a.status, ${LIST_PAYLOAD_SQL}, a.resolution_note,
             a.resolved_at, a.archived_at, a.created_at,
             co.name AS team_name,
             co.slug AS team_slug,
@@ -106,6 +117,42 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 	}
 
 	return ok(c, result.rows);
+});
+
+/**
+ * One approval with its whole payload. For a role update card it also returns the
+ * agent's live prompt, which is what the preview compares the offered text with.
+ * Addressed by id like the other single-approval routes, because a card's team
+ * slug need not be any project's slug; access is checked against the card's team,
+ * and the agent must belong to that team, so a card never reads another team's
+ * prompt.
+ */
+approvalsRoutes.get('/approvals/:approvalId', async (c) => {
+	const db = c.get('db');
+	const result = await db.query<{
+		id: string;
+		team_id: string;
+		type: string;
+		payload: Record<string, unknown>;
+		current_prompt: string | null;
+	}>(
+		`SELECT a.id, a.team_id, a.type, a.status, a.payload, a.resolution_note,
+		        a.resolved_at, a.created_at,
+		        CASE WHEN a.type = $2::approval_type THEN (
+		          SELECT d.content FROM documents d
+		            JOIN members m ON m.id = d.member_agent_id AND m.team_id = a.team_id
+		           WHERE d.member_agent_id = (a.payload->>'member_id')::uuid
+		             AND d.type = $3::document_type
+		        ) END AS current_prompt
+		   FROM approvals a
+		  WHERE a.id = $1`,
+		[c.req.param('approvalId'), ApprovalType.RoleUpdate, DocumentType.AgentSystemPrompt],
+	);
+	const row = result.rows[0];
+	if (!row) return err(c, 'NOT_FOUND', 'Approval not found', 404);
+	const access = await requireTeamAccessForResource(db, c, row.team_id);
+	if (access instanceof Response) return access;
+	return ok(c, row);
 });
 
 /** Chars of the previous comment scanned for a blocked task's preview line. */
