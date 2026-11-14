@@ -512,7 +512,10 @@ agent's live prompt, which the preview diffs against the offer. The card offers 
 answer: Apply update and Keep current live only in the preview.
 `approval-handlers/role-update.ts` writes the content the card carried (not a fresh splice:
 the admin approved a specific text) through `upsertDocument`, which records a revision, so
-the existing rollback undoes it.
+the existing rollback undoes it. A write that throws or is refused (an archived prompt)
+raises `ApprovalSideEffectError` and the card waits again: an accepted card is what later
+boots read as the agent's role text, so one accepted with nothing written would never be
+offered again.
 
 `services/project-retrospective.ts` computes the signals — the deterministic half — and the Coach
 judges them; the block is composed by the server into the run prompt (`buildRetrospectivePrompt`)

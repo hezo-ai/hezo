@@ -560,6 +560,44 @@ describe('accepting an offered role update', () => {
 		await setPrompt(base, teamId);
 	});
 
+	it('leaves the card waiting when the prompt cannot be written', async () => {
+		// An accepted card is what later boots read as the role text the agent runs.
+		// Accepted with nothing written, the update would never be offered again.
+		const teamId = await coachTeam();
+		const base = (
+			await db.query<{ system_prompt_template: string }>(
+				'SELECT system_prompt_template FROM agent_types WHERE id = $1',
+				[coachTypeId],
+			)
+		).rows[0].system_prompt_template;
+		await setPrompt(base, teamId);
+		await setTemplate(`${base}\n\n## New Section\nv2`);
+		await fileRolePromptUpdates(db);
+		const card = (
+			await db.query<{ id: string }>(
+				`SELECT id FROM approvals
+				  WHERE type = $1::approval_type AND status = $2::approval_status
+				    AND payload->>'member_id' = $3`,
+				[ApprovalType.RoleUpdate, ApprovalStatus.Pending, coachId],
+			)
+		).rows[0];
+		// An archived prompt refuses the write without throwing.
+		await db.query('UPDATE documents SET archived_at = now() WHERE id = $1', [await promptDocId()]);
+
+		const resolved = await resolveApproval(db, card.id, {
+			status: ApprovalStatus.Approved,
+			resolutionNote: null,
+			dataDir: '',
+			actorMemberId: null,
+			decider: { user_id: null, api_key_id: null },
+		});
+		expect(resolved).toMatchObject({ ok: false, error: 'SIDE_EFFECT_FAILED' });
+		expect(await pendingCards()).toHaveLength(1);
+
+		await db.query('UPDATE documents SET archived_at = NULL WHERE id = $1', [await promptDocId()]);
+		await setTemplate(base);
+	});
+
 	it('writes nothing and does not throw when the card names no agent', async () => {
 		const teamId = await coachTeam();
 		const before = (
