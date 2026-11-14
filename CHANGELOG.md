@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.83.1 - 2026-11-14
+
+### Bug Fixes
+
+- **roles:** stop re-offering accepted role updates, and review them in a preview ([#1216](https://github.com/hezo-ai/hezo/pull/1216))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.83.0...0.83.1
+
 ## 0.83.0 - 2026-11-13
 
 ### Features
