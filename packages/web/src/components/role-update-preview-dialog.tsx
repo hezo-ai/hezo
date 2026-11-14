@@ -102,11 +102,24 @@ export function RoleUpdatePreviewDialog({
 		[ready, current, offered],
 	);
 	const items = useMemo(() => (diff ? foldUnchanged(diff.lines) : []), [diff]);
-	const editedLines = useMemo(() => new Set(lostLines ?? []), [lostLines]);
+	// `lost_lines` names one entry per lost occurrence, so a line the role also
+	// has once is tagged once: each removed line takes a tag while its text has
+	// one left.
+	const taggedLines = useMemo(() => {
+		const left = new Map<string, number>();
+		for (const line of lostLines ?? []) left.set(line, (left.get(line) ?? 0) + 1);
+		const tagged = new Set<number>();
+		for (const line of diff?.lines ?? []) {
+			const n = line.kind === 'removed' && line.oldNo !== null ? (left.get(line.text) ?? 0) : 0;
+			if (n > 0 && line.oldNo !== null) {
+				tagged.add(line.oldNo);
+				left.set(line.text, n - 1);
+			}
+		}
+		return tagged;
+	}, [lostLines, diff]);
 	const editedTag = t('approval.roleUpdate.dialog.editedTag');
-	const editedCount = diff
-		? diff.lines.filter((l) => l.kind === 'removed' && editedLines.has(l.text)).length
-		: 0;
+	const editedCount = taggedLines.size;
 
 	function decide(status: typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied) {
 		resolve.mutate(
@@ -195,7 +208,7 @@ export function RoleUpdatePreviewDialog({
 												key={`${item.oldNo}-${item.newNo}`}
 												line={item}
 												editedTag={
-													item.kind === 'removed' && editedLines.has(item.text) ? editedTag : null
+													item.oldNo !== null && taggedLines.has(item.oldNo) ? editedTag : null
 												}
 											/>
 										);

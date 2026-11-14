@@ -205,17 +205,33 @@ export const ROLE_UPDATE_PREVIEW_FIELDS = ['content', 'template'] as const;
 /** Most lost lines the preview is told about; it still shows every removed line. */
 export const MAX_EDITED_LINES = 200;
 
+function lineCounts(text: string): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const line of text.split('\n')) counts.set(line, (counts.get(line) ?? 0) + 1);
+	return counts;
+}
+
 /**
- * The lines an admin wrote that the offer drops: in the live prompt, but in
- * neither the role text it is measured against nor the offer. The preview tags
- * them, because they are the cost of accepting.
+ * The lines an admin wrote that the offer drops, one entry per occurrence. A line
+ * is the admin's when the live prompt holds it more times than the role text it
+ * is measured against, and lost when the offer holds it fewer times than that.
+ * Counted, not looked up: an admin line that repeats a line the role already
+ * has is still theirs. The preview tags them, because they are the cost of
+ * accepting.
  */
 export function editedLinesLost(base: string, current: string, offered: string): string[] {
-	const known = new Set([...base.split('\n'), ...offered.split('\n')]);
-	return current
-		.split('\n')
-		.filter((line) => line.trim() !== '' && !known.has(line))
-		.slice(0, MAX_EDITED_LINES);
+	const inBase = lineCounts(base);
+	const inOffer = lineCounts(offered);
+	const seen = new Map<string, number>();
+	const lost: string[] = [];
+	for (const line of current.split('\n')) {
+		if (line.trim() === '') continue;
+		const nth = (seen.get(line) ?? 0) + 1;
+		seen.set(line, nth);
+		if (nth > Math.max(inBase.get(line) ?? 0, inOffer.get(line) ?? 0)) lost.push(line);
+		if (lost.length >= MAX_EDITED_LINES) break;
+	}
+	return lost;
 }
 
 /** One agent whose role doc has moved on without it. */

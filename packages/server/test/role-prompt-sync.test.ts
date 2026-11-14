@@ -147,6 +147,15 @@ describe('editedLinesLost', () => {
 		// '- old rule' goes too, but the release removed it: it is not the admin's.
 		expect(editedLinesLost(base, current, offered)).toEqual(['- my own rule']);
 	});
+
+	it('counts an admin line that repeats a line the role already has', () => {
+		// B was replaced by a second C. The role holds C once, so one C is the
+		// admin's, and the offer drops it.
+		expect(editedLinesLost('A\nB\nC', 'A\nC\nC', 'A\nD')).toEqual(['C']);
+		// The offer keeping one C still drops the admin's second one.
+		expect(editedLinesLost('A\nB\nC', 'A\nC\nC', 'A\nC')).toEqual(['C']);
+		expect(editedLinesLost('A\nB\nC', 'A\nC\nC', 'A\nC\nC')).toEqual([]);
+	});
 });
 
 describe('recoverBaseTemplate', () => {
