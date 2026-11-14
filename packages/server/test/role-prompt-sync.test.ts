@@ -311,6 +311,37 @@ describe('fileRolePromptUpdates', () => {
 		await setTemplate(base);
 	});
 
+	it('fills in the preview fields on a card an earlier release left waiting', async () => {
+		// A genuine conflict filed before cards carried `edited_lines` and `template`:
+		// same role doc, same offer, so only the missing fields differ. Left as it
+		// was, the preview would warn about edited lines and tag none of them.
+		const teamId = await coachTeam();
+		const [first, ...rest] = base.split('\n');
+		await setPrompt([first, 'EDITED BY THE ADMIN', ...rest].join('\n'), teamId);
+		await setTemplate(`${base}\nv2`);
+		await fileRolePromptUpdates(db);
+		await db.query(
+			`UPDATE approvals SET payload = payload - 'edited_lines' - 'template',
+			        created_at = now() - interval '1 day'
+			  WHERE type = $1::approval_type AND payload->>'member_id' = $2`,
+			[ApprovalType.RoleUpdate, coachId],
+		);
+
+		await fileRolePromptUpdates(db);
+		const cards = await db.query<{ payload: Record<string, unknown>; age: boolean }>(
+			`SELECT payload, created_at < now() - interval '1 hour' AS age FROM approvals
+			  WHERE type = $1::approval_type AND status = $2::approval_status
+			    AND payload->>'member_id' = $3`,
+			[ApprovalType.RoleUpdate, ApprovalStatus.Pending, coachId],
+		);
+		expect(cards.rows).toHaveLength(1);
+		expect(cards.rows[0].payload.edited_lines).toEqual(['EDITED BY THE ADMIN']);
+		expect(cards.rows[0].payload.template).toBe(`${base}\nv2`);
+		// The same offer keeps its place in the inbox.
+		expect(cards.rows[0].age).toBe(true);
+		await setTemplate(base);
+	});
+
 	it('names no edited lines on a clean offer', async () => {
 		await setTemplate(`${base}\nv2`);
 		await fileRolePromptUpdates(db);

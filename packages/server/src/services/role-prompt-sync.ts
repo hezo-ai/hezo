@@ -272,7 +272,8 @@ async function scanRolePrompts(db: Db): Promise<RolePromptScan> {
  *   a decision the admin is already looking at.
  * - **Already offered, offer changed.** The standing card is rewritten rather
  *   than joined by a second one: the role doc moved again, or the card was
- *   worked out wrongly by an earlier release. A stale offer would apply text the
+ *   worked out wrongly or filed without the preview's fields by an earlier
+ *   release. A stale offer would apply text the
  *   admin is not being shown, and two cards for one agent make them pick.
  * - **Declined for this role doc.** Never re-offered. The declined record is the
  *   memory - keyed on the version refused, so the *next* improvement is still
@@ -318,13 +319,18 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 			);
 			if (declined.rows.length > 0) continue;
 
+			// Any difference rewrites the card: a new role doc, an offer worked out
+			// wrongly, or a card filed by an earlier release without the fields the
+			// preview reads (`template`, `edited_lines`). It keeps its place in the
+			// inbox unless the role doc itself moved.
 			const updated = await db.query(
-				`UPDATE approvals SET payload = $1::jsonb, created_at = now()
+				`UPDATE approvals
+				    SET payload = $1::jsonb,
+				        created_at = CASE WHEN payload->>'target_hash' IS DISTINCT FROM $5
+				                          THEN now() ELSE created_at END
 				  WHERE type = $2::approval_type AND status = $3::approval_status
 				    AND payload->>'member_id' = $4
-				    AND (payload->>'target_hash' IS DISTINCT FROM $5
-				         OR payload->>'content' IS DISTINCT FROM $6
-				         OR payload->>'outcome' IS DISTINCT FROM $7)
+				    AND payload IS DISTINCT FROM $1::jsonb
 				  RETURNING id`,
 				[
 					JSON.stringify(payload),
@@ -332,8 +338,6 @@ export async function fileRolePromptUpdates(db: Db): Promise<number> {
 					ApprovalStatus.Pending,
 					u.memberId,
 					u.targetHash,
-					u.content,
-					u.outcome,
 				],
 			);
 			if (updated.rows.length > 0) {
