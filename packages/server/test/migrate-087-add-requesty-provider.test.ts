@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '083_add_requesty_provider.sql';
+const TARGET = '087_add_requesty_provider.sql';
 
-describe('083_add_requesty_provider migration', () => {
+describe('087_add_requesty_provider migration', () => {
 	let h: DataPreservationHarness;
 	let seededConfigId: string;
 
