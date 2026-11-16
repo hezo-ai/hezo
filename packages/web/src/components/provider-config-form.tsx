@@ -43,6 +43,7 @@ export const ADD_PROVIDER_ORDER: readonly AddableAiProvider[] = [
 	AiProvider.Kimi,
 	AiProvider.XAi,
 	AiProvider.OpenRouter,
+	AiProvider.Requesty,
 	AiProvider.Ollama,
 	AiProvider.LmStudio,
 ];
