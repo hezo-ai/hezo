@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.83.2 - 2026-11-16
+
+### Bug Fixes
+
+- **budget:** show a project's hours once, and call the hours month a month ([#1218](https://github.com/hezo-ai/hezo/pull/1218))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.83.1...0.83.2
+
 ## 0.83.1 - 2026-11-14
 
 ### Bug Fixes
