@@ -40,9 +40,9 @@ const TONE_BAR = { success: 'bg-success', warning: 'bg-warning', danger: 'bg-dan
 
 /**
  * When each window comes round again. Daily and weekly are the UTC day and the
- * ISO week for every budget; the month is the caller's, because the hours
- * budget's month is the container-hours window, which may be anchored to a
- * billing day.
+ * ISO week for every budget; the month's end is the caller's, because the hours
+ * budget's month is the container-hours window, which a deployment may start on
+ * a billing day rather than the 1st.
  */
 export function useResetCaption(): (w: WindowKey, monthEnd: Date) => string {
 	const { t, formatDate } = useI18n();
@@ -67,6 +67,7 @@ export function WindowColumn({
 	label,
 	format,
 	resetCaption,
+	note,
 	testId,
 }: {
 	figures: WindowFigures;
@@ -74,6 +75,8 @@ export function WindowColumn({
 	/** How a used or limit figure reads: compact tokens, or hours. */
 	format: (n: number) => string;
 	resetCaption: string;
+	/** A second caption under the reset line, for what the window's figure alone does not say. */
+	note?: string;
 	testId: string;
 }) {
 	const { t } = useI18n();
@@ -104,9 +107,10 @@ export function WindowColumn({
 					/>
 				</div>
 			)}
-			<span className="text-[11px] text-text-3">
-				{unlimited ? t('budget.usage.unlimited') : resetCaption}
-			</span>
+			<div className="flex flex-col gap-0.5 text-[11px] text-text-3">
+				<span>{unlimited ? t('budget.usage.unlimited') : resetCaption}</span>
+				{note && <span>{note}</span>}
+			</div>
 		</div>
 	);
 }

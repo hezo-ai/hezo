@@ -57,7 +57,7 @@ test('an hours pause reads in hours, the way the Hours tab draws them, not as to
 		localeFor(Language.En),
 	);
 	expect(text).toBe(
-		"@engineer is paused: the project's monthly hours budget of 1h 30m is used up (1h 40m used). An instance owner can raise it to let the agent run again before the period ends.",
+		"@engineer is paused: the project's monthly hours budget of 1h 30m is used up (1h 40m used). An instance owner can raise it to let the agent run again before the month ends.",
 	);
 });
 

@@ -6,6 +6,7 @@ import {
 	type ContainerHoursBucket,
 	type ContainerHoursProjectBucket,
 	type ContainerHoursTotals,
+	type ProjectContainerHours,
 	useInstanceContainerHours,
 	useProjectContainerHours,
 } from '../../hooks/use-container-hours';
@@ -20,7 +21,8 @@ import { ManagedSetting, ManageLink } from '../settings/managed-setting';
 import { BudgetBar } from '../ui/budget-bar';
 import { SectionHeader } from '../ui/section-header';
 import { SegmentedControl } from '../ui/segmented-control';
-import { ProjectHoursBudgetPanel } from './hours-budget-panel';
+import type { WindowKey } from './budget-window-figures';
+import { hoursBudgetShown, ProjectHoursBudgetPanel } from './hours-budget-panel';
 import { MonthlyHoursCap } from './monthly-hours-cap';
 
 const HOURS_KEY = 'hours';
@@ -160,35 +162,72 @@ function AllowanceHero({
 	);
 }
 
-function HoursTiles({ totals }: { totals: ContainerHoursTotals }) {
+/**
+ * What each window's figure alone does not say: how many containers are up, when
+ * the week started, and the month against the last one. The summary tiles and the
+ * project's hours budget card both caption their windows with these, so the
+ * wording lives once.
+ */
+function useHoursWindowNotes(totals: ContainerHoursTotals): Record<WindowKey, string> {
 	const { t, plural, formatDate } = useI18n();
 	const delta = totals.prev_window_seconds
 		? Math.round(
 				((totals.window_seconds - totals.prev_window_seconds) / totals.prev_window_seconds) * 100,
 			)
 		: null;
+	return {
+		daily: plural('budget.hours.runningNow', totals.open_intervals),
+		weekly: t('budget.hours.rollingWindow'),
+		monthly:
+			delta == null
+				? t('budget.hours.sincePeriodStart', { date: formatDate(totals.window_start) })
+				: t('budget.hours.monthDelta', { delta: `${delta >= 0 ? '+' : ''}${delta}` }),
+	};
+}
+
+function HoursTiles({ totals }: { totals: ContainerHoursTotals }) {
+	const { t } = useI18n();
+	const notes = useHoursWindowNotes(totals);
 	return (
 		<div data-testid="container-hours-tiles" className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
 			<Tile
 				title={t('budget.hours.today')}
 				value={formatDuration(totals.today_seconds)}
-				meta={plural('budget.hours.runningNow', totals.open_intervals)}
+				meta={notes.daily}
 			/>
 			<Tile
 				title={t('budget.hours.thisWeek')}
 				value={formatDuration(totals.week_seconds)}
-				meta={t('budget.hours.rollingWindow')}
+				meta={notes.weekly}
 			/>
 			<Tile
-				title={t('budget.hours.thisPeriod')}
+				title={t('budget.usage.thisMonth')}
 				value={formatDuration(totals.window_seconds)}
-				meta={
-					delta == null
-						? t('budget.hours.sincePeriodStart', { date: formatDate(totals.window_start) })
-						: t('budget.hours.periodDelta', { delta: `${delta >= 0 ? '+' : ''}${delta}` })
-				}
+				meta={notes.monthly}
 			/>
 		</div>
+	);
+}
+
+/**
+ * The project's hours budget card, which already shows today, this week and this
+ * month, so it carries the tiles' captions in place of drawing the tiles again.
+ */
+function ProjectHoursBudget({
+	projectId,
+	data,
+}: {
+	projectId: string;
+	data: ProjectContainerHours;
+}) {
+	const notes = useHoursWindowNotes(data.totals);
+	return (
+		<ProjectHoursBudgetPanel
+			projectId={projectId}
+			budget={data.budget}
+			periodEnd={data.totals.window_end}
+			notes={notes}
+		/>
 	);
 }
 
@@ -258,20 +297,16 @@ export function ProjectContainerHoursPanel({ projectId }: { projectId: string })
 	const { t } = useI18n();
 	const [bucket, setBucket] = useState<HoursBucket>(HoursBucket.Day);
 	const { data, isLoading } = useProjectContainerHours(projectId, bucket);
-	const totals = data?.totals;
 
 	return (
 		<div className="flex flex-col gap-6">
 			<ProjectHoursScope projectId={projectId} />
-			{data && (
-				<ProjectHoursBudgetPanel
-					projectId={projectId}
-					budget={data.budget}
-					periodEnd={data.totals.window_end}
-					metered={data.metered}
-				/>
-			)}
-			{totals && <HoursTiles totals={totals} />}
+			{data &&
+				(hoursBudgetShown(data.budget, data.metered) ? (
+					<ProjectHoursBudget projectId={projectId} data={data} />
+				) : (
+					<HoursTiles totals={data.totals} />
+				))}
 			<HoursChart
 				bucket={bucket}
 				setBucket={setBucket}

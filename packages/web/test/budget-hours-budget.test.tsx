@@ -126,6 +126,30 @@ test('a local daemon with no limit set shows no hours budget at all', async () =
 	expect(queryByTestId('hours-budget')).toBeNull();
 });
 
+test('the budget card carries the summary captions in place of repeating the tiles', async () => {
+	let slug = '';
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			pinRemoteBackend();
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Hours Captions' });
+			slug = project.slug;
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
+
+	expect((await findByTestId('hours-budget-window-daily')).textContent).toContain(
+		'0 containers up now',
+	);
+	expect((await findByTestId('hours-budget-window-weekly')).textContent).toContain('since Monday');
+	const monthly = await findByTestId('hours-budget-window-monthly');
+	expect(monthly.textContent).toContain('This month');
+	expect(monthly.textContent).toContain('since ');
+	expect(queryByTestId('container-hours-tiles')).toBeNull();
+});
+
 test("HQ adds the projects' monthly limits up against the allowance", async () => {
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',

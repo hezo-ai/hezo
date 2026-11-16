@@ -4,7 +4,7 @@ import { afterEach, expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
 // A deployment's hours allowance can be part plan, part bought. The plan's share
-// comes back each period and the bought share carries over until it is used, so
+// comes back each month and the bought share carries over until it is used, so
 // HQ's Hours tab names the two apart instead of promising the whole total back.
 // The allowance card renders only where hours are billed, hence the remote backend.
 
@@ -43,7 +43,7 @@ test('an allowance with bought hours names the per-period share and the hours th
 
 	const card = await findByTestId('monthly-hours-cap-value');
 	expect(card.textContent).toBe(
-		'10 container hours each period, plus 20 bought hours that carry over until used.',
+		'10 container hours each month, plus 20 bought hours that carry over until used.',
 	);
 
 	const remaining = await findByTestId('container-hours-remaining');
@@ -57,7 +57,7 @@ test('an allowance with no bought hours keeps the per-period sentence and the re
 	const { findByTestId } = await openHqHours({ monthlyContainerHours: 10 });
 
 	const card = await findByTestId('monthly-hours-cap-value');
-	expect(card.textContent).toBe('10 container hours each period.');
+	expect(card.textContent).toBe('10 container hours each month.');
 
 	const remaining = await findByTestId('container-hours-remaining');
 	expect(remaining.textContent).toMatch(/^10\.0 h left\. Resets .+\. Buy more hours$/);

@@ -149,7 +149,7 @@ record of what the fleet is doing rather than something to budget against.
 Where container hours do cost money, you can set an **hours allowance** from HQ's
 Hours tab (under **Team & Budget**). Once it is spent:
 
-- No new container starts, until more hours are added or the period turns - chat
+- No new container starts, until more hours are added or the month turns - chat
   replies included, so an exhausted allowance pauses chat too.
 - Runs that land on a container **already up** carry on - they spend no new hours, and
   stopping them would idle a container you are paying for anyway.
@@ -157,14 +157,14 @@ Hours tab (under **Team & Budget**). Once it is spent:
 
 It is unset by default, which means no limit.
 
-**The period is usually the calendar month, but not always.** A deployment that
-bills you on the day you subscribed anchors the allowance to that day instead, so
-the hours you are capped against cover the period you are charged for. The Hours
-tab names the period it is measuring and the date the allowance comes back, so
-you never have to work out which one you are on.
+**The month does not always start on the 1st.** A deployment that bills you on the
+day you subscribed starts each month on that day instead, so the hours you are
+capped against cover the month you are charged for. The Hours tab says when this
+month started and the date the allowance comes back, so you never have to work out
+which one you are on.
 
 Where part of a fixed allowance was bought on top of the plan, the Hours tab shows
-the two apart. The plan's hours come back each period, and bought hours carry over
+the two apart. The plan's hours come back each month, and bought hours carry over
 until they are used.
 
 Where the allowance is fixed by whoever runs your instance, HQ's Hours tab says
@@ -177,7 +177,7 @@ chat's warning above the composer.
 ### A project's hours budget
 
 Each project can also have an **hours budget**: limits on how many container hours its
-containers may be up in a day, a week and a period. Use it to decide where an
+containers may be up in a day, a week and a month. Use it to decide where an
 instance's hours go, so that one busy project cannot use the whole allowance.
 
 - **Only an instance owner can set it.** The hours are one pool that every project draws
@@ -185,7 +185,7 @@ instance's hours go, so that one busy project cannot use the whole allowance.
   them on the project's **Hours** tab, with **Edit limits**.
 - **The windows follow the allowance.** The daily limit counts the UTC day, and the
   weekly limit counts from Monday, as token budgets do. The monthly limit counts over
-  the allowance's own period, so where your hours renew on a billing date, the
+  the allowance's own month, so where your hours renew on a billing date, the
   project's limit renews on the same date.
 - **Longer limits cover shorter ones**, as for token budgets. A weekly limit is at least
   seven times the daily limit. A monthly limit is at least the daily limit times 365/12

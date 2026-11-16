@@ -77,7 +77,7 @@ export interface InstanceContainerHours extends ContainerHoursSeries {
 	/** Set when this deployment fixed the allowance, so the control renders locked. */
 	monthly_hours_pinned: boolean;
 	/**
-	 * How many of `monthly_hours` were bought rather than granted each period.
+	 * How many of `monthly_hours` were bought rather than granted each month.
 	 * They carry over until spent, so they do not come back when the period
 	 * turns. 0 unless a deployment says otherwise.
 	 */

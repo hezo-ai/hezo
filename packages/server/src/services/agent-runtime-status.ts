@@ -88,22 +88,10 @@ const BUDGET_WINDOW_UNIT: Record<OverBudgetBlock['period'], string> = {
 };
 
 /** When each window frees the agent again, as the notice says it in English. */
-const BUDGET_WINDOW_END: Record<
-	OverBudgetBlock['resource'],
-	Record<OverBudgetBlock['period'], string>
-> = {
-	tokens: {
-		daily: 'before the day ends',
-		weekly: 'before the week ends',
-		monthly: 'before the month ends',
-	},
-	// The hours month is the container-hours window, which a deployer may anchor
-	// to a billing day, so it is a period rather than a month.
-	container_hours: {
-		daily: 'before the day ends',
-		weekly: 'before the week ends',
-		monthly: 'before the period ends',
-	},
+const BUDGET_WINDOW_END: Record<OverBudgetBlock['period'], string> = {
+	daily: 'before the day ends',
+	weekly: 'before the week ends',
+	monthly: 'before the month ends',
 };
 
 /**
@@ -132,7 +120,7 @@ const BLOCK_NOTICE: Record<
 		numbers: (block) => ({ used_tokens: block.used, limit_tokens: block.limit }),
 		text: (block, slug) => {
 			const whose = block.scope === 'project' ? "the project's" : `@${slug}'s`;
-			return `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limit)} tokens is used up (${englishCount(block.used)} used). Raise the budget to let it run again ${BUDGET_WINDOW_END.tokens[block.period]}.`;
+			return `@${slug} is paused: ${whose} ${block.period} budget of ${englishCount(block.limit)} tokens is used up (${englishCount(block.used)} used). Raise the budget to let it run again ${BUDGET_WINDOW_END[block.period]}.`;
 		},
 	},
 	container_hours: {
@@ -152,7 +140,7 @@ const BLOCK_NOTICE: Record<
 			limit_seconds: block.limit,
 		}),
 		text: (block, slug) =>
-			`@${slug} is paused: the project's ${block.period} hours budget of ${containerSecondsToHours(block.limit)} container-hours is used up (${containerSecondsToHours(block.used)} used). Raise the hours budget to let it run again ${BUDGET_WINDOW_END.container_hours[block.period]}.`,
+			`@${slug} is paused: the project's ${block.period} hours budget of ${containerSecondsToHours(block.limit)} container-hours is used up (${containerSecondsToHours(block.used)} used). Raise the hours budget to let it run again ${BUDGET_WINDOW_END[block.period]}.`,
 	},
 };
 
