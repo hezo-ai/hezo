@@ -25,11 +25,14 @@ import {
 } from './budget-window-figures';
 import { ContainerHoursBudgetEditor } from './budget-windows-editor';
 
-/** The hours month is the container-hours window, so it reads as a period, not a month. */
+/**
+ * The hours month is the container-hours window. It is still called a month,
+ * though a deployment may start it on a billing day rather than the 1st.
+ */
 const WINDOW_LABELS: Record<WindowKey, MessageKey> = {
 	daily: 'budget.hours.today',
 	weekly: 'budget.hours.thisWeek',
-	monthly: 'budget.hours.thisPeriod',
+	monthly: 'budget.usage.thisMonth',
 };
 
 function hoursFigures(s: ContainerHoursWindowStatus): WindowFigures {
@@ -70,28 +73,35 @@ function AllowanceNote({ monthlySeconds }: { monthlySeconds: number }) {
 }
 
 /**
+ * Whether a project's hours budget card is drawn: on a backend that bills uptime,
+ * or wherever a limit is already set. On a local daemon an hour costs nothing,
+ * and a card inviting a budget for it would be noise.
+ */
+export function hoursBudgetShown(budget: ProjectContainerHoursBudget, metered: boolean): boolean {
+	return metered || WINDOW_KEYS.some((key) => budget[key].limit_seconds > 0);
+}
+
+/**
  * A project's hours budget: how long its containers may be up today, this week
- * and this period, against what they used.
+ * and this month, against what they used. The caller draws it only where
+ * `hoursBudgetShown` says so.
  *
  * **Set by the instance owner alone.** The hours are one pool every project
  * draws on, so the edit control is a superuser's, and everyone else is told who
  * sets the limits rather than shown a control the server would refuse.
- *
- * **Shown only where it means something:** on a backend that bills uptime, or
- * wherever a limit is already set. On a local daemon an hour costs nothing, and
- * a card inviting a budget for it would be noise.
  */
 export function ProjectHoursBudgetPanel({
 	projectId,
 	budget,
 	periodEnd,
-	metered,
+	notes,
 }: {
 	projectId: string;
 	budget: ProjectContainerHoursBudget;
 	/** When the container-hours window ends, which is when the monthly limit resets. */
 	periodEnd: string;
-	metered: boolean;
+	/** A second caption per window, for what its figure alone does not say. */
+	notes: Record<WindowKey, string>;
 }) {
 	const { t } = useI18n();
 	const { data: me } = useMe();
@@ -101,8 +111,6 @@ export function ProjectHoursBudgetPanel({
 	const [draft, setDraft] = useState<BudgetWindowsContainerSeconds>(() => storedLimits(budget));
 
 	const windows = hoursWindows(budget);
-	const anyLimit = WINDOW_KEYS.some((key) => windows[key].limit > 0);
-	if (!metered && !anyLimit) return null;
 	const canEdit = me?.is_superuser === true;
 
 	function startEditing() {
@@ -164,6 +172,7 @@ export function ProjectHoursBudgetPanel({
 								label={t(WINDOW_LABELS[key])}
 								format={formatDuration}
 								resetCaption={resetCaption(key, new Date(periodEnd))}
+								note={notes[key]}
 								testId={`hours-budget-window-${key}`}
 							/>
 						))}

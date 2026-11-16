@@ -981,9 +981,10 @@ earlier on the day of purchase. Both reads take it through the same `@hezo/share
 addition to it**: the hours a control plane sold as one-off packs, which carry over until
 spent. Admission never reads it, since the cap is the total either way; it reaches only
 `GET /api/container-hours` as `purchased_hours`, so HQ's Hours tab can say how much of the
-allowance comes back each period. The schema refuses it without a pinned
+allowance comes back each month. The schema refuses it without a pinned
 `monthlyContainerHours`, or above it. The instance does not draw packs down; the plane
-re-pins both figures when a period turns.
+re-pins both figures when the month turns. User-facing text calls the window a month even
+when it is anchored, and says the date it started.
 
 **A project's hours budget sits inside the allowance and is checked by the token gate.**
 `projects.daily_/weekly_/monthly_budget_container_seconds` (migration 086, 0 = unlimited,
@@ -1012,7 +1013,9 @@ same row. HQ is refused, since it draws on the allowance directly. The
 floors are the token floors, from the unit-free `windowViolations`/`normalizeWindowsUp` in
 `@hezo/shared`. A limit reserves nothing: `GET /api/container-hours` reports the projects'
 monthly limits summed (`project_limits`) so HQ's Hours tab can say when they promise more than
-the allowance holds. The control plane needs nothing new: it still meters the whole ledger,
+the allowance holds. Wherever a project's budget card is drawn (`hoursBudgetShown`: a metered
+backend, or any limit set), it replaces the Hours tab's summary tiles, since both show the
+same three windows; the card carries the tiles' captions under each window. The control plane needs nothing new: it still meters the whole ledger,
 and the ledger, its columns and its clip expression are unchanged.
 
 ### Docs, skills & assets

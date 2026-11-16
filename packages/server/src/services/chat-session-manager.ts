@@ -151,7 +151,7 @@ const CHAT_BUDGET_TAB: Record<OverBudgetBlock['resource'], string> = {
 /** The hours half of the same refusal - decision-level twin of the budget notice. */
 export const CHAT_HOURS_EXHAUSTED_NOTICE =
 	'This chat cannot start a container: the instance has spent its monthly container-hours ' +
-	"allowance. It resumes when the period turns, or when the allowance is raised on HQ's Hours tab.";
+	"allowance. It resumes when the month turns, or when the allowance is raised on HQ's Hours tab.";
 
 /** The turn is parked on the instance memory budget; said in the thread at once. */
 export const CHAT_CAPACITY_WAIT_NOTICE =
