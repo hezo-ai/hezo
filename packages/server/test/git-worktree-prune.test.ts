@@ -96,6 +96,7 @@ describe('removeWorktreesWhere', () => {
 			repoLoc(cloneDir),
 			worktreesRoot,
 			(id) => id === 'HM-200',
+			null,
 		);
 
 		expect(removed).toEqual(['HM-200']);
@@ -109,7 +110,13 @@ describe('removeWorktreesWhere', () => {
 	it('never removes the main clone worktree, even when the predicate matches everything', async () => {
 		const p = await addWt('HM-300');
 
-		const removed = await removeWorktreesWhere(exec, repoLoc(cloneDir), worktreesRoot, () => true);
+		const removed = await removeWorktreesWhere(
+			exec,
+			repoLoc(cloneDir),
+			worktreesRoot,
+			() => true,
+			null,
+		);
 
 		expect(removed).toContain('HM-300');
 		expect(existsSync(p)).toBe(false);
