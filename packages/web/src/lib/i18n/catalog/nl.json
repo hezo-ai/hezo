@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "Budgetten en grafieken bekijken",
 	"agents.card.chatWith": "Chatten met {name}",
 	"agents.card.globalAgent": "Globale agent - werkt in alle projecten",
+	"agents.card.openPage": "Agentpagina openen",
 	"agents.hire.action": "Agent aannemen",
 	"agents.hire.addToProject": "Toevoegen aan {project}",
 	"agents.hire.back": "Kies een andere manier van aannemen",

@@ -1,3 +1,4 @@
+import { checkResourceAllowed } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
 import { logger } from '../../logger';
 import { guardedFetch } from '../egress/guarded-fetch';
 import { discoverMetadata, type FetchFn, type OAuthMetadata } from './provider-generic';
@@ -110,6 +111,28 @@ export async function fetchProtectedResourceMetadata(
 export class PrmUnavailableError extends Error {}
 
 /**
+ * The RFC 8707 resource indicator to request tokens for: the `resource` the
+ * server's own PRM names, not the endpoint URL. An Authorization Server binds
+ * the token to the indicator it was given, and a server whose PRM names a
+ * parent of its endpoint (an origin-level resource fronting `/mcp`) refuses a
+ * token bound to the endpoint path. The PRM must name the endpoint itself or a
+ * path above it on the same origin, as RFC 9728 requires; anything else could
+ * steer the token to another audience, so it fails discovery. Serialised as a
+ * URL, matching the MCP SDK clients these servers are tested against.
+ */
+export function resourceIndicatorFor(mcpUrl: string, prm: ProtectedResourceMetadata): string {
+	if (typeof prm.resource !== 'string' || !URL.canParse(prm.resource)) {
+		throw new Error(`Protected Resource Metadata for ${mcpUrl} has no valid resource`);
+	}
+	if (!checkResourceAllowed({ requestedResource: mcpUrl, configuredResource: prm.resource })) {
+		throw new Error(
+			`Protected Resource Metadata names resource ${prm.resource}, which does not cover ${mcpUrl}`,
+		);
+	}
+	return new URL(prm.resource).href;
+}
+
+/**
  * Full discovery walk: probe the MCP server, fetch its PRM, then fetch the
  * advertised Authorization Server's metadata. The single entry point used by
  * the auth-start route for a connector.
@@ -127,10 +150,11 @@ export async function discoverMcpAuthorization(
 			`Could not discover OAuth endpoints for ${mcpUrl}: WWW-Authenticate had no resource_metadata pointer, and ${prmUrl} failed (${(e as Error).message})`,
 		);
 	}
+	const resource = resourceIndicatorFor(mcpUrl, prm);
 	const asUrl = prm.authorization_servers[0]!;
 	const asMetadata = await discoverMetadata(asUrl, fetchFn);
 	return {
-		resource: prm.resource,
+		resource,
 		authorizationServerUrl: asUrl,
 		prm,
 		asMetadata,

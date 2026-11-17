@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "View budgets and charts",
 	"agents.card.chatWith": "Chat with {name}",
 	"agents.card.globalAgent": "Global agent - works across all projects",
+	"agents.card.openPage": "Open agent page",
 	"agents.hire.action": "Hire agent",
 	"agents.hire.addToProject": "Add to {project}",
 	"agents.hire.back": "Choose a different way to hire",

@@ -3,6 +3,7 @@ import {
 	discoverMcpAuthorization,
 	fetchProtectedResourceMetadata,
 	probeForProtectedResourceMetadata,
+	resourceIndicatorFor,
 	wellKnownPrmUrl,
 } from '../src/services/oauth/prm-discovery';
 import type { FetchFn } from '../src/services/oauth/provider-generic';
@@ -155,7 +156,7 @@ describe('discoverMcpAuthorization', () => {
 			return jsonResponse({}, 404);
 		};
 		const result = await discoverMcpAuthorization('https://srv.example/mcp', fetchFn);
-		expect(result.resource).toBe('https://srv.example');
+		expect(result.resource).toBe('https://srv.example/');
 		expect(result.authorizationServerUrl).toBe('https://as.example');
 		expect(result.asMetadata.token_endpoint).toBe('https://as.example/token');
 		expect(result.prm.scopes_supported).toEqual(['read']);
@@ -171,5 +172,38 @@ describe('discoverMcpAuthorization', () => {
 		await expect(discoverMcpAuthorization('https://srv.example/mcp', fetchFn)).rejects.toThrow(
 			/Could not discover OAuth endpoints for https:\/\/srv\.example\/mcp/,
 		);
+	});
+});
+
+describe('resourceIndicatorFor', () => {
+	const MCP = 'https://router.example/mcp';
+	const prm = (resource: unknown) =>
+		({ resource, authorization_servers: ['https://as.example'] }) as Parameters<
+			typeof resourceIndicatorFor
+		>[1];
+
+	it('requests the origin-level resource a router names, not its endpoint path', () => {
+		expect(resourceIndicatorFor(MCP, prm('https://router.example'))).toBe(
+			'https://router.example/',
+		);
+	});
+
+	it('keeps a resource that names the endpoint itself', () => {
+		expect(resourceIndicatorFor(MCP, prm('https://router.example/mcp'))).toBe(MCP);
+	});
+
+	it('refuses a resource on another origin', () => {
+		expect(() => resourceIndicatorFor(MCP, prm('https://other.example'))).toThrow(/does not cover/);
+	});
+
+	it('refuses a resource on a sibling path', () => {
+		expect(() => resourceIndicatorFor(MCP, prm('https://router.example/other'))).toThrow(
+			/does not cover/,
+		);
+	});
+
+	it('refuses metadata with no usable resource', () => {
+		expect(() => resourceIndicatorFor(MCP, prm(undefined))).toThrow(/no valid resource/);
+		expect(() => resourceIndicatorFor(MCP, prm('not a url'))).toThrow(/no valid resource/);
 	});
 });

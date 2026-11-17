@@ -12,6 +12,10 @@ import { getAvailablePort } from './port';
  * - `GET /mcp`                                  → 401 + WWW-Authenticate: Bearer resource_metadata="<base>/.well-known/oauth-protected-resource"
  *                                                  unless a valid Bearer token is presented, then 200 {ok: true}
  * - `GET /.well-known/oauth-protected-resource` → PRM (RFC 9728): `{ resource, authorization_servers: ["<base>"] }`
+ *
+ * Like a resource-scoped AS, the token issued for a code is bound to the
+ * `resource` the authorize request carried, and `/mcp` accepts it only when that
+ * matches the resource the PRM names.
  * - `GET /.well-known/oauth-authorization-server` → AS metadata (RFC 8414)
  * - `POST /register`                            → DCR (RFC 7591): returns `{ client_id }`
  * - `GET  /authorize`                           → 302 to `redirect_uri?code=...&state=...` (auto-approves)
@@ -40,6 +44,11 @@ export interface FakeMcpServerOptions {
 	 * downstream service (e.g. github-sim) that pre-seeds an expected token.
 	 */
 	issueToken?: string;
+	/**
+	 * Name the bare origin as the PRM resource rather than the `/mcp` endpoint,
+	 * the shape of a router fronting several services (DigitalOcean's).
+	 */
+	resourceAtOrigin?: boolean;
 }
 
 export interface FakeMcpServer {
@@ -51,17 +60,35 @@ export interface FakeMcpServer {
 	/** Last issued access token, for assertions. */
 	lastAccessToken: () => string | null;
 	/** Pending authorize requests (one entry per /authorize hit). */
-	authorizeRequests: () => Array<{ clientId: string; redirectUri: string; state: string }>;
+	authorizeRequests: () => Array<{
+		clientId: string;
+		redirectUri: string;
+		state: string;
+		resource: string | null;
+	}>;
+	/** The resource the PRM names, as the AS compares it. */
+	resource: string;
 }
 
 export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promise<FakeMcpServer> {
 	const port = await getAvailablePort();
 	const base = `http://127.0.0.1:${port}`;
+	const prmResource = opts.resourceAtOrigin ? base : `${base}/mcp`;
+	const canonical = (r: string | null) => (r && URL.canParse(r) ? new URL(r).href : null);
 
 	const clients = new Map<string, { redirect_uris: string[] }>();
-	const codes = new Map<string, { clientId: string; redirectUri: string; codeChallenge: string }>();
-	const tokens = new Set<string>();
-	const authorizeRequests: Array<{ clientId: string; redirectUri: string; state: string }> = [];
+	const codes = new Map<
+		string,
+		{ clientId: string; redirectUri: string; codeChallenge: string; resource: string | null }
+	>();
+	// Each issued access token, mapped to the resource it was bound to.
+	const tokens = new Map<string, string | null>();
+	const authorizeRequests: Array<{
+		clientId: string;
+		redirectUri: string;
+		state: string;
+		resource: string | null;
+	}> = [];
 	let lastClientId: string | null = null;
 	let lastAccessToken: string | null = null;
 
@@ -71,7 +98,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 	app.get('/mcp', (c) => {
 		const auth = c.req.header('authorization') ?? '';
 		const token = auth.replace(/^Bearer\s+/i, '');
-		if (token && tokens.has(token)) {
+		if (token && tokens.has(token) && tokens.get(token) === canonical(prmResource)) {
 			return c.json({ ok: true, message: 'authenticated' });
 		}
 		c.header(
@@ -86,7 +113,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 	// PRM.
 	app.get('/.well-known/oauth-protected-resource', (c) =>
 		c.json({
-			resource: `${base}/mcp`,
+			resource: prmResource,
 			authorization_servers: [base],
 			scopes_supported: ['read', 'write'],
 		}),
@@ -136,6 +163,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 		const redirectUri = c.req.query('redirect_uri') ?? '';
 		const state = c.req.query('state') ?? '';
 		const codeChallenge = c.req.query('code_challenge') ?? '';
+		const resource = c.req.query('resource') ?? null;
 		const client = clients.get(clientId);
 		if (!client) {
 			return c.text(`unknown client_id: ${clientId}`, 400);
@@ -143,9 +171,9 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 		if (!client.redirect_uris.includes(redirectUri)) {
 			return c.text(`redirect_uri not registered for ${clientId}`, 400);
 		}
-		authorizeRequests.push({ clientId, redirectUri, state });
+		authorizeRequests.push({ clientId, redirectUri, state, resource });
 		const code = `code_${randomBytes(12).toString('hex')}`;
-		codes.set(code, { clientId, redirectUri, codeChallenge });
+		codes.set(code, { clientId, redirectUri, codeChallenge, resource });
 		const sep = redirectUri.includes('?') ? '&' : '?';
 		const target = `${redirectUri}${sep}code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
 		return c.redirect(target, 302);
@@ -186,9 +214,12 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 		if (stored.codeChallenge && !codeVerifier) {
 			return c.json({ error: 'invalid_grant', error_description: 'missing verifier' }, 400);
 		}
+		if (params.get('resource') !== stored.resource) {
+			return c.json({ error: 'invalid_target', error_description: 'resource mismatch' }, 400);
+		}
 		codes.delete(code);
 		const accessToken = opts.issueToken ?? `tok_${randomBytes(16).toString('hex')}`;
-		tokens.add(accessToken);
+		tokens.set(accessToken, canonical(stored.resource));
 		lastAccessToken = accessToken;
 		return c.json({
 			access_token: accessToken,
@@ -239,5 +270,6 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 		lastClientId: () => lastClientId,
 		lastAccessToken: () => lastAccessToken,
 		authorizeRequests: () => [...authorizeRequests],
+		resource: prmResource,
 	};
 }

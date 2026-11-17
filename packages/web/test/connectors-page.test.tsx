@@ -44,6 +44,9 @@ async function seedSaasConnector(
 			// auth-start reuses this cached registration instead of re-running live
 			// PRM discovery / DCR for a changed origin.
 			redirect_uri: 'http://localhost/api/oauth/mcp-callback',
+			// Discovery's resolved resource indicator; a registration without one
+			// is a cache miss that re-runs discovery.
+			resource: input.url,
 		};
 	}
 	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {

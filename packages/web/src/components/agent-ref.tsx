@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from 'react';
+import { AgentCard } from './agent-card';
 import { agentDisplayName, agentIdentityTooltip } from './agent-identity-tooltip';
-import { AgentLink } from './agent-link';
 import { Tooltip } from './ui/tooltip';
 
 /**
@@ -14,14 +14,21 @@ export interface AgentRefIdentity {
 	role_description?: string | null;
 	slug?: string | null;
 	is_instance?: boolean;
+	/** Shown on the linked card only. */
+	avatar_spec?: unknown;
+	/** Shown on the linked card only. */
+	runtime_status?: string | null;
 }
 
 interface AgentRefProps {
 	/** The resolved agent. Null/undefined falls back to `fallbackName`. */
 	agent?: AgentRefIdentity | null;
-	/** Required for `link`; the current project, which `AgentLink` re-points for HQ agents. */
+	/** Required for `link`; the current project, which the card re-points to HQ for HQ agents. */
 	projectId?: string;
-	/** Wrap the label in a link to the agent's page. */
+	/**
+	 * Make the label open the agent card (see `AgentCard`): the agent's page and
+	 * a chat shortcut. The label stays a link to the page for a modified click.
+	 */
 	link?: boolean;
 	/** Shown when the agent could not be resolved - e.g. a name baked into an old payload. */
 	fallbackName?: string;
@@ -60,6 +67,9 @@ const TOOLTIP_PANEL = 'max-w-[min(18rem,calc(100vw-2rem))] px-3 py-2.5 text-[12p
  * `agentIdentityTooltip` returns null when the label already says everything - an
  * unnamed agent with no role description - so a role-only label is never given a
  * card that just repeats itself.
+ *
+ * A `link` label instead opens `AgentCard`, which carries the same identity plus
+ * the agent's page and a chat shortcut, so it is shown whatever the label says.
  */
 export function AgentRef({
 	agent,
@@ -79,9 +89,25 @@ export function AgentRef({
 	if (!label && !children) return null;
 
 	const content = children ?? label;
-	const tooltip = agent ? agentIdentityTooltip(agent) : null;
 	const slug = agent?.slug ?? undefined;
-	const linked = link && !!projectId && !!slug;
+
+	// A linked label always gets the card, even when there is nothing to add to
+	// the name: the card is where its page link and chat shortcut live. The card
+	// carries the identity itself, so there is no separate tooltip.
+	if (link && projectId && agent && slug) {
+		return (
+			<AgentCard
+				agent={{ ...agent, slug }}
+				projectId={projectId}
+				className={className}
+				testId={testId}
+			>
+				{content}
+			</AgentCard>
+		);
+	}
+
+	const tooltip = agent ? agentIdentityTooltip(agent) : null;
 
 	// The caller's element is the trigger, so there is nothing of ours to render:
 	// with no card to show, `children` passes straight through untouched.
@@ -95,31 +121,15 @@ export function AgentRef({
 	}
 
 	if (!tooltip) {
-		return linked && projectId && slug ? (
-			<AgentLink projectId={projectId} agentId={slug} className={className} testId={testId}>
-				{content}
-			</AgentLink>
-		) : (
+		return (
 			<span className={className} data-testid={testId}>
 				{content}
 			</span>
 		);
 	}
 
-	// Radix opens a tooltip on hover and focus but never on a touch tap. A linked
-	// label needs no tap handling - the tap navigates to the agent's page, which
-	// says everything the card does and more - so only a standalone label toggles
-	// itself open, matching `RelativeTime`.
-	if (linked && projectId && slug) {
-		return (
-			<Tooltip content={tooltip} side={side} contentClassName={TOOLTIP_PANEL}>
-				<AgentLink projectId={projectId} agentId={slug} className={className} testId={testId}>
-					{content}
-				</AgentLink>
-			</Tooltip>
-		);
-	}
-
+	// Radix opens a tooltip on hover and focus but never on a touch tap, so a
+	// standalone label toggles itself open on tap, matching `RelativeTime`.
 	if (!tapToOpen) {
 		return (
 			<Tooltip content={tooltip} side={side} contentClassName={TOOLTIP_PANEL}>

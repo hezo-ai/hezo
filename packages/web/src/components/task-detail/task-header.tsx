@@ -234,8 +234,11 @@ export function TaskHeader({
 					<Badge color="neutral" className="max-w-[12rem]" testId="task-assignee-inline">
 						<AgentRef
 							agent={assigneeAgent}
+							projectId={projectId}
+							link
 							fallbackName={task.assignee_name ?? task.assignee_slug ?? undefined}
-							className="truncate"
+							className="truncate hover:underline"
+							testId="task-assignee-inline-link"
 						/>
 					</Badge>
 				)}
