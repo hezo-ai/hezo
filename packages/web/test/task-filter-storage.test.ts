@@ -39,6 +39,14 @@ describe('task-filter-storage', () => {
 		expect(readStoredTaskFilters('ops')).toEqual(fullFilters());
 	});
 
+	test('every column sort round-trips', () => {
+		for (const sortField of ['number', 'title', 'status', 'priority', 'assignee'] as const) {
+			const filters = { ...fullFilters(), sortField, sortDir: 'asc' as const };
+			writeStoredTaskFilters('ops', filters);
+			expect(readStoredTaskFilters('ops')).toEqual(filters);
+		}
+	});
+
 	test('a selection without In progress round-trips unchanged', () => {
 		writeStoredTaskFilters('ops', { ...fullFilters(), statusValues: [TaskStatus.Done] });
 		expect(readStoredTaskFilters('ops')?.statusValues).toEqual([TaskStatus.Done]);
@@ -140,7 +148,7 @@ describe('task-filter-storage', () => {
 	});
 
 	test('read rejects an unknown sortField and falls back to work_order', () => {
-		localStorage.setItem(KEY, JSON.stringify({ sortField: 'priority' }));
+		localStorage.setItem(KEY, JSON.stringify({ sortField: 'shoe_size' }));
 		expect(readStoredTaskFilters('ops')?.sortField).toBe('work_order');
 	});
 

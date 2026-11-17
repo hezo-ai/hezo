@@ -4,10 +4,16 @@
 // Keyed by the route-param project slug (the same handle the component already
 // holds), never a resolved UUID.
 
-import { TaskStatus } from '@hezo/shared';
+import {
+	isTaskListSortDir,
+	isTaskListSortField,
+	type TaskListSortDir,
+	type TaskListSortField,
+	TaskStatus,
+} from '@hezo/shared';
 
-export type TaskSortField = 'work_order' | 'created_at' | 'updated_at';
-export type TaskSortDir = 'asc' | 'desc';
+export type TaskSortField = TaskListSortField;
+export type TaskSortDir = TaskListSortDir;
 
 const KNOWN_STATUSES = new Set<string>(Object.values(TaskStatus));
 
@@ -27,8 +33,6 @@ const STORAGE_PREFIX = 'hezo:task-filters:';
  * `in_progress` on read to keep the view it saved.
  */
 export const TASK_FILTERS_STORAGE_VERSION = 2;
-const SORT_FIELDS: readonly TaskSortField[] = ['work_order', 'created_at', 'updated_at'];
-const SORT_DIRS: readonly TaskSortDir[] = ['asc', 'desc'];
 
 function keyFor(projectId: string): string {
 	return `${STORAGE_PREFIX}${projectId}`;
@@ -66,12 +70,8 @@ export function readStoredTaskFilters(projectId: string): StoredTaskFilters | nu
 			search: typeof obj.search === 'string' ? obj.search : '',
 			statusValues,
 			ownerValues: stringArray(obj.ownerValues),
-			sortField: SORT_FIELDS.includes(obj.sortField as TaskSortField)
-				? (obj.sortField as TaskSortField)
-				: 'work_order',
-			sortDir: SORT_DIRS.includes(obj.sortDir as TaskSortDir)
-				? (obj.sortDir as TaskSortDir)
-				: 'asc',
+			sortField: isTaskListSortField(obj.sortField) ? obj.sortField : 'work_order',
+			sortDir: isTaskListSortDir(obj.sortDir) ? obj.sortDir : 'asc',
 		};
 	} catch {
 		return null;

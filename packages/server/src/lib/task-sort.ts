@@ -1,15 +1,12 @@
-import { CommentContentType, TaskPriority, TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import {
+	CommentContentType,
+	isTaskListSortField,
+	type TaskListSortField,
+	TaskPriority,
+	TERMINAL_TASK_STATUSES,
+} from '@hezo/shared';
 
 const TASK_ALIAS = 'i';
-
-export const TASK_LIST_SORT_FIELDS = [
-	'work_order',
-	'created_at',
-	'updated_at',
-	'priority',
-	'number',
-] as const;
-export type TaskListSortField = (typeof TASK_LIST_SORT_FIELDS)[number];
 
 export function taskActiveRunExistsSql(alias = TASK_ALIAS): string {
 	return `EXISTS (
@@ -140,21 +137,42 @@ export function parseTaskListSort(sortParam: string | undefined): {
 	const raw = sortParam ?? 'work_order:asc';
 	const [field, dir] = raw.split(':');
 	const direction = dir === 'asc' ? 'ASC' : 'DESC';
-	if ((TASK_LIST_SORT_FIELDS as readonly string[]).includes(field)) {
-		return { field: field as TaskListSortField, direction };
+	if (isTaskListSortField(field)) {
+		return { field, direction };
 	}
 	return { field: 'work_order', direction: 'ASC' };
 }
+
+/**
+ * The sort key of every field except `work_order`. `assignee` is the caller's
+ * display-name expression, since only the caller knows its join aliases.
+ */
+const SORT_KEY_SQL: Record<
+	Exclude<TaskListSortField, 'work_order'>,
+	(assigneeName: string) => string
+> = {
+	created_at: () => `${TASK_ALIAS}.created_at`,
+	updated_at: () => `${TASK_ALIAS}.updated_at`,
+	number: () => `${TASK_ALIAS}.number`,
+	title: () => `LOWER(${TASK_ALIAS}.title)`,
+	status: () => `${TASK_ALIAS}.status`,
+	priority: () => `${TASK_ALIAS}.priority`,
+	assignee: (assigneeName) => `LOWER(${assigneeName})`,
+};
 
 /**
  * Build ORDER BY for the task list. Every sort mode is tiered first: tasks with a
  * run in flight or queued, then tasks waiting on the admin, then the rest. The
  * chosen field only orders within a tier.
  * `work_order`: ready → priority → ticket number (matches agent dispatch).
+ * Every other field ends on the task number, so rows that tie on the field keep
+ * one order across pages and offset paging neither repeats nor skips them.
+ * Unassigned tasks sort last in either direction.
  *
  * `adminActionPending` is the expression from {@link adminActionPendingSql}, passed
  * in rather than built here so the caller can project the same tier as a column
- * without pushing its params twice.
+ * without pushing its params twice. `assigneeName` is the assignee display-name
+ * expression over the caller's joins.
  */
 export function buildTaskListOrderBy(
 	field: TaskListSortField,
@@ -162,6 +180,7 @@ export function buildTaskListOrderBy(
 	params: unknown[],
 	idx: number,
 	adminActionPending: string,
+	assigneeName: string,
 ): { sql: string; nextIdx: number } {
 	const tiers = `${taskActiveRunExistsSql()} DESC, ${adminActionPending} DESC`;
 	if (field === 'work_order') {
@@ -177,7 +196,7 @@ export function buildTaskListOrderBy(
 		};
 	}
 	return {
-		sql: `${tiers}, ${TASK_ALIAS}.${field} ${direction}`,
+		sql: `${tiers}, ${SORT_KEY_SQL[field](assigneeName)} ${direction} NULLS LAST, ${TASK_ALIAS}.number ASC`,
 		nextIdx: idx,
 	};
 }

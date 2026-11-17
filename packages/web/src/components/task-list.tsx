@@ -1,6 +1,8 @@
 import {
 	formatTaskStatus,
 	isLastRunFailed,
+	TASK_LIST_SORT_DIRS,
+	TASK_LIST_SORT_FIELDS,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
@@ -11,7 +13,7 @@ import { useAgentLookup } from '../hooks/use-agent-lookup';
 import { useAgents } from '../hooks/use-agents';
 import { usePanelPlacement } from '../hooks/use-panel-placement';
 import { type Task, useInfiniteTasks, useTasks } from '../hooks/use-tasks';
-import { useI18n } from '../lib/i18n';
+import { type MessageKey, useI18n } from '../lib/i18n';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
 import {
 	clearStoredTaskFilters,
@@ -33,7 +35,7 @@ import { TaskRunDot } from './task-run-dot';
 import { TaskStatusBadge } from './task-status-badge';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { type Column, DataTable } from './ui/data-table';
+import { type Column, DataTable, type DataTableSort } from './ui/data-table';
 import { EmptyState } from './ui/empty-state';
 import { MultiSelect, type MultiSelectOption } from './ui/multi-select';
 import { Tooltip } from './ui/tooltip';
@@ -83,14 +85,49 @@ const NAMED_STATUS_SELECTIONS: { values: string[]; label: string }[] = [
 	},
 ];
 
-const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
-	'work_order:asc': 'Work order',
-	'work_order:desc': 'Work order',
-	'created_at:desc': 'Newest first',
-	'created_at:asc': 'Oldest first',
-	'updated_at:desc': 'Recently updated',
-	'updated_at:asc': 'Oldest updates',
+const DEFAULT_SORT_FIELD = 'work_order' satisfies SortField;
+
+const SORT_FIELD_TEXT: Record<SortField, MessageKey> = {
+	work_order: 'tasks.sort.field.workOrder',
+	created_at: 'tasks.sort.field.createdAt',
+	updated_at: 'tasks.sort.field.updatedAt',
+	number: 'tasks.sort.field.number',
+	title: 'tasks.sort.field.title',
+	status: 'tasks.sort.field.status',
+	priority: 'tasks.sort.field.priority',
+	assignee: 'tasks.sort.field.assignee',
 };
+
+/** Each directed order's caption: the filter bar summary and the direction picker. */
+const SORT_ORDER_TEXT: Record<
+	Exclude<SortField, typeof DEFAULT_SORT_FIELD>,
+	Record<SortDir, MessageKey>
+> = {
+	created_at: { asc: 'tasks.sort.order.createdAt.asc', desc: 'tasks.sort.order.createdAt.desc' },
+	updated_at: { asc: 'tasks.sort.order.updatedAt.asc', desc: 'tasks.sort.order.updatedAt.desc' },
+	number: { asc: 'tasks.sort.order.number.asc', desc: 'tasks.sort.order.number.desc' },
+	title: { asc: 'tasks.sort.order.title.asc', desc: 'tasks.sort.order.title.desc' },
+	status: { asc: 'tasks.sort.order.status.asc', desc: 'tasks.sort.order.status.desc' },
+	priority: { asc: 'tasks.sort.order.priority.asc', desc: 'tasks.sort.order.priority.desc' },
+	assignee: { asc: 'tasks.sort.order.assignee.asc', desc: 'tasks.sort.order.assignee.desc' },
+};
+
+function sortCaptionKey(field: SortField, dir: SortDir): MessageKey {
+	return field === DEFAULT_SORT_FIELD ? SORT_FIELD_TEXT[field] : SORT_ORDER_TEXT[field][dir];
+}
+
+/**
+ * The order a column-header click leads to: a new column sorts ascending, the
+ * sorted column reverses, and a reversed column hands back to work order.
+ */
+function nextHeaderSort(
+	current: { field: SortField; dir: SortDir },
+	clicked: SortField,
+): { field: SortField; dir: SortDir } {
+	if (current.field !== clicked) return { field: clicked, dir: 'asc' };
+	if (current.dir === 'asc') return { field: clicked, dir: 'desc' };
+	return { field: DEFAULT_SORT_FIELD, dir: 'asc' };
+}
 
 /**
  * Keep only the statuses the filter offers, in its order - a persisted selection
@@ -137,6 +174,7 @@ interface TaskListSectionProps {
 	testId: string;
 	tasks: TaskRow[];
 	columns: Column<TaskRow>[];
+	sort: DataTableSort;
 	onRowClick: (row: TaskRow) => void;
 	/** Dim the section's rows — used for finished (terminal) work in "Done". */
 	faded?: boolean;
@@ -147,6 +185,7 @@ function TaskListSection({
 	testId,
 	tasks,
 	columns,
+	sort,
 	onRowClick,
 	faded,
 }: TaskListSectionProps) {
@@ -162,6 +201,7 @@ function TaskListSection({
 				data={tasks}
 				rowKey={(row) => row.id}
 				onRowClick={onRowClick}
+				sort={sort}
 				getRowDepth={(row) => row.depth}
 				indentColumnKey="title"
 				// Fade finished work via opacity — reads as "faded" in both light and
@@ -231,7 +271,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		sanitizeStatusValues(stored?.statusValues),
 	);
 	const [ownerValues, setOwnerValues] = useState<string[]>(stored?.ownerValues ?? []);
-	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
+	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? DEFAULT_SORT_FIELD);
 	const [sortDir, setSortDir] = useState<SortDir>(stored?.sortDir ?? 'asc');
 	const [createOpen, setCreateOpen] = useState(false);
 
@@ -264,7 +304,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		setDebouncedSearch((next?.search ?? '').trim());
 		setStatusValues(sanitizeStatusValues(next?.statusValues));
 		setOwnerValues(next?.ownerValues ?? []);
-		setSortField(next?.sortField ?? 'work_order');
+		setSortField(next?.sortField ?? DEFAULT_SORT_FIELD);
 		setSortDir(next?.sortDir ?? 'asc');
 	}, [projectId]);
 
@@ -294,6 +334,10 @@ export function TaskList({ projectId }: TaskListProps) {
 		[agents],
 	);
 
+	// Search and owner narrow every section. The sort does too, except the default
+	// work order: under it the In progress and Done sections read most recently
+	// updated first, as an activity log.
+	const isDefaultSort = sortField === DEFAULT_SORT_FIELD;
 	const todoFilters = useMemo(
 		() => ({
 			project_id: projectId,
@@ -308,9 +352,9 @@ export function TaskList({ projectId }: TaskListProps) {
 	const { data: inProgressResult, isLoading: inProgressQueryLoading } = useTasks(
 		projectId,
 		{
-			project_id: projectId,
+			...todoFilters,
 			status: PINNED_STATUS_PARAM,
-			sort: 'updated_at:desc',
+			sort: isDefaultSort ? 'updated_at:desc' : todoFilters.sort,
 			page: '1',
 			per_page: '200',
 		},
@@ -359,22 +403,23 @@ export function TaskList({ projectId }: TaskListProps) {
 	}>(() => {
 		if (!todoListEnabled) return { backlogTasks: [], doneTasks: [] };
 		const rows = mainRows.filter((t) => !PINNED_STATUS_SET.has(t.status));
+		const finished = rows.filter((t) => TERMINAL_STATUS_SET.has(t.status));
 		return {
 			backlogTasks: nestTasksForDisplay(rows.filter((t) => !TERMINAL_STATUS_SET.has(t.status))),
-			// Finished work reads best as a recent-activity log: always most-recently
-			// updated first, independent of the sort dropdown (which governs the
-			// Backlog) — the same treatment the pinned In-progress section gets.
-			// `updated_at` is trigger-maintained server-side, so it's a reliable key;
-			// localeCompare on the ISO string keeps ties stable (falls back to the
-			// server order). Sorting the full Task rows before nesting needs no type
-			// change, and nestTasksForDisplay preserves this sibling order.
+			// Under the default work order, finished work reads as a recent-activity
+			// log: most recently updated first, the same treatment the pinned
+			// In-progress section gets. Any other sort keeps the server's order, so
+			// a column sort reads the same in every section. `updated_at` is
+			// trigger-maintained server-side, so it's a reliable key; localeCompare on
+			// the ISO string keeps ties stable (falls back to the server order), and
+			// nestTasksForDisplay preserves this sibling order.
 			doneTasks: nestTasksForDisplay(
-				rows
-					.filter((t) => TERMINAL_STATUS_SET.has(t.status))
-					.sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+				isDefaultSort
+					? finished.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+					: finished,
 			),
 		};
-	}, [mainRows, todoListEnabled]);
+	}, [mainRows, todoListEnabled, isDefaultSort]);
 
 	const showsNoTasks =
 		!inProgressLoading &&
@@ -414,7 +459,7 @@ export function TaskList({ projectId }: TaskListProps) {
 				: `${ownerValues.length} owners`;
 
 	const summaryBits: string[] = [
-		sortLabels[`${sortField}:${sortDir}`],
+		t(sortCaptionKey(sortField, sortDir)),
 		...(statusLabel ? [statusLabel] : []),
 		...(ownerLabel ? [ownerLabel] : []),
 		...(debouncedSearch ? [`Matching "${debouncedSearch}"`] : []),
@@ -445,11 +490,23 @@ export function TaskList({ projectId }: TaskListProps) {
 		persistFilters({ sortDir: next });
 	}
 
+	const tableSort: DataTableSort = {
+		key: sortField,
+		direction: sortDir,
+		onSort: (key) => {
+			const next = nextHeaderSort({ field: sortField, dir: sortDir }, key as SortField);
+			setSortField(next.field);
+			setSortDir(next.dir);
+			persistFilters({ sortField: next.field, sortDir: next.dir });
+		},
+		label: (header) => t('common.sortByColumn', { column: header }),
+	};
+
 	function resetFilters() {
 		setSearch('');
 		setStatusValues([...DEFAULT_STATUS_VALUES]);
 		setOwnerValues([]);
-		setSortField('work_order');
+		setSortField(DEFAULT_SORT_FIELD);
 		setSortDir('asc');
 		clearStoredTaskFilters(projectId);
 	}
@@ -458,6 +515,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		{
 			key: 'id',
 			header: 'ID',
+			sortKey: 'number' satisfies SortField,
 			width: '88px',
 			// `whitespace-nowrap` lands on the <td> (DataTable appends col.className
 			// last). It stops the identifier breaking at its hyphen, and — because the
@@ -499,7 +557,8 @@ export function TaskList({ projectId }: TaskListProps) {
 		},
 		{
 			key: 'title',
-			header: 'Title',
+			header: t(SORT_FIELD_TEXT.title),
+			sortKey: 'title' satisfies SortField,
 			// The table uses auto layout, where a cell's min-content width is its
 			// widest unbreakable content — so a `truncate` (nowrap) title made this
 			// column demand the full title width, overflowing the table and starving
@@ -527,20 +586,23 @@ export function TaskList({ projectId }: TaskListProps) {
 				]),
 		{
 			key: 'status',
-			header: 'Status',
+			header: t(SORT_FIELD_TEXT.status),
+			sortKey: 'status' satisfies SortField,
 			width: '100px',
 			render: (row) => <TaskStatusBadge status={row.status} />,
 		},
 		{
 			key: 'priority',
-			header: 'Priority',
+			header: t(SORT_FIELD_TEXT.priority),
+			sortKey: 'priority' satisfies SortField,
 			width: '80px',
 			hideOnMobile: true,
 			render: (row) => <TaskPriorityBadge priority={row.priority} />,
 		},
 		{
 			key: 'assignee',
-			header: 'Assignee',
+			header: t(SORT_FIELD_TEXT.assignee),
+			sortKey: 'assignee' satisfies SortField,
 			width: '120px',
 			hideOnMobile: true,
 			render: (row) =>
@@ -608,7 +670,7 @@ export function TaskList({ projectId }: TaskListProps) {
 								type="text"
 								value={search}
 								onChange={(e) => handleSearchChange(e.target.value)}
-								placeholder="Filter by title..."
+								placeholder={t('tasks.filter.searchPlaceholder')}
 								data-testid="task-filter-search"
 								className="w-full rounded-md border border-border bg-surface pl-8 pr-2.5 py-1.5 text-xs text-text-1 outline-none focus:border-border-strong"
 							/>
@@ -624,19 +686,24 @@ export function TaskList({ projectId }: TaskListProps) {
 								data-testid="task-filter-sort-field"
 								className="rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text-1 outline-none"
 							>
-								<option value="work_order">Work order</option>
-								<option value="created_at">Created</option>
-								<option value="updated_at">Updated</option>
+								{TASK_LIST_SORT_FIELDS.map((field) => (
+									<option key={field} value={field}>
+										{t(SORT_FIELD_TEXT[field])}
+									</option>
+								))}
 							</select>
-							{sortField !== 'work_order' && (
+							{sortField !== DEFAULT_SORT_FIELD && (
 								<select
 									value={sortDir}
 									onChange={(e) => handleSortDirChange(e.target.value as SortDir)}
 									data-testid="task-filter-sort-dir"
 									className="rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text-1 outline-none"
 								>
-									<option value="desc">desc</option>
-									<option value="asc">asc</option>
+									{TASK_LIST_SORT_DIRS.map((dir) => (
+										<option key={dir} value={dir}>
+											{t(SORT_ORDER_TEXT[sortField][dir])}
+										</option>
+									))}
 								</select>
 							)}
 						</div>
@@ -711,6 +778,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					testId="task-list-in-progress"
 					tasks={inProgressTasks}
 					columns={columns}
+					sort={tableSort}
 					onRowClick={handleRowClick}
 				/>
 			)}
@@ -752,6 +820,7 @@ export function TaskList({ projectId }: TaskListProps) {
 						testId="task-list-main"
 						tasks={backlogTasks}
 						columns={columns}
+						sort={tableSort}
 						onRowClick={handleRowClick}
 					/>
 					<TaskListSection
@@ -759,6 +828,7 @@ export function TaskList({ projectId }: TaskListProps) {
 						testId="task-list-done"
 						tasks={doneTasks}
 						columns={columns}
+						sort={tableSort}
 						onRowClick={handleRowClick}
 						faded
 					/>
