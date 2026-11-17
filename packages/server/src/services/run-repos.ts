@@ -20,6 +20,7 @@ import {
 	type RepoLoc,
 	seedInitialCommitIfEmpty,
 	type WorktreeLoc,
+	worktreeHasChanges,
 } from './git';
 import { ContainerGitExecutor, type GitExecutor, mintGitOpScopeId } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
@@ -53,6 +54,8 @@ export interface WorktreeRef {
 	loc: WorktreeLoc;
 	/** The task branch tip once the worktree was ready, or null when not taken this run. */
 	headBefore: string | null;
+	/** With no `headBefore`: commits dated from here on count as this run's work. */
+	since?: Date;
 }
 
 /** One repo's line in a `prepare_repos` answer. */
@@ -66,12 +69,61 @@ export interface PreparedRepo {
 	error?: string;
 	/** Anything the agent should know before working in it, e.g. a catch-up merge that stopped. */
 	notes: string[];
+	/**
+	 * The repository's own instruction files at its root. A CLI loads these only
+	 * when it starts inside the repo, and a run now starts in the task folder, so
+	 * the agent is handed them to read instead.
+	 */
+	instructions?: string[];
 }
+
+/**
+ * Whether a folder is a linked worktree: its `.git` is a file pointing at the
+ * clone's admin entry. A `.git` directory is a separate clone or `git init` an
+ * agent made itself, which Hezo neither pushes from nor scans.
+ */
+async function isLinkedWorktree(loc: WorktreeLoc): Promise<boolean> {
+	if (!(await loc.files.exists('.git'))) return false;
+	try {
+		return (await loc.files.read('.git')).startsWith('gitdir:');
+	} catch {
+		return false;
+	}
+}
+
+/** What sits in the task folder outside the worktrees Hezo manages. */
+export interface TaskRootStrays {
+	/** Folders holding a git checkout that is not a task worktree. */
+	checkouts: string[];
+	/** The task folder itself is a git repository. */
+	rootIsRepo: boolean;
+	/** Plain entries directly in the task folder, by name. */
+	entries: string[];
+}
+
+/** Root files a repo keeps its agent conventions in, across the runtimes Hezo drives. */
+const REPO_INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'] as const;
 
 export interface PrepareReposResult {
 	branch: string;
 	repos: PreparedRepo[];
 }
+
+/** The answer while a prep is still running past {@link PREPARE_REPLY_WAIT_MS}. */
+export interface PrepareReposPending {
+	branch: string;
+	pending: true;
+	message: string;
+}
+
+/**
+ * How long a `prepare_repos` call waits before answering "still preparing".
+ * The tool call is one HTTP request, and the server cuts a request idle for 120 s
+ * (`idleTimeout` in `index.ts`); a first clone on a fresh container, or one queued
+ * behind another run's prep on the project git lock, can take longer. The prep
+ * keeps running, and the agent's next call waits for it again.
+ */
+export const PREPARE_REPLY_WAIT_MS = 90_000;
 
 /** What finalize reads: every worktree of the task present in the container. */
 export interface RunRepoView {
@@ -115,6 +167,8 @@ export interface RunRepoSessionInit {
 	emit: (stream: 'stdout' | 'stderr', text: string) => void;
 	/** Stops prep work when the run ends early. */
 	signal: AbortSignal;
+	/** When the run started, for change detection in a worktree it did not prepare. */
+	startedAt: Date;
 }
 
 interface ReadyRepo {
@@ -197,6 +251,35 @@ export class RunRepoSession {
 		return work;
 	}
 
+	/**
+	 * {@link prepare}, answering "still preparing" once `waitMs` passes. The prep
+	 * is not abandoned: it stays in flight, finalize waits for it, and a repeat
+	 * call queues behind it on the lock and answers from its result.
+	 */
+	async prepareWithin(
+		requested: string[] | undefined,
+		waitMs: number = PREPARE_REPLY_WAIT_MS,
+	): Promise<PrepareReposResult | PrepareReposPending | { error: string }> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const pending = new Promise<PrepareReposPending>((resolve) => {
+			timer = setTimeout(
+				() =>
+					resolve({
+						branch: this.branch,
+						pending: true,
+						message:
+							'Still preparing: a clone or fetch is taking a while. Call prepare_repos again with the same repositories to wait for it.',
+					}),
+				waitMs,
+			);
+		});
+		try {
+			return await Promise.race([this.prepare(requested), pending]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	/** Wait for any prep still running. Bounded by git's per-op timeouts and the run signal. */
 	async settle(): Promise<void> {
 		while (this.inFlight.size > 0) {
@@ -221,6 +304,7 @@ export class RunRepoSession {
 		const worktrees: WorktreeRef[] = [];
 		const clones: CloneRef[] = [];
 		const preparedClones: CloneRef[] = [];
+		const leftovers: Array<{ worktree: WorktreeRef; clone: CloneRef }> = [];
 		for (const repo of this.init.repos) {
 			const ready = this.ready.get(repo.id);
 			if (ready) {
@@ -231,19 +315,54 @@ export class RunRepoSession {
 			}
 			const name = repoNameFromIdentifier(repo.repo_identifier);
 			const loc = this.worktreeLoc(name);
-			if (!(await loc.files.exists('.git'))) continue;
-			worktrees.push({ loc, headBefore: null });
-			clones.push({ ...this.cloneLoc(name), repoId: repo.id });
+			if (!(await isLinkedWorktree(loc))) continue;
+			leftovers.push({
+				worktree: { loc, headBefore: null, since: this.init.startedAt },
+				clone: { ...this.cloneLoc(name), repoId: repo.id },
+			});
+		}
+		if (worktrees.length === 0 && leftovers.length === 0) {
+			return { ...EMPTY_RUN_REPO_VIEW, branch: this.branch };
+		}
+		const executor = await this.executor(signal);
+		// A leftover worktree counts only when this run touched it (a dirty tree,
+		// or a commit dated from the run's start). It was never fetched this run,
+		// so its tracking refs may be stale: scanning one this run never touched
+		// would report, and pin the container for, work an earlier run already
+		// accounted for.
+		for (const { worktree, clone } of leftovers) {
+			if (!(await worktreeHasChanges(executor, worktree.loc, null, worktree.since))) continue;
+			worktrees.push(worktree);
+			clones.push(clone);
 		}
 		if (worktrees.length === 0) return { ...EMPTY_RUN_REPO_VIEW, branch: this.branch };
 		return {
-			executor: await this.executor(signal),
+			executor,
 			worktrees,
 			clones,
 			preparedClones,
 			branch: this.branch,
 			recoveryFailed: this.recoveryFailed,
 		};
+	}
+
+	/**
+	 * What an agent left in the task folder outside the worktrees: a checkout it
+	 * cloned or initialised itself (never pushed, never scanned, lost with the
+	 * container), and the plain files a finalize check reads by name.
+	 */
+	async strays(): Promise<TaskRootStrays> {
+		const root = this.deps.docker.files(this.init.project.container_id, this.taskRoot);
+		const entries = await root.list('.');
+		const checkouts: string[] = [];
+		for (const name of entries) {
+			if (name === '.git') continue;
+			const loc = this.worktreeLoc(name);
+			if ((await loc.files.exists('.git')) && !(await isLinkedWorktree(loc))) {
+				checkouts.push(loc.containerPath);
+			}
+		}
+		return { checkouts, rootIsRepo: entries.includes('.git'), entries };
 	}
 
 	private pick(requested?: string[]): { repos: RepoRow[] } | { error: string } {
@@ -272,11 +391,18 @@ export class RunRepoSession {
 			teamId: init.project.team_id,
 		});
 		const identity = await this.identityEnv;
-		const env = init.egress ? [...identity, ...buildEgressProxyEnv(init.egress)] : identity;
+		const env = [...identity, ...(init.egress ? buildEgressProxyEnv(init.egress) : [])];
+		// No bridge runner of its own: prep runs while the agent CLI's runner is
+		// live on the run's socket, and a second runner on that path (socat
+		// `unlink-early`, then its exit trap) would delete the agent's socket and
+		// leave every later commit unable to sign. Remote git rides HTTPS through
+		// the egress proxy and needs no socket; a catch-up merge commit signs
+		// through the agent's own live socket.
+		if (init.bridge) env.push(`SSH_AUTH_SOCK=${init.bridge.socketPath}`);
 		return ContainerGitExecutor.forPrep(
 			deps.docker,
 			init.project.container_id,
-			init.bridge,
+			null,
 			init.runUser,
 			mintGitOpScopeId(),
 			env,
@@ -455,6 +581,17 @@ export class RunRepoSession {
 			);
 		}
 
+		// A checkout the agent made itself at the worktree's path would otherwise be
+		// adopted as the task worktree (it answers `rev-parse --git-dir`), then
+		// pushed from and scanned as if it were one.
+		if ((await wtLoc.files.exists('.git')) && !(await isLinkedWorktree(wtLoc))) {
+			emitSystem('stderr', `${name}: ${wtLoc.containerPath} holds a separate checkout`);
+			return {
+				error: `${wtLoc.containerPath} holds a separate git checkout, not the task worktree. Move anything you need out of it, delete the folder, and call prepare_repos again.`,
+				notes,
+			};
+		}
+
 		emitSystem('stdout', `git worktree ${name}...`);
 		const wt = await ensureTaskWorktreeWithRetry(
 			executor,
@@ -496,8 +633,12 @@ export class RunRepoSession {
 		// Taken after the catch-up, so a pure catch-up with no agent work is not
 		// mistaken for produced output.
 		const headBefore = await getWorktreeHead(executor, wtLoc);
+		const instructions: string[] = [];
+		for (const file of REPO_INSTRUCTION_FILES) {
+			if (await wtLoc.files.exists(file)) instructions.push(`${wtLoc.containerPath}/${file}`);
+		}
 		this.ready.set(repo.id, {
-			result: { ...this.describe(repo), ready: true, notes },
+			result: { ...this.describe(repo), ready: true, notes, instructions },
 			worktree: { loc: wtLoc, headBefore },
 			clone: { ...repoLoc, repoId: repo.id },
 		});
@@ -505,12 +646,10 @@ export class RunRepoSession {
 	}
 
 	/**
-	 * Reclaim finished tasks' worktrees, then measure the container's disk.
-	 * Worktrees are kept after a run (a task gets many runs), so a container
-	 * serving many tasks accumulates them; a managed sandbox has a few GB in
-	 * total. Bounded per repo and best-effort: reclaimed disk is never worth
-	 * failing a prep over. The measurement follows the reclaim so the figure the
-	 * pool recycles on is the disk actually unavailable.
+	 * Reclaim finished tasks' worktrees. Worktrees are kept after a run (a task
+	 * gets many runs), so a container serving many tasks accumulates them; a
+	 * managed sandbox has a few GB in total. Bounded per repo and best-effort:
+	 * reclaimed disk is never worth failing a prep over.
 	 */
 	private async housekeep(executor: GitExecutor): Promise<void> {
 		const { deps, init } = this;
@@ -536,9 +675,18 @@ export class RunRepoSession {
 		} catch (e) {
 			log.error(`Project ${init.project.id}: worktree GC failed:`, e);
 		}
-		// Null means the measurement could not be taken, which leaves the previous
-		// figure alone - reporting an unmeasurable container as empty would defeat
-		// the recycle rung entirely.
+	}
+
+	/**
+	 * Record how much of the container's disk is in use, at the end of every task
+	 * run whether or not it prepared a repo, so the pool's recycle rung sees what
+	 * runs actually leave behind. After any reclaim, so the figure is disk that is
+	 * really unavailable. Null (an unreadable measurement) leaves the previous
+	 * figure alone - reporting an unmeasurable container as empty would defeat the
+	 * rung entirely.
+	 */
+	async measureDisk(): Promise<void> {
+		const { deps, init } = this;
 		try {
 			const used = await deps.docker.diskUsedBytes(
 				init.project.container_id,

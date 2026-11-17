@@ -21,6 +21,13 @@ export const SECRET_MASK = '***';
  */
 const MIN_SECRET_CHARS = 12;
 
+/**
+ * A held tail at least this long is masked when its stream ends: it is held only
+ * because it is the start of a registered value, and nothing can complete it any
+ * more. A shorter tail (`s`, `ey`) is far more likely ordinary text.
+ */
+const MIN_HELD_TAIL_TO_MASK = 4;
+
 export class SecretMasker {
 	/** Longest first, so a value that contains another is replaced whole. */
 	private secrets: string[] = [];
@@ -79,7 +86,7 @@ export class SecretMasker {
 	flush(stream: string): string {
 		const held = this.carry.get(stream) ?? '';
 		this.carry.delete(stream);
-		return held;
+		return held.length >= MIN_HELD_TAIL_TO_MASK ? SECRET_MASK : held;
 	}
 
 	/** Length of the longest suffix of `text` that is a proper prefix of a secret. */
@@ -103,11 +110,13 @@ export class SecretMasker {
 
 /**
  * Every value a stored credential could put in front of the agent: the stored
- * value itself, and when it is a JSON blob (a subscription's auth file), each
- * string inside it, since the CLI writes those out individually.
+ * value itself, its trimmed form (a key saved with a stray newline still works,
+ * since HTTP strips it, but tool output collapses whitespace around it), and when
+ * it is a JSON blob (a subscription's auth file), each string inside it, since
+ * the CLI writes those out individually.
  */
 export function credentialSecretValues(raw: string): string[] {
-	const out = [raw];
+	const out = [raw, raw.trim()];
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
@@ -115,7 +124,7 @@ export function credentialSecretValues(raw: string): string[] {
 		return out;
 	}
 	const walk = (node: unknown): void => {
-		if (typeof node === 'string') out.push(node);
+		if (typeof node === 'string') out.push(node, node.trim());
 		else if (Array.isArray(node)) for (const item of node) walk(item);
 		else if (node && typeof node === 'object') for (const item of Object.values(node)) walk(item);
 	};

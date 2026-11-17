@@ -1829,7 +1829,7 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stderr: message,
+			stderr: runSecrets.mask(message),
 			durationMs,
 			heartbeatRunId,
 		};
@@ -1904,7 +1904,7 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stderr: reason,
+			stderr: runSecrets.mask(reason),
 			durationMs,
 			heartbeatRunId,
 			requeue: cause,
@@ -1994,7 +1994,7 @@ export async function runAgent(
 				memberId: agent.id,
 				teamId: runTeamId,
 				taskId: task?.id ?? null,
-				reason: verdict.message,
+				reason: runSecrets.mask(verdict.message),
 			}).catch((e) =>
 				log.error(`Run ${heartbeatRunId}: could not file a provider-refusal approval:`, e),
 			);
@@ -2495,7 +2495,7 @@ export async function runAgent(
 			return {
 				success: false,
 				exitCode: -1,
-				stderr: message,
+				stderr: runSecrets.mask(message),
 				durationMs: Date.now() - startTime,
 				heartbeatRunId,
 			};
@@ -2852,6 +2852,7 @@ export async function runAgent(
 					egress: egressEnv,
 					emit,
 					signal: runAbort.signal,
+					startedAt: new Date(startTime),
 				});
 				unregisterRepoSession = registerRunRepoSession(heartbeatRunId, repoSession);
 			} else if (task) {
@@ -2994,7 +2995,7 @@ export async function runAgent(
 				(msg) => log.warn(`Run ${heartbeatRunId}: ${msg}`),
 			);
 
-			// Unelevated: the agent writes into the bind-mounted worktree, and those
+			// Unelevated: the agent writes into the bind-mounted worktrees, and those
 			// files must stay owned by the run user rather than root. The poll stops
 			// however the exec ends, before anything reads and scrubs the usage file.
 			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser)
@@ -3017,6 +3018,22 @@ export async function runAgent(
 			// by an earlier one - the agent may have worked in either.
 			unregisterRepoSession?.();
 			const prep = repoSession ? await repoSession.view(signal) : EMPTY_RUN_REPO_VIEW;
+			// A checkout the agent cloned or initialised itself in the task folder is
+			// outside everything above: Hezo never pushes from it and never scans it.
+			const strays = repoSession ? await repoSession.strays() : null;
+			await repoSession?.measureDisk();
+			for (const path of strays?.checkouts ?? []) {
+				emit(
+					'stderr',
+					`\n[runner] WARNING: ${path} is a separate git checkout, not a task worktree. Hezo does not push or scan it, so commits made there are lost with the container. Use prepare_repos and work in the path it returns.\n`,
+				);
+			}
+			if (strays?.rootIsRepo && repoSession) {
+				emit(
+					'stderr',
+					`\n[runner] WARNING: the task folder ${repoSession.taskRoot} was made a git repository. Hezo does not push or scan it, so commits made there are lost with the container. Use prepare_repos and work in the path it returns.\n`,
+				);
+			}
 
 			// Report auto-pushes that were denied during the run. The post-commit hook
 			// is deliberately non-fatal, so without this the human sees a run that
@@ -3213,7 +3230,9 @@ export async function runAgent(
 										projectId: project.id,
 										taskId: task.id,
 										author: { memberId: agent.id, runId: heartbeatRunId },
-										content: { text: fitCommentForDelivery(finalMessage, undeliveredActive) },
+										content: {
+											text: fitCommentForDelivery(runSecrets.mask(finalMessage), undeliveredActive),
+										},
 									});
 									// The run delivered a real comment, so it is no longer a no-op:
 									// flip the local flag (drives `success` below) and the row column
@@ -3283,7 +3302,7 @@ export async function runAgent(
 										taskId: task.id,
 										author: { memberId: agent.id, runId: heartbeatRunId },
 										parentCommentId: wakingCommentId ?? undefined,
-										content: { text: fitCommentForDelivery(finalMessage) },
+										content: { text: fitCommentForDelivery(runSecrets.mask(finalMessage)) },
 									});
 									await deps.db.query(
 										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
@@ -3375,7 +3394,16 @@ export async function runAgent(
 			// spec.md) and is left alone. A doc-shaped file with a name no doc uses
 			// is not flagged - that would be guesswork, and this net is worth more
 			// being trusted than being exhaustive.
-			if (exitedClean && project && prep.executor && prep.worktrees.length > 0) {
+			// The task folder is checked too: it is the working directory, so a relative
+			// write of a doc-named file lands there, outside every worktree.
+			const rootDocCandidates = (strays?.entries ?? []).filter((n) =>
+				n.toLowerCase().endsWith('.md'),
+			);
+			if (
+				exitedClean &&
+				project &&
+				((prep.executor && prep.worktrees.length > 0) || rootDocCandidates.length > 0)
+			) {
 				try {
 					const slugs = await deps.db.query<{ slug: string }>(
 						`SELECT slug FROM documents
@@ -3384,23 +3412,28 @@ export async function runAgent(
 					);
 					const docSlugs = new Set(slugs.rows.map((r) => r.slug.toLowerCase()));
 					if (docSlugs.size > 0) {
-						const strays: string[] = [];
-						for (const wt of prep.worktrees) {
-							const changed = await worktreeChangedPaths(prep.executor, wt.loc);
+						const strayDocs: string[] = [];
+						for (const wt of prep.executor ? prep.worktrees : []) {
+							const changed = await worktreeChangedPaths(prep.executor as GitExecutor, wt.loc);
 							for (const p of changed) {
 								const base = p.split('/').pop() ?? p;
 								if (!base.toLowerCase().endsWith('.md')) continue;
 								if (!docSlugs.has(base.toLowerCase())) continue;
-								if (await worktreeTracksPath(prep.executor, wt.loc, p)) continue;
-								strays.push(p);
+								if (await worktreeTracksPath(prep.executor as GitExecutor, wt.loc, p)) continue;
+								strayDocs.push(p);
 							}
 						}
-						if (strays.length > 0) {
+						for (const name of rootDocCandidates) {
+							if (docSlugs.has(name.toLowerCase()) && repoSession) {
+								strayDocs.push(`${repoSession.taskRoot}/${name}`);
+							}
+						}
+						if (strayDocs.length > 0) {
 							emit(
 								'stderr',
-								`\n[runner] WARNING: this run wrote ${strays.join(', ')} to the repo, but ${
-									strays.length === 1 ? 'that filename is' : 'those filenames are'
-								} a project doc - project docs live in the database, not the filesystem, so the file changed nothing anyone will read and the real doc is now stale. Re-apply the change with write_project_doc (or edit_project_doc for part of one) and drop the file from the worktree.\n`,
+								`\n[runner] WARNING: this run wrote ${strayDocs.join(', ')} to disk, but ${
+									strayDocs.length === 1 ? 'that filename is' : 'those filenames are'
+								} a project doc - project docs live in the database, not the filesystem, so the file changed nothing anyone will read and the real doc is now stale. Re-apply the change with write_project_doc (or edit_project_doc for part of one) and delete the file.\n`,
 							);
 						}
 					}
@@ -3731,7 +3764,7 @@ export async function runAgent(
 			return {
 				success: false,
 				exitCode: -1,
-				stderr: errorMessage,
+				stderr: runSecrets.mask(errorMessage),
 				durationMs,
 				heartbeatRunId,
 				timedOut: reason === 'run_timeout',
@@ -3788,7 +3821,7 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stderr: verdict.message,
+			stderr: runSecrets.mask(verdict.message),
 			durationMs,
 			heartbeatRunId,
 			timedOut: verdict.timedOut,
@@ -3859,7 +3892,7 @@ async function anyWorktreeChanged(
 	worktrees: WorktreeRef[],
 ): Promise<boolean> {
 	for (const wt of worktrees) {
-		if (await worktreeHasChanges(executor, wt.loc, wt.headBefore)) return true;
+		if (await worktreeHasChanges(executor, wt.loc, wt.headBefore, wt.since)) return true;
 	}
 	return false;
 }
@@ -3945,20 +3978,38 @@ async function vaultUnpushedWork(
 	unpushed: UnpushedWorkScan,
 	prep: {
 		executor: GitExecutor | null;
-		clones: CloneRef[];
+		/** Clones prepared this run: the only ones whose stored bundle was restored here. */
+		preparedClones: CloneRef[];
 		branch: string | null;
 		recoveryFailed: Set<string>;
 	},
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 ): Promise<boolean> {
-	// No executor means no clone was prepared, so the scan found nothing and there
+	// No executor means no worktree was found, so the scan found nothing and there
 	// is nothing to copy - but an unanswerable scan still may not clear a pin.
 	if (!prep.executor || !prep.branch) return unpushed.work.length > 0;
 	const vault = createBundleVault(deps.dataDir);
 	let stranded = false;
+	// Both halves of the vault assume the stored bundle was restored into the clone
+	// first, which only prep does. A worktree an earlier run left, scanned here
+	// without being prepared, never saw the bundle: its commits may be older than
+	// the stored ones, and its clean scan says nothing about them. So such a clone
+	// neither saves (it could replace a newer bundle) nor releases (it could drop
+	// the only copy); its unpushed commits keep the container pinned instead.
+	const prepared = new Set(prep.preparedClones.map((c) => c.containerPath));
 
 	for (const item of unpushed.work) {
 		const repoName = basename(item.repo.containerPath);
+		if (!prepared.has(item.repo.containerPath)) {
+			stranded = true;
+			emit(
+				'stderr',
+				`[system] ${repoName}: ${item.commits} unpushed commit(s) on ${item.branch} in a worktree ` +
+					`this run did not prepare — this container is held open because it has the only ` +
+					`copy Hezo knows of.\n`,
+			);
+			continue;
+		}
 		const key = { projectId: project.id, repoName, branch: item.branch };
 		const saved = await saveRecoveryBundle(
 			vault,
@@ -3990,7 +4041,7 @@ async function vaultUnpushedWork(
 	// the one condition under which the vault drops anything.
 	if (unpushed.complete) {
 		const withWork = new Set(unpushed.work.map((w) => w.repo.containerPath));
-		for (const clone of prep.clones) {
+		for (const clone of prep.preparedClones) {
 			if (withWork.has(clone.containerPath)) continue;
 			// "This clone has nothing unpushed" only implies "the work reached
 			// origin" when this clone actually *has* the work. If a stored bundle

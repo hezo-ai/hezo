@@ -43,8 +43,9 @@ function renderStopHookBlock(judgeScriptContainerPath: string): string {
 // (`hooks/src/engine/discovery.rs`). Hezo writes a fresh CODEX_HOME per run, so
 // its judge hook is never trusted, and until this flag no Codex task run was
 // judged. It travels with the hook: a run without the judge does not get it.
-// It also lets a hook committed in the worked repo's own `.codex/config.toml`
-// run; the agent already executes that repo's code in the same container.
+// It would also let a hook committed in a repo's own `.codex/config.toml` run, but
+// a run starts in the task folder, outside every repo, so Codex finds no project
+// config there.
 const BYPASS_HOOK_TRUST_ARG = '--dangerously-bypass-hook-trust';
 
 // Codex's background-terminal poll ceiling (`background_terminal_max_timeout`,

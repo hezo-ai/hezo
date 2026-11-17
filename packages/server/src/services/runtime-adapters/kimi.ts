@@ -318,8 +318,9 @@ export const kimiAdapter: RuntimeAdapter = {
 
 		// The system prompt, which this runtime cannot receive any other way. The
 		// CLI loads this file first, before any AGENTS.md in the workspace, and
-		// concatenates rather than overrides - so the repo's own instructions still
-		// reach the agent, after Hezo's.
+		// concatenates rather than overrides. The workspace is the task folder, not
+		// a repo, so a repo's own AGENTS.md reaches the agent through the
+		// `instructions` list `prepare_repos` returns, not from here.
 		if (ctx.systemPrompt) {
 			files.push({
 				hostPath: join(ctx.hostHomeDir, SYSTEM_PROMPT_BASENAME),

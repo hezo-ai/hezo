@@ -1033,13 +1033,13 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 	const designated = repos.rows.find((r) => r.is_designated === true) ?? repos.rows[0];
 	const others = repos.rows.filter((r) => r !== designated);
 
-	// Where `prepare_repos` checks a repo out: `/worktrees/<TASK>/<name>`. Emit the
-	// concrete path when the task identifier resolves; otherwise describe it
-	// relative to the task folder so the guidance still holds.
-	const localPathOf = (name: string): string =>
+	// Where `prepare_repos` checks a repo out: `/worktrees/<TASK>/<name>`. A run
+	// with no task (a progress update, a retrospective) cannot prepare one, so its
+	// block names the repos and the GitHub operations and nothing about checkouts.
+	const checkoutAt = (name: string): string =>
 		taskIdentifier
-			? `\`${CONTAINER_WORKTREES_ROOT}/${taskIdentifier}/${name}\``
-			: `a worktree named \`${name}\` in your task folder`;
+			? ` \`prepare_repos\` checks it out at \`${CONTAINER_WORKTREES_ROOT}/${taskIdentifier}/${name}\`, on the \`hezo/<TASK>\` branch, with its own \`origin\`.`
+			: '';
 
 	// Only a definite `false` is called out. `null` means the check hasn't run
 	// (or was inconclusive) and must not be reported as a restriction: telling an
@@ -1073,13 +1073,16 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 				: 'the GitHub MCP tools, if any connector provides them';
 
 	const designatedName = repoNameFromIdentifier(designated.repo_identifier);
+	const checkoutBullets = `
+- **Call \`prepare_repos\` before you read, build, test or commit code.** It fetches each repository you name, checks out its worktree on the \`hezo/<TASK>\` branch, and catches that branch up to the default branch. Call it even when the worktree already exists from an earlier run. Name only the repositories you need.
+- **Work in the paths \`prepare_repos\` returns.** Prefix every shell command for a repository with \`cd <path> &&\`. Read every file it lists in \`instructions\` before you change code: those hold the repository's own conventions. Never \`git clone\` or \`git init\` a linked repository yourself.`;
 	const repoLines = [
-		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}). It is the default target for this project's work. \`prepare_repos\` checks it out at ${localPathOf(designatedName)}.${connectorNote(designated)}${readOnlyNote(designated)}`,
+		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}). It is the default target for this project's work.${checkoutAt(designatedName)}${connectorNote(designated)}${readOnlyNote(designated)}`,
 	];
 	for (const o of others) {
 		const name = repoNameFromIdentifier(o.repo_identifier);
 		repoLines.push(
-			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}). \`prepare_repos\` checks it out at ${localPathOf(name)}, on the same \`hezo/<TASK>\` branch, with its own \`origin\`. You can commit, push, and open a pull request here exactly as you do in the designated repo.${connectorNote(o)}${readOnlyNote(o)}`,
+			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}).${checkoutAt(name)} You can commit, push, and open a pull request here exactly as you do in the designated repo.${connectorNote(o)}${readOnlyNote(o)}`,
 		);
 	}
 
@@ -1089,13 +1092,12 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 
 ## Repository
 
-This project's repositories are listed below. Your run starts in its task folder with no repository checked out. **Never create a new repository, invent a repo name, or repoint \`origin\`.** The repos below already exist and are the target for every push and pull request.
+This project's repositories are listed below. ${taskIdentifier ? 'Your run starts in its task folder with no repository checked out.' : 'This run is not on a task, so it cannot check out a repository.'} **Never create a new repository, invent a repo name, or repoint \`origin\`.** The repos below already exist and are the target for every push and pull request.
 
 ${repoLines.join('\n')}
-
-- **Call \`prepare_repos\` before you read, build, test or commit code.** It fetches each repository you name, checks out its worktree on the \`hezo/<TASK>\` branch, and catches that branch up to the default branch. Call it even when the worktree already exists from an earlier run. Name only the repositories you need, then \`cd\` into the path it returns.
+${taskIdentifier ? checkoutBullets : ''}
 - **Every repository listed above is yours to work in, not just the designated one.** Each prepared repository has its own worktree on the same \`hezo/<TASK>\` branch, its own \`origin\`, and the same auto-push, so committing, pushing and opening a pull request are normal in any of them. Nothing about your run is scoped to a single repository: one connected GitHub account serves all of them. If a repo above carries no read-only note, treat it as writable and do the work. Never leave a finished change unpushed because you assumed you lacked access to that repo.
-- **Read connected repositories from disk, never through an API.** After \`prepare_repos\`, inspect the code with \`ls\`, \`Read\`, \`grep\` and \`cat\`. Do **not** pull a repo's file contents through ${githubTools} (\`get_file_contents\`) or any other remote fetch: that is slower, spends tokens per file, and returns GitHub's default branch instead of the ref checked out here. Use those tools for GitHub operations: pull requests, CI logs, issues.
+- **Read connected repositories from disk, never through an API.** Once a repository is checked out, inspect the code with \`ls\`, \`Read\`, \`grep\` and \`cat\`. Do **not** pull a repo's file contents through ${githubTools} (\`get_file_contents\`) or any other remote fetch: that is slower, spends tokens per file, and returns GitHub's default branch instead of the ref checked out here. Use those tools for GitHub operations: pull requests, CI logs, issues.
 - **Commits auto-push to \`origin\`; you do not need a manual push to keep work.** Every commit you make is pushed to \`origin/<branch>\` (e.g. \`origin/hezo/<TASK>\`) the moment it lands, so committed work survives a run that ends early. Git authenticates over **HTTPS** with the project's connected account, through the egress proxy. An explicit \`git push -u origin <branch>\` also works. You do **not** need a GitHub Personal Access Token for git, so never call \`request_credential\` for a PAT to push or to create a repo.
 - **If a push is rejected, report the error. Do not theorise about it.** Run the push, and if it fails, quote the exact git output (e.g. \`Permission to <owner>/<repo>.git denied to <account>\`) in your wrap-up and \`@admin\` it. Never assert a restriction that is not written in this block: there is no per-repository scoping of the connected account or the connectors above. Never leave a committed fix unpushed and ask a human to apply a patch by hand while an untried push remains.
 - **Open and manage pull requests** with ${githubTools} (e.g. \`create_pull_request\`), targeting whichever of the repositories above the change lives in. Use them for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`. If you cannot find a tool you expect, run \`hezo-mcp servers\` and \`hezo-mcp search <term>\` before concluding it is missing: the server name is the connector's name, not the service's.

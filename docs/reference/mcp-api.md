@@ -288,7 +288,7 @@ List projects, by name. With CEO cross-team access (or as superuser) returns eve
 
 _Read-only._
 
-Prepare this run's linked repositories so you can read and change their code. Your run starts in its task folder with no repository checked out. Call this before you read, build, test or commit code, even when the worktree already exists from an earlier run: it fetches each repository, checks out its worktree on the task branch and catches that branch up to the default branch. Name only the repositories you need. Each comes back with its worktree path; `cd` into it before you run git. Calling it again for a repository already prepared this run costs nothing.
+Prepare this run's linked repositories so you can read and change their code. Your run starts in its task folder with no repository checked out. Call this before you read, build, test or commit code, even when the worktree already exists from an earlier run: it fetches each repository, checks out its worktree on the task branch and catches that branch up to the default branch. Name only the repositories you need. Each comes back with its worktree path: prefix every shell command for that repository with `cd <path> &&`. Read every file listed in `instructions` before you change code; it holds that repository's own conventions. Never `git clone` or `git init` a linked repository yourself. Calling it again for a repository already prepared this run costs nothing. If the answer says `pending`, call it again with the same repositories to wait for it.
 
 **Parameters:**
 
@@ -296,7 +296,7 @@ Prepare this run's linked repositories so you can read and change their code. Yo
 | --- | --- | --- | --- |
 | `repos` | `string[]` | No | Repository names as the Repository section of your prompt lists them (e.g. "website"), or `owner/name`. Omit to prepare every linked repository. |
 
-**Returns:** `{ branch, repos: [{ name, repo, path, designated, ready, error?, notes }] }`: one entry per requested repository, with the task worktree's path on the task branch. `{ error }` outside a task run, when the project has no linked repository, or for a name that is not linked.
+**Returns:** `{ branch, repos: [{ name, repo, path, designated, ready, error?, notes, instructions? }] }`: one entry per requested repository, with the task worktree's path on the task branch and the repository's own instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) found at its root. `{ branch, pending: true, message }` when preparing takes longer than 90 seconds: call again to wait for it. `{ error }` outside a task run, when the project has no linked repository, or for a name that is not linked. Read-only for Hezo records, but it clones, fetches and checks out in the run's container.
 
 **Authorization:** Available only within an agent run on a task (requires a run identity).
 

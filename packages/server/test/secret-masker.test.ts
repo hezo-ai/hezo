@@ -67,8 +67,25 @@ describe('SecretMasker.push', () => {
 
 	it('bounds the carry below the longest value', () => {
 		const masker = maskerWith(KEY);
-		masker.push('stdout', `${'x'.repeat(10_000)}${KEY.slice(0, KEY.length - 1)}`);
-		expect(masker.flush('stdout').length).toBe(KEY.length - 1);
+		const out = masker.push('stdout', `${'x'.repeat(10_000)}${KEY.slice(0, KEY.length - 1)}`);
+		// Everything but the possible start of the value goes out at once.
+		expect(out).toBe('x'.repeat(10_000));
+		expect(masker.flush('stdout')).toBe(SECRET_MASK);
+	});
+
+	it('masks a held tail of four or more characters when the stream ends', () => {
+		const masker = maskerWith(HEX);
+		// The stream ends partway through the value: nothing can complete it now.
+		expect(masker.push('stderr', `HTTPS_PROXY=http://run:${HEX.slice(0, 31)}`)).toBe(
+			'HTTPS_PROXY=http://run:',
+		);
+		expect(masker.flush('stderr')).toBe(SECRET_MASK);
+	});
+
+	it('releases a held tail shorter than four characters as it is', () => {
+		const masker = maskerWith(KEY);
+		expect(masker.push('stdout', 'yes')).toBe('ye');
+		expect(masker.flush('stdout')).toBe('s');
 	});
 
 	it('passes text through unchanged before any value is registered', () => {
@@ -80,7 +97,17 @@ describe('SecretMasker.push', () => {
 
 describe('credentialSecretValues', () => {
 	it('returns a plain key as itself', () => {
-		expect(credentialSecretValues(KEY)).toEqual([KEY]);
+		expect(credentialSecretValues(KEY)).toContain(KEY);
+	});
+
+	it('also returns the trimmed form of a key saved with surrounding whitespace', () => {
+		// The key works (HTTP strips the newline), but tool output collapses
+		// whitespace, so only the trimmed form ever appears in a log.
+		const masker = new SecretMasker();
+		masker.addAll(credentialSecretValues(` ${KEY}\n`));
+		expect(masker.mask(`[tool-result] ANTHROPIC_API_KEY=${KEY} HOME=/home/node`)).toBe(
+			`[tool-result] ANTHROPIC_API_KEY=${SECRET_MASK} HOME=/home/node`,
+		);
 	});
 
 	it('also returns every string inside a JSON credential blob', () => {

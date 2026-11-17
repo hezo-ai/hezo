@@ -88,8 +88,7 @@ export async function collectFinishedWorktrees(
 	 * Runs on closed tasks are routine, not exotic: the explicit-`task_id` wakeup
 	 * path (mentions, comments, coach triggers) carries no status filter, and the
 	 * Coach exists to review completed work. Without this the pass deletes the
-	 * worktree run prep just created and set as the run's working directory, and
-	 * the agent execs into a directory that is no longer there.
+	 * worktree `prepare_repos` just created, while the agent is about to work in it.
 	 */
 	currentTaskIdentifier: string | null = null,
 ): Promise<WorktreeGcResult> {

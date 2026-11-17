@@ -1,6 +1,7 @@
 import { RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
+import { withProjectGitLock } from '../lib/git-lock';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
@@ -113,27 +114,36 @@ export async function performRepoSetup(
 						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId, proxyEnv),
 						undefined,
 						undefined,
-						{ freshClone: input.freshClone ? new Set([input.repoIdentifier]) : undefined },
+						{
+							freshClone: input.freshClone ? new Set([input.repoIdentifier]) : undefined,
+							// Only the repo being linked: the others are cloned when a run
+							// asks for them.
+							only: new Set([input.repoIdentifier]),
+						},
 					);
 				// Ssh server only — the egress proxy is mandatory, and
 				// `withProvisionBridge` enforces that by throwing. See the note at the
 				// equivalent guard in `containers.ts`.
-				const syncRes = deps.sshAgentServer
-					? await withProvisionBridge(
-							deps.sshAgentServer,
-							{
-								engine: docker,
-								containerId,
-								teamId: input.teamId,
-								dataDir,
-								runUser,
-								db,
-								egressProxy: deps.egressProxy as EgressProxy,
-								projectId: input.projectId,
-							},
-							({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
-						)
-					: await syncRepos(null, mintGitOpScopeId());
+				// Under the project git lock, as a run's prep is: both write the same
+				// clone, and a run may be cloning this repo into it right now.
+				const syncRes = await withProjectGitLock(input.projectId, () =>
+					deps.sshAgentServer
+						? withProvisionBridge(
+								deps.sshAgentServer,
+								{
+									engine: docker,
+									containerId,
+									teamId: input.teamId,
+									dataDir,
+									runUser,
+									db,
+									egressProxy: deps.egressProxy as EgressProxy,
+									projectId: input.projectId,
+								},
+								({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
+							)
+						: syncRepos(null, mintGitOpScopeId()),
+				);
 				const failed = syncRes.failed.find((f) => f.name === repoName);
 				if (failed) {
 					setupError = failed.error;

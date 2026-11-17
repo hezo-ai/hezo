@@ -2022,7 +2022,8 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   Disk is measured with `df` rather than `du`: the question is how close a container is to
   filling up, which `df` answers from the superblock in constant time, where `du` would walk
   every `node_modules` in every worktree - exactly the trees that make the number
-  interesting. It runs each time a run prepares repos, **after** the worktree GC, so the
+  interesting. It runs at the end of every task run on a project with linked repos
+  (`RunRepoSession.measureDisk`), after any worktree GC that run's prep did, so the
   figure reflects disk that is actually unavailable rather than what a reclaim was about to free, and it lands in
   `container_pool_members.disk_used_bytes`. `null` (an unreadable measurement) leaves the
   previous figure alone; reporting an unmeasurable container as empty would defeat the
@@ -3999,19 +4000,44 @@ needs code. The call reaches the run's `RunRepoSession` (`services/run-repos.ts`
 id in an in-process registry the runner fills before exec and empties in cleanup, and runs the
 prep pipeline under `withProjectGitLock`: clone sync for the named repos only, push hook,
 empty-remote seed, fetch, default fast-forward, recovery-bundle restore, `git worktree add`,
-recovery replay, catch-up merge, then the pre-run head, finished-worktree GC and the disk
-measurement. A repeat call for a prepared repo does no git work; a repo that fails is reported
-to the agent and retried on its next call, and never fails the run. Container provisioning
+recovery replay, catch-up merge, then the pre-run head and finished-worktree GC. It returns
+each repo's path, any warning (`notes`, e.g. a catch-up merge that stopped) and the repo's own
+instruction files at its root (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`): a CLI loads those only
+when it starts inside the repo, and the run starts in the task folder. A repeat call for a
+prepared repo does no git work; a repo that fails is reported to the agent and retried on its
+next call, and never fails the run. A folder at a worktree path whose `.git` is a directory
+(a clone or `git init` the agent made itself) is refused rather than adopted, since Hezo
+neither pushes from nor scans it; finalize warns about one, and about a `.git` at the task
+root. Container provisioning
 clones nothing: a container gets a repo's clone the first time a run on it prepares that repo
-(linking or recloning a repo still clones into a held container). The prep executor carries
-its own `gitop-` scope id, never the run id - the agent CLI is stamped with the run id, so a
-prep op's marker kill on a timeout would otherwise kill the running agent. Finalize awaits any
-prep still in flight, then scans every worktree of the task present in the container, prepared
-this run or left by an earlier one: an agent that works in a leftover worktree without
-preparing it still has its commits scanned and vaulted. For a leftover worktree change
-detection has no pre-run head and reads only a dirty tree, and its push-error log is not
-reported, since this run did not clear it. Each adapter's MCP tool-call timeout (OpenCode's
-600 s is the shortest one set) exceeds a worst-case clone plus fetch.
+(linking or recloning a repo clones only that repo into a held container, under the same lock).
+The prep executor carries its own `gitop-` scope id, never the run id - the agent CLI is
+stamped with the run id, so a prep op's marker kill on a timeout would otherwise kill the
+running agent. It also runs git bare, never under its own `hezo-run-with-bridge`: the agent
+CLI's runner already serves the run's socket, and a second runner on that path (socat
+`unlink-early`, then its exit trap) deletes it and leaves every later commit unable to sign.
+Remote git needs no socket (HTTPS through the egress proxy); `SSH_AUTH_SOCK` points at the
+agent's live socket, so a catch-up merge commit signs too. A reused worktree whose
+`rev-parse --git-dir` probe fails is deleted only on git's own "not a git repository" - a
+transport error leaves it, since it may hold the agent's uncommitted edits. A call answers
+`pending` after 90 s (`PREPARE_REPLY_WAIT_MS`), under the server's 120 s idle cut: the prep
+keeps running and the agent's next call waits for it. Finalize awaits any
+prep still in flight, then scans the task's worktrees: every one prepared this run, and a
+worktree an earlier run left only when this run touched it (a dirty tree, or a commit on the
+branch dated from the run's start - there is no pre-run head). An agent that works in a
+leftover worktree without preparing it still has its unpushed commits found, and the
+container stays pinned; an untouched leftover is skipped, since it was never fetched this run
+and its stale tracking refs would report, and pin for, work an earlier run accounted for. A
+leftover worktree never had the stored recovery bundle restored into it, so its scan may
+neither save a bundle (it could replace a newer one) nor release one (it could drop the only
+copy); only clones prepared this run touch the vault. A leftover's push-error log is not
+reported, since this run did not clear it. The stray-doc check
+also reads doc-named files at the task root, the working directory. A clone runs inside the
+project git lock, so concurrent first prepares on several fresh containers of one project
+queue behind each other; a slow one can exceed a client's MCP tool-call timeout (OpenCode's
+600 s is the shortest one set) but not the 90 s `pending` answer. Keying the lock on the clone's
+store (the project on a shared bind mount, the container on a per-sandbox backend) would
+remove that queue; it is not done.
 
 Because Docker Desktop bind-mount propagation can lag right after a container reprovision (a
 path the host just `mkdirSync`'d briefly stats as missing inside the container), the runner
@@ -4925,7 +4951,7 @@ absent for most runtimes:
 | `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Antigravity, Kimi |
 | `backgroundTerminationMarker` | the line it prints when it exits 0 having killed unfinished work | Claude Code, Antigravity |
 
-A task run builds its argv before it prepares the worktree that decides its working
+A task run builds its argv before it creates the task folder that is its working
 directory, so `extraArgs` gets `DEFERRED_WORKING_DIR` there, and the runner swaps it for the
 real path (`bindWorkingDir`) before it logs and runs the command. An adapter passes the
 directory as an argv element of its own; one buried in a longer element fails the run.
@@ -5504,9 +5530,14 @@ rides `LogStreamConfig.masker`, so `LogStreamBroker.emit` replaces every registe
 with `***` before the text is buffered, broadcast or persisted - stored chunks, live frames
 and the replay snapshot all derive from masked text. A value split across two chunks is
 caught: the masker holds back only a tail that is itself the start of a registered value,
-and `end()` releases it. The invocation line and every run-row `error` go through the same
-masker. It matches exact values only: a token the CLI refreshes inside the container, or a
-fragment the output itself truncated, is not masked. Logs stored before this are unchanged.
+and `end()` releases it, masked when four or more characters long since nothing can complete
+it any more. A credential is registered with its trimmed form too: a key saved with a stray
+newline still works over HTTP, but tool output collapses the whitespace around it. The
+invocation line, every run-row `error`, `RunResult.stderr`, the comment the handoff net posts
+from the final message, and the provider-refusal inbox reason go through the same masker. It
+matches exact values of 12 or more characters only: a token the CLI refreshes inside the
+container, a fragment the output itself truncated, and a short local-runner token are not
+masked. Chat turns have no masker yet. Logs stored before this are unchanged.
 
 **Secrets.** `secrets` rows are AES-256-GCM ciphertext plus `allowed_hosts` (e.g.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.

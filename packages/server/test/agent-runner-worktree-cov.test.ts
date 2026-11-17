@@ -16,9 +16,10 @@ import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { DEFERRED_WORKING_DIR, type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import { resolveContainerRunUser } from '../src/services/container-user';
 import { RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import type { PrepareReposResult } from '../src/services/run-repos';
+import { type PrepareReposResult, RunRepoSession } from '../src/services/run-repos';
 import { createBundleVault } from '../src/services/sandbox/bundle-vault';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { getWorkspacePath, getWorktreesPath } from '../src/services/workspace';
@@ -167,8 +168,11 @@ function scriptedGitDocker(opts: {
 	rules: GitRule[];
 	onAgentExec?: (config: { Cmd: string[]; Env: string[] }) => Promise<void> | void;
 	onGitExec?: (config: { Cmd: string[]; Env: string[]; WorkingDir?: string }) => void;
+	/** Milliseconds a `git <args>` exec takes before it answers. */
+	slowGit?: (argLine: string) => number;
 	agentExitCode?: number;
 }): ContainerEngine {
+	const delays = new Map<string, number>();
 	const results = new Map<string, { exitCode: number; stdout: string; stderr: string }>();
 	let seq = 0;
 	const base = createStubDocker({
@@ -188,6 +192,8 @@ function scriptedGitDocker(opts: {
 					stdout: res?.stdout ?? '',
 					stderr: res?.stderr ?? '',
 				});
+				const delay = opts.slowGit?.(argLine) ?? 0;
+				if (delay > 0) delays.set(id, delay);
 			} else if (
 				cmd[0] === 'sh' &&
 				cmd[1] === '-c' &&
@@ -203,6 +209,8 @@ function scriptedGitDocker(opts: {
 			return id;
 		},
 		execStart: async (id: string) => {
+			const delay = delays.get(id);
+			if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
 			const r = results.get(id) ?? { stdout: '', stderr: '', exitCode: 0 };
 			return { stdout: r.stdout, stderr: r.stderr };
 		},
@@ -213,6 +221,15 @@ function scriptedGitDocker(opts: {
 		}),
 	});
 	return withRunUserStub(base as unknown as ContainerEngine);
+}
+
+/**
+ * Stage a task worktree on the host as git leaves one: a `.git` file pointing at
+ * the clone's admin entry. A `.git` directory there is a separate checkout.
+ */
+function stageWorktree(dir: string): void {
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, '.git'), `gitdir: /workspace/${dir.split('/').pop()}/.git/worktrees/x\n`);
 }
 
 async function insertRepo(identifier: string): Promise<string> {
@@ -298,9 +315,7 @@ describe('repo prep on demand', () => {
 		mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
 			recursive: true,
 		});
-		mkdirSync(join(getWorktreesPath(dataDir, teamId, projectId), 'WT-TWICE', 'todos', '.git'), {
-			recursive: true,
-		});
+		stageWorktree(join(getWorktreesPath(dataDir, teamId, projectId), 'WT-TWICE', 'todos'));
 		try {
 			let gitExecs = 0;
 			const gitScopes = new Set<string>();
@@ -348,6 +363,7 @@ describe('repo prep on demand', () => {
 					designated: true,
 					ready: true,
 					notes: [],
+					instructions: [],
 				},
 			]);
 			expect(prepared(first!).branch).toBe('hezo/WT-TWICE');
@@ -404,6 +420,270 @@ describe('repo prep on demand', () => {
 			expect(gitCwds.some((cwd) => cwd.includes('only-lib'))).toBe(false);
 		} finally {
 			await db.query('DELETE FROM repos WHERE id = ANY($1::uuid[])', [[libId, appId]]);
+		}
+	});
+
+	it("hands the agent the repo's own instruction files, which its CLI no longer loads", async () => {
+		const repoId = await insertRepo('acme/todos');
+		mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+			recursive: true,
+		});
+		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-RULES', 'todos');
+		stageWorktree(wt);
+		writeFileSync(join(wt, 'AGENTS.md'), '# conventions');
+		writeFileSync(join(wt, 'CLAUDE.md'), '# more conventions');
+		try {
+			let reply: PrepareReply | null = null;
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'https://github.com/acme/todos.git\n',
+					}),
+					when((a) => a === 'merge-base --is-ancestor origin/main HEAD', { exitCode: 0 }),
+				],
+				onAgentExec: async (config) => {
+					reply = await prepareRepos(config);
+					await markProducedOutput();
+				},
+			});
+
+			await runAgent(baseDeps(docker), makeAgent(), makeTask('WT-RULES'), makeProject());
+
+			expect(prepared(reply!).repos[0].instructions).toEqual([
+				'/worktrees/WT-RULES/todos/AGENTS.md',
+				'/worktrees/WT-RULES/todos/CLAUDE.md',
+			]);
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+		}
+	});
+
+	it('refuses to adopt a checkout the agent made itself, and warns about it at the end', async () => {
+		const repoId = await insertRepo('acme/todos');
+		mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+			recursive: true,
+		});
+		// An agent ran `git clone` into the task folder: a `.git` directory, not a
+		// worktree's `.git` file.
+		mkdirSync(join(getWorktreesPath(dataDir, teamId, projectId), 'WT-OWNCLONE', 'todos', '.git'), {
+			recursive: true,
+		});
+		try {
+			let reply: PrepareReply | null = null;
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'https://github.com/acme/todos.git\n',
+					}),
+				],
+				onAgentExec: async (config) => {
+					reply = await prepareRepos(config);
+					await markProducedOutput();
+				},
+			});
+
+			const result = await runAgent(
+				baseDeps(docker),
+				makeAgent(),
+				makeTask('WT-OWNCLONE'),
+				makeProject(),
+			);
+
+			const [todos] = prepared(reply!).repos;
+			expect(todos.ready).toBe(false);
+			expect(todos.error).toContain('separate git checkout');
+			expect(await runLog(result.heartbeatRunId!)).toContain(
+				'/worktrees/WT-OWNCLONE/todos is a separate git checkout',
+			);
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+		}
+	});
+
+	it('warns when a project doc is written as a file into the task folder', async () => {
+		// The task folder is the working directory, so a relative write of a
+		// doc-named file lands there, outside every worktree.
+		const repoId = await insertRepo('acme/todos');
+		const docRes = await app.request(`/api/projects/${projectSlug}/docs/prd.md`, {
+			method: 'PUT',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '# PRD' }),
+		});
+		expect(docRes.status).toBeLessThan(300);
+		try {
+			const docker = scriptedGitDocker({
+				rules: [],
+				onAgentExec: async () => {
+					writeFileSync(
+						join(getWorktreesPath(dataDir, teamId, projectId), 'WT-ROOTDOC', 'prd.md'),
+						'# PRD, edited on disk',
+					);
+					await markProducedOutput();
+				},
+			});
+
+			const result = await runAgent(
+				baseDeps(docker),
+				makeAgent(),
+				makeTask('WT-ROOTDOC'),
+				makeProject(),
+			);
+
+			expect(await runLog(result.heartbeatRunId!)).toContain(
+				'this run wrote /worktrees/WT-ROOTDOC/prd.md to disk, but that filename is a project doc',
+			);
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			await app.request(`/api/projects/${projectSlug}/docs/prd.md`, {
+				method: 'DELETE',
+				headers: authHeader(adminToken),
+			});
+		}
+	});
+
+	/** A session on the stub container, outside a run, for prep-only scenarios. */
+	async function openSession(
+		docker: ContainerEngine,
+		identifier: string,
+		repos: Array<{ id: string; repo_identifier: string }>,
+		bridge: { socketPath: string } | null = null,
+	): Promise<RunRepoSession> {
+		// The stub engine resolves a container's files through the project row that
+		// names it, as a run's acquisition leaves it.
+		const containerId = 'stub-container';
+		await db.query('UPDATE projects SET container_id = $1 WHERE id = $2', [containerId, projectId]);
+		return RunRepoSession.open(
+			{ db, docker, dataDir, masterKeyManager },
+			{
+				project: {
+					id: projectId,
+					team_id: teamId,
+					container_id: containerId,
+					designated_repo_id: null,
+				},
+				task: { identifier },
+				repos,
+				bridge: bridge
+					? {
+							socketPath: bridge.socketPath,
+							socketUser: 'node',
+							tokenHex: 'ab'.repeat(16),
+							hostName: '127.0.0.1',
+							hostPort: 45678,
+						}
+					: null,
+				runUser: await resolveContainerRunUser(docker, containerId),
+				egress: null,
+				emit: () => {},
+				signal: new AbortController().signal,
+				startedAt: new Date(),
+			},
+		);
+	}
+
+	it("runs prep git bare, signing through the agent's own socket, never a second bridge", async () => {
+		// The agent CLI's bridge runner already serves the run's socket. A second
+		// runner on that path deletes it, and every later commit fails to sign.
+		const repoId = await insertRepo('acme/todos');
+		mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+			recursive: true,
+		});
+		try {
+			const gitEnvs: string[][] = [];
+			let otherExecs = 0;
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'https://github.com/acme/todos.git\n',
+					}),
+				],
+				onGitExec: (config) => {
+					gitEnvs.push(config.Env);
+				},
+				// Anything that is neither bare git nor the dir-ready check lands here,
+				// a bridge-wrapped git included.
+				onAgentExec: () => {
+					otherExecs++;
+				},
+			});
+			const bridged = await openSession(
+				docker,
+				'WT-BRIDGE',
+				[{ id: repoId, repo_identifier: 'acme/todos' }],
+				{ socketPath: '/run/hezo/run-bridge.sock' },
+			);
+
+			const reply = await bridged.prepare();
+
+			expect(prepared(reply).repos[0].ready).toBe(true);
+			expect(otherExecs).toBe(0);
+			expect(gitEnvs.length).toBeGreaterThan(0);
+			for (const env of gitEnvs) expect(env).toContain('SSH_AUTH_SOCK=/run/hezo/run-bridge.sock');
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+		}
+	});
+
+	it('answers "still preparing" past the wait, and the next call gets the result', async () => {
+		const repoId = await insertRepo('acme/todos');
+		mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+			recursive: true,
+		});
+		try {
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'https://github.com/acme/todos.git\n',
+					}),
+				],
+				slowGit: (a) => (a === 'fetch --prune origin' ? 300 : 0),
+			});
+			const session = await openSession(docker, 'WT-SLOW', [
+				{ id: repoId, repo_identifier: 'acme/todos' },
+			]);
+
+			const first = await session.prepareWithin(undefined, 20);
+			expect(first).toMatchObject({ branch: 'hezo/WT-SLOW', pending: true });
+			expect((first as { message: string }).message).toContain('Call prepare_repos again');
+
+			const second = await session.prepareWithin(undefined, 5_000);
+			expect(prepared(second as PrepareReply).repos[0].ready).toBe(true);
+			await session.settle();
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+		}
+	});
+
+	it('never deletes an existing worktree because a check of it failed for another reason', async () => {
+		// Prep now runs mid-run, so the worktree may hold the agent's uncommitted
+		// edits. Only git saying the admin entry is gone licenses removing it.
+		const repoId = await insertRepo('acme/todos');
+		mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+			recursive: true,
+		});
+		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-KEEPEDITS', 'todos');
+		stageWorktree(wt);
+		writeFileSync(join(wt, 'work-in-progress.ts'), 'export const x = 1;');
+		try {
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'https://github.com/acme/todos.git\n',
+					}),
+					when((a) => a === 'rev-parse --git-dir', { exitCode: 1, stderr: 'timed out after 30s' }),
+				],
+			});
+			const session = await openSession(docker, 'WT-KEEPEDITS', [
+				{ id: repoId, repo_identifier: 'acme/todos' },
+			]);
+
+			const reply = prepared(await session.prepare());
+
+			expect(reply.repos[0].ready).toBe(false);
+			expect(reply.repos[0].error).toContain('could not check the existing worktree');
+			expect(existsSync(join(wt, 'work-in-progress.ts'))).toBe(true);
+		} finally {
+			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 		}
 	});
 
@@ -520,7 +800,7 @@ describe('repo prep on demand', () => {
 		const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
 		mkdirSync(join(clone, '.git'), { recursive: true });
 		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-REUSE', 'todos');
-		mkdirSync(join(wt, '.git'), { recursive: true });
+		stageWorktree(wt);
 		try {
 			let agentRan = false;
 			const docker = scriptedGitDocker({
@@ -598,7 +878,7 @@ describe('repo prep on demand', () => {
 		const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
 		mkdirSync(join(clone, '.git'), { recursive: true });
 		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-AGY', 'todos');
-		mkdirSync(join(wt, '.git'), { recursive: true });
+		stageWorktree(wt);
 		try {
 			let agentCmd: string[] = [];
 			const docker = scriptedGitDocker({
@@ -653,7 +933,7 @@ describe('repo prep on demand', () => {
 		const appClone = join(getWorkspacePath(dataDir, teamId, projectId), 'app');
 		mkdirSync(join(appClone, '.git'), { recursive: true });
 		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-DESIG', 'app');
-		mkdirSync(join(wt, '.git'), { recursive: true });
+		stageWorktree(wt);
 		try {
 			let reply: PrepareReply | null = null;
 			const docker = scriptedGitDocker({
@@ -820,7 +1100,7 @@ describe('repo prep on demand', () => {
 		const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
 		mkdirSync(join(clone, '.git'), { recursive: true });
 		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-NOOP', 'todos');
-		mkdirSync(join(wt, '.git'), { recursive: true });
+		stageWorktree(wt);
 		try {
 			const docker = scriptedGitDocker({
 				rules: [
@@ -900,9 +1180,7 @@ describe('repo prep on demand', () => {
 			mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
 				recursive: true,
 			});
-			mkdirSync(join(getWorktreesPath(dataDir, teamId, projectId), identifier, 'todos', '.git'), {
-				recursive: true,
-			});
+			stageWorktree(join(getWorktreesPath(dataDir, teamId, projectId), identifier, 'todos'));
 			return { repoId };
 		}
 
@@ -1002,6 +1280,157 @@ describe('repo prep on demand', () => {
 				expect(await memberFlag()).toBe(true);
 				// Scanned, not prepared: no fetch or sync ran for it.
 				expect(await runLog(result.heartbeatRunId!)).not.toContain('(syncing repos...)');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('ignores a leftover worktree this run never touched, however its stale refs read', async () => {
+			// Never fetched this run, so its tracking refs may be stale. Work an
+			// earlier run left there was that run's to report; this run must not fail
+			// or pin the container over it.
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun('WT-UNTOUCHED');
+			try {
+				const docker = scriptedGitDocker({
+					rules: [
+						when((a) => a === 'status --porcelain', { stdout: '' }),
+						when((a) => a.startsWith('rev-list --count --since='), { stdout: '0\n' }),
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '3\n' }),
+					],
+					onAgentExec: markProducedOutput,
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-UNTOUCHED'),
+					makeProject(),
+				);
+
+				expect(result.success).toBe(true);
+				expect(await memberFlag()).toBe(false);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('counts a pushed commit made this run in an unprepared leftover worktree as output', async () => {
+			// No pre-run head exists for a worktree the run never prepared, so a commit
+			// the agent made and auto-pushed there must still read as the run's work.
+			const { repoId } = await stageRun('WT-LEFTCOMMIT');
+			let sinceArg = '';
+			try {
+				const docker = scriptedGitDocker({
+					rules: [
+						when((a) => a === 'status --porcelain', { stdout: '' }),
+						when(
+							(a) => a.startsWith('rev-list --count --since='),
+							() => {
+								sinceArg = 'seen';
+								return { stdout: '1\n' };
+							},
+						),
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					],
+					// Deliberately no Hezo write: the commit alone is the output.
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-LEFTCOMMIT'),
+					makeProject(),
+				);
+
+				expect(sinceArg).toBe('seen');
+				expect(result.success).toBe(true);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('leaves a stored bundle alone when only an unprepared leftover worktree was scanned', async () => {
+			// The leftover worktree never had the stored bundle restored into it, so
+			// its clean scan says nothing about the bundle's commits: dropping the
+			// bundle here would destroy the only copy.
+			const { repoId } = await stageRun('WT-LEFTCLEAN');
+			try {
+				const vault = createBundleVault(dataDir);
+				const bundleKey = { projectId, repoName: 'todos', branch: 'hezo/WT-LEFTCLEAN' };
+				await vault.put(bundleKey, new TextEncoder().encode('commits from another container'));
+
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					]),
+				});
+
+				await runAgent(baseDeps(docker), makeAgent(), makeTask('WT-LEFTCLEAN'), makeProject());
+
+				expect(await vault.has(bundleKey)).toBe(true);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('never replaces a stored bundle with commits from an unprepared leftover worktree', async () => {
+			// A newer bundle from another container must not be overwritten by the
+			// older commits a stale leftover worktree still holds.
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun('WT-LEFTSTALE');
+			try {
+				const vault = createBundleVault(dataDir);
+				const bundleKey = { projectId, repoName: 'todos', branch: 'hezo/WT-LEFTSTALE' };
+				await vault.put(bundleKey, new TextEncoder().encode('the newer bundle'));
+				let bundleCreated = false;
+
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '1\n' }),
+						when(
+							(a) => a.startsWith('bundle create'),
+							() => {
+								bundleCreated = true;
+								return { exitCode: 0 };
+							},
+						),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-LEFTSTALE'),
+					makeProject(),
+				);
+
+				expect(result.success).toBe(false);
+				expect(bundleCreated).toBe(false);
+				expect(new TextDecoder().decode((await vault.get(bundleKey)) ?? new Uint8Array())).toBe(
+					'the newer bundle',
+				);
+				// The container holds the only copy of those commits Hezo knows of.
+				expect(await memberFlag()).toBe(true);
+				expect(await runLog(result.heartbeatRunId!)).toContain('this run did not prepare');
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}
@@ -1207,7 +1636,7 @@ describe('repo prep on demand', () => {
 		const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
 		mkdirSync(join(clone, '.git'), { recursive: true });
 		const wt = join(getWorktreesPath(dataDir, teamId, projectId), 'WT-LOOPAB', 'todos');
-		mkdirSync(join(wt, '.git'), { recursive: true });
+		stageWorktree(wt);
 		const ac = new AbortController();
 		try {
 			const docker = scriptedGitDocker({

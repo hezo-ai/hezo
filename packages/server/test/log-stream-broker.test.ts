@@ -293,7 +293,7 @@ describe('LogStreamBroker', () => {
 			}
 		});
 
-		it('releases a held-back tail when the stream ends', async () => {
+		it('masks a held-back tail when the stream ends partway through a value', async () => {
 			const onFlush = vi.fn(async (_text: string) => {});
 			const masker = new SecretMasker();
 			masker.add(SECRET);
@@ -302,9 +302,11 @@ describe('LogStreamBroker', () => {
 			broker.emit('run:r1', 'stdout', 'last words sk-run');
 			await broker.end('run:r1');
 
+			// Held because it starts the value, and nothing can complete it now.
 			const stored = onFlush.mock.calls.map((call) => call[0]).join('');
 			expect(stored).toContain('last words');
-			expect(stored).toContain('sk-run');
+			expect(stored).toContain('***');
+			expect(stored).not.toContain('sk-run');
 		});
 	});
 

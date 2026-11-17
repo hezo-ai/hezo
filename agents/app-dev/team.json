@@ -82,7 +82,7 @@
 	"changelog": [
 		{
 			"version": 40,
-			"notes": "Coding roles now prepare the repositories they need with prepare_repos, since a run no longer checks them out before it starts. QA checks out the branch the same way. The repository guidance now says git uses HTTPS and points to the GitHub connector's tools."
+			"notes": "Coding roles now prepare the repositories they need with prepare_repos, since a run no longer checks them out before it starts, and read the repository instruction files it lists. QA checks out the branch the same way. A catch-up merge conflict now shows in the notes prepare_repos returns. The repository guidance now says git uses HTTPS and points to the GitHub connector's tools."
 		},
 		{
 			"version": 39,

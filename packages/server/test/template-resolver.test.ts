@@ -1796,9 +1796,6 @@ describe('repository block', () => {
 		});
 		expect(result).toContain('## Repository');
 		expect(result).toContain('Designated repository: `acme/widgets` (github)');
-		// A run starts with no repo checked out; the agent prepares the ones it needs.
-		expect(result).toContain('Call `prepare_repos` before you read, build, test or commit code');
-		expect(result).toContain('Call it even when the worktree already exists from an earlier run');
 		// Git rides HTTPS through the egress proxy; SSH is retired.
 		expect(result).toContain('Git authenticates over **HTTPS**');
 		expect(result).not.toContain('over SSH');
@@ -1839,10 +1836,11 @@ describe('repository block', () => {
 		});
 		expect(result).toContain('Designated repository: `acme/widgets`');
 		expect(result).toContain('Also linked: `acme/docs`');
-		// The additional repo is named with where `prepare_repos` checks it out, and
-		// — with no resolved task here — described relative to the task folder.
-		expect(result).toContain('`prepare_repos` checks it out at');
-		expect(result).toContain('a worktree named `docs` in your task folder');
+		// With no task here, the run cannot check a repo out, so the block names
+		// the repos and says so rather than pointing at `prepare_repos`.
+		expect(result).toContain('This run is not on a task, so it cannot check out a repository');
+		expect(result).not.toContain('`prepare_repos` checks it out at');
+		expect(result).not.toContain('Call `prepare_repos`');
 		// Steer reading to disk, not the github MCP file API.
 		expect(result).toContain('Read connected repositories from disk, never through an API');
 		expect(result).toContain('get_file_contents');
@@ -1914,6 +1912,14 @@ describe('repository block', () => {
 		});
 		// The additional repo is addressed by its absolute per-task worktree path.
 		expect(result).toContain(`/worktrees/${task.rows[0].identifier}/api`);
+		expect(result).toContain('`prepare_repos` checks it out at');
+		// A task run starts with no repo checked out; the agent prepares the ones it needs.
+		expect(result).toContain('Your run starts in its task folder with no repository checked out');
+		expect(result).toContain('Call `prepare_repos` before you read, build, test or commit code');
+		expect(result).toContain('Call it even when the worktree already exists from an earlier run');
+		expect(result).toContain('Prefix every shell command for a repository with `cd <path> &&`');
+		expect(result).toContain('Read every file it lists in `instructions` before you change code');
+		expect(result).toContain('Never `git clone` or `git init` a linked repository yourself');
 	});
 
 	it('omits the Repository block for a cross-team (roaming) resolve', async () => {

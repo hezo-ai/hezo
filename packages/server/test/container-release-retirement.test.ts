@@ -846,6 +846,39 @@ describe('repo setup holds the container it clones into', () => {
 	});
 });
 
+describe('repo setup clones only the repo being linked', () => {
+	it('leaves every other linked repo for a run to ask for', async () => {
+		const { projectId, teamId } = await freshProject('Repo Setup Only');
+		await db.query(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/other-linked', 'github'::repo_host_type)`,
+			[projectId],
+		);
+		const repo = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, setup_status)
+			 VALUES ($1, 'acme/just-linked', 'github'::repo_host_type, 'pending'::repo_setup_status)
+			 RETURNING id`,
+			[projectId],
+		);
+		const e = engine();
+		const execs: string[] = [];
+		vi.mocked(e.docker.execCreate).mockImplementation(async (_id: string, opts: unknown) => {
+			const o = opts as { Cmd?: string[]; WorkingDir?: string };
+			execs.push(`${(o.Cmd ?? []).join(' ')} @ ${o.WorkingDir ?? ''}`);
+			return 'exec-x';
+		});
+		const { performRepoSetup } = await import('../src/services/repo-provisioning');
+		await performRepoSetup(
+			{ db, docker: e.docker, dataDir, masterKeyManager },
+			{ teamId, projectId, repoId: repo.rows[0].id, repoIdentifier: 'acme/just-linked' },
+		);
+		await waitForBackground();
+
+		expect(execs.some((x) => x.includes('just-linked'))).toBe(true);
+		expect(execs.some((x) => x.includes('other-linked'))).toBe(false);
+	});
+});
+
 describe('replacing and resuming members', () => {
 	it('replaces an outdated member without making the next run wait for its removal', async () => {
 		const { projectId, taskId } = await freshProject('Recycle Lock');

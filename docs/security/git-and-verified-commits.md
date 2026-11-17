@@ -122,8 +122,9 @@ three things.
   reached GitHub is not a completed run, and marking it failed is what puts it in front of
   you.
 - **A recovery copy is kept.** Hezo packs the undelivered commits and copies them onto your
-  instance, so the next agent to work on that task picks them up automatically - even if it
-  runs in a different container, and even if the original one is long gone. The copy is
+  instance, so the next agent that prepares that repository for the task picks them up
+  automatically - even if it runs in a different container, and even if the original one is
+  long gone. The copy is
   dropped once the commits do reach GitHub, and is otherwise kept until you delete the
   project.
 - **The container is held open** if the copy could not be made, so the machine holding the
