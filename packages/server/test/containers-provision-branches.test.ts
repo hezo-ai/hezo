@@ -635,87 +635,41 @@ describe('provisionContainer', () => {
 		expect(row.rows[0].container_status).toBe('running');
 	});
 
-	it('syncs repos when unlocked and reports clone failures without failing the provision', async () => {
+	it('clones no repo: a run clones one when its agent asks for it', async () => {
 		await resetContainerRow();
 		await db.query(
 			`INSERT INTO repos (project_id, repo_identifier, host_type) VALUES ($1, $2, 'github')`,
 			[projectId, 'acme/coverage-repo'],
 		);
+		// A provisioning bridge would be allocated for a clone; none must be.
+		const allocateRunSocket = vi.fn(async () => ({
+			tokenHex: 'aa'.repeat(16),
+			tcpHostPort: 45678,
+		}));
+		const sshAgentServer = {
+			allocateRunSocket,
+			releaseRunSocket: vi.fn(async () => {}),
+		} as unknown as NonNullable<ContainerDeps['sshAgentServer']>;
 		try {
-			const { docker } = recordingDocker({
-				execStderr: 'fatal: could not read from remote repository',
-				execExitCode: 128,
-			});
+			const { docker } = recordingDocker();
 			const logs = new LogStreamBroker();
 
 			const id = await provisionContainer(
-				baseDeps(docker, { logs, masterKeyManager }),
+				baseDeps(docker, { logs, masterKeyManager, sshAgentServer }),
 				await projectRow(),
 				teamSlug,
 			);
 
 			expect(id).toBeTruthy();
-			const text = logs.getLogText(`container:${id}`);
-			expect(text).toContain('→ Syncing project repos');
-			expect(text).toContain('coverage-repo');
-			expect(text).toContain('⚠ 1 repo(s) failed to clone');
-			const row = await db.query<{ container_status: string }>(
-				'SELECT container_status FROM projects WHERE id = $1',
-				[projectId],
-			);
-			expect(row.rows[0].container_status).toBe('running');
+			expect(logs.getLogText(`container:${id}`)).not.toContain('Syncing project repos');
+			const execCmds = vi
+				.mocked(docker.execCreate)
+				.mock.calls.map((call) => ((call as unknown[])[1] as { Cmd?: string[] }).Cmd ?? []);
+			expect(execCmds.some((cmd) => cmd[0] === 'git')).toBe(false);
+			expect(allocateRunSocket).not.toHaveBeenCalled();
 		} finally {
 			await db.query('DELETE FROM repos WHERE project_id = $1', [projectId]);
 		}
-	});
-
-	it('allocates a provisioning SSH bridge for repo sync when an ssh-agent server is available', async () => {
-		await resetContainerRow();
-		const allocateRunSocket = vi.fn(async () => ({
-			tokenHex: 'aa'.repeat(16),
-			tcpHostPort: 45678,
-		}));
-		const releaseRunSocket = vi.fn(async () => {});
-		const sshAgentServer = {
-			allocateRunSocket,
-			releaseRunSocket,
-		} as unknown as NonNullable<ContainerDeps['sshAgentServer']>;
-		// The bridge allocates an egress proxy as well as an ssh socket — a
-		// provisioning clone's remote carries a credential placeholder only the
-		// proxy can substitute — and refuses to run without one, so a test that
-		// exercises the bridge has to supply both.
-		const allocateRunProxy = vi.fn(async () => ({
-			proxyHost: '127.0.0.1',
-			proxyPort: 29999,
-			token: 'provision-token',
-		}));
-		const releaseRunProxy = vi.fn(async () => {});
-		const egressProxy = {
-			allocateRunProxy,
-			releaseRunProxy,
-		} as unknown as NonNullable<ContainerDeps['egressProxy']>;
-		const { docker } = recordingDocker();
-		const logs = new LogStreamBroker();
-
-		const id = await provisionContainer(
-			baseDeps(docker, { logs, masterKeyManager, sshAgentServer, egressProxy }),
-			await projectRow(),
-			teamSlug,
-		);
-
-		expect(id).toBeTruthy();
-		expect(allocateRunSocket).toHaveBeenCalledTimes(1);
-		const [runId, identity] = allocateRunSocket.mock.calls[0] as unknown as [
-			string,
-			{ teamId: string; label: string },
-		];
-		expect(runId).toMatch(/^provision-[0-9a-f]{16}$/);
-		expect(identity).toEqual({ teamId, agentId: 'host', label: 'provision-git' });
-		// The short-lived pair is always released, even with no repos to sync.
-		expect(releaseRunSocket).toHaveBeenCalledWith(runId);
-		expect(allocateRunProxy).toHaveBeenCalledTimes(1);
-		expect(releaseRunProxy).toHaveBeenCalledWith(runId);
-		expect(logs.getLogText(`container:${id}`)).toContain('→ Syncing project repos');
 	});
 
 	it('reports failed local MCP installs without failing the provision', async () => {

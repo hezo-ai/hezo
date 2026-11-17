@@ -1,4 +1,4 @@
-import { dirname } from 'node:path';
+import { dirname, posix } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 import { credentialPlaceholder } from '../lib/credential-placeholder';
 import type { GitExecutor } from './git-executor';
@@ -714,6 +714,25 @@ async function addTaskWorktree(
 	return { success: true, created: true };
 }
 
+/**
+ * Whether a worktree's `.git` file names an admin entry that no longer exists in
+ * its clone - the one state in which the tree is safe to discard and rebuild. A
+ * `.git` that is not a gitfile (a separate checkout) is never orphaned.
+ */
+async function isOrphanedWorktree(executor: GitExecutor, wt: WorktreeLoc): Promise<boolean> {
+	let gitfile: string;
+	try {
+		gitfile = (await wt.files.read('.git')).trim();
+	} catch {
+		return false;
+	}
+	if (!gitfile.startsWith('gitdir:')) return false;
+	const target = gitfile.slice('gitdir:'.length).trim();
+	if (!target) return false;
+	const adminPath = target.startsWith('/') ? target : posix.join(wt.containerPath, target);
+	return !(await executor.files(adminPath).exists('HEAD'));
+}
+
 export async function ensureTaskWorktree(
 	executor: GitExecutor,
 	repo: RepoLoc,
@@ -728,6 +747,17 @@ export async function ensureTaskWorktree(
 		});
 		if (probe.exitCode === 0) {
 			return { success: true, created: false };
+		}
+		// Only a missing admin entry licenses the delete below. A transport error or
+		// timeout also reads as a failed probe, and the tree may hold an agent's
+		// uncommitted edits: prep can run mid-run. Decided from the gitfile and the
+		// entry it names, never from git's wording, which differs across versions.
+		if (!(await isOrphanedWorktree(executor, wt))) {
+			return {
+				success: false,
+				created: false,
+				error: `could not check the existing worktree: ${probe.stderr.trim() || 'unknown error'}`,
+			};
 		}
 		// The tree survived but its admin entry was lost (e.g. the clone was
 		// recreated). Discard the stale tree and rebuild from the branch ref, which
@@ -917,11 +947,16 @@ export async function worktreeChangedPaths(
  * Whether a run changed code in this worktree: any uncommitted/untracked change
  * (`git status --porcelain` non-empty), or the branch tip advanced past the
  * commit captured before the run.
+ *
+ * With no captured head (a worktree an earlier run left, which this run never
+ * prepared), `since` stands in for it: a commit on the branch dated at or after
+ * the run's start counts.
  */
 export async function worktreeHasChanges(
 	executor: GitExecutor,
 	wt: WorktreeLoc,
 	headBefore: string | null,
+	since?: Date,
 ): Promise<boolean> {
 	if (!(await wt.files.exists('.git'))) return false;
 	const status = await executor.exec(['status', '--porcelain'], {
@@ -929,6 +964,13 @@ export async function worktreeHasChanges(
 		timeout: 10_000,
 	});
 	if (status.exitCode === 0 && status.stdout.trim().length > 0) return true;
+	if (headBefore === null && since) {
+		const recent = await executor.exec(
+			['rev-list', '--count', `--since=${Math.floor(since.getTime() / 1000)}`, 'HEAD'],
+			{ cwd: wt.containerPath, timeout: 10_000 },
+		);
+		return recent.exitCode === 0 && Number.parseInt(recent.stdout.trim(), 10) > 0;
+	}
 	const headAfter = await getWorktreeHead(executor, wt);
 	return headAfter !== null && headBefore !== null && headAfter !== headBefore;
 }
@@ -1285,8 +1327,11 @@ function deliveredExclusions(remotes: readonly string[]): string[] {
  * directly.
  *
  * `git push` updates the corresponding `refs/remotes/origin/*` ref on success, and
- * run prep fetches before the agent starts, so the tracking refs are a faithful
- * local record of what the remote holds - no network call is needed or made.
+ * repo prep fetches before the agent works in a worktree, so the tracking refs are
+ * a faithful local record of what the remote holds - no network call is needed or
+ * made. A worktree an earlier run left, scanned without being prepared, was not
+ * fetched this run: its refs may be stale, which is why its scan may neither save
+ * nor release a recovery bundle (`vaultUnpushedWork`).
  *
  * Excluding everything reachable from those tracking refs answers four shapes
  * uniformly: pushed and current (0), pushed but behind (the delta), never pushed but

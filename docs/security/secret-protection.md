@@ -106,6 +106,30 @@ ever shared. The same holds for the warning a run's log gets when a connector re
 it names the connector, the HTTP status and whether a credential was sent, never the
 credential.
 
+A run also carries a few values of its own: the model-provider key above, the run's access
+token for Hezo, its password for the egress proxy, and the token for its commit-signing
+bridge. If an agent prints any of them, for example by listing its environment or its
+processes, Hezo replaces each one with `***` before the run's log is saved or shown. The
+same masking covers the error recorded for a failed run, the comment Hezo posts from an
+agent's last message, and the inbox notice filed when a model provider refuses a run.
+
+Chat works the same way. A chat reply is masked before it is saved, shown while it streams,
+or posted to a connected chat app such as Slack, and so is a failed reply's error and a
+conversation's generated title. When a chat turn ends, Hezo removes the files that held its
+token and its credential from the container, so the next run on that container cannot read
+them.
+
+Some gaps remain:
+
+- A token the agent's tool refreshes inside the container is new to Hezo, so it cannot be
+  masked.
+- Part of a value that the output itself cut short is not masked.
+- A value shorter than 12 characters, such as a short token for a model server on your own
+  machine, is not masked.
+
+Logs saved before this masking existed are unchanged, so rotate a model-provider key that
+appeared in one.
+
 ## Where agents can reach
 
 The egress proxy runs on the machine hosting Hezo, so by default it refuses to carry

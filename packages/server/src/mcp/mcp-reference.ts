@@ -269,6 +269,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ updated: true, agent_id, slug, admin_status }`, or `{ error }`. Disabling unassigns the agent from every open task; the change is reversible.',
 		auth: "The team's Captain or the CEO. The Captain, CEO, and Coach roles cannot be disabled with this tool.",
 	},
+	prepare_repos: {
+		category: 'Projects',
+		returns:
+			"`{ branch, repos: [{ name, repo, path, designated, ready, error?, notes, instructions? }] }`: one entry per requested repository, with the task worktree's path on the task branch and the repository's own instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) found at its root. `{ branch, pending: true, message }` when preparing takes longer than 90 seconds: call again to wait for it. `{ error }` outside a task run, when the project has no linked repository, or for a name that is not linked. Read-only for Hezo records, but it clones, fetches and checks out in the run's container.",
+		auth: 'Available only within an agent run on a task (requires a run identity).',
+	},
 	report_no_work: {
 		category: 'Agents & hiring',
 		returns:

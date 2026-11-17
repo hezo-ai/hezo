@@ -1,5 +1,6 @@
 import { WsMessageType } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SecretMasker } from '../src/lib/secret-masker';
 import { CappedLogBuffer } from '../src/services/log-buffer';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
@@ -259,6 +260,54 @@ describe('LogStreamBroker', () => {
 		expect(onFlush).toHaveBeenCalledTimes(1);
 		expect(onFlush).toHaveBeenCalledWith(expect.stringContaining('unflushed'));
 		expect(broker.isActive('run:r1')).toBe(false);
+	});
+
+	describe('secret masking', () => {
+		const SECRET = 'sk-run-credential-0123456789abcdef';
+
+		it('masks a registered value in the stored log, the live frame and the replay', async () => {
+			const received = subscribeSocket('project-runs:p1');
+			const onFlush = vi.fn(async (_text: string) => {});
+			const masker = new SecretMasker();
+			broker.begin({ ...makeRunConfig('r1', 'p1', onFlush), masker });
+			// Registered after begin(), as a run does when it mints the value.
+			masker.add(SECRET);
+
+			broker.emit('run:r1', 'stdout', `ANTHROPIC_AUTH_TOKEN=${SECRET.slice(0, 9)}`);
+			broker.emit('run:r1', 'stdout', `${SECRET.slice(9)} HOME=/home/node\n`);
+			const replayed: Array<Record<string, unknown>> = [];
+			broker.replay('project-runs:p1', (payload) =>
+				replayed.push(payload as Record<string, unknown>),
+			);
+			await broker.end('run:r1');
+
+			const stored = onFlush.mock.calls.map((call) => call[0]).join('');
+			const frames = received.map((m) => String(m.text)).join('\n');
+			// Each emit is its own line (see 'persists each emit on its own line'),
+			// so the masked value starts the second one.
+			for (const text of [stored, frames, String(replayed[0]?.text)]) {
+				expect(text).toContain('ANTHROPIC_AUTH_TOKEN=');
+				expect(text).toContain('*** HOME=/home/node');
+				expect(text).not.toContain(SECRET.slice(0, 9));
+				expect(text).not.toContain(SECRET.slice(9));
+			}
+		});
+
+		it('masks a held-back tail when the stream ends partway through a value', async () => {
+			const onFlush = vi.fn(async (_text: string) => {});
+			const masker = new SecretMasker();
+			masker.add(SECRET);
+			broker.begin({ ...makeRunConfig('r1', 'p1', onFlush), masker });
+
+			broker.emit('run:r1', 'stdout', 'last words sk-run');
+			await broker.end('run:r1');
+
+			// Held because it starts the value, and nothing can complete it now.
+			const stored = onFlush.mock.calls.map((call) => call[0]).join('');
+			expect(stored).toContain('last words');
+			expect(stored).toContain('***');
+			expect(stored).not.toContain('sk-run');
+		});
 	});
 
 	it('end() on an unknown streamId is a no-op', async () => {

@@ -117,12 +117,13 @@ export interface PoolCapacity {
  *
  * Then the ladder, first match wins:
  *
- * 1. **A warm idle container that last served this task.** Nothing to start,
- *    and the task's worktree and `node_modules` are already built. This is the
+ * 1. **A warm idle container holding this task's worktree.** Nothing to start,
+ *    and the task's worktree and `node_modules` are already built: a run records
+ *    the task on its container only when it left that worktree there. This is the
  *    common case rather than an optimization: the wakeup model gives a task
  *    many runs (replies, retries, timeouts, hire resolutions), and
- *    `prepareWorktrees` already reuses a task's worktree rather than deleting
- *    it.
+ *    repo prep (`RunRepoSession`) reuses a task's worktree rather than
+ *    deleting it.
  * 2. **Any warm idle container.** Nothing to start, cold worktree.
  * 3. **A suspended container.** Resume costs about a second.
  * 4. **Create**, if under the cap.

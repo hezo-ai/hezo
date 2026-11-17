@@ -229,8 +229,9 @@ describe('acquireRunContainer', () => {
 		const forTask = await acquireRunContainer(deps(docker), projectId, TASK_AFFINE);
 		const affineId = forTask.containerId;
 		const other = await acquireRunContainer(deps(docker), projectId, TASK_OTHER);
-		await forTask.release();
-		await other.release();
+		// Each run prepared its task's worktree on its container.
+		await forTask.release({ affinityTaskId: TASK_AFFINE });
+		await other.release({ affinityTaskId: TASK_OTHER });
 
 		const again = await acquireRunContainer(deps(docker), projectId, TASK_AFFINE);
 		try {
@@ -240,13 +241,29 @@ describe('acquireRunContainer', () => {
 		}
 	});
 
-	it('records the task on release even when the run failed', async () => {
+	it('records the task named on release, and nothing at the claim', async () => {
+		// A failed run that prepared its worktree leaves it just as warm, so the
+		// runner names the task whenever the container holds that worktree.
 		const acquired = await acquireRunContainer(deps(provisioningDocker()), projectId, TASK_NOTED);
-		await acquired.release();
+		expect((await poolRow(acquired.containerId))?.last_task_id ?? null).not.toBe(TASK_NOTED);
+		await acquired.release({ affinityTaskId: TASK_NOTED });
 		expect(await poolRow(acquired.containerId)).toMatchObject({
 			state: 'idle',
 			last_task_id: TASK_NOTED,
 		});
+	});
+
+	it('leaves the recorded affinity alone when a run built no worktree', async () => {
+		// Releasing without naming a task changes nothing, so a comment reply or a
+		// Coach review that prepared no repo cannot move affinity elsewhere.
+		const docker = provisioningDocker();
+		const coding = await acquireRunContainer(deps(docker), projectId, TASK_AFFINE);
+		await coding.release({ affinityTaskId: TASK_AFFINE });
+		// The task's next run lands here by affinity, but builds nothing.
+		const reply = await acquireRunContainer(deps(docker), projectId, TASK_AFFINE);
+		expect(reply.containerId).toBe(coding.containerId);
+		await reply.release();
+		expect((await poolRow(coding.containerId))?.last_task_id).toBe(TASK_AFFINE);
 	});
 
 	it('release is idempotent', async () => {

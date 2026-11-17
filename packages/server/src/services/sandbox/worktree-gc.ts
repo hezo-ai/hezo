@@ -18,11 +18,12 @@
  * is never touched.
  */
 
-import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import { ACTIVE_HEARTBEAT_RUN_STATUSES, TERMINAL_TASK_STATUSES } from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { type RepoLoc, removeWorktreesWhere } from '../git';
 import type { GitExecutor } from '../git-executor';
 import { CONTAINER_WORKTREES_ROOT } from '../workspace';
+import type { SandboxFiles } from './files';
 
 /**
  * Removals per repo per automatic pass. Bounded so a container carrying a long
@@ -53,6 +54,12 @@ export interface WorktreeGcResult {
  * Absence therefore covers two cases at once, both reclaimable: a task that has
  * finished, and an identifier with no task row at all - a leftover from a
  * crashed run or a deleted task, which nothing will ever come back for.
+ *
+ * A finished task with a run still in flight is kept too: runs on closed tasks
+ * are routine (a Coach review, a reply), and on a backend that shares `/worktrees`
+ * across a project's containers another container's sweep would otherwise delete
+ * the folder that run is working in. Active runs are few, so the second arm is a
+ * short read on the run-status index.
  */
 export async function resolveReclaimableTasks(
 	db: Db,
@@ -60,8 +67,12 @@ export async function resolveReclaimableTasks(
 ): Promise<(taskIdentifier: string) => boolean> {
 	const rows = await db.query<{ identifier: string }>(
 		`SELECT identifier FROM tasks
-		  WHERE project_id = $1 AND status <> ALL($2::task_status[])`,
-		[projectId, TERMINAL_TASK_STATUSES],
+		  WHERE project_id = $1 AND status <> ALL($2::task_status[])
+		 UNION
+		 SELECT t.identifier FROM heartbeat_runs r
+		   JOIN tasks t ON t.id = r.task_id
+		  WHERE t.project_id = $1 AND r.status = ANY($3::heartbeat_run_status[])`,
+		[projectId, TERMINAL_TASK_STATUSES, ACTIVE_HEARTBEAT_RUN_STATUSES],
 	);
 	const stillOpen = new Set(rows.rows.map((t) => t.identifier));
 	return (taskIdentifier: string) => !stillOpen.has(taskIdentifier);
@@ -88,8 +99,7 @@ export async function collectFinishedWorktrees(
 	 * Runs on closed tasks are routine, not exotic: the explicit-`task_id` wakeup
 	 * path (mentions, comments, coach triggers) carries no status filter, and the
 	 * Coach exists to review completed work. Without this the pass deletes the
-	 * worktree run prep just created and set as the run's working directory, and
-	 * the agent execs into a directory that is no longer there.
+	 * worktree `prepare_repos` just created, while the agent is about to work in it.
 	 */
 	currentTaskIdentifier: string | null = null,
 ): Promise<WorktreeGcResult> {
@@ -107,4 +117,39 @@ export async function collectFinishedWorktrees(
 		if (limit !== undefined && swept.length >= limit) deferred = true;
 	}
 	return { removed: Array.from(new Set(removed)), deferred };
+}
+
+/**
+ * Remove the whole task folder (`/worktrees/<identifier>`) of every finished task
+ * in this container: its worktrees, and whatever else a run left there - scratch
+ * files, a dependency install, a clone the agent made itself. A run's working
+ * directory is its task folder, so these accumulate for every task the container
+ * ever served, and on a managed sandbox nothing else removes them: the task-close
+ * teardown is a host delete that only reaches a bind mount.
+ *
+ * Through the file seam, so it works on every backend. Bounded per pass like the
+ * worktree sweep. Outside the git lock: a finished task with no run in flight has
+ * no git work in progress, and any admin entry its worktree leaves behind in a
+ * clone is pruned by the next worktree sweep.
+ */
+export async function removeFinishedTaskFolders(
+	db: Db,
+	worktrees: SandboxFiles,
+	projectId: string,
+	currentTaskIdentifier: string | null,
+	limit: number = MAX_WORKTREE_REMOVALS_PER_PASS,
+): Promise<WorktreeGcResult> {
+	const names = (await worktrees.list('.')).filter(
+		(name) => name !== currentTaskIdentifier && !name.startsWith('.'),
+	);
+	if (names.length === 0) return { removed: [], deferred: false };
+	const reclaimable = await resolveReclaimableTasks(db, projectId);
+	const removed: string[] = [];
+	for (const name of names) {
+		if (!reclaimable(name)) continue;
+		if (removed.length >= limit) return { removed, deferred: true };
+		await worktrees.removeDir(name);
+		removed.push(name);
+	}
+	return { removed, deferred: false };
 }

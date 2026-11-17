@@ -1,4 +1,3 @@
-import { mkdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import {
 	AGENT_RUNTIME_LABELS,
@@ -38,7 +37,6 @@ import {
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
 	type RunLink,
-	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	type ThreadRowCategory,
@@ -57,7 +55,6 @@ import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { commentCategoryPredicate } from '../lib/comment-filters';
 import { describeSignalExit, signalFromExitCode } from '../lib/exit-code';
-import { withProjectGitLock } from '../lib/git-lock';
 import {
 	type AcquireOptions,
 	acquireKeyedLock,
@@ -70,6 +67,7 @@ import {
 	detectUnlinkedTeammateAsks,
 	extractMentionSlugs,
 } from '../lib/mentions';
+import { credentialSecretValues, SecretMasker } from '../lib/secret-masker';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -105,38 +103,26 @@ import {
 	type ContainerRunUser,
 	chownToRunUser,
 	containerHomeDir,
-	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { acquireRunContainer, PoolCapacityError } from './containers';
+import { type AcquiredContainer, acquireRunContainer, PoolCapacityError } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { type EffortRuntimeApplication, resolveEffort } from './effort';
-import { buildEgressProxyEnv, type EgressProxy } from './egress';
+import { buildEgressProxyEnv, type EgressProxy, egressProxyTokenForms } from './egress';
 import {
-	clearPushErrors,
 	countBranchDelivery,
 	describeUnpushedWork,
-	ensurePushHook,
-	ensureTaskWorktreeWithRetry,
-	fastForwardFromRecovery,
-	fastForwardLocalDefault,
-	fetchRepo,
 	findUnpushedWork,
-	getWorktreeHead,
-	mergeDefaultIntoWorktree,
-	type RepoLoc,
 	readPushErrors,
 	readPushedMarker,
-	seedInitialCommitIfEmpty,
 	type UnpushedWorkScan,
 	voidPushedMarker,
-	type WorktreeLoc,
 	worktreeChangedPaths,
 	worktreeHasChanges,
 	worktreeTracksPath,
 } from './git';
-import { ContainerGitExecutor, type GitExecutor } from './git-executor';
+import type { GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import { currentAgentImageVersion } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
@@ -193,13 +179,20 @@ import {
 } from './provider-credential-health';
 import { loadReactionsForComments, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
-import { ensureProjectRepos } from './repo-sync';
 import {
 	CAPACITY_PARK_QUEUED_REASON,
 	containerCapacityVerdictInDb,
 	projectContainerMemoryGb,
 } from './run-concurrency';
 import { classifyRunFailure, RunFailureClass } from './run-failure-classification';
+import {
+	type CloneRef,
+	EMPTY_RUN_REPO_VIEW,
+	type RepoRow,
+	RunRepoSession,
+	registerRunRepoSession,
+	type WorktreeRef,
+} from './run-repos';
 import {
 	applyEffortToRuntime,
 	buildMcpInjection,
@@ -224,26 +217,15 @@ import { createBundleVault } from './sandbox/bundle-vault';
 import { PREFLIGHT_TUNNEL_ENDPOINTS, type RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
-import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
-import {
-	releaseRecoveryBundle,
-	restoreRecoveryBundle,
-	saveRecoveryBundle,
-} from './sandbox/recovery';
+import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
+import { releaseRecoveryBundle, saveRecoveryBundle } from './sandbox/recovery';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
-import { collectFinishedWorktrees } from './sandbox/worktree-gc';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
 import type { HandbackCause } from './wakeup';
-import {
-	CONTAINER_WORKSPACE_ROOT,
-	CONTAINER_WORKTREES_ROOT,
-	getRunSocketPath,
-	getWorkspacePath,
-	getWorktreesPath,
-} from './workspace';
+import { CONTAINER_WORKSPACE_ROOT, getRunSocketPath, getWorkspacePath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 /**
@@ -374,22 +356,6 @@ export interface RunnerDeps {
 	 */
 	capacityPark?: { pollMs: number; maxMs: number };
 }
-
-interface RepoRow {
-	id: string;
-	repo_identifier: string;
-}
-
-/**
- * A prepared clone, carrying the `repos` row it came from.
- *
- * The id rides along rather than being looked up again at finalize because the one
- * check that needs it - asking the git host what became of a branch the remote no
- * longer advertises - has only a container path to go on otherwise, and matching a
- * path back to a row by name is a second source of truth for something already known
- * here. Structurally still a {@link RepoLoc}, so every existing consumer is unchanged.
- */
-type CloneRef = RepoLoc & { repoId: string };
 
 /**
  * Build the env-var entries for a given provider/auth method. Composed from the
@@ -752,7 +718,7 @@ export interface EgressEnvDescriptor {
 
 /**
  * Stands in for the working directory in argv built before that directory is
- * known: a task run builds its invocation before it prepares the worktree that
+ * known: a task run builds its invocation before it creates the task root that
  * decides it. Always a whole argv element; {@link bindWorkingDir} swaps it.
  */
 export const DEFERRED_WORKING_DIR = '__HEZO_RUN_WORKING_DIR__';
@@ -790,8 +756,14 @@ export interface RuntimeInvocationInput {
 	/** Pre-minted MCP bearer token (run token for a task run; session token for chat). */
 	agentJwt: string;
 	agentId: string;
-	/** Keys the per-resource home/subscription/config dirs — heartbeatRunId or sessionId. */
+	/** The process marker (`HEZO_HEARTBEAT_RUN_ID`): heartbeatRunId, or a chat sessionId. */
 	resourceId: string;
+	/**
+	 * Keys the per-run home/subscription/config dirs; defaults to `resourceId`. A
+	 * chat turn passes its own turn id, so a turn's credential-bearing home is its
+	 * own and is removed when the turn ends, never shared with a sibling turn.
+	 */
+	homeId?: string;
 	/** The project container the run executes in (target of the run-user chown). */
 	containerId: string;
 	/** Detected container run-user; the per-run config dir is chowned to it so the
@@ -881,12 +853,13 @@ export async function buildRuntimeInvocation(
 		extraEnv = [],
 		stopJudge = true,
 	} = input;
+	const homeId = input.homeId ?? resourceId;
 
 	const subscriptionMount = await buildSubscriptionMount(
 		deps.dataDir,
 		runTeamId,
 		projectId,
-		resourceId,
+		homeId,
 		provider,
 		runtimeType,
 		credential,
@@ -902,7 +875,7 @@ export async function buildRuntimeInvocation(
 				deps.dataDir,
 				runTeamId,
 				projectId,
-				resourceId,
+				homeId,
 				subscriptionMount,
 				deps.docker,
 				containerId,
@@ -1349,7 +1322,7 @@ async function buildRunContext(
 			containerId: project.container_id,
 			runUser,
 			promptContainerPath: promptFilePath,
-			// Decided by the worktree prep that runs after this; bound before the exec.
+			// Decided after this (the task root once it exists); bound before the exec.
 			workingDir: DEFERRED_WORKING_DIR,
 			systemPrompt: systemPromptToFile,
 			effort,
@@ -1779,9 +1752,21 @@ export async function runAgent(
 	/** The usage snapshot last written to the run row, so a flush never rewrites it unchanged. */
 	let lastPersistedUsage: string | null = null;
 
+	// Every plaintext value this run carries is registered here as it is minted,
+	// so nothing the agent prints can put one in the stored or broadcast log.
+	const runSecrets = new SecretMasker();
+	/** The run row's terminal write, with this run's secrets masked out of its error. */
+	const recordRunEnd = (update: RunRowUpdate) =>
+		updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			update.error === undefined ? update : { ...update, error: runSecrets.mask(update.error) },
+			runBroadcast,
+		);
 	deps.logs.begin({
 		streamId,
 		room: `project-runs:${project.id}`,
+		masker: runSecrets,
 		buildMessage: (line) => ({
 			type: WsMessageType.RunLog,
 			projectId: project.id,
@@ -1842,21 +1827,16 @@ export async function runAgent(
 		emit('stderr', `[runner] ${message}\n`);
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
-		await updateHeartbeatRun(
-			deps.db,
-			heartbeatRunId,
-			{
-				status: HeartbeatRunStatus.Failed,
-				exitCode: -1,
-				durationMs,
-				error: message,
-			},
-			runBroadcast,
-		);
+		await recordRunEnd({
+			status: HeartbeatRunStatus.Failed,
+			exitCode: -1,
+			durationMs,
+			error: message,
+		});
 		return {
 			success: false,
 			exitCode: -1,
-			stderr: message,
+			stderr: runSecrets.mask(message),
 			durationMs,
 			heartbeatRunId,
 		};
@@ -1914,29 +1894,24 @@ export async function runAgent(
 		emit('stdout', `[runner] ${message}\n`);
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
-		await updateHeartbeatRun(
-			deps.db,
-			heartbeatRunId,
-			{
-				status: HeartbeatRunStatus.Cancelled,
-				exitCode: -1,
-				durationMs,
-				error: message,
-				...(opts.usage ? { usage: opts.usage, usagePartial: true } : {}),
-				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
-				// actually carried is not known until the caller settles the wakeup,
-				// and the guard there can bite. Writing `handed_back` at this point
-				// asserted an outcome before attempting it - the same defect the orphan
-				// sweeper was restructured to avoid - and left it standing when the
-				// handback failed. `JobManager.settleWakeupForRun` records it once the
-				// answer is in, through the recorder the sweeper shares.
-			},
-			runBroadcast,
-		);
+		await recordRunEnd({
+			status: HeartbeatRunStatus.Cancelled,
+			exitCode: -1,
+			durationMs,
+			error: message,
+			...(opts.usage ? { usage: opts.usage, usagePartial: true } : {}),
+			// Deliberately NOT stamping `cancel_reason` here. Whether the work is
+			// actually carried is not known until the caller settles the wakeup,
+			// and the guard there can bite. Writing `handed_back` at this point
+			// asserted an outcome before attempting it - the same defect the orphan
+			// sweeper was restructured to avoid - and left it standing when the
+			// handback failed. `JobManager.settleWakeupForRun` records it once the
+			// answer is in, through the recorder the sweeper shares.
+		});
 		return {
 			success: false,
 			exitCode: -1,
-			stderr: reason,
+			stderr: runSecrets.mask(reason),
 			durationMs,
 			heartbeatRunId,
 			requeue: cause,
@@ -2026,7 +2001,7 @@ export async function runAgent(
 				memberId: agent.id,
 				teamId: runTeamId,
 				taskId: task?.id ?? null,
-				reason: verdict.message,
+				reason: runSecrets.mask(verdict.message),
 			}).catch((e) =>
 				log.error(`Run ${heartbeatRunId}: could not file a provider-refusal approval:`, e),
 			);
@@ -2059,17 +2034,12 @@ export async function runAgent(
 		await deps.logs.end(streamId);
 		const reason = abortReason;
 		const status = abortedRunStatus(reason);
-		await updateHeartbeatRun(
-			deps.db,
-			heartbeatRunId,
-			{
-				status,
-				exitCode: -1,
-				durationMs,
-				error: abortErrorMessage(reason),
-			},
-			runBroadcast,
-		);
+		await recordRunEnd({
+			status,
+			exitCode: -1,
+			durationMs,
+			error: abortErrorMessage(reason),
+		});
 		return {
 			success: false,
 			exitCode: -1,
@@ -2154,6 +2124,7 @@ export async function runAgent(
 		);
 	}
 	let credential = { ...selection.config, value: storedCredential };
+	runSecrets.addAll(credentialSecretValues(credential.value));
 	// The hold this run saw when it chose its credential. Only a run that started
 	// under a hold - the one run testing a lapsed hold, or one a person asked for -
 	// lifts it once it gets a turn.
@@ -2353,8 +2324,10 @@ export async function runAgent(
 			deps.masterKeyManager,
 			credential.configId,
 		);
-		if (stored !== null && stored !== credential.value)
+		if (stored !== null && stored !== credential.value) {
 			credential = { ...credential, value: stored };
+			runSecrets.addAll(credentialSecretValues(stored));
+		}
 		if (checkHoldAfterWait) {
 			const holdAfterWait = await readActiveUsageHold(deps.db, credential.configId);
 			if (holdAfterWait && holdAfterWait.getTime() !== holdBeforeWait?.getTime()) {
@@ -2388,7 +2361,7 @@ export async function runAgent(
 		emit('stdout', '[runner] Starting the project container…\n');
 	}
 	let containerId: string;
-	let releaseContainer: () => Promise<void> = async () => undefined;
+	let releaseContainer: AcquiredContainer['release'] = async () => undefined;
 	// Park rather than bail when the instance is at its memory budget. The wait
 	// happens here, inside `runAgent`, for one reason: the run id is only in the
 	// live-run registry while this call is in flight, and that registry is the
@@ -2529,7 +2502,7 @@ export async function runAgent(
 			return {
 				success: false,
 				exitCode: -1,
-				stderr: message,
+				stderr: runSecrets.mask(message),
 				durationMs: Date.now() - startTime,
 				heartbeatRunId,
 			};
@@ -2559,6 +2532,7 @@ export async function runAgent(
 			sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
 			sshHostTcpPort = allocated.tcpHostPort;
 			sshTokenHex = allocated.tokenHex;
+			runSecrets.add(allocated.tokenHex);
 			sshSocketAllocated = true;
 		}
 
@@ -2602,6 +2576,7 @@ export async function runAgent(
 			});
 			egressAllocated = true;
 			egressProxyAllocated = true;
+			runSecrets.addAll(egressProxyTokenForms(allocated.token));
 			egressHost = {
 				host: allocated.proxyHost,
 				port: allocated.proxyPort,
@@ -2720,6 +2695,7 @@ export async function runAgent(
 			endpoints,
 			connectorDescriptors,
 		);
+		runSecrets.add(context.agentJwt);
 
 		// Rooted at the workspace, which is what makes the prompt path relative and
 		// so switchable; the absolute form is still needed for the env var the
@@ -2784,6 +2760,11 @@ export async function runAgent(
 			return recoveredUsage;
 		};
 
+		// The run's repositories, prepared only when the agent asks (`prepare_repos`).
+		// Null for a task-less run or a project with no linked repo.
+		let repoSession: RunRepoSession | null = null;
+		let unregisterRepoSession: (() => void) | null = null;
+
 		const cleanupRunArtifacts = async () => {
 			const step = async (label: string, fn: () => void | Promise<void>) => {
 				try {
@@ -2792,39 +2773,31 @@ export async function runAgent(
 					log.error(`Run ${heartbeatRunId} artifact cleanup step '${label}' failed:`, e);
 				}
 			};
+			// Before anything prep relies on goes away (the tunnel, the proxy, the
+			// bridge, the container itself): refuse new prep, then let a prep still
+			// running finish, bounded by git's per-op timeouts.
+			await step('settle-repo-prep', async () => {
+				unregisterRepoSession?.();
+				await repoSession?.settle();
+			});
 			// First, and unconditionally: a live channel counts as activity on every
 			// backend, so a tunnel left open keeps the container from ever going
 			// idle - a bill rather than an error, with nothing to surface it.
 			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
 			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
-			// Home-rooted config files carrying a per-run secret (Antigravity's
-			// mcp_config.json holds the agent JWT): scrub them so the token does not
-			// sit in the pooled container's home between runs.
-			if (context.homeConfigScrubPaths.length > 0) {
-				await step('scrub-home-config', async () => {
-					const homeFiles = deps.docker.files(containerId, containerHomeDir(runUser));
-					for (const rel of context.homeConfigScrubPaths) await homeFiles.remove(rel);
-				});
-			}
-			// The tunnel's config, for the same reason as the prompt: a pooled
-			// container serves run after run, so one file per run accumulates there
-			// forever. It carries hostnames only - never a secret value - so this is
-			// housekeeping rather than a scrub, but on a container with a 3 GB disk
-			// budget nothing gets to grow without a bound.
-			await step('remove-tunnel-config', () =>
-				workspaceFiles.remove(join('.hezo', 'tunnel', `${heartbeatRunId}.json`)),
+			await scrubRunArtifacts(
+				deps.docker,
+				{
+					containerId,
+					runUser,
+					homeConfigScrubPaths: context.homeConfigScrubPaths,
+					homeDir:
+						context.subscriptionMount?.containerDir ?? context.homeMount?.containerDir ?? null,
+					tunnelConfigId: heartbeatRunId,
+				},
+				step,
 			);
-			await step('remove-home-mount', async () => {
-				// Removing the per-run home was never tidiness - it holds the provider
-				// credential, so this is a scrub. It goes through the seam because on a
-				// managed backend the directory is inside the sandbox, where a host
-				// `rmSync` would silently no-op while looking like it worked.
-				const dirToRemove =
-					context.subscriptionMount?.containerDir ?? context.homeMount?.containerDir;
-				if (!dirToRemove) return;
-				await deps.docker.files(containerId, dirToRemove).removeDir('.');
-			});
 			await step('release-ssh-socket', async () => {
 				if (deps.sshAgentServer) {
 					await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
@@ -2835,11 +2808,16 @@ export async function runAgent(
 					await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 				}
 			});
-			// Back into the pool, warm and idle, with this task recorded so the
-			// task's next run gets the container whose worktree is already built.
+			// Back into the pool, warm and idle.
 			// Released here rather than only on the success path: a container held
 			// by a failed run is a container no other run can ever have.
-			await step('release-pool-container', () => releaseContainer());
+			// The task is recorded only when this container now holds its worktree,
+			// so its next coding run is routed to a container with something built.
+			await step('release-pool-container', () =>
+				releaseContainer({
+					affinityTaskId: task && repoSession?.holdsTaskWorktree() ? task.id : null,
+				}),
+			);
 		};
 
 		if (runAbort.signal.aborted) {
@@ -2850,28 +2828,34 @@ export async function runAgent(
 		try {
 			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			// Progress-update runs only call MCP tools; they need no code worktree.
-			const prep = task
-				? await prepareWorktrees(
-						deps,
-						runningProject,
-						task,
-						heartbeatRunId,
-						bridge,
-						runUser,
-						egressEnv,
-						emit,
-						signal,
-					)
-				: {
-						workingDir: '/workspace',
-						designatedRepo: null as RepoRow | null,
-						worktrees: [] as WorktreeRef[],
-						clones: [] as CloneRef[],
-						branch: null as string | null,
-						executor: null as GitExecutor | null,
-						recoveryFailed: new Set<string>(),
-					};
+			// No repository work before the agent starts: a task run on a project with
+			// linked repos starts in its task root, and the agent prepares the repos it
+			// needs with `prepare_repos`. Task-less runs only call MCP tools.
+			const linkedRepos = task
+				? (
+						await deps.db.query<RepoRow>(
+							'SELECT id, repo_identifier FROM repos WHERE project_id = $1 ORDER BY created_at ASC',
+							[project.id],
+						)
+					).rows
+				: [];
+			if (task && linkedRepos.length > 0) {
+				repoSession = await RunRepoSession.open(deps, {
+					project: runningProject,
+					task,
+					repos: linkedRepos,
+					bridge,
+					runUser,
+					egress: egressEnv,
+					emit,
+					signal: runAbort.signal,
+					startedAt: new Date(startTime),
+				});
+				unregisterRepoSession = registerRunRepoSession(heartbeatRunId, repoSession);
+			} else if (task) {
+				emit('stdout', '[system] (no repos linked to project — running in /workspace)\n');
+			}
+			const workingDir = repoSession?.taskRoot ?? CONTAINER_WORKSPACE_ROOT;
 
 			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -2884,9 +2868,9 @@ export async function runAgent(
 			// has to go through the provider's file API. Nothing else about it changes.
 			await workspaceFiles.write(promptRelPath, context.taskPrompt);
 
-			const cmd = bindWorkingDir(context.cmd, prep.workingDir);
-			const execCmd = bindWorkingDir(context.execCmd, prep.workingDir);
-			const redactedCmd = cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+			const cmd = bindWorkingDir(context.cmd, workingDir);
+			const execCmd = bindWorkingDir(context.execCmd, workingDir);
+			const redactedCmd = cmd.map((arg) => runSecrets.mask(arg));
 			const promptSuffix =
 				context.promptDelivery === 'arg'
 					? ` "$(cat ${context.promptFilePath})"`
@@ -2897,7 +2881,7 @@ export async function runAgent(
 
 			await deps.db.query(
 				`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
-				[invocationCommand, prep.workingDir, heartbeatRunId],
+				[invocationCommand, workingDir, heartbeatRunId],
 			);
 
 			emit('stdout', `${invocationCommand}\n`);
@@ -3008,14 +2992,14 @@ export async function runAgent(
 				(msg) => log.warn(`Run ${heartbeatRunId}: ${msg}`),
 			);
 
-			// Unelevated: the agent writes into the bind-mounted worktree, and those
+			// Unelevated: the agent writes into the bind-mounted worktrees, and those
 			// files must stay owned by the run user rather than root. The poll stops
 			// however the exec ends, before anything reads and scrubs the usage file.
 			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser)
 				.exec({
 					cmd: execCmd,
 					env: context.env,
-					workingDir: prep.workingDir,
+					workingDir,
 					// The derived signal, so a tunnel that dies mid-run tears the exec down
 					// instead of leaving it to burn the rest of the budget toolless.
 					signal: runAbort.signal,
@@ -3027,11 +3011,34 @@ export async function runAgent(
 			const durationMs = Date.now() - startTime;
 			const exitedClean = execOutcome.exitCode === 0;
 
+			// Every worktree of this task in the container, prepared this run or left
+			// by an earlier one - the agent may have worked in either.
+			unregisterRepoSession?.();
+			const prep = repoSession ? await repoSession.view(signal) : EMPTY_RUN_REPO_VIEW;
+			// A checkout the agent cloned or initialised itself in the task folder is
+			// outside everything above: Hezo never pushes from it and never scans it.
+			const strays = repoSession ? await repoSession.strays() : null;
+			// The sweep first, so the disk figure the pool recycles on reflects it.
+			await repoSession?.sweepFinishedTaskFolders();
+			await repoSession?.measureDisk();
+			for (const path of strays?.checkouts ?? []) {
+				emit(
+					'stderr',
+					`\n[runner] WARNING: ${path} is a separate git checkout, not a task worktree. Hezo does not push or scan it, so commits made there are lost with the container. Use prepare_repos and work in the path it returns.\n`,
+				);
+			}
+			if (strays?.rootIsRepo && repoSession) {
+				emit(
+					'stderr',
+					`\n[runner] WARNING: the task folder ${repoSession.taskRoot} was made a git repository. Hezo does not push or scan it, so commits made there are lost with the container. Use prepare_repos and work in the path it returns.\n`,
+				);
+			}
+
 			// Report auto-pushes that were denied during the run. The post-commit hook
 			// is deliberately non-fatal, so without this the human sees a run that
 			// "succeeded" while its commits never left the container — the exact shape
 			// of a repo the connected GitHub account can read but not write.
-			for (const clone of prep.clones) {
+			for (const clone of prep.preparedClones) {
 				const pushErrors = await readPushErrors(clone);
 				if (!pushErrors) continue;
 				emit(
@@ -3222,7 +3229,9 @@ export async function runAgent(
 										projectId: project.id,
 										taskId: task.id,
 										author: { memberId: agent.id, runId: heartbeatRunId },
-										content: { text: fitCommentForDelivery(finalMessage, undeliveredActive) },
+										content: {
+											text: fitCommentForDelivery(runSecrets.mask(finalMessage), undeliveredActive),
+										},
 									});
 									// The run delivered a real comment, so it is no longer a no-op:
 									// flip the local flag (drives `success` below) and the row column
@@ -3292,7 +3301,7 @@ export async function runAgent(
 										taskId: task.id,
 										author: { memberId: agent.id, runId: heartbeatRunId },
 										parentCommentId: wakingCommentId ?? undefined,
-										content: { text: fitCommentForDelivery(finalMessage) },
+										content: { text: fitCommentForDelivery(runSecrets.mask(finalMessage)) },
 									});
 									await deps.db.query(
 										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
@@ -3384,7 +3393,16 @@ export async function runAgent(
 			// spec.md) and is left alone. A doc-shaped file with a name no doc uses
 			// is not flagged - that would be guesswork, and this net is worth more
 			// being trusted than being exhaustive.
-			if (exitedClean && project && prep.executor && prep.worktrees.length > 0) {
+			// The task folder is checked too: it is the working directory, so a relative
+			// write of a doc-named file lands there, outside every worktree.
+			const rootDocCandidates = (strays?.entries ?? []).filter((n) =>
+				n.toLowerCase().endsWith('.md'),
+			);
+			if (
+				exitedClean &&
+				project &&
+				((prep.executor && prep.worktrees.length > 0) || rootDocCandidates.length > 0)
+			) {
 				try {
 					const slugs = await deps.db.query<{ slug: string }>(
 						`SELECT slug FROM documents
@@ -3393,23 +3411,28 @@ export async function runAgent(
 					);
 					const docSlugs = new Set(slugs.rows.map((r) => r.slug.toLowerCase()));
 					if (docSlugs.size > 0) {
-						const strays: string[] = [];
-						for (const wt of prep.worktrees) {
-							const changed = await worktreeChangedPaths(prep.executor, wt.loc);
+						const strayDocs: string[] = [];
+						for (const wt of prep.executor ? prep.worktrees : []) {
+							const changed = await worktreeChangedPaths(prep.executor as GitExecutor, wt.loc);
 							for (const p of changed) {
 								const base = p.split('/').pop() ?? p;
 								if (!base.toLowerCase().endsWith('.md')) continue;
 								if (!docSlugs.has(base.toLowerCase())) continue;
-								if (await worktreeTracksPath(prep.executor, wt.loc, p)) continue;
-								strays.push(p);
+								if (await worktreeTracksPath(prep.executor as GitExecutor, wt.loc, p)) continue;
+								strayDocs.push(p);
 							}
 						}
-						if (strays.length > 0) {
+						for (const name of rootDocCandidates) {
+							if (docSlugs.has(name.toLowerCase()) && repoSession) {
+								strayDocs.push(`${repoSession.taskRoot}/${name}`);
+							}
+						}
+						if (strayDocs.length > 0) {
 							emit(
 								'stderr',
-								`\n[runner] WARNING: this run wrote ${strays.join(', ')} to the repo, but ${
-									strays.length === 1 ? 'that filename is' : 'those filenames are'
-								} a project doc - project docs live in the database, not the filesystem, so the file changed nothing anyone will read and the real doc is now stale. Re-apply the change with write_project_doc (or edit_project_doc for part of one) and drop the file from the worktree.\n`,
+								`\n[runner] WARNING: this run wrote ${strayDocs.join(', ')} to disk, but ${
+									strayDocs.length === 1 ? 'that filename is' : 'those filenames are'
+								} a project doc - project docs live in the database, not the filesystem, so the file changed nothing anyone will read and the real doc is now stale. Re-apply the change with write_project_doc (or edit_project_doc for part of one) and delete the file.\n`,
 							);
 						}
 					}
@@ -3553,32 +3576,27 @@ export async function runAgent(
 				combineRunUsage(runtimeType, parser.getUsage(), runUsage, true) ?? currentUsage;
 
 			await deps.logs.end(streamId);
-			await updateHeartbeatRun(
-				deps.db,
-				heartbeatRunId,
-				{
-					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
-					exitCode: execOutcome.exitCode,
-					durationMs,
-					error:
-						unpushedError ??
-						backgroundError ??
-						signalError ??
-						terminalError ??
-						noOutputError ??
-						unexplainedExitError ??
-						undefined,
-					usage: finalUsage,
-					// The stream ran to its terminal event, so this usage is final, not a
-					// mid-run snapshot — clear the partial flag any earlier flush set.
-					usagePartial: false,
-					// Written here rather than mid-run like mcp_tool_counts: the tally only
-					// completes when the stream does, and updating it per call would leave a
-					// dead tuple behind every tool the agent used.
-					toolCallCounts: parser.getToolCallCounts(),
-				},
-				runBroadcast,
-			);
+			await recordRunEnd({
+				status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
+				exitCode: execOutcome.exitCode,
+				durationMs,
+				error:
+					unpushedError ??
+					backgroundError ??
+					signalError ??
+					terminalError ??
+					noOutputError ??
+					unexplainedExitError ??
+					undefined,
+				usage: finalUsage,
+				// The stream ran to its terminal event, so this usage is final, not a
+				// mid-run snapshot — clear the partial flag any earlier flush set.
+				usagePartial: false,
+				// Written here rather than mid-run like mcp_tool_counts: the tally only
+				// completes when the stream does, and updating it per call would leave a
+				// dead tuple behind every tool the agent used.
+				toolCallCounts: parser.getToolCallCounts(),
+			});
 
 			// The provider refused this run's credential. Ask the provider directly
 			// whether the credential itself is dead and, if it is, take it out of
@@ -3702,33 +3720,28 @@ export async function runAgent(
 
 			const abortUsage = (await recoverUsageOnce()) ?? parser.getUsage() ?? currentUsage;
 			await deps.logs.end(streamId);
-			await updateHeartbeatRun(
-				deps.db,
-				heartbeatRunId,
-				{
-					status,
-					exitCode: -1,
-					durationMs,
-					error: errorMessage,
-					// Recover before falling back to the parser: a runtime that reports
-					// usage only in a file reaches here with nothing captured at all, so
-					// an hour of real work recorded zero tokens.
-					usage: abortUsage,
-					// A killed run's figure is never final, and this is the path where
-					// that mattered least visibly and most often: no flush had carried
-					// usage for these runtimes, so the flag stayed false and the UI
-					// presented an interrupted run's tokens as the whole story.
-					...(abortUsage ? { usagePartial: true } : {}),
-					// Partial by nature - the calls made before the run died are still the
-					// truth about what it reached for, and a died-early run is exactly the
-					// case worth being able to inspect.
-					toolCallCounts: parser.getToolCallCounts(),
-					// In this awaited write, so a dispatch after the run returns always
-					// sees the size stop that holds its task.
-					stopReason: isRunSizeStopReason(reason) ? reason : null,
-				},
-				runBroadcast,
-			);
+			await recordRunEnd({
+				status,
+				exitCode: -1,
+				durationMs,
+				error: errorMessage,
+				// Recover before falling back to the parser: a runtime that reports
+				// usage only in a file reaches here with nothing captured at all, so
+				// an hour of real work recorded zero tokens.
+				usage: abortUsage,
+				// A killed run's figure is never final, and this is the path where
+				// that mattered least visibly and most often: no flush had carried
+				// usage for these runtimes, so the flag stayed false and the UI
+				// presented an interrupted run's tokens as the whole story.
+				...(abortUsage ? { usagePartial: true } : {}),
+				// Partial by nature - the calls made before the run died are still the
+				// truth about what it reached for, and a died-early run is exactly the
+				// case worth being able to inspect.
+				toolCallCounts: parser.getToolCallCounts(),
+				// In this awaited write, so a dispatch after the run returns always
+				// sees the size stop that holds its task.
+				stopReason: isRunSizeStopReason(reason) ? reason : null,
+			});
 
 			// A lost output stream is the infrastructure losing the run, not the agent
 			// failing it: the channel carrying stdout died while the command was still
@@ -3750,7 +3763,7 @@ export async function runAgent(
 			return {
 				success: false,
 				exitCode: -1,
-				stderr: errorMessage,
+				stderr: runSecrets.mask(errorMessage),
 				durationMs,
 				heartbeatRunId,
 				timedOut: reason === 'run_timeout',
@@ -3790,17 +3803,12 @@ export async function runAgent(
 		log.error(`Run ${heartbeatRunId} failed before the agent could start:`, error);
 		emit('stderr', `\n[runner] ${verdict.message}\n`);
 		await deps.logs.end(streamId);
-		await updateHeartbeatRun(
-			deps.db,
-			heartbeatRunId,
-			{
-				status: verdict.status,
-				exitCode: -1,
-				durationMs,
-				error: verdict.message,
-			},
-			runBroadcast,
-		);
+		await recordRunEnd({
+			status: verdict.status,
+			exitCode: -1,
+			durationMs,
+			error: verdict.message,
+		});
 		// Only a failure the infrastructure caused earns a recovery retry. A
 		// configuration error reproduces identically on every attempt, and the retry
 		// that used to be minted for one - by the orphan pass, on a row this path had
@@ -3812,7 +3820,7 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stderr: verdict.message,
+			stderr: runSecrets.mask(verdict.message),
 			durationMs,
 			heartbeatRunId,
 			timedOut: verdict.timedOut,
@@ -3877,18 +3885,13 @@ export function shellQuoteArg(arg: string): string {
 	return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
-interface WorktreeRef {
-	loc: WorktreeLoc;
-	headBefore: string | null;
-}
-
 /** Whether any of a run's worktrees has an uncommitted change or an advanced branch tip. */
 async function anyWorktreeChanged(
 	executor: GitExecutor,
 	worktrees: WorktreeRef[],
 ): Promise<boolean> {
 	for (const wt of worktrees) {
-		if (await worktreeHasChanges(executor, wt.loc, wt.headBefore)) return true;
+		if (await worktreeHasChanges(executor, wt.loc, wt.headBefore, wt.since)) return true;
 	}
 	return false;
 }
@@ -3974,20 +3977,38 @@ async function vaultUnpushedWork(
 	unpushed: UnpushedWorkScan,
 	prep: {
 		executor: GitExecutor | null;
-		clones: CloneRef[];
+		/** Clones prepared this run: the only ones whose stored bundle was restored here. */
+		preparedClones: CloneRef[];
 		branch: string | null;
 		recoveryFailed: Set<string>;
 	},
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 ): Promise<boolean> {
-	// No executor means no clone was prepared, so the scan found nothing and there
+	// No executor means no worktree was found, so the scan found nothing and there
 	// is nothing to copy - but an unanswerable scan still may not clear a pin.
 	if (!prep.executor || !prep.branch) return unpushed.work.length > 0;
 	const vault = createBundleVault(deps.dataDir);
 	let stranded = false;
+	// Both halves of the vault assume the stored bundle was restored into the clone
+	// first, which only prep does. A worktree an earlier run left, scanned here
+	// without being prepared, never saw the bundle: its commits may be older than
+	// the stored ones, and its clean scan says nothing about them. So such a clone
+	// neither saves (it could replace a newer bundle) nor releases (it could drop
+	// the only copy); its unpushed commits keep the container pinned instead.
+	const prepared = new Set(prep.preparedClones.map((c) => c.containerPath));
 
 	for (const item of unpushed.work) {
 		const repoName = basename(item.repo.containerPath);
+		if (!prepared.has(item.repo.containerPath)) {
+			stranded = true;
+			emit(
+				'stderr',
+				`[system] ${repoName}: ${item.commits} unpushed commit(s) on ${item.branch} in a worktree ` +
+					`this run did not prepare — this container is held open because it has the only ` +
+					`copy Hezo knows of.\n`,
+			);
+			continue;
+		}
 		const key = { projectId: project.id, repoName, branch: item.branch };
 		const saved = await saveRecoveryBundle(
 			vault,
@@ -4019,7 +4040,7 @@ async function vaultUnpushedWork(
 	// the one condition under which the vault drops anything.
 	if (unpushed.complete) {
 		const withWork = new Set(unpushed.work.map((w) => w.repo.containerPath));
-		for (const clone of prep.clones) {
+		for (const clone of prep.preparedClones) {
 			if (withWork.has(clone.containerPath)) continue;
 			// "This clone has nothing unpushed" only implies "the work reached
 			// origin" when this clone actually *has* the work. If a stored bundle
@@ -4039,372 +4060,49 @@ async function vaultUnpushedWork(
 	return stranded;
 }
 
-async function prepareWorktrees(
-	deps: RunnerDeps,
-	project: RunningProjectInfo,
-	task: TaskInfo,
-	heartbeatRunId: string,
-	bridge: BridgeRunnerArgs | null,
-	runUser: ContainerRunUser,
-	/**
-	 * The run's egress proxy as the container reaches it. Prep clones and
-	 * fetches authenticate with a placeholder only the proxy can substitute, so
-	 * without this a private repo is refused upstream as a bad token — the same
-	 * failure a provisioning clone hits without its own allocation.
-	 */
-	egress: EgressEnvDescriptor | null,
-	emit: (stream: 'stdout' | 'stderr', text: string) => void,
-	signal?: AbortSignal,
-): Promise<{
-	workingDir: string;
-	designatedRepo: RepoRow | null;
-	worktrees: WorktreeRef[];
-	/** Each prepared repo's clone — where the auto-push hook records failed pushes. */
-	clones: CloneRef[];
-	/** The task branch every prepared worktree is on, or null when no repo was prepared. */
-	branch: string | null;
-	executor: GitExecutor | null;
-	/**
-	 * Clones (by container path) that had a stored recovery bundle which could
-	 * **not** be applied. Carried to finalize because it is the one thing that
-	 * makes "this clone has nothing unpushed" uninformative: the commits exist,
-	 * they are just not here - so the vault must not drop its copy.
-	 */
-	recoveryFailed: Set<string>;
-}> {
-	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
-		emit(stream, `[system] ${text}\n`);
+/** What one exec's runtime left in its container that must go when it ends. */
+export interface RunArtifacts {
+	containerId: string;
+	runUser: ContainerRunUser;
+	/** Home-relative config files carrying a per-run secret (`scrubAfterRun`). */
+	homeConfigScrubPaths: string[];
+	/** The per-run home or subscription dir, which holds the provider credential. */
+	homeDir: string | null;
+	/** Names the tunnel config file, `.hezo/tunnel/<id>.json` in the workspace. */
+	tunnelConfigId: string;
+}
 
-	const repos = await deps.db.query<RepoRow>(
-		`SELECT id, repo_identifier FROM repos
-		 WHERE project_id = $1 ORDER BY created_at ASC`,
-		[project.id],
-	);
-
-	if (repos.rows.length === 0) {
-		emitSystem('stdout', '(no repos linked to project — running in /workspace)');
-		return {
-			workingDir: '/workspace',
-			designatedRepo: null,
-			worktrees: [],
-			clones: [],
-			branch: null,
-			executor: null,
-			recoveryFailed: new Set<string>(),
-		};
-	}
-
-	return withProjectGitLock(project.id, async () => {
-		// Declared before the first early return: it is a pure function of the task,
-		// and every exit from here reports which branch the run's work is on.
-		const branchName = `hezo/${task.identifier}`;
-		// Repos whose stored recovery bundle could not be applied this run. See the
-		// field's docstring on the return type - it is what stops finalize reading
-		// "nothing unpushed here" as "the work reached origin".
-		const recoveryFailed = new Set<string>();
-		// All git runs inside the project container; the host only does the bind-mount
-		// filesystem checks. Remote ops authenticate over HTTPS with a placeholder the
-		// egress proxy substitutes, so they carry the run's proxy env — the same
-		// entries the agent CLI gets, from the same builder. The team's git identity
-		// (+ signing) is passed so the worktree catch-up merge can record a (verified)
-		// merge commit; the run team owns this, matching the agent's own in-container
-		// commits.
-		const gitIdentityEnv = await buildGitIdentityEnv(deps.db, deps.masterKeyManager, {
-			projectId: project.id,
-			teamId: project.team_id,
+/**
+ * Remove what a task run or a chat turn leaves in a pooled container: the
+ * home-rooted config files carrying its token (Antigravity's mcp_config.json holds
+ * the agent JWT), its per-run home (it holds the provider credential), and its
+ * tunnel config. Pooled containers serve one run after another, so anything left
+ * here is readable by the next. Through the file seam, because on a managed
+ * backend these live inside the sandbox, where a host `rmSync` would silently
+ * no-op. `step` isolates each removal, so one failure never skips the others.
+ */
+export async function scrubRunArtifacts(
+	docker: ContainerEngine,
+	a: RunArtifacts,
+	step: (label: string, fn: () => Promise<void>) => Promise<void>,
+): Promise<void> {
+	if (a.homeConfigScrubPaths.length > 0) {
+		await step('scrub-home-config', async () => {
+			const homeFiles = docker.files(a.containerId, containerHomeDir(a.runUser));
+			for (const rel of a.homeConfigScrubPaths) await homeFiles.remove(rel);
 		});
-		const gitPrepEnv = egress
-			? [...gitIdentityEnv, ...buildEgressProxyEnv(egress)]
-			: gitIdentityEnv;
-		// The run id doubles as the exec scope marker so an abandoned prep op's
-		// git/ssh/bridge tree stays killable; the agent CLI hasn't started yet, so
-		// a prep-abort marker kill can only hit prep's own processes.
-		const executor = ContainerGitExecutor.forPrep(
-			deps.docker,
-			project.container_id,
-			bridge,
-			runUser,
-			heartbeatRunId,
-			gitPrepEnv,
-			signal,
-		);
-
-		emitSystem('stdout', '(syncing repos...)');
-		const syncRes = await ensureProjectRepos(
-			deps.db,
-			{ id: project.id, team_id: project.team_id },
-			deps.dataDir,
-			executor,
-			emitSystem,
-		);
-		if (syncRes.cloned.length > 0) {
-			emitSystem('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)`);
-		}
-		if (syncRes.repaired.length > 0) {
-			emitSystem('stdout', `(repaired ${syncRes.repaired.length} repo(s) with a broken origin)`);
-		}
-
-		if (signal?.aborted) {
-			return {
-				workingDir: '/workspace',
-				designatedRepo: null,
-				worktrees: [],
-				clones: [],
-				branch: branchName,
-				executor,
-				recoveryFailed,
-			};
-		}
-
-		const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
-		const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
-		const taskWorktreeRoot = join(worktreesRoot, task.identifier);
-		const containerWorktreeRoot = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}`;
-		mkdirSync(taskWorktreeRoot, { recursive: true });
-		// Also create the root from inside the container and confirm it is visible
-		// there. The host mkdir above may not have propagated into the container yet
-		// (bind-mount propagation lag, most visibly right after a reprovision), and the
-		// chown below is skipped for a root run-user — so without this the in-container
-		// `git worktree add` can fail with ENOENT on the worktree path. The readiness
-		// check retries until the dir stats as present in the container's namespace.
-		await ensureContainerDirReady(deps.docker, project.container_id, containerWorktreeRoot);
-		// Give the run-user ownership so the in-container `git worktree add` (run as
-		// the run-user) can populate it. No-op when the run-user is root.
-		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
-
-		// Addressed inside the container, with the seam rooted there. A host path
-		// would only line up while the container is on this machine.
-		const repoLocOf = (name: string): RepoLoc => {
-			const containerPath = `${CONTAINER_WORKSPACE_ROOT}/${name}`;
-			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
-		};
-		const wtLocOf = (name: string): WorktreeLoc => {
-			const containerPath = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`;
-			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
-		};
-
-		const worktreeErrors = new Map<string, string>();
-		for (const repo of repos.rows) {
-			if (signal?.aborted) break;
-			const repoName = repoNameFromIdentifier(repo.repo_identifier);
-			const repoLoc = repoLocOf(repoName);
-
-			if (!(await repoLoc.files.exists('.git'))) {
-				worktreeErrors.set(repo.id, 'repo is not cloned');
-				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
-				continue;
-			}
-
-			// Install/refresh the auto-push post-commit hook so every commit the agent
-			// makes this run is pushed to origin immediately — committed work then
-			// survives an aborted or timed-out run instead of dying with the ephemeral
-			// worktree. Idempotent and best-effort (never throws). Clearing the hook's
-			// error log here scopes what the run reports at finalize to this run's own
-			// failed pushes.
-			await ensurePushHook(repoLoc);
-			await clearPushErrors(repoLoc);
-
-			// Bootstrap a connected repo that has no commits yet: `git worktree add`
-			// can't branch off an unborn HEAD, so an empty remote would otherwise fail
-			// worktree prep below with "clone is empty (no commits fetched)". Seed a
-			// minimal README initial commit and push it so the repo has a default branch;
-			// the fetch just below then materializes its `origin/*` tracking refs. No-op
-			// when the remote already has commits.
-			const seed = await seedInitialCommitIfEmpty(executor, repo.repo_identifier, repoLoc, true);
-			if (seed.seeded) {
-				emitSystem('stdout', `seeded initial commit for ${repoName} (remote was empty)`);
-			} else if (seed.error) {
-				emitSystem('stderr', `could not seed initial commit for ${repoName}: ${seed.error}`);
-			}
-
-			emitSystem('stdout', `git fetch ${repoName}...`);
-			const fetchRes = await fetchRepo(executor, repoLoc);
-			if (fetchRes.success) {
-				emitSystem('stdout', `git fetch ${repoName} done`);
-			} else {
-				emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
-			}
-
-			// Keep the clone's local default branch (the "main codebase") current with
-			// the remote — a clean fast-forward, since the clone holds no local commits
-			// on its default.
-			const ffWarn = await fastForwardLocalDefault(executor, repoLoc);
-			if (ffWarn) emitSystem('stderr', `${repoName}: ${ffWarn}`);
-
-			// Recover commits an earlier run left in a DIFFERENT container because its
-			// push was denied. This is the half of the durability story that only
-			// matters once a project has more than one container: without it, run 2
-			// silently starts from a remote that never received run 1's work.
-			//
-			// Strictly after the origin fetch above: the stored bundle is a delta whose
-			// prerequisites are the remote tips, so git refuses to apply it to a clone
-			// that has not caught up. That ordering is enforced by git, not just by
-			// this comment.
-			const recovered = await restoreRecoveryBundle(
-				createBundleVault(deps.dataDir),
-				deps.docker.files(project.container_id, repoLoc.containerPath),
-				executor,
-				repoLoc,
-				{ projectId: project.id, repoName, branch: branchName },
-			);
-			if (!recovered.ok) {
-				// A bundle exists for this branch and this clone does not have its
-				// commits. Recorded so finalize does not mistake "nothing unpushed
-				// here" for "the work is safely on origin" and drop the only copy.
-				recoveryFailed.add(repoLoc.containerPath);
-				emitSystem('stderr', `${repoName}: ${recovered.reason}`);
-			} else if (recovered.bytes !== null) {
-				emitSystem(
-					'stdout',
-					`${repoName}: recovered commits an earlier run could not push (${recovered.bytes} bytes)`,
-				);
-			}
-
-			emitSystem('stdout', `git worktree ${repoName}...`);
-			const wt = await ensureTaskWorktreeWithRetry(
-				executor,
-				repoLoc,
-				wtLocOf(repoName),
-				branchName,
-				async () => {
-					// A transient bind-mount ENOENT right after a reprovision — re-assert the
-					// worktree root is visible in-container before git retries the add.
-					await ensureContainerDirReady(deps.docker, project.container_id, containerWorktreeRoot);
-					emitSystem('stderr', `git worktree ${repoName}: mount not ready, retrying`);
-				},
-			);
-			if (!wt.success) {
-				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
-				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
-			} else {
-				if (wt.created) {
-					emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
-				}
-				// Bring any recovered commits onto the task branch itself. Fetching them
-				// above made them present (so nothing is lost); this is what makes them
-				// the agent's starting point rather than a ref it would have to know to
-				// look for. Fast-forward only, and non-fatal either way.
-				const replayed = await fastForwardFromRecovery(executor, wtLocOf(repoName), branchName);
-				if (replayed.warning) {
-					emitSystem('stderr', `${repoName}: ${replayed.warning}`);
-				} else if (replayed.merged) {
-					emitSystem('stdout', `${repoName}: replayed recovered commits onto ${branchName}`);
-				}
-
-				// Catch the task branch up to the freshly-fetched trunk so a resumed run
-				// starts from current default instead of forcing the agent to merge by
-				// hand. A merge failure is non-fatal — the worktree is still usable and
-				// the agent reconciles — so it never enters worktreeErrors.
-				const caughtUp = await mergeDefaultIntoWorktree(executor, repoLoc, wtLocOf(repoName));
-				if (caughtUp.warning) {
-					emitSystem('stderr', `${repoName}: ${caughtUp.warning}`);
-				} else if (caughtUp.merged) {
-					emitSystem('stdout', `${repoName}: caught up ${branchName} to origin default`);
-				}
-			}
-		}
-
-		if (signal?.aborted) {
-			return {
-				workingDir: '/workspace',
-				designatedRepo: null,
-				worktrees: [],
-				clones: [],
-				branch: branchName,
-				executor,
-				recoveryFailed,
-			};
-		}
-
-		const designated = project.designated_repo_id
-			? repos.rows.find((r) => r.id === project.designated_repo_id)
-			: null;
-		const primary = designated ?? repos.rows[0];
-		const primaryName = repoNameFromIdentifier(primary.repo_identifier);
-
-		// The run executes with this worktree as its cwd; proceeding without it
-		// would only surface later as an opaque container chdir failure.
-		const primaryError = worktreeErrors.get(primary.id);
-		if (primaryError) {
-			throw new Error(`cannot prepare worktree for ${primaryName}: ${primaryError}`);
-		}
-
-		const workingDir = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${primaryName}`;
-
-		// Capture each prepared worktree's location + pre-run commit so the completion
-		// path can detect whether the run produced any code change.
-		const worktrees: WorktreeRef[] = [];
-		const clones: CloneRef[] = [];
-		for (const repo of repos.rows) {
-			if (worktreeErrors.has(repo.id)) continue;
-			const repoName = repoNameFromIdentifier(repo.repo_identifier);
-			const loc = wtLocOf(repoName);
-			if (!(await loc.files.exists('.git'))) continue;
-			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
-			clones.push({ ...repoLocOf(repoName), repoId: repo.id });
-		}
-
-		// Reclaim the worktrees of finished tasks before the agent starts. Worktrees
-		// are deliberately kept after a run (a task gets many runs and reusing its
-		// worktree is the common case), so a container that serves twenty tasks
-		// accumulates twenty worktrees and their node_modules. On the operator's own
-		// daemon that only costs disk; a managed sandbox has a few GB in total, and
-		// package caches cannot be moved onto the shared store, so this is the only
-		// lever on that budget.
-		//
-		// Bounded per repo so a long backlog costs a predictable amount per run, and
-		// best-effort: reclaimed disk is never worth failing a run over. Only tasks
-		// that are terminal or gone are touched, and committed work survives on the
-		// `hezo/<identifier>` branch ref regardless.
-		try {
-			const gc = await collectFinishedWorktrees(
-				deps.db,
-				executor,
-				project.id,
-				clones,
-				undefined,
-				undefined,
-				// Never this run's own worktree: a run on a closed task (a comment,
-				// a mention, a Coach review) would otherwise have prep delete the
-				// directory it just set as the working directory.
-				task.identifier,
-			);
-			if (gc.removed.length > 0) {
-				emitSystem(
-					'stdout',
-					`(reclaimed ${gc.removed.length} finished task worktree(s)${gc.deferred ? ', more remain for the next run' : ''})`,
-				);
-			}
-		} catch (e) {
-			log.error(`Run ${heartbeatRunId}: worktree GC failed:`, e);
-		}
-
-		// Measure what the container is using *after* the GC above, so the figure
-		// the pool recycles on reflects the disk that is actually unavailable
-		// rather than what a reclaim was about to free. A container at the ceiling
-		// is replaced on the next acquire instead of reused, because one that fills
-		// up mid-run fails that run partway through.
-		//
-		// Null means the measurement could not be taken, which leaves the previous
-		// figure alone - reporting an unmeasurable container as empty would defeat
-		// the rung entirely.
-		try {
-			const used = await deps.docker.diskUsedBytes(project.container_id, CONTAINER_WORKSPACE_ROOT);
-			if (used !== null) await setPoolMemberDiskUsage(deps.db, project.container_id, used);
-		} catch (e) {
-			log.error(`Run ${heartbeatRunId}: disk measurement failed:`, e);
-		}
-
-		return {
-			workingDir,
-			designatedRepo: primary ?? null,
-			worktrees,
-			clones,
-			branch: branchName,
-			executor,
-			recoveryFailed,
-		};
-	});
+	}
+	// Hostnames only, never a secret value, so housekeeping rather than a scrub -
+	// but one file per exec would otherwise accumulate for the container's life.
+	await step('remove-tunnel-config', () =>
+		docker
+			.files(a.containerId, CONTAINER_WORKSPACE_ROOT)
+			.remove(join('.hezo', 'tunnel', `${a.tunnelConfigId}.json`)),
+	);
+	const homeDir = a.homeDir;
+	if (homeDir) {
+		await step('remove-home-mount', () => docker.files(a.containerId, homeDir).removeDir('.'));
+	}
 }
 
 export interface MentionOpenTicket {
@@ -5985,6 +5683,8 @@ async function markHeartbeatRunRunning(
 	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
 	return true;
 }
+
+type RunRowUpdate = Parameters<typeof updateHeartbeatRun>[2];
 
 async function updateHeartbeatRun(
 	db: Db,

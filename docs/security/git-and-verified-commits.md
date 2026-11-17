@@ -35,20 +35,23 @@ until it's ready; if setup fails (for example the workspace couldn't start), the
 shown on the repository with a **Retry** button.
 
 If you connect a repository that has **no commits yet**, Hezo seeds it with a minimal
-`README.md` on its first run and pushes that as the initial commit - an empty repository
+`README.md` the first time an agent prepares it and pushes that as the initial commit - an empty repository
 has no branch for a task to build on, so this makes it usable immediately. (Repositories
 you create through Hezo already start with an initial commit, so this only applies to
 pre-existing empty repositories you link.)
 
 ### Every linked repository is a working repository
 
-A project can link more than one repository, and agents work in **all** of them - each is
-cloned into the workspace and checked out on the task's own branch, with its own remote.
-One of them is the **designated** repository (the default place a task's work goes, and the
-directory an agent starts in), but that is a default, not a boundary: an agent can commit,
-push, and open a pull request in any repository you have linked. Nothing about a run is
-scoped to a single repository - the same project key and the same connected account serve
-every one of them.
+A project can link more than one repository, and agents work in **all** of them. A run
+starts with no repository checked out. When an agent needs code, it asks Hezo to prepare
+the repositories it needs: each one is cloned into the workspace if it is not there yet,
+fetched, and checked out on the task's own branch, with its own remote. A run that never
+touches code, such as a planning or marketing task, skips this work and starts sooner.
+
+One of the repositories is the **designated** repository (the default place a task's work
+goes), but that is a default, not a boundary: an agent can commit, push, and open a pull
+request in any repository you have linked. Nothing about a run is scoped to a single
+repository - the same project key and the same connected account serve every one of them.
 
 ### Write access is checked, not assumed
 
@@ -119,8 +122,9 @@ three things.
   reached GitHub is not a completed run, and marking it failed is what puts it in front of
   you.
 - **A recovery copy is kept.** Hezo packs the undelivered commits and copies them onto your
-  instance, so the next agent to work on that task picks them up automatically - even if it
-  runs in a different container, and even if the original one is long gone. The copy is
+  instance, so the next agent that prepares that repository for the task picks them up
+  automatically - even if it runs in a different container, and even if the original one is
+  long gone. The copy is
   dropped once the commits do reach GitHub, and is otherwise kept until you delete the
   project.
 - **The container is held open** if the copy could not be made, so the machine holding the
@@ -147,9 +151,10 @@ against it. From there, three recovery actions are available:
   to GitHub is never affected.
 - **Prune worktrees** - clears out per-task working copies for closed (completed or cancelled) tasks,
   plus any leftover copies from runs that were interrupted. Working copies for tasks still in progress
-  are left untouched. A closed task's working copy is normally removed automatically the moment the
-  task closes; this button is the manual sweep for anything left behind. Committed work on their
-  branches is preserved.
+  are left untouched, and so are those of tasks an agent is still working on. A closed task's
+  folder is normally removed automatically: as the task closes on a local Docker setup, and at the
+  end of a later run on every setup. This button is the manual sweep for anything left behind.
+  Committed work on their branches is preserved.
 - **Re-clone** - the last resort: deletes the project's copy entirely and clones it fresh from GitHub.
 
 These actions only ever affect the local working copy on your instance, never the repository on

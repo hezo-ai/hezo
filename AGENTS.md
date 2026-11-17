@@ -309,7 +309,7 @@ Never expose raw secrets, private keys or signing keys via endpoints or logs. Us
 **A hard architectural invariant.** An agent run - container env, arguments, config files, mounted files, logs, anything the agent process can read - must never contain a confidential value in plaintext. Every secret an agent touches is referenced only by a placeholder; the real value lives encrypted and is substituted **at the egress proxy**, at request time, scoped to the hosts it may fire for.
 
 - **Assume the proxy catches everything.** A call bypassing it carries the unsubstituted placeholder and fails upstream - a usability failure, never a leak. "Fixing" that by materializing the real value into the run is a red-line violation, not a fix.
-- **Sole exception - the run CLI's own model-provider credential**, injected in plaintext and sent direct, that endpoint being exempt from interception. It never licenses materializing any other secret.
+- **Sole exception - the run CLI's own model-provider credential**, injected in plaintext and sent direct, exempt from interception. It never licenses materializing any other secret.
 - **Connectors are not exempt.** The descriptor loader resolves a secret's **name** and never decrypts its value.
 - **Server-side code that resolves a credential must not take its destination, or any part of the value, from an agent.** Trace every field the destination is derived from back to who can write it; an agent-writable path that could move a credentialed row's destination must reject the write atomically, not merely be trusted not to. Return nothing derived from the value - no prefix, length, hash or masked form. Answer the diagnostic question instead, and scrub the value out of anything relayed from upstream.
 
@@ -325,7 +325,7 @@ Agents reference secrets by placeholder in any header or URL they emit, and the 
 - **A credential that rides an outbound HTTP header must declare its allowed hosts**; the request is rejected otherwise.
 - **Agents request the narrowest scope and shortest expiry**, and prefer a registered connector where one covers the provider. A raw secret reaches a run only by a human pasting it in response to an explicit request.
 
-Secret values are never logged; substitution failures surface to the agent as explicit HTTP errors.
+Secret values are never logged: register each per-run plaintext value with the run's `SecretMasker`. Substitution failures surface to the agent as explicit HTTP errors.
 
 ### Route authorization
 

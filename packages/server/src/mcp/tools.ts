@@ -231,6 +231,7 @@ import {
 } from '../services/reactions';
 import { listReviewComments } from '../services/review-comments';
 import { isTaskBusyInDb } from '../services/run-concurrency';
+import { getRunRepoSession } from '../services/run-repos';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
 import {
@@ -5715,6 +5716,35 @@ export function registerTools(
 			const reason = (args.reason as string).trim();
 			await markRunReportedNoWork(db, auth.runId, reason);
 			return { ok: true };
+		},
+		db,
+		{ audience: 'agent_run' },
+	);
+
+	tool(
+		server,
+		'prepare_repos',
+		"Prepare this run's linked repositories so you can read and change their code. Your run starts in its task folder with no repository checked out. Call this before you read, build, test or commit code, even when the worktree already exists from an earlier run: it fetches each repository, checks out its worktree on the task branch and catches that branch up to the default branch. Name only the repositories you need. Each comes back with its worktree path: prefix every shell command for that repository with `cd <path> &&`. Read every file listed in `instructions` before you change code; it holds that repository's own conventions. Never `git clone` or `git init` a linked repository yourself. Calling it again for a repository already prepared this run costs nothing. If the answer says `pending`, call it again with the same repositories to wait for it.",
+		{
+			repos: z
+				.array(z.string().trim().min(1))
+				.optional()
+				.describe(
+					'Repository names as the Repository section of your prompt lists them (e.g. "website"), or `owner/name`. Omit to prepare every linked repository.',
+				),
+		},
+		async (args, _db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.runId) {
+				return { error: 'prepare_repos is only available within an agent run' };
+			}
+			const session = getRunRepoSession(auth.runId);
+			if (!session) {
+				return {
+					error:
+						'This run has no repositories to prepare: its project has no linked repository, or the run is not working on a task.',
+				};
+			}
+			return session.prepareWithin(args.repos as string[] | undefined);
 		},
 		db,
 		{ audience: 'agent_run' },

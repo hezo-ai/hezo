@@ -107,6 +107,12 @@ export async function ensureProjectRepos(
 		 * a removal through the same seam can change the answer.
 		 */
 		freshClone?: ReadonlySet<string>;
+		/**
+		 * Repo identifiers to sync, leaving every other linked repo untouched. A
+		 * run prepares only the repos its agent asked for, so a missing clone of
+		 * one it never named is not worth a clone on its time.
+		 */
+		only?: ReadonlySet<string>;
 	} = {},
 ): Promise<RepoSyncResult> {
 	const result: RepoSyncResult = { cloned: [], repaired: [], skipped: [], failed: [] };
@@ -132,6 +138,7 @@ export async function ensureProjectRepos(
 	type SyncMode = 'clone' | 'init' | 'adopt' | 'repoint';
 	const pending: Array<{ repo: RepoRow; mode: SyncMode; loc: RepoLoc; badOrigin?: string }> = [];
 	for (const r of repos.rows) {
+		if (opts.only && !opts.only.has(r.repo_identifier)) continue;
 		const name = repoNameFromIdentifier(r.repo_identifier);
 
 		const containerPath = `${containerWorkspaceRoot}/${name}`;

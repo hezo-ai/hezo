@@ -216,6 +216,15 @@ export function formatEgressProxyUrl(host: string, port: number, token: string |
 	return `http://${PROXY_AUTH_USERNAME}:${token}@${host}:${port}`;
 }
 
+/**
+ * The forms a run's proxy token can take in text the run prints: the token in
+ * its proxy URL, and the Basic `Proxy-Authorization` value clients send.
+ */
+export function egressProxyTokenForms(token: string | null): string[] {
+	if (!token) return [];
+	return [token, Buffer.from(`${PROXY_AUTH_USERNAME}:${token}`).toString('base64')];
+}
+
 /** How many ports to try binding before giving up allocating a run's proxy. */
 const EGRESS_BIND_ATTEMPTS = 5;
 

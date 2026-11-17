@@ -492,12 +492,12 @@ describe('claimPoolMember', () => {
 
 	it('claims an idle member', async () => {
 		await seed('free', 'idle');
-		expect(await claimPoolMember(db, 'free', null)).toBe(true);
+		expect(await claimPoolMember(db, 'free')).toBe(true);
 	});
 
 	it('refuses a member another run already holds', async () => {
 		await seed('taken', 'busy');
-		expect(await claimPoolMember(db, 'taken', null)).toBe(false);
+		expect(await claimPoolMember(db, 'taken')).toBe(false);
 	});
 
 	// `<> 'busy'` used to let these through, so a container the backend had just
@@ -505,17 +505,17 @@ describe('claimPoolMember', () => {
 	// a sandbox that was not up.
 	it('refuses a suspended member rather than handing a run a stopped container', async () => {
 		await seed('parked', 'suspended');
-		expect(await claimPoolMember(db, 'parked', null)).toBe(false);
+		expect(await claimPoolMember(db, 'parked')).toBe(false);
 	});
 
 	it('refuses a member whose provisioning failed', async () => {
 		await seed('broken', 'error');
-		expect(await claimPoolMember(db, 'broken', null)).toBe(false);
+		expect(await claimPoolMember(db, 'broken')).toBe(false);
 	});
 
 	it('refuses a member that is still coming up', async () => {
 		await seed('coming-up', 'creating');
-		expect(await claimPoolMember(db, 'coming-up', null)).toBe(false);
+		expect(await claimPoolMember(db, 'coming-up')).toBe(false);
 	});
 });
 

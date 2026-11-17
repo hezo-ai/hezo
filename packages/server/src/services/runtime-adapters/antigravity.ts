@@ -88,12 +88,12 @@ export const antigravityAdapter: RuntimeAdapter = {
 	// "leaving 1 daemon task(s) running on exit", which is not a kill.
 	backgroundTerminationMarker: /terminating [1-9]\d* background task\(s\)/,
 	// Without it agy tells the model it has no workspace and should create one
-	// under `~/.gemini/antigravity-cli/scratch`, even with a repo as its cwd. With
-	// it, the model is told the directory is its workspace, the repo's `AGENTS.md`
-	// and `GEMINI.md` reach it as rules, and the repo's `.agents/hooks.json` runs -
-	// what Claude Code and Codex do with their own project files. The path must be
-	// absolute: 1.2.8 logs and ignores a relative one, and accepts one that does not
-	// exist, both silently.
+	// under `~/.gemini/antigravity-cli/scratch`. With it, the model is told the
+	// directory is its workspace. The working directory is the task folder, not a
+	// repo, so a repo's `AGENTS.md`/`GEMINI.md` and `.agents/hooks.json` are not
+	// loaded from here; `prepare_repos` lists the repo's instruction files for the
+	// agent to read. The path must be absolute: 1.2.8 logs and ignores a relative
+	// one, and accepts one that does not exist, both silently.
 	extraArgs: (ctx) => ['--add-dir', ctx.workingDir],
 	build(descriptors): McpInjection {
 		const homeConfigFiles: HomeConfigFile[] = [

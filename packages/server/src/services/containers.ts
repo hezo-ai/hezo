@@ -46,10 +46,8 @@ import {
 import type { ContainerEngine, ContainerInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { ensureImage } from './ensure-image';
-import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { currentAgentImageVersion, resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
-import { ensureProjectRepos } from './repo-sync';
 import {
 	CAPACITY_PARK_QUEUED_REASON,
 	getActiveContainers,
@@ -87,7 +85,7 @@ import {
 	upsertPoolMember,
 } from './sandbox/pool-db';
 import { containerNameFromProvisionalKey, provisionalContainerKey } from './sandbox/uptime-ledger';
-import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
+import type { SshAgentServer } from './ssh-agent';
 import { getOrCreateInstanceId } from './telemetry';
 import { createWakeup } from './wakeup';
 import {
@@ -548,7 +546,7 @@ export async function provisionContainer(
 	teamSlug: string,
 	wakePolicy: ProvisionWakePolicy = 'wake-pending-agents',
 ): Promise<string> {
-	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
+	const { db, docker, dataDir, wsManager, logs } = deps;
 	const teamId = project.team_id;
 
 	// Measured from the moment the project goes `creating`, which is also when the
@@ -847,53 +845,9 @@ export async function provisionContainer(
 			'/run/hezo',
 		]);
 
-		if (masterKeyManager) {
-			emit('stdout', '→ Syncing project repos');
-			// Clone in-container (the host has no git). A private repo's remote carries
-			// a credential placeholder the egress proxy substitutes, and the bridge
-			// carries commit signing — provisioning isn't a run, so allocate a
-			// short-lived pair. Without them the clone still runs but ships the
-			// placeholder unsubstituted, so a private repo fails as a bad token.
-			const syncRepos = (
-				bridge: BridgeRunnerArgs | null,
-				scopeId: string,
-				proxyEnv: string[] = [],
-			) =>
-				ensureProjectRepos(
-					db,
-					{ id: project.id, team_id: teamId },
-					dataDir,
-					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser, scopeId, proxyEnv),
-					(stream, text) => emit(stream, text),
-				);
-			// Guarded on the ssh server alone. The egress proxy is *not* a second
-			// condition: it is mandatory, and `withProvisionBridge` says so by
-			// throwing. Adding it here would make that throw unreachable and
-			// silently degrade to an uncredentialed clone instead — the fallback
-			// the mandatory rule exists to prevent.
-			const syncRes = deps.sshAgentServer
-				? await withProvisionBridge(
-						deps.sshAgentServer,
-						{
-							engine: docker,
-							containerId: Id,
-							teamId,
-							dataDir,
-							runUser,
-							db,
-							egressProxy: deps.egressProxy as EgressProxy,
-							projectId: project.id,
-						},
-						({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
-					)
-				: await syncRepos(null, mintGitOpScopeId());
-			if (syncRes.failed.length > 0) {
-				emit(
-					'stderr',
-					`⚠ ${syncRes.failed.length} repo(s) failed to clone; container is usable but some repos may be missing`,
-				);
-			}
-		}
+		// No repo clone here: a container gets a repo's clone the first time a run
+		// on it asks for that repo (`prepare_repos`), so a run that never touches
+		// code never waits for one. Linking or recloning a repo still clones it.
 
 		emit('stdout', '→ Installing pending local MCP servers');
 		try {
@@ -1464,8 +1418,12 @@ export interface AcquiredContainer {
 	 * claimed. The caller states nothing rather than inventing figures.
 	 */
 	allocation: ContainerAllocation | null;
-	/** Idempotent. Returns the container to the pool as idle, recording task affinity. */
-	release(): Promise<void>;
+	/**
+	 * Idempotent. Returns the container to the pool as idle. `affinityTaskId`
+	 * records the task whose worktree the container now holds, so the task's next
+	 * run is routed here; omitted, the recorded affinity is left as it was.
+	 */
+	release(opts?: { affinityTaskId?: string | null }): Promise<void>;
 }
 
 /**
@@ -1614,7 +1572,7 @@ export async function acquireRunContainer(
 				// the post-provision fan-out would wake agents for work this run is
 				// about to do - including the agent whose run is provisioning.
 				const id = await provisionContainer(deps, proj, proj.team_slug, 'caller-runs-the-work');
-				if (await claimPoolMember(deps.db, id, taskId)) {
+				if (await claimPoolMember(deps.db, id)) {
 					return { kind: 'acquired' as const, containerId: id };
 				}
 				return { kind: 'retry' as const };
@@ -1668,7 +1626,7 @@ export async function acquireRunContainer(
 				await setPoolMemberState(db, member.id, 'idle', undefined, startRequestedAt);
 				await markProjectContainerStarted(deps, projectId, member.id);
 			}
-			if (await claimPoolMember(deps.db, member.id, taskId)) {
+			if (await claimPoolMember(deps.db, member.id)) {
 				return { kind: 'acquired' as const, containerId: member.id };
 			}
 			return { kind: 'retry' as const };
@@ -1702,15 +1660,18 @@ export async function acquireRunContainer(
 		// an engine round trip - cheaper than threading the figures back out of
 		// every rung, and uniform across all of them.
 		allocation: await readPoolMemberAllocation(db, containerId),
-		release: async () => {
+		release: async (opts = {}) => {
 			if (released) return;
 			released = true;
 			// Back to idle only. Whether it is then retired is decided once the run's
 			// follow-up work has had its chance to claim it - see the job manager's
 			// release-time retirement - so nothing here races the next acquire.
-			await releasePoolMember(db, containerId, taskId, workload === 'chat-turn').catch(
-				() => undefined,
-			);
+			await releasePoolMember(
+				db,
+				containerId,
+				opts.affinityTaskId ?? null,
+				workload === 'chat-turn',
+			).catch(() => undefined);
 		},
 	};
 }

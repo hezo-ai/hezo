@@ -27,6 +27,7 @@ import { trackBackground } from '../lib/background';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
 import { KeyedLockTimeoutError } from '../lib/keyed-lock';
 import { isUuid } from '../lib/resolve';
+import { credentialSecretValues, SecretMasker } from '../lib/secret-masker';
 import { withTransaction } from '../lib/sql';
 import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
@@ -47,6 +48,7 @@ import {
 	type RunnerDeps,
 	recoverOffStreamRunUsage,
 	type SubscriptionMount,
+	scrubRunArtifacts,
 } from './agent-runner';
 import {
 	type AgentChatParser,
@@ -81,7 +83,7 @@ import {
 } from './containers';
 import { getAgentSystemPrompt } from './documents';
 import { type EffortRuntimeApplication, resolveEffort } from './effort';
-import type { ConnectorRunRejection } from './egress';
+import { type ConnectorRunRejection, egressProxyTokenForms } from './egress';
 import { applyEffortToRuntime } from './runtime-adapters';
 import {
 	persistRotatedSubscriptionAuth,
@@ -453,6 +455,12 @@ interface TurnSession {
 	homeMount: RuntimeHomeMount | null;
 	/** What the turn's execs read their provider/credential identity from. */
 	invocationInputs: HostSideInputs;
+	/**
+	 * This turn's own plaintext values (provider credential, session JWT, egress
+	 * and bridge tokens), masked out of every reply, error and title it stores,
+	 * broadcasts or delivers to a channel.
+	 */
+	masker: SecretMasker;
 }
 
 /**
@@ -512,6 +520,10 @@ interface HostSideAllocation {
 	 * (and scrub them - they can carry the provider credential).
 	 */
 	homeMount: RuntimeHomeMount | null;
+	/** Home-relative config files carrying this turn's token, removed at teardown. */
+	homeConfigScrubPaths: string[];
+	/** See {@link TurnSession.masker}. */
+	masker: SecretMasker;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
 	/**
@@ -1719,6 +1731,7 @@ export class ChatSessionManager {
 			subscriptionMount: allocation.subscriptionMount,
 			homeMount: allocation.homeMount,
 			invocationInputs: inputs,
+			masker: allocation.masker,
 		};
 		return {
 			session,
@@ -1728,6 +1741,28 @@ export class ChatSessionManager {
 				} catch (e) {
 					log.warn(`chat turn tunnel close failed: ${String(e)}`);
 				}
+				// While the container is still this turn's: what is left here is
+				// readable by whichever run or turn claims the container next.
+				await scrubRunArtifacts(
+					this.deps.docker,
+					{
+						containerId,
+						runUser,
+						homeConfigScrubPaths: allocation.homeConfigScrubPaths,
+						homeDir:
+							allocation.subscriptionMount?.containerDir ??
+							allocation.homeMount?.containerDir ??
+							null,
+						tunnelConfigId: turnId,
+					},
+					async (label, fn) => {
+						try {
+							await fn();
+						} catch (e) {
+							log.warn(`chat turn cleanup step '${label}' failed: ${String(e)}`);
+						}
+					},
+				);
 				await allocation.releaseSsh().catch(() => undefined);
 				await allocation.releaseEgress().catch(() => undefined);
 			},
@@ -2228,6 +2263,9 @@ export class ChatSessionManager {
 		let releaseSsh = async (): Promise<void> => undefined;
 		let releaseEgress = async (): Promise<void> => undefined;
 		let tunnel: RunTunnel | null = null;
+		// Every plaintext value this turn carries, registered as it is minted.
+		const masker = new SecretMasker();
+		masker.addAll(credentialSecretValues(inputs.credential.value));
 		try {
 			const label = `chat`;
 
@@ -2251,6 +2289,7 @@ export class ChatSessionManager {
 				sshSocketContainerPath = `/run/hezo/${turnId}.sock`;
 				sshHostTcpPort = allocated.tcpHostPort;
 				sshTokenHex = allocated.tokenHex;
+				masker.add(allocated.tokenHex);
 				releaseSsh = () => sshAgentServer.releaseRunSocket(turnId);
 			}
 
@@ -2270,6 +2309,7 @@ export class ChatSessionManager {
 					port: allocated.proxyPort,
 					token: allocated.token,
 				};
+				masker.addAll(egressProxyTokenForms(allocated.token));
 				releaseEgress = () => egressProxy.releaseRunProxy(turnId);
 			}
 
@@ -2349,6 +2389,7 @@ export class ChatSessionManager {
 							ttlSeconds: WORKER_SESSION_JWT_TTL_SECONDS,
 						},
 			);
+			masker.add(agentJwt);
 
 			const effortApplication: EffortRuntimeApplication = applyEffortToRuntime(
 				inputs.runtimeType,
@@ -2367,6 +2408,9 @@ export class ChatSessionManager {
 				agentJwt,
 				agentId: inputs.memberId,
 				resourceId: sessionId,
+				// The turn's own home: removed at teardown, never shared with a sibling
+				// turn of the same session.
+				homeId: turnId,
 				containerId,
 				runUser,
 				promptContainerPath: getContainerPromptPath(sessionId),
@@ -2402,6 +2446,8 @@ export class ChatSessionManager {
 				promptDirective: effortApplication.promptDirective ?? null,
 				subscriptionMount: invocation.subscriptionMount,
 				homeMount: invocation.homeMount,
+				homeConfigScrubPaths: invocation.homeConfigScrubPaths,
+				masker,
 				releaseEgress,
 				releaseSsh,
 				closeTunnel: () => tunnel?.close(),
@@ -2507,13 +2553,19 @@ export class ChatSessionManager {
 		) => {
 			if (finalized) return;
 			finalized = true;
+			// The tail the masker held back goes out as the last delta, so the
+			// streamed text matches the complete message.
+			const heldTail = session.masker.flush('reply');
+			if (heldTail) this.broadcastDelta(conversationId, assistantMessageId, heldTail);
+			// The stored, broadcast and delivered reply all come from this masked copy.
+			const reply = session.masker.mask(accumulated.text);
 			await this.finalizeMessage(
 				conversationId,
 				assistantMessageId,
 				status,
-				accumulated.text,
+				reply,
 				usage,
-				error,
+				error === undefined ? undefined : session.masker.mask(error),
 			);
 			// Reply-where-asked: a completed reply posts back to the surface the turn
 			// came from (web turns already streamed over WebSocket). An
@@ -2521,7 +2573,7 @@ export class ChatSessionManager {
 			// suggested-replies trailer is a web affordance, so the delivered copy
 			// is the clean body.
 			if (status === ChatMessageStatus.Complete) {
-				await this.deliverReplyToOrigin(ctx, parseSuggestedReplies(accumulated.text).body);
+				await this.deliverReplyToOrigin(ctx, parseSuggestedReplies(reply).body);
 			}
 		};
 
@@ -2542,7 +2594,10 @@ export class ChatSessionManager {
 				for (const ev of events) {
 					if (ev.text) {
 						accumulated.text += ev.text;
-						this.broadcastDelta(conversationId, assistantMessageId, ev.text);
+						// Deltas can be token-sized, so a value can arrive split across
+						// two; the masker holds back only what could be its start.
+						const shown = session.masker.push('reply', ev.text);
+						if (shown) this.broadcastDelta(conversationId, assistantMessageId, shown);
 					}
 					// Progress, not conversation: broadcast but never accumulated into the
 					// message, so it reaches the open chatbox and nothing else. Without it
@@ -3174,7 +3229,7 @@ export class ChatSessionManager {
 		}
 		if (abort.signal.aborted) return;
 
-		const title = sanitizeChatTitle(text);
+		const title = sanitizeChatTitle(session.masker.mask(text));
 		if (!title) return;
 		// Persist only while still untitled, so a concurrent path (or a manual title)
 		// is never clobbered; RETURNING confirms we actually set it before broadcasting.
@@ -3301,6 +3356,7 @@ export class ChatSessionManager {
 	private rememberCredentialValue(session: TurnSession, value: string): void {
 		const { credential } = session.invocationInputs;
 		if (credential.value === value) return;
+		session.masker.addAll(credentialSecretValues(value));
 		session.invocationInputs = {
 			...session.invocationInputs,
 			credential: { ...credential, value },

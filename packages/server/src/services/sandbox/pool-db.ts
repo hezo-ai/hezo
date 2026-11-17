@@ -403,20 +403,15 @@ export async function upsertPoolMember(
  *
  * Returns whether the row moved.
  */
-export async function claimPoolMember(
-	db: Db,
-	containerId: string,
-	lastTaskId: string | null,
-): Promise<boolean> {
+export async function claimPoolMember(db: Db, containerId: string): Promise<boolean> {
 	// RETURNING rather than a row count: the driver's QueryResult carries only
 	// rows, and "did this row move" is exactly what decides the race.
 	const res = await db.query<{ container_id: string }>(
 		`UPDATE container_pool_members
-		    SET state = 'busy', last_task_id = COALESCE($2, last_task_id), updated_at = now(),
-		        chat_released_at = NULL
+		    SET state = 'busy', updated_at = now(), chat_released_at = NULL
 		  WHERE container_id = $1 AND state = 'idle'
 		  RETURNING container_id`,
-		[containerId, lastTaskId],
+		[containerId],
 	);
 	if (res.rows.length === 0) return false;
 	// The row moved out of `idle`, so the pool believes this container is up. A
@@ -463,9 +458,11 @@ export async function readPoolMemberAllocation(
 /**
  * Hand a container back after a run.
  *
- * The task is recorded even when the run failed: affinity is about which
- * worktree and `node_modules` are already built, which a failed run leaves just
- * as warm as a successful one.
+ * `lastTaskId` is the task whose worktree this container now holds, or null to
+ * leave the recorded affinity as it was. A claim records nothing: a run that never
+ * prepared its repos leaves no worktree behind, and naming it would route the
+ * task's next coding run to a container with nothing built. A failed run that did
+ * prepare leaves the worktree just as warm, so it is recorded all the same.
  *
  * `releasedByChat` stamps the release as a chat turn's, which is what lets a
  * chat keep this one member warm through a pause between messages. Any other

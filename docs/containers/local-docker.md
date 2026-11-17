@@ -49,8 +49,8 @@ larger host and the automatic figure grows with it.
 
 A project's workspace is a directory on your disk, so the whole disk is behind it. There
 is no per-container disk ceiling to plan around, and Hezo does not prune anything on size
-grounds here. Worktrees for closed tasks are cleaned up as tasks close, as they are
-everywhere.
+grounds here. A closed task's folder is removed as the task closes, and any left behind
+is swept at the end of a later run.
 
 The **Disk per container** setting therefore allocates nothing on this backend. It is
 still there, and still what a container would get if you moved to a managed service, but

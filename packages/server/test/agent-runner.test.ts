@@ -16,7 +16,7 @@ import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import { runLogTextSql } from '../src/db/run-log-chunks';
+import { readRunLogText, runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import {
 	acquireCredentialLock,
@@ -1789,7 +1789,7 @@ describe('runAgent', () => {
 			expect(new Date(row.rows[0].started_at!).getTime()).toBeGreaterThan(Date.now() - 10_000);
 		});
 
-		it('fails the run before exec when the primary repo worktree cannot be prepared', async () => {
+		it('starts the agent with no git work, even when a linked repo is not cloned', async () => {
 			const repoRes = await db.query<{ id: string }>(
 				`INSERT INTO repos (project_id, repo_identifier, host_type)
 				 VALUES ($1, 'acme/todos', 'github') RETURNING id`,
@@ -1797,16 +1797,13 @@ describe('runAgent', () => {
 			);
 			const repoId = repoRes.rows[0].id;
 
-			// Prep runs `git …` and `sh -c …` helpers in the container (repo sync,
-			// worktree-root mkdir/chown, run-user probe); the agent CLI exec is the
-			// runtime binary — neither `git` nor `sh`. The mock git execs "succeed" but
-			// produce no real checkout on disk, so the worktree can't be prepared and the
-			// run must fail before the agent runs.
-			let agentExecCreated = false;
+			// Repos are prepared when the agent asks (`prepare_repos`), never before
+			// it starts, so a repo that cannot be cloned no longer stops the run.
+			let gitExecs = 0;
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: { Cmd: string[] }) => {
-					if (opts.Cmd[0] !== 'git' && opts.Cmd[0] !== 'sh') agentExecCreated = true;
-					return 'exec-wt-fail';
+					if (opts.Cmd[0] === 'git') gitExecs++;
+					return 'exec-lazy';
 				},
 			});
 			const deps: RunnerDeps = {
@@ -1819,21 +1816,15 @@ describe('runAgent', () => {
 			};
 
 			try {
-				// The linked repo can't clone (no bridge), so the primary repo worktree
-				// can't exist. The run must fail with the worktree error instead of
-				// exec'ing the agent CLI into a missing cwd.
 				const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
-				expect(result.success).toBe(false);
-				expect(agentExecCreated).toBe(false);
-				expect(result.stderr).toContain('cannot prepare worktree for todos');
-
-				const row = await db.query<{ status: string; error: string | null }>(
-					'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+				expect(result.success).toBe(true);
+				expect(gitExecs).toBe(0);
+				const row = await db.query<{ working_dir: string | null }>(
+					'SELECT working_dir FROM heartbeat_runs WHERE id = $1',
 					[result.heartbeatRunId],
 				);
-				expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-				expect(row.rows[0].error).toContain('cannot prepare worktree for todos');
+				expect(row.rows[0].working_dir).toBe('/worktrees/RC-1');
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}
@@ -2166,6 +2157,85 @@ describe('runAgent', () => {
 			expect(row.rows[0].invocation_command).toBeTruthy();
 			expect(row.rows[0].invocation_command!).toMatch(/Bearer \*\*\*/);
 			expect(row.rows[0].invocation_command!).not.toMatch(/Bearer eyJ/);
+		});
+
+		// An agent that prints its process environment (a `/proc/*/cmdline` dump,
+		// an `env` call) would otherwise put the run's own secrets in a log that is
+		// stored, broadcast and readable by other agents.
+		it('masks the run credential and access token in the stored log', async () => {
+			let agentExecId = '';
+			let agentEnv: string[] = [];
+			let execSeq = 0;
+			const docker = createMockDocker({
+				execCreate: async (_containerId: string, opts: any) => {
+					const id = `exec-${++execSeq}`;
+					if ((opts.Env ?? []).some((e: string) => e.startsWith('HEZO_AGENT_TOKEN='))) {
+						agentExecId = id;
+						agentEnv = opts.Env;
+					}
+					return id;
+				},
+				execStart: async (id: string) =>
+					id === agentExecId
+						? { stdout: `${agentEnv.join('\n')}\n`, stderr: '' }
+						: { stdout: '', stderr: '' },
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			const token = agentEnv.find((e) => e.startsWith('HEZO_AGENT_TOKEN='))?.slice(17) ?? '';
+			expect(token.length).toBeGreaterThan(20);
+			expect(agentEnv.some((e) => e.includes('sk-ant-test-runner-key'))).toBe(true);
+			const log = await readRunLogText(db, result.heartbeatRunId ?? '');
+			expect(log).toContain('HEZO_AGENT_TOKEN=***');
+			expect(log).not.toContain(token);
+			expect(log).not.toContain('sk-ant-test-runner-key');
+		});
+
+		it('masks the run credential in the error recorded on the run row', async () => {
+			let execSeq = 0;
+			let agentExecId = '';
+			const docker = createMockDocker({
+				execCreate: async (_containerId: string, opts: any) => {
+					const id = `exec-${++execSeq}`;
+					if ((opts.Env ?? []).some((e: string) => e.startsWith('HEZO_AGENT_TOKEN=')))
+						agentExecId = id;
+					return id;
+				},
+				execStart: async (id: string) => {
+					if (id === agentExecId) throw new Error('upstream refused key sk-ant-test-runner-key');
+					return { stdout: '', stderr: '' };
+				},
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			const row = await db.query<{ error: string | null }>(
+				'SELECT error FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].error).toContain('upstream refused key ***');
+			expect(await readRunLogText(db, result.heartbeatRunId ?? '')).not.toContain(
+				'sk-ant-test-runner-key',
+			);
 		});
 
 		it('sends a large system prompt via stdin file, keeping every argv element small', async () => {
