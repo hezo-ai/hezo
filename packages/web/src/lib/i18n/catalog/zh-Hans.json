@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "查看预算和图表",
 	"agents.card.chatWith": "与{name}聊天",
 	"agents.card.globalAgent": "全局智能体 - 参与所有项目",
+	"agents.card.openPage": "打开智能体页面",
 	"agents.hire.action": "招聘智能体",
 	"agents.hire.addToProject": "添加到 {project}",
 	"agents.hire.back": "换一种招聘方式",

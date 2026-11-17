@@ -105,7 +105,7 @@ test('comment with @mention inside a fenced code block does not render a mention
 	);
 });
 
-test('architect agent page is reachable via the mention link from a comment', async () => {
+test('architect agent page is reachable via the mention card from a comment', async () => {
 	let fix: HandoffFixture;
 	const { findAllByTestId, findByTestId, findByRole, user, router } = await renderApp({
 		initialPath: '/',
@@ -131,8 +131,10 @@ test('architect agent page is reachable via the mention link from a comment', as
 		},
 	});
 
+	// A click on the mention opens the agent card; its page link is what navigates.
 	const links = await findAllByTestId('agent-mention-link');
 	await user.click(links[0]);
+	await user.click(await findByTestId('agent-card-page-link'));
 
 	await findByTestId('agent-summary', undefined, { timeout: 10_000 });
 	await findByRole('heading', { name: fix!.architect.title });

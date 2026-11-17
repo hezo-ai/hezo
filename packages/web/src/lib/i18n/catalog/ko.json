@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "예산과 차트 보기",
 	"agents.card.chatWith": "{name}와 채팅",
 	"agents.card.globalAgent": "글로벌 에이전트 - 모든 프로젝트에서 일합니다",
+	"agents.card.openPage": "에이전트 페이지 열기",
 	"agents.hire.action": "에이전트 채용",
 	"agents.hire.addToProject": "{project}에 추가",
 	"agents.hire.back": "다른 채용 방법 고르기",

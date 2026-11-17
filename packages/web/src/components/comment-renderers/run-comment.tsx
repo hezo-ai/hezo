@@ -20,6 +20,7 @@ import { useProjectMeta } from '../../hooks/use-projects';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
 import { type MessageKey, useI18n } from '../../lib/i18n';
+import { AgentCard } from '../agent-card';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
@@ -33,6 +34,10 @@ import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
 import { runErrorSummary, runStatusDotClass, runStatusLabel } from './helpers';
+
+/** The agent name at the head of a run row. */
+const AGENT_LINK_CLASS =
+	'text-xs text-text-2 whitespace-nowrap max-w-full truncate hover:text-text-1 hover:underline';
 
 interface Props {
 	comment: CommentDataOf<'run'>;
@@ -309,14 +314,28 @@ export function RunCommentBody({
 	// everything it toggles.
 	const summaryRow = (trailing?: ReactNode) => (
 		<span className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={agentLinkParams}
-				onClick={(e) => e.stopPropagation()}
-				className="text-xs text-text-2 whitespace-nowrap max-w-full truncate hover:text-text-1 hover:underline"
-			>
-				{agentLabel} run
-			</Link>
+			{/* The agent name opens the agent card. An older comment that lacks a slug
+			    has only the run's member id, which the card cannot address, so it
+			    keeps a plain link to the agent's page. */}
+			{agentSlug ? (
+				<AgentCard
+					agent={resolvedAgent ?? { slug: agentSlug, title: agentTitle }}
+					projectId={projectId}
+					className={AGENT_LINK_CLASS}
+					testId="run-comment-agent"
+				>
+					{agentLabel} run
+				</AgentCard>
+			) : (
+				<Link
+					to="/projects/$projectId/agents/$agentId"
+					params={agentLinkParams}
+					onClick={(e) => e.stopPropagation()}
+					className={AGENT_LINK_CLASS}
+				>
+					{agentLabel} run
+				</Link>
+			)}
 			{actorName && (
 				<span
 					className="hidden sm:inline-flex items-center text-xs text-text-3 shrink-0 whitespace-nowrap"

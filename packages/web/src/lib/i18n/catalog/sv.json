@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "Visa budgetar och diagram",
 	"agents.card.chatWith": "Chatta med {name}",
 	"agents.card.globalAgent": "Global agent - arbetar i alla projekt",
+	"agents.card.openPage": "Öppna agentsidan",
 	"agents.hire.action": "Anställ agent",
 	"agents.hire.addToProject": "Lägg till i {project}",
 	"agents.hire.back": "Välj ett annat sätt att anställa",

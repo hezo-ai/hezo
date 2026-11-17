@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "予算とグラフを表示",
 	"agents.card.chatWith": "{name}とチャット",
 	"agents.card.globalAgent": "グローバルエージェント - すべてのプロジェクトで働きます",
+	"agents.card.openPage": "エージェントページを開く",
 	"agents.hire.action": "エージェントを採用",
 	"agents.hire.addToProject": "{project} に追加",
 	"agents.hire.back": "別の採用方法を選ぶ",

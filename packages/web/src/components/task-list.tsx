@@ -547,8 +547,11 @@ export function TaskList({ projectId }: TaskListProps) {
 				row.assignee_id && agentsByMemberId.get(row.assignee_id) ? (
 					<AgentRef
 						agent={agentsByMemberId.get(row.assignee_id)}
+						projectId={projectId}
+						link
 						fallbackName={row.assignee_name ?? undefined}
-						className="block max-w-[140px] truncate text-text-2"
+						className="block max-w-[140px] truncate text-text-2 hover:text-text-1 hover:underline"
+						testId="task-list-assignee"
 					/>
 				) : (
 					<span className="block max-w-[140px] truncate text-text-2">
