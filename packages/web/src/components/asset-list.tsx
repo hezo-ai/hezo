@@ -111,7 +111,7 @@ export function AssetList({
 		key: assetSortField(sort),
 		direction: assetSortDirection(sort),
 		onSort: (key) => onSortField(key as AssetSortField),
-		label: (header) => t('assets.sort.byColumn', { column: header }),
+		label: (header) => t('common.sortByColumn', { column: header }),
 	};
 
 	const columns: Column<AssetRow>[] = [

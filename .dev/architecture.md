@@ -6938,9 +6938,19 @@ section, the infinitely-paged Backlog (where a client-side sort could only reord
 already fetched), and the dashboard's in-progress widget. Only the first leg of tier 2 is
 per-user, so an agent or API key sees the tier driven by unanswered asks alone, the same
 way `has_unread_admin_mention` already reads false for them. Two deliberate exclusions:
-the web "Done" section re-sorts terminal rows by `updated_at` client-side, overriding the
-tiers; and MCP `list_tasks` keeps its keyset `created_at` order, which the tiers would
-break. The ask leg's predicate is spelled with enum **literals** so it matches migration
+under the default `work_order` sort the web "Done" section re-sorts terminal rows by
+`updated_at` client-side, overriding the tiers (any other sort keeps the server order, so
+a column sort reads the same in all three sections); and MCP `list_tasks` keeps its keyset
+`created_at` order, which the tiers would break.
+
+The sort fields are `TASK_LIST_SORT_FIELDS` (`@hezo/shared`), shared with the web list's
+column headers and its persisted filter. Every field except `work_order` reads one key from
+the `SORT_KEY_SQL` table (`title` lower-cased, `status`/`priority` in enum order, `assignee`
+as the caller's display-name expression, `NULLS LAST` either way), then breaks ties on
+`number` so offset paging never repeats or skips a row. No index serves this ORDER BY - the
+tier `EXISTS` keys lead it - so a new field needs no migration. The `search` filter matches
+title, description, identifier, and the assignee's display name or slug; the assignee leg is
+an `EXISTS` rather than a join so the join-free count query applies the same filter. The ask leg's predicate is spelled with enum **literals** so it matches migration
 `059`'s partial index (`idx_comments_pending_ask`) verbatim - a parameterized `IN` list
 leaves the planner unable to prove the implication under a generic plan, and the index
 goes unused.

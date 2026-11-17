@@ -195,7 +195,11 @@ A project's task list is split into three sections:
 The status filter picks which sections show. Its **In progress** choice also covers blocked
 tasks, because they sit in that section. By default the list shows In progress, Backlog and
 Done. Cancelled tasks show only when you select **Cancelled**. The search and owner filters
-narrow Backlog and Done only.
+narrow all three sections.
+
+The search box matches a task's title, description and ID, and the name of the agent it is
+assigned to. Type `HM-169` or `169` to find one task, or an agent's name to see everything
+assigned to that agent.
 
 ## How the task list is ordered
 
@@ -210,10 +214,18 @@ whichever sort you have chosen:
    or a repo to work in. The inbox ones carry the blue @ icon.
 3. **Everything else.**
 
-Your chosen sort - work order, newest, or recently updated - orders the tasks inside each
-band rather than across them, so a task that needs you never sinks out of sight just
-because something newer arrived. The **Done** section is the exception: finished work
-always reads most-recently-updated first.
+Your chosen sort orders the tasks inside each band rather than across them, so a task that
+needs you never sinks out of sight just because something newer arrived.
+
+The default sort is **work order**: the order agents pick work up in. Under it, the **In
+progress** and **Done** sections read most recently updated first, like an activity log.
+
+To sort by a column, click its header: **ID**, **Title**, **Status**, **Priority** or
+**Assignee**. The first click sorts ascending (for priority, urgent first), the second
+reverses it, and the third returns to work order. A column sort applies to all three
+sections at once. On a phone, where some columns are hidden, pick the same sorts from the
+**Sort** menu in the filter bar. Your browser remembers the last sort you picked for each
+project.
 
 ## Sub-tasks and hierarchy
 
