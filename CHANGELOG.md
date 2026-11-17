@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.84.0 - 2026-11-17
+
+### Features
+
+- **runs:** prepare repos only when an agent asks, and mask run secrets in logs ([#1223](https://github.com/hezo-ai/hezo/pull/1223))
+- **tasks:** sort the task list by any column, and search by agent ([#1222](https://github.com/hezo-ai/hezo/pull/1222))
+- **web:** open an agent card from agent names instead of navigating ([#1221](https://github.com/hezo-ai/hezo/pull/1221))
+
+### Bug Fixes
+
+- **connectors:** request MCP OAuth tokens for the resource the server names ([#1220](https://github.com/hezo-ai/hezo/pull/1220))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.83.2...0.84.0
+
 ## 0.83.2 - 2026-11-16
 
 ### Bug Fixes
