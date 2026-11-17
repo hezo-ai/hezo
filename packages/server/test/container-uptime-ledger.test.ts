@@ -420,7 +420,7 @@ describe('every pool state write moves the ledger', () => {
 		// The exact production fault: the container was up, correctly pooled, and
 		// reported 4 GB in its own run header, while Budget -> Hours read zero.
 		await warmWithNoInterval('warm-claim');
-		expect(await claimPoolMember(db, 'warm-claim', null)).toBe(true);
+		expect(await claimPoolMember(db, 'warm-claim')).toBe(true);
 
 		const rows = await openRows('warm-claim');
 		expect(rows).toHaveLength(1);
@@ -431,7 +431,7 @@ describe('every pool state write moves the ledger', () => {
 
 	it('opens an interval when a run hands a warm container back', async () => {
 		await upsertPoolMember(db, projectId, 'warm-release', 'idle', { memoryBytes: GB });
-		await claimPoolMember(db, 'warm-release', null);
+		await claimPoolMember(db, 'warm-release');
 		await db.query('DELETE FROM container_uptime_entries');
 
 		await releasePoolMember(db, 'warm-release', null);
@@ -455,8 +455,8 @@ describe('every pool state write moves the ledger', () => {
 		// never resumes, so this is the only point the whole fleet passes through.
 		await upsertPoolMember(db, projectId, 'reclaim-a', 'idle', { memoryBytes: GB });
 		await upsertPoolMember(db, otherProjectId, 'reclaim-b', 'idle', { memoryBytes: GB });
-		await claimPoolMember(db, 'reclaim-a', null);
-		await claimPoolMember(db, 'reclaim-b', null);
+		await claimPoolMember(db, 'reclaim-a');
+		await claimPoolMember(db, 'reclaim-b');
 		await db.query('DELETE FROM container_uptime_entries');
 
 		expect((await reclaimBusyPoolMembers(db)).sort()).toEqual(['reclaim-a', 'reclaim-b']);
@@ -479,7 +479,7 @@ describe('every pool state write moves the ledger', () => {
 		// The boot self-heal and the on-demand start both call this, and both can
 		// race a live run. `WHERE state = 'suspended'` is what makes that safe.
 		await upsertPoolMember(db, projectId, 'held', 'idle', { memoryBytes: GB });
-		await claimPoolMember(db, 'held', null);
+		await claimPoolMember(db, 'held');
 
 		expect(await markPoolMemberRunning(db, 'held')).toBe(false);
 		const state = await db.query<{ state: string }>(
@@ -546,7 +546,7 @@ describe('every pool state write moves the ledger', () => {
 		// rather than merely inheriting the interval the provision left behind. That
 		// distinction is the whole fault: they all inherited, and none opened.
 		await db.query('DELETE FROM container_uptime_entries');
-		await claimPoolMember(db, id, null);
+		await claimPoolMember(db, id);
 		await check('a run claims it');
 		await db.query('DELETE FROM container_uptime_entries');
 		await releasePoolMember(db, id, null);

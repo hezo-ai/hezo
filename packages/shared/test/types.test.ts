@@ -8,6 +8,7 @@ import {
 	SANDBOX_BACKENDS,
 	SandboxBackend,
 	sandboxBackendNeedsApiKey,
+	sandboxBackendSharesProjectWorkspace,
 	TERMINAL_WAKEUP_STATUSES,
 	WakeupStatus,
 } from '../src/types/common';
@@ -106,5 +107,15 @@ describe('sandbox backend kind', () => {
 		}
 		expect(sandboxBackendNeedsApiKey(SandboxBackend.Docker)).toBe(false);
 		expect(sandboxBackendNeedsApiKey(SandboxBackend.Daytona)).toBe(true);
+	});
+
+	it('shares a project workspace across containers on exactly the local backends', () => {
+		for (const backend of SANDBOX_BACKENDS) {
+			expect(sandboxBackendSharesProjectWorkspace(backend)).toBe(
+				SANDBOX_BACKEND_KIND[backend] === 'local',
+			);
+		}
+		expect(sandboxBackendSharesProjectWorkspace(SandboxBackend.Docker)).toBe(true);
+		expect(sandboxBackendSharesProjectWorkspace(SandboxBackend.Daytona)).toBe(false);
 	});
 });

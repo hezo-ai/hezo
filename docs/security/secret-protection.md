@@ -112,6 +112,13 @@ bridge. If an agent prints any of them, for example by listing its environment o
 processes, Hezo replaces each one with `***` before the run's log is saved or shown. The
 same masking covers the error recorded for a failed run, the comment Hezo posts from an
 agent's last message, and the inbox notice filed when a model provider refuses a run.
+
+Chat works the same way. A chat reply is masked before it is saved, shown while it streams,
+or posted to a connected chat app such as Slack, and so is a failed reply's error and a
+conversation's generated title. When a chat turn ends, Hezo removes the files that held its
+token and its credential from the container, so the next run on that container cannot read
+them.
+
 Some gaps remain:
 
 - A token the agent's tool refreshes inside the container is new to Hezo, so it cannot be
@@ -119,7 +126,6 @@ Some gaps remain:
 - Part of a value that the output itself cut short is not masked.
 - A value shorter than 12 characters, such as a short token for a model server on your own
   machine, is not masked.
-- Chat replies are not masked yet.
 
 Logs saved before this masking existed are unchanged, so rotate a model-provider key that
 appeared in one.

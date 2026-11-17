@@ -1152,6 +1152,12 @@ export const HeartbeatRunStatus = {
 } as const;
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
 
+/** Run states still in flight: a run in one of these may be using its task's files. */
+export const ACTIVE_HEARTBEAT_RUN_STATUSES: readonly HeartbeatRunStatus[] = [
+	HeartbeatRunStatus.Queued,
+	HeartbeatRunStatus.Running,
+];
+
 /**
  * Why a run ended because its container did, stored verbatim as the run's
  * `error` and read back by the web to say it in words.
@@ -3592,4 +3598,16 @@ export const SANDBOX_BACKEND_KIND: Record<SandboxBackend, 'local' | 'remote'> = 
  */
 export function sandboxBackendNeedsApiKey(backend: SandboxBackend): boolean {
 	return SANDBOX_BACKEND_KIND[backend] === 'remote';
+}
+
+/**
+ * Do a project's containers share one `/workspace` (and so one clone per repo)?
+ *
+ * True for a local backend, which bind-mounts the same host directory into every
+ * container of a project, and false for a remote one, where each sandbox has its
+ * own disk. Git work on a clone serializes per store, so this decides whether that
+ * store is the project or the container. A property of the class, asked of the kind.
+ */
+export function sandboxBackendSharesProjectWorkspace(backend: SandboxBackend): boolean {
+	return SANDBOX_BACKEND_KIND[backend] === 'local';
 }

@@ -1,9 +1,9 @@
 import {
+	ACTIVE_HEARTBEAT_RUN_STATUSES,
 	ACTIVE_WAKEUP_STATUSES,
 	ApprovalStatus,
 	ApprovalType,
 	CommentContentType,
-	HeartbeatRunStatus,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
@@ -286,7 +286,6 @@ export async function assertChildrenAllClosed(
 	};
 }
 
-const ACTIVE_RUN_STATUSES = [HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running];
 // ACTIVE_WAKEUP_STATUSES now lives in @hezo/shared beside the enum, paired with
 // TERMINAL_WAKEUP_STATUSES that the maintenance sweep deletes on. The two must
 // agree about `deferred`, so they cannot be two separate lists.
@@ -298,7 +297,7 @@ export async function assertNoOutstandingActivity(
 	callerMemberId: string | null,
 ): Promise<Check> {
 	const runStatusOffset = 3;
-	const runPlaceholders = ACTIVE_RUN_STATUSES.map(
+	const runPlaceholders = ACTIVE_HEARTBEAT_RUN_STATUSES.map(
 		(_, i) => `$${i + runStatusOffset}::heartbeat_run_status`,
 	).join(', ');
 	const runs = await db.query<{ slug: string | null; status: string }>(
@@ -309,7 +308,7 @@ export async function assertNoOutstandingActivity(
 		   AND ($2::uuid IS NULL OR hr.member_id != $2::uuid)
 		   AND hr.status IN (${runPlaceholders})
 		 LIMIT 1`,
-		[taskId, callerMemberId, ...ACTIVE_RUN_STATUSES],
+		[taskId, callerMemberId, ...ACTIVE_HEARTBEAT_RUN_STATUSES],
 	);
 	if (runs.rows.length > 0) {
 		const who = runs.rows[0].slug ?? 'an agent';

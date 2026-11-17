@@ -73,6 +73,8 @@ rather than here, is how a codebase ends up with two of everything.
 | "Is this approval a run-failure notice, and how does it present?" | `isAgentErrorApproval` / `AGENT_ERROR_ROW` (`packages/web/src/lib/inbox-row-kind.ts`) - the inbox, the project dashboard and home all ask it there |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Keeping a run's own plaintext values out of its log | `SecretMasker` (`lib/secret-masker.ts`), passed as `LogStreamConfig.masker`; register each value where the run mints it. Never a second scrub pass over stored logs |
+| Serialising git work on a clone | `withRepoStoreLock` (`lib/git-lock.ts`) with the store from `repoStoreFor` (`services/sandbox/repo-store.ts`): per project where a backend shares the workspace, per container otherwise. Never a lock keyed on the project alone |
+| Removing what a run or chat turn left in a pooled container | `scrubRunArtifacts` (`services/agent-runner.ts`): token-bearing home config, the per-run home, the tunnel config |
 | Preparing a task run's repos, or reading its worktrees at finalize | `RunRepoSession` (`services/run-repos.ts`), reached from a tool by run id via `getRunRepoSession`. Never prep before the agent starts |
 | A system row in a chat thread, or a task's chat-origin stamp + receipt | `postChatSystemMessage` / `recordChatTaskOrigin` / `postTaskStatusBreadcrumb` (`services/chat-breadcrumbs.ts`) - the writers that have only (db, wsManager); the manager's own turns use its `postSystemMessage` |
 | The suggested-replies trailer contract (parse, caps, strip) | `parseSuggestedReplies` (`@hezo/shared`) - the server parses with it, the web renders what it stored; never a second parser |

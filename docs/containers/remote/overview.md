@@ -108,9 +108,10 @@ of the system is sized against that promise.
 - **Disk is finite, and you choose how much.** A local workspace has your whole disk behind
   it; a sandbox gets exactly what Hezo asks for. **Disk per container** in Settings ->
   Containers sets that (5 GB by default), and a project that needs more can override it on
-  its own Containers page - the same shape as the RAM cap. Hezo prunes worktrees for closed
-  tasks and replaces a container that fills most of its allocation, so a run never runs out
-  of space partway through.
+  its own Containers page - the same shape as the RAM cap. At the end of each run Hezo removes
+  the folders of finished tasks from that container, including any files an agent left in
+  them, and it replaces a container that fills most of its allocation, so a run never runs
+  out of space partway through.
 
   It is worth sizing deliberately rather than raising to be safe: disk is billed and
   quota'd per sandbox, and the account-wide disk quota is usually what binds first, so

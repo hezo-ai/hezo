@@ -3998,7 +3998,7 @@ run or a project with no linked repo).
 **A run prepares no repo before its agent starts.** The agent calls `prepare_repos` when it
 needs code. The call reaches the run's `RunRepoSession` (`services/run-repos.ts`), found by run
 id in an in-process registry the runner fills before exec and empties in cleanup, and runs the
-prep pipeline under `withProjectGitLock`: clone sync for the named repos only, push hook,
+prep pipeline under `withRepoStoreLock`: clone sync for the named repos only, push hook,
 empty-remote seed, fetch, default fast-forward, recovery-bundle restore, `git worktree add`,
 recovery replay, catch-up merge, then the pre-run head and finished-worktree GC. It returns
 each repo's path, any warning (`notes`, e.g. a catch-up merge that stopped) and the repo's own
@@ -4032,12 +4032,27 @@ leftover worktree never had the stored recovery bundle restored into it, so its 
 neither save a bundle (it could replace a newer one) nor release one (it could drop the only
 copy); only clones prepared this run touch the vault. A leftover's push-error log is not
 reported, since this run did not clear it. The stray-doc check
-also reads doc-named files at the task root, the working directory. A clone runs inside the
-project git lock, so concurrent first prepares on several fresh containers of one project
-queue behind each other; a slow one can exceed a client's MCP tool-call timeout (OpenCode's
-600 s is the shortest one set) but not the 90 s `pending` answer. Keying the lock on the clone's
-store (the project on a shared bind mount, the container on a per-sandbox backend) would
-remove that queue; it is not done.
+also reads doc-named files at the task root, the working directory.
+
+**Git work serializes per clone store, not per project** (`withRepoStoreLock`,
+`lib/git-lock.ts`; the store from `repoStoreFor`, `services/sandbox/repo-store.ts`). A backend
+whose kind shares one workspace across a project's containers (`sandboxBackendSharesProjectWorkspace`
+in `@hezo/shared`, true for `local`) keys it on the project; one where each container has its
+own disk keys it on the container, so fresh containers of one project clone in parallel. A
+slow prep still answers `pending` after 90 s.
+
+**The pool records a task on a container only when the container holds its worktree.** A
+claim records nothing; the run's release names the task when `RunRepoSession.holdsTaskWorktree`
+(a repo prepared this run, or a leftover worktree finalize found). A comment reply or a Coach
+review that prepared nothing leaves the container's affinity as it was, so the task's next
+coding run is still routed to the container with its worktree built.
+
+**Finished task folders go at the end of every task run** (`removeFinishedTaskFolders`,
+`sandbox/worktree-gc.ts`, through the file seam so it works on every backend, bounded per
+pass): the whole `/worktrees/<identifier>` of a terminal or deleted task, scratch files and an
+agent's own clones included. A task with a queued or running run is never reclaimable, by this
+sweep or the worktree GC (`resolveReclaimableTasks`), so a run on a closed task in another
+container sharing `/worktrees` keeps its folder.
 
 Because Docker Desktop bind-mount propagation can lag right after a container reprovision (a
 path the host just `mkdirSync`'d briefly stats as missing inside the container), the runner
@@ -4073,8 +4088,8 @@ so repo-linked runs failed with `repo is not cloned` for a repo that was cloned,
 sync's clone-vs-adopt decision flipped depending on which pool rung a run landed on. `git.ts`
 imports no `node:fs` at all now, which is what stops the assumption returning. The one
 deliberate exception is `removeRepoFromWorkspace`/`removeTaskWorktrees`, which still reclaim
-host disk only - that leaves a managed backend's copy in place, which costs disk rather than
-correctness, and the disk-ceiling rung already recycles a container that fills up.
+host disk only - that leaves a managed backend's copy in place until the end-of-run folder
+sweep above removes it, through the seam, on the next task run in that container.
 **Git transport is HTTPS, on every backend** (`buildGitRemoteUrl`):
 `https://x-access-token:__HEZO_SECRET_<NAME>__@github.com/owner/repo.git`, where the
 credential is the GitHub connection's access-token secret as a **placeholder** the egress
@@ -4118,7 +4133,7 @@ stays unrouted, since a provisioning op has no MCP identity. The egress leg is m
 missing one throws rather than standing up a tunnel with nowhere to route. Each exec also carries a per-op timeout
 (fetch 60s, clone 120s)
 and, for prep, the run's own abort signal — both abort the `docker exec` stream, so a hung
-transport can no longer block the run (or the per-project git lock) until it is killed by
+transport can no longer block the run (or the clone-store git lock) until it is killed by
 hand. The abort actually tears the exec down because the streaming Docker transport removes
 its abort handler on the *response* stream's end, never on the `ClientRequest`'s `close`
 (which Bun emits prematurely, mid-body) — otherwise the timeout would fire against a handler
@@ -4427,8 +4442,8 @@ dangling metadata; the branch refs survive), and `reclone` (wipe the clone via
 **blocked (409) while any agent run is active on the project** (`getProjectConcurrency`) — it
 mutates the shared `.git` a live worktree prep also touches, and reclone deletes worktrees a run
 may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every
-read and reset runs under the same per-project git lock (`withProjectGitLock`, extracted to
-`lib/git-lock.ts`) as run-time worktree prep, so they never interleave on the shared `.git`.
+read and reset runs under the same clone-store git lock (`withRepoStoreLock`, `lib/git-lock.ts`)
+as run-time worktree prep, so they never interleave on a shared `.git`.
 
 ### Abort, timeout & the success gate
 
@@ -5537,7 +5552,17 @@ invocation line, every run-row `error`, `RunResult.stderr`, the comment the hand
 from the final message, and the provider-refusal inbox reason go through the same masker. It
 matches exact values of 12 or more characters only: a token the CLI refreshes inside the
 container, a fragment the output itself truncated, and a short local-runner token are not
-masked. Chat turns have no masker yet. Logs stored before this are unchanged.
+masked. Logs stored before this are unchanged.
+
+**Chat turns mask and scrub the same way.** Each turn's allocation carries its own
+`SecretMasker` (the credential, re-registered on a rotation; the session JWT; the egress
+token forms; the bridge token). Streamed deltas go through `push`, since token-sized deltas
+can split a value, and the held tail is sent as the last delta; the stored and broadcast
+reply, its error, the channel delivery and the auto-title come from the masked copy. A turn's
+runtime home is keyed by the turn (`homeId` on `buildRuntimeInvocation`), never shared with a
+sibling turn of the session, and `teardownTurn` removes it with the token-bearing home config
+files and the tunnel config through `scrubRunArtifacts`, the helper the task run's cleanup
+uses too.
 
 **Secrets.** `secrets` rows are AES-256-GCM ciphertext plus `allowed_hosts` (e.g.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.

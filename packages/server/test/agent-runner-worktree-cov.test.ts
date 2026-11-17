@@ -228,8 +228,19 @@ function scriptedGitDocker(opts: {
  * the clone's admin entry. A `.git` directory there is a separate checkout.
  */
 function stageWorktree(dir: string): void {
+	const [identifier, repo] = dir.split('/').slice(-2);
 	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, '.git'), `gitdir: /workspace/${dir.split('/').pop()}/.git/worktrees/x\n`);
+	writeFileSync(join(dir, '.git'), `gitdir: /workspace/${repo}/.git/worktrees/${identifier}\n`);
+	// The clone's admin entry for it, so the worktree reads as healthy.
+	const admin = join(
+		getWorkspacePath(dataDir, teamId, projectId),
+		repo,
+		'.git',
+		'worktrees',
+		identifier,
+	);
+	mkdirSync(admin, { recursive: true });
+	writeFileSync(join(admin, 'HEAD'), 'ref: refs/heads/main\n');
 }
 
 async function insertRepo(identifier: string): Promise<string> {
@@ -1586,6 +1597,57 @@ describe('repo prep on demand', () => {
 				await runAgent(baseDeps(docker), makeAgent(), makeTask('WT-KEEPBUNDLE'), makeProject());
 
 				expect(await vault.has(bundleKey)).toBe(true);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('records the task on the container only when the run left its worktree there', async () => {
+			const lastTask = async (): Promise<string | null> => {
+				const r = await db.query<{ last_task_id: string | null }>(
+					'SELECT last_task_id FROM container_pool_members WHERE container_id = $1',
+					[POOL_CONTAINER_ID],
+				);
+				return r.rows[0]?.last_task_id ?? null;
+			};
+			const repoId = await insertRepo('acme/todos');
+			mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+				recursive: true,
+			});
+			try {
+				await db.query(
+					'UPDATE container_pool_members SET last_task_id = NULL WHERE container_id = $1',
+					[POOL_CONTAINER_ID],
+				);
+				// A run that never prepares a repo builds nothing here.
+				await runAgent(
+					baseDeps(scriptedGitDocker({ rules: [], onAgentExec: markProducedOutput })),
+					makeAgent(),
+					makeTask('WT-NOAFFINITY'),
+					makeProject(),
+				);
+				expect(await lastTask()).toBeNull();
+
+				// A run that prepares one leaves the task's worktree warm.
+				await runAgent(
+					baseDeps(
+						scriptedGitDocker({
+							rules: [
+								when((a) => a === 'remote get-url origin', {
+									stdout: 'https://github.com/acme/todos.git\n',
+								}),
+							],
+							onAgentExec: async (config) => {
+								prepared(await prepareRepos(config));
+								await markProducedOutput();
+							},
+						}),
+					),
+					makeAgent(),
+					makeTask('WT-AFFINITY'),
+					makeProject(),
+				);
+				expect(await lastTask()).toBe(taskId);
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}

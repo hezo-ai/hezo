@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskStatus } from '@hezo/shared';
@@ -8,9 +8,11 @@ import type { PgliteDb } from '../src/db/drivers/pglite';
 import type { RepoLoc } from '../src/services/git';
 import { localGitLoc } from '../src/services/git';
 import { HostGitExecutor } from '../src/services/git-executor';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 import {
 	collectFinishedWorktrees,
 	MAX_WORKTREE_REMOVALS_PER_PASS,
+	removeFinishedTaskFolders,
 	resolveReclaimableTasks,
 } from '../src/services/sandbox/worktree-gc';
 import { createTestDbWithMigrations } from './helpers/db';
@@ -256,6 +258,29 @@ describe('resolveReclaimableTasks', () => {
 		expect(reclaimable('REC-999')).toBe(true);
 	});
 
+	it('keeps a finished task while a run on it is still in flight', async () => {
+		// A Coach review or a reply runs on a closed task; on a backend sharing
+		// `/worktrees` across containers another container's sweep would otherwise
+		// delete the folder that run works in.
+		const member = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'Reviewer') RETURNING id`,
+			[projectTeamId],
+		);
+		const task = await db.query<{ id: string }>(
+			`SELECT id FROM tasks WHERE project_id = $1 AND identifier = 'REC-3'`,
+			[projectId],
+		);
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())`,
+			[member.rows[0].id, projectTeamId, task.rows[0].id],
+		);
+		const reclaimable = await resolveReclaimableTasks(db, projectId);
+		expect(reclaimable('REC-3')).toBe(false);
+		expect(reclaimable('REC-1')).toBe(true);
+	});
+
 	it('is scoped to the project, so another project’s open task is not read as reclaimable-by-absence', async () => {
 		// The identifier belongs to a live task, just not here. Sweeping a project's
 		// worktrees must not depend on identifiers it cannot see - and it does not,
@@ -263,5 +288,85 @@ describe('resolveReclaimableTasks', () => {
 		const reclaimable = await resolveReclaimableTasks(db, otherProjectId);
 		expect(reclaimable('OTH-1')).toBe(false);
 		expect(reclaimable('REC-2')).toBe(true);
+	});
+});
+
+describe('removeFinishedTaskFolders', () => {
+	let db: PgliteDb;
+	let projectId: string;
+	let worktreesRoot: string;
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Folder Co', 'folder-co') RETURNING id`,
+		);
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Folders', 'folders', 'TF') RETURNING id`,
+			[team.rows[0].id],
+		);
+		projectId = project.rows[0].id;
+		await db.query(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority) VALUES
+			 ($1, $2, 1, 'TF-1', 'done', 'done'::task_status, 'medium'),
+			 ($1, $2, 2, 'TF-2', 'open', 'in_progress'::task_status, 'medium'),
+			 ($1, $2, 3, 'TF-3', 'done too', 'done'::task_status, 'medium')`,
+			[team.rows[0].id, projectId],
+		);
+		worktreesRoot = join(root, 'folders');
+	});
+	afterAll(() => db.close());
+
+	function stageFolder(identifier: string): void {
+		const dir = join(worktreesRoot, identifier);
+		// Scratch output and a checkout the agent made itself: nothing git knows of.
+		mkdirSync(join(dir, 'own-clone', '.git'), { recursive: true });
+		writeFileSync(join(dir, 'notes.txt'), 'scratch');
+	}
+
+	it('removes the whole folder of a finished task, keeping open and current ones', async () => {
+		for (const id of ['TF-1', 'TF-2', 'TF-3', 'TF-GONE']) stageFolder(id);
+
+		const result = await removeFinishedTaskFolders(
+			db,
+			hostSandboxFiles(worktreesRoot),
+			projectId,
+			'TF-3',
+		);
+
+		expect(result.removed.sort()).toEqual(['TF-1', 'TF-GONE']);
+		expect(result.deferred).toBe(false);
+		expect(existsSync(join(worktreesRoot, 'TF-1'))).toBe(false);
+		expect(existsSync(join(worktreesRoot, 'TF-GONE'))).toBe(false);
+		// Open, and the calling run's own task however terminal.
+		expect(existsSync(join(worktreesRoot, 'TF-2', 'notes.txt'))).toBe(true);
+		expect(existsSync(join(worktreesRoot, 'TF-3', 'notes.txt'))).toBe(true);
+	});
+
+	it('stops at the per-pass bound and says more remain', async () => {
+		for (const id of ['TF-A', 'TF-B', 'TF-C']) stageFolder(id);
+
+		const first = await removeFinishedTaskFolders(
+			db,
+			hostSandboxFiles(worktreesRoot),
+			projectId,
+			null,
+			2,
+		);
+		expect(first.removed).toHaveLength(2);
+		expect(first.deferred).toBe(true);
+
+		const second = await removeFinishedTaskFolders(
+			db,
+			hostSandboxFiles(worktreesRoot),
+			projectId,
+			'TF-3',
+			2,
+		);
+		expect(second.deferred).toBe(false);
+		expect(existsSync(join(worktreesRoot, 'TF-A'))).toBe(false);
+		expect(existsSync(join(worktreesRoot, 'TF-B'))).toBe(false);
+		expect(existsSync(join(worktreesRoot, 'TF-C'))).toBe(false);
 	});
 });

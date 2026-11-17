@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { repoNameFromIdentifier } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { withProjectGitLock } from '../lib/git-lock';
+import { type RepoStore, withRepoStoreLock } from '../lib/git-lock';
 import { logger } from '../logger';
 import { type ContainerRunUser, chownToRunUser, ensureContainerDirReady } from './container-user';
 import type { ContainerEngine } from './docker';
@@ -28,7 +28,8 @@ import { ensureProjectRepos } from './repo-sync';
 import { createBundleVault } from './sandbox/bundle-vault';
 import { setPoolMemberDiskUsage } from './sandbox/pool-db';
 import { restoreRecoveryBundle } from './sandbox/recovery';
-import { collectFinishedWorktrees } from './sandbox/worktree-gc';
+import { repoStoreFor } from './sandbox/repo-store';
+import { collectFinishedWorktrees, removeFinishedTaskFolders } from './sandbox/worktree-gc';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { CONTAINER_WORKSPACE_ROOT, CONTAINER_WORKTREES_ROOT, getWorktreesPath } from './workspace';
 
@@ -120,7 +121,7 @@ export interface PrepareReposPending {
  * How long a `prepare_repos` call waits before answering "still preparing".
  * The tool call is one HTTP request, and the server cuts a request idle for 120 s
  * (`idleTimeout` in `index.ts`); a first clone on a fresh container, or one queued
- * behind another run's prep on the project git lock, can take longer. The prep
+ * behind another run's prep on the clone-store git lock, can take longer. The prep
  * keeps running, and the agent's next call waits for it again.
  */
 export const PREPARE_REPLY_WAIT_MS = 90_000;
@@ -180,7 +181,7 @@ interface ReadyRepo {
 /**
  * A task run's repositories. Nothing is fetched or checked out when the run
  * starts: the agent asks with `prepare_repos`, and only then does the run sync,
- * fetch, build the task worktree and catch it up, under the project git lock.
+ * fetch, build the task worktree and catch it up, under the clone-store git lock.
  * All git runs inside the project container.
  *
  * The session's git executor carries its own process-scope id, never the run id:
@@ -196,6 +197,10 @@ export class RunRepoSession {
 	private readonly inFlight = new Set<Promise<unknown>>();
 	private identityEnv: Promise<string[]> | null = null;
 	private closed = false;
+	/** The clone store this container uses, which git work here serializes over. */
+	private store!: RepoStore;
+	/** Finalize found a worktree of this task here that this run did not prepare. */
+	private foundLeftover = false;
 
 	private constructor(
 		private readonly deps: RunRepoDeps,
@@ -212,6 +217,7 @@ export class RunRepoSession {
 	static async open(deps: RunRepoDeps, init: RunRepoSessionInit): Promise<RunRepoSession> {
 		const session = new RunRepoSession(deps, init);
 		const { project } = init;
+		session.store = await repoStoreFor(deps.db, project.id, project.container_id);
 		mkdirSync(
 			join(getWorktreesPath(deps.dataDir, project.team_id, project.id), init.task.identifier),
 			{ recursive: true },
@@ -287,6 +293,15 @@ export class RunRepoSession {
 		}
 	}
 
+	/**
+	 * Whether this container now holds a worktree of the task: one prepared this
+	 * run, or one an earlier run left that finalize found. What the pool's task
+	 * affinity is recorded on.
+	 */
+	holdsTaskWorktree(): boolean {
+		return this.ready.size > 0 || this.foundLeftover;
+	}
+
 	/** Refuse further prep; the run is finishing. */
 	close(): void {
 		this.closed = true;
@@ -316,6 +331,7 @@ export class RunRepoSession {
 			const name = repoNameFromIdentifier(repo.repo_identifier);
 			const loc = this.worktreeLoc(name);
 			if (!(await isLinkedWorktree(loc))) continue;
+			this.foundLeftover = true;
 			leftovers.push({
 				worktree: { loc, headBefore: null, since: this.init.startedAt },
 				clone: { ...this.cloneLoc(name), repoId: repo.id },
@@ -441,7 +457,7 @@ export class RunRepoSession {
 		const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
 			init.emit(stream, `[system] ${text}\n`);
 
-		return withProjectGitLock(init.project.id, async () => {
+		return withRepoStoreLock(this.store, async () => {
 			const failed = new Map<string, PreparedRepo>();
 			// Checked under the lock, so a concurrent call that prepared a repo
 			// while this one waited is answered from its result.
@@ -674,6 +690,32 @@ export class RunRepoSession {
 			}
 		} catch (e) {
 			log.error(`Project ${init.project.id}: worktree GC failed:`, e);
+		}
+	}
+
+	/**
+	 * Remove the folders of finished tasks from this container, at the end of
+	 * every task run, whether or not it prepared a repo: a run's working directory
+	 * is its task folder, so anything a run writes there outlives its task unless
+	 * something sweeps it. Best-effort: reclaimed disk is never worth failing a run.
+	 */
+	async sweepFinishedTaskFolders(): Promise<void> {
+		const { deps, init } = this;
+		try {
+			const swept = await removeFinishedTaskFolders(
+				deps.db,
+				deps.docker.files(init.project.container_id, CONTAINER_WORKTREES_ROOT),
+				init.project.id,
+				init.task.identifier,
+			);
+			if (swept.removed.length > 0) {
+				init.emit(
+					'stdout',
+					`[system] (removed ${swept.removed.length} finished task folder(s)${swept.deferred ? ', more remain for the next run' : ''})\n`,
+				);
+			}
+		} catch (e) {
+			log.error(`Project ${init.project.id}: task folder sweep failed:`, e);
 		}
 	}
 

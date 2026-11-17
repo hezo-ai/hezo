@@ -1,4 +1,4 @@
-import { dirname } from 'node:path';
+import { dirname, posix } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 import { credentialPlaceholder } from '../lib/credential-placeholder';
 import type { GitExecutor } from './git-executor';
@@ -714,6 +714,25 @@ async function addTaskWorktree(
 	return { success: true, created: true };
 }
 
+/**
+ * Whether a worktree's `.git` file names an admin entry that no longer exists in
+ * its clone - the one state in which the tree is safe to discard and rebuild. A
+ * `.git` that is not a gitfile (a separate checkout) is never orphaned.
+ */
+async function isOrphanedWorktree(executor: GitExecutor, wt: WorktreeLoc): Promise<boolean> {
+	let gitfile: string;
+	try {
+		gitfile = (await wt.files.read('.git')).trim();
+	} catch {
+		return false;
+	}
+	if (!gitfile.startsWith('gitdir:')) return false;
+	const target = gitfile.slice('gitdir:'.length).trim();
+	if (!target) return false;
+	const adminPath = target.startsWith('/') ? target : posix.join(wt.containerPath, target);
+	return !(await executor.files(adminPath).exists('HEAD'));
+}
+
 export async function ensureTaskWorktree(
 	executor: GitExecutor,
 	repo: RepoLoc,
@@ -729,10 +748,11 @@ export async function ensureTaskWorktree(
 		if (probe.exitCode === 0) {
 			return { success: true, created: false };
 		}
-		// Only git's own verdict that the admin entry is gone licenses the delete
-		// below. A transport error or timeout also reads as a failed probe, and the
-		// tree may hold an agent's uncommitted edits: prep can now run mid-run.
-		if (!/not a git repository/i.test(probe.stderr)) {
+		// Only a missing admin entry licenses the delete below. A transport error or
+		// timeout also reads as a failed probe, and the tree may hold an agent's
+		// uncommitted edits: prep can run mid-run. Decided from the gitfile and the
+		// entry it names, never from git's wording, which differs across versions.
+		if (!(await isOrphanedWorktree(executor, wt))) {
 			return {
 				success: false,
 				created: false,

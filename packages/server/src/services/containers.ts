@@ -1418,8 +1418,12 @@ export interface AcquiredContainer {
 	 * claimed. The caller states nothing rather than inventing figures.
 	 */
 	allocation: ContainerAllocation | null;
-	/** Idempotent. Returns the container to the pool as idle, recording task affinity. */
-	release(): Promise<void>;
+	/**
+	 * Idempotent. Returns the container to the pool as idle. `affinityTaskId`
+	 * records the task whose worktree the container now holds, so the task's next
+	 * run is routed here; omitted, the recorded affinity is left as it was.
+	 */
+	release(opts?: { affinityTaskId?: string | null }): Promise<void>;
 }
 
 /**
@@ -1568,7 +1572,7 @@ export async function acquireRunContainer(
 				// the post-provision fan-out would wake agents for work this run is
 				// about to do - including the agent whose run is provisioning.
 				const id = await provisionContainer(deps, proj, proj.team_slug, 'caller-runs-the-work');
-				if (await claimPoolMember(deps.db, id, taskId)) {
+				if (await claimPoolMember(deps.db, id)) {
 					return { kind: 'acquired' as const, containerId: id };
 				}
 				return { kind: 'retry' as const };
@@ -1622,7 +1626,7 @@ export async function acquireRunContainer(
 				await setPoolMemberState(db, member.id, 'idle', undefined, startRequestedAt);
 				await markProjectContainerStarted(deps, projectId, member.id);
 			}
-			if (await claimPoolMember(deps.db, member.id, taskId)) {
+			if (await claimPoolMember(deps.db, member.id)) {
 				return { kind: 'acquired' as const, containerId: member.id };
 			}
 			return { kind: 'retry' as const };
@@ -1656,15 +1660,18 @@ export async function acquireRunContainer(
 		// an engine round trip - cheaper than threading the figures back out of
 		// every rung, and uniform across all of them.
 		allocation: await readPoolMemberAllocation(db, containerId),
-		release: async () => {
+		release: async (opts = {}) => {
 			if (released) return;
 			released = true;
 			// Back to idle only. Whether it is then retired is decided once the run's
 			// follow-up work has had its chance to claim it - see the job manager's
 			// release-time retirement - so nothing here races the next acquire.
-			await releasePoolMember(db, containerId, taskId, workload === 'chat-turn').catch(
-				() => undefined,
-			);
+			await releasePoolMember(
+				db,
+				containerId,
+				opts.affinityTaskId ?? null,
+				workload === 'chat-turn',
+			).catch(() => undefined);
 		},
 	};
 }

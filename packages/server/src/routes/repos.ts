@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { buildContainerDeps } from '../lib/container-deps';
-import { withProjectGitLock } from '../lib/git-lock';
+import { withRepoStoreLock } from '../lib/git-lock';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { isUniqueViolation } from '../lib/sql';
@@ -37,6 +37,7 @@ import {
 	countActiveRunsInProject,
 	isContainerCapacityBlockedInDb,
 } from '../services/run-concurrency';
+import { repoStoreFor } from '../services/sandbox/repo-store';
 import { collectFinishedWorktrees } from '../services/sandbox/worktree-gc';
 import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
 import {
@@ -336,7 +337,7 @@ reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
  * `{ container_running: false }` rather than auto-starting one, because this read
  * fires whenever the panel is expanded and a passive inspect must never trigger a
  * minutes-long provision. Starting one is the operator's explicit call and lives on
- * `POST` to this same path. Reads run under the project git lock so they never
+ * `POST` to this same path. Reads run under the clone-store git lock so they never
  * interleave with a run's worktree prep on the shared `.git`.
  */
 reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
@@ -380,39 +381,42 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 	const worktreesPath = getWorktreesPath(dataDir, teamId, projectId);
 	const wtPrefix = `${CONTAINER_WORKTREES_ROOT}/`;
 
-	const state = await withProjectGitLock(projectId, async () => {
-		const repoLoc: RepoLoc = {
-			containerPath: repo.repoContainerPath,
-			files: executor.files(repo.repoContainerPath),
-		};
-		const clone = await getCloneState(executor, repoLoc);
-		const entries = await listWorktrees(executor, repoLoc);
-		const worktrees: {
-			taskIdentifier: string;
-			branch: string | null;
-			head: string | null;
-			dirty: boolean;
-		}[] = [];
-		for (const entry of entries) {
-			// Skip the main worktree (the clone itself, under /workspace/<repo>); only
-			// list the per-task worktrees under /worktrees/<taskId>/<repo>.
-			if (!entry.path.startsWith(wtPrefix)) continue;
-			const taskIdentifier = entry.path.slice(wtPrefix.length).split('/')[0];
-			if (!taskIdentifier) continue;
-			const wtLoc: WorktreeLoc = {
-				containerPath: entry.path,
-				files: executor.files(entry.path),
+	const state = await withRepoStoreLock(
+		await repoStoreFor(db, projectId, containerId),
+		async () => {
+			const repoLoc: RepoLoc = {
+				containerPath: repo.repoContainerPath,
+				files: executor.files(repo.repoContainerPath),
 			};
-			const wt = await getWorktreeState(executor, wtLoc);
-			worktrees.push({
-				taskIdentifier,
-				branch: entry.branch ? entry.branch.replace(/^refs\/heads\//, '') : null,
-				head: wt.head,
-				dirty: wt.dirty,
-			});
-		}
-		return { clone, worktrees };
-	});
+			const clone = await getCloneState(executor, repoLoc);
+			const entries = await listWorktrees(executor, repoLoc);
+			const worktrees: {
+				taskIdentifier: string;
+				branch: string | null;
+				head: string | null;
+				dirty: boolean;
+			}[] = [];
+			for (const entry of entries) {
+				// Skip the main worktree (the clone itself, under /workspace/<repo>); only
+				// list the per-task worktrees under /worktrees/<taskId>/<repo>.
+				if (!entry.path.startsWith(wtPrefix)) continue;
+				const taskIdentifier = entry.path.slice(wtPrefix.length).split('/')[0];
+				if (!taskIdentifier) continue;
+				const wtLoc: WorktreeLoc = {
+					containerPath: entry.path,
+					files: executor.files(entry.path),
+				};
+				const wt = await getWorktreeState(executor, wtLoc);
+				worktrees.push({
+					taskIdentifier,
+					branch: entry.branch ? entry.branch.replace(/^refs\/heads\//, '') : null,
+					head: wt.head,
+					dirty: wt.dirty,
+				});
+			}
+			return { clone, worktrees };
+		},
+	);
 
 	// Attach each worktree's task title/status in one query.
 	const identifiers = [...new Set(state.worktrees.map((w) => w.taskIdentifier))];
@@ -613,8 +617,8 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	try {
 		const runUser = await resolveContainerRunUser(docker, containerId);
 
-		result = await withProjectGitLock(
-			projectId,
+		result = await withRepoStoreLock(
+			await repoStoreFor(db, projectId, containerId),
 			async (): Promise<{
 				success: boolean;
 				error?: string;

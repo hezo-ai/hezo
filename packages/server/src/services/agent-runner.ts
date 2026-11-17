@@ -105,7 +105,7 @@ import {
 	containerHomeDir,
 	resolveContainerRunUser,
 } from './container-user';
-import { acquireRunContainer, PoolCapacityError } from './containers';
+import { type AcquiredContainer, acquireRunContainer, PoolCapacityError } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -756,8 +756,14 @@ export interface RuntimeInvocationInput {
 	/** Pre-minted MCP bearer token (run token for a task run; session token for chat). */
 	agentJwt: string;
 	agentId: string;
-	/** Keys the per-resource home/subscription/config dirs — heartbeatRunId or sessionId. */
+	/** The process marker (`HEZO_HEARTBEAT_RUN_ID`): heartbeatRunId, or a chat sessionId. */
 	resourceId: string;
+	/**
+	 * Keys the per-run home/subscription/config dirs; defaults to `resourceId`. A
+	 * chat turn passes its own turn id, so a turn's credential-bearing home is its
+	 * own and is removed when the turn ends, never shared with a sibling turn.
+	 */
+	homeId?: string;
 	/** The project container the run executes in (target of the run-user chown). */
 	containerId: string;
 	/** Detected container run-user; the per-run config dir is chowned to it so the
@@ -847,12 +853,13 @@ export async function buildRuntimeInvocation(
 		extraEnv = [],
 		stopJudge = true,
 	} = input;
+	const homeId = input.homeId ?? resourceId;
 
 	const subscriptionMount = await buildSubscriptionMount(
 		deps.dataDir,
 		runTeamId,
 		projectId,
-		resourceId,
+		homeId,
 		provider,
 		runtimeType,
 		credential,
@@ -868,7 +875,7 @@ export async function buildRuntimeInvocation(
 				deps.dataDir,
 				runTeamId,
 				projectId,
-				resourceId,
+				homeId,
 				subscriptionMount,
 				deps.docker,
 				containerId,
@@ -2354,7 +2361,7 @@ export async function runAgent(
 		emit('stdout', '[runner] Starting the project container…\n');
 	}
 	let containerId: string;
-	let releaseContainer: () => Promise<void> = async () => undefined;
+	let releaseContainer: AcquiredContainer['release'] = async () => undefined;
 	// Park rather than bail when the instance is at its memory budget. The wait
 	// happens here, inside `runAgent`, for one reason: the run id is only in the
 	// live-run registry while this call is in flight, and that registry is the
@@ -2779,33 +2786,18 @@ export async function runAgent(
 			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
 			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
-			// Home-rooted config files carrying a per-run secret (Antigravity's
-			// mcp_config.json holds the agent JWT): scrub them so the token does not
-			// sit in the pooled container's home between runs.
-			if (context.homeConfigScrubPaths.length > 0) {
-				await step('scrub-home-config', async () => {
-					const homeFiles = deps.docker.files(containerId, containerHomeDir(runUser));
-					for (const rel of context.homeConfigScrubPaths) await homeFiles.remove(rel);
-				});
-			}
-			// The tunnel's config, for the same reason as the prompt: a pooled
-			// container serves run after run, so one file per run accumulates there
-			// forever. It carries hostnames only - never a secret value - so this is
-			// housekeeping rather than a scrub, but on a container with a 3 GB disk
-			// budget nothing gets to grow without a bound.
-			await step('remove-tunnel-config', () =>
-				workspaceFiles.remove(join('.hezo', 'tunnel', `${heartbeatRunId}.json`)),
+			await scrubRunArtifacts(
+				deps.docker,
+				{
+					containerId,
+					runUser,
+					homeConfigScrubPaths: context.homeConfigScrubPaths,
+					homeDir:
+						context.subscriptionMount?.containerDir ?? context.homeMount?.containerDir ?? null,
+					tunnelConfigId: heartbeatRunId,
+				},
+				step,
 			);
-			await step('remove-home-mount', async () => {
-				// Removing the per-run home was never tidiness - it holds the provider
-				// credential, so this is a scrub. It goes through the seam because on a
-				// managed backend the directory is inside the sandbox, where a host
-				// `rmSync` would silently no-op while looking like it worked.
-				const dirToRemove =
-					context.subscriptionMount?.containerDir ?? context.homeMount?.containerDir;
-				if (!dirToRemove) return;
-				await deps.docker.files(containerId, dirToRemove).removeDir('.');
-			});
 			await step('release-ssh-socket', async () => {
 				if (deps.sshAgentServer) {
 					await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
@@ -2816,11 +2808,16 @@ export async function runAgent(
 					await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 				}
 			});
-			// Back into the pool, warm and idle, with this task recorded so the
-			// task's next run gets the container whose worktree is already built.
+			// Back into the pool, warm and idle.
 			// Released here rather than only on the success path: a container held
 			// by a failed run is a container no other run can ever have.
-			await step('release-pool-container', () => releaseContainer());
+			// The task is recorded only when this container now holds its worktree,
+			// so its next coding run is routed to a container with something built.
+			await step('release-pool-container', () =>
+				releaseContainer({
+					affinityTaskId: task && repoSession?.holdsTaskWorktree() ? task.id : null,
+				}),
+			);
 		};
 
 		if (runAbort.signal.aborted) {
@@ -3021,6 +3018,8 @@ export async function runAgent(
 			// A checkout the agent cloned or initialised itself in the task folder is
 			// outside everything above: Hezo never pushes from it and never scans it.
 			const strays = repoSession ? await repoSession.strays() : null;
+			// The sweep first, so the disk figure the pool recycles on reflects it.
+			await repoSession?.sweepFinishedTaskFolders();
 			await repoSession?.measureDisk();
 			for (const path of strays?.checkouts ?? []) {
 				emit(
@@ -4059,6 +4058,51 @@ async function vaultUnpushedWork(
 		}
 	}
 	return stranded;
+}
+
+/** What one exec's runtime left in its container that must go when it ends. */
+export interface RunArtifacts {
+	containerId: string;
+	runUser: ContainerRunUser;
+	/** Home-relative config files carrying a per-run secret (`scrubAfterRun`). */
+	homeConfigScrubPaths: string[];
+	/** The per-run home or subscription dir, which holds the provider credential. */
+	homeDir: string | null;
+	/** Names the tunnel config file, `.hezo/tunnel/<id>.json` in the workspace. */
+	tunnelConfigId: string;
+}
+
+/**
+ * Remove what a task run or a chat turn leaves in a pooled container: the
+ * home-rooted config files carrying its token (Antigravity's mcp_config.json holds
+ * the agent JWT), its per-run home (it holds the provider credential), and its
+ * tunnel config. Pooled containers serve one run after another, so anything left
+ * here is readable by the next. Through the file seam, because on a managed
+ * backend these live inside the sandbox, where a host `rmSync` would silently
+ * no-op. `step` isolates each removal, so one failure never skips the others.
+ */
+export async function scrubRunArtifacts(
+	docker: ContainerEngine,
+	a: RunArtifacts,
+	step: (label: string, fn: () => Promise<void>) => Promise<void>,
+): Promise<void> {
+	if (a.homeConfigScrubPaths.length > 0) {
+		await step('scrub-home-config', async () => {
+			const homeFiles = docker.files(a.containerId, containerHomeDir(a.runUser));
+			for (const rel of a.homeConfigScrubPaths) await homeFiles.remove(rel);
+		});
+	}
+	// Hostnames only, never a secret value, so housekeeping rather than a scrub -
+	// but one file per exec would otherwise accumulate for the container's life.
+	await step('remove-tunnel-config', () =>
+		docker
+			.files(a.containerId, CONTAINER_WORKSPACE_ROOT)
+			.remove(join('.hezo', 'tunnel', `${a.tunnelConfigId}.json`)),
+	);
+	const homeDir = a.homeDir;
+	if (homeDir) {
+		await step('remove-home-mount', () => docker.files(a.containerId, homeDir).removeDir('.'));
+	}
 }
 
 export interface MentionOpenTicket {

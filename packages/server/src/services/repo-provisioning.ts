@@ -1,7 +1,7 @@
 import { RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
-import { withProjectGitLock } from '../lib/git-lock';
+import { withRepoStoreLock } from '../lib/git-lock';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
@@ -15,6 +15,7 @@ import {
 	markRepoSetupFailed,
 } from './repo-setup';
 import { ensureProjectRepos } from './repo-sync';
+import { repoStoreFor } from './sandbox/repo-store';
 import { type BridgeRunnerArgs, withProvisionBridge } from './ssh-agent';
 
 const log = logger.child('repo-provisioning');
@@ -124,9 +125,10 @@ export async function performRepoSetup(
 				// Ssh server only — the egress proxy is mandatory, and
 				// `withProvisionBridge` enforces that by throwing. See the note at the
 				// equivalent guard in `containers.ts`.
-				// Under the project git lock, as a run's prep is: both write the same
-				// clone, and a run may be cloning this repo into it right now.
-				const syncRes = await withProjectGitLock(input.projectId, () =>
+				// Under the clone store's git lock, as a run's prep is: both write the
+				// same clone, and a run may be cloning this repo into it right now.
+				const store = await repoStoreFor(db, input.projectId, containerId);
+				const syncRes = await withRepoStoreLock(store, () =>
 					deps.sshAgentServer
 						? withProvisionBridge(
 								deps.sshAgentServer,
