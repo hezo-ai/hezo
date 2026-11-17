@@ -301,6 +301,66 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 		expect(wakeup.rows[0].payload.connector_id).toBe(connectorId);
 	});
 
+	it('binds the token to the resource the PRM names when it is the origin, not the endpoint', async () => {
+		const router = await startFakeMcpServer({ resourceAtOrigin: true });
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'router-shaped',
+				displayName: 'Router Shaped',
+				mcpUrl: `${router.url}/mcp`,
+				mcpTransport: 'http',
+				createdByTaskId: taskId,
+			});
+			const authStart = () =>
+				app.request(`/api/projects/${projectSlug}/auth-start`, {
+					method: 'POST',
+					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ connector_id: row.id }),
+				});
+			const expected = new URL(router.resource).href;
+
+			const startRes = await authStart();
+			const { data } = (await startRes.json()) as { data: { auth_url: string } };
+			expect(new URL(data.auth_url).searchParams.get('resource')).toBe(expected);
+
+			const authorizeRes = await fetch(data.auth_url, { redirect: 'manual' });
+			const loc = new URL(authorizeRes.headers.get('location')!);
+			const cbRes = await app.request(`/api/oauth/mcp-callback?${loc.searchParams.toString()}`);
+			expect(await cbRes.text()).toContain('OAuth connection complete');
+
+			// The server accepts the token Hezo stored, which it refuses when the
+			// token is bound to the endpoint path instead.
+			const accepted = await fetch(`${router.url}/mcp`, {
+				headers: { Authorization: `Bearer ${router.lastAccessToken()}` },
+			});
+			expect(accepted.status).toBe(200);
+
+			// Refresh carries the same indicator as the grant it renews.
+			const connector = await getConnector(db, row.id);
+			const meta = await db.query<{ resource_url: string }>(
+				`SELECT metadata->>'resource_url' AS resource_url FROM oauth_connections WHERE id = $1`,
+				[connector!.oauth_connection_id],
+			);
+			expect(meta.rows[0].resource_url).toBe(expected);
+
+			// A registration cached before the indicator was resolved is a cache
+			// miss: the next connect re-runs discovery and records it.
+			const cached = connector!.config as { dcr: Record<string, unknown> };
+			const { resource: _dropped, ...legacyDcr } = cached.dcr;
+			await db.query(`UPDATE mcp_connections SET config = $1::jsonb WHERE id = $2`, [
+				JSON.stringify({ ...cached, dcr: legacyDcr }),
+				row.id,
+			]);
+			const restart = await authStart();
+			const restarted = (await restart.json()) as { data: { auth_url: string } };
+			expect(new URL(restarted.data.auth_url).searchParams.get('resource')).toBe(expected);
+			const healed = (await getConnector(db, row.id))!.config as { dcr: { resource?: string } };
+			expect(healed.dcr.resource).toBe(expected);
+		} finally {
+			await router.close();
+		}
+	});
+
 	it('callback fails with exchange error when the AS rejects the code', async () => {
 		const broken = await startFakeMcpServer({ rejectExchange: true });
 		try {

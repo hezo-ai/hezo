@@ -26,6 +26,18 @@ export interface SaasConnectorConfig {
 		authorization_endpoint: string;
 		token_endpoint: string;
 		scopes_supported?: string[];
+		/**
+		 * The exact callback URL this client_id was registered against. A public
+		 * OAuth client is bound at registration time to its redirect_uris, so the
+		 * cached client is only reusable while the callback origin is unchanged.
+		 */
+		redirect_uri?: string;
+		/**
+		 * The RFC 8707 resource indicator discovery resolved from the server's
+		 * Protected Resource Metadata, sent on every authorization, token and
+		 * refresh request.
+		 */
+		resource?: string;
 	};
 	/**
 	 * API-key auth shape for connectors authenticated by a pasted key
