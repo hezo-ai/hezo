@@ -1,7 +1,7 @@
 import { type AgentEffort, DEFAULT_TASK_VIEW, type TaskView } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { jumpToComment } from '../../../../components/comment-renderers';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
 import { CommentsSection } from '../../../../components/task-detail/comments-section';
@@ -109,7 +109,10 @@ function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: stri
 	// the chevron. It is independent of the preview panel — opening/closing a
 	// preview must not affect it (otherwise closing a doc reveals the meta panel).
 	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const openPreview = (item: PreviewItem) => setPreview(item);
+	// Stable across renders: comment markdown rebuilds its renderers when this
+	// changes, which remounts every mention in the thread and closes any open
+	// agent card.
+	const openPreview = useCallback((item: PreviewItem) => setPreview(item), []);
 	const commentFormRef = useRef<HTMLFormElement>(null);
 	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 

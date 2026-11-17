@@ -87,6 +87,8 @@ rather than here, is how a codebase ends up with two of everything.
 | Reading token usage - totals, per agent, per day | `services/usage-read.ts` (`parseUsageFilters`, `usageTotals`, `usageByAgent`, `usageByDay`) - `GET /usage` and the `get_usage` tool read the same columns through it |
 | Recording token usage | `recordUsage` (`services/budget.ts`) - the one writer of `usage_entries`; it broadcasts to the owning team so the Tokens tab refreshes |
 | A token count in text the server writes (a notice, a log line) | `englishCount` (`@hezo/shared`) - the web formats counts through the reader's number format instead |
+| Naming an agent in the web UI | `AgentRef` (`packages/web/src/components/agent-ref.tsx`) - its name, else its role, with the identity hover card; `link` makes the name open `AgentCard` (page link and chat shortcut) instead of navigating. A name known only by slug goes through `AgentLink` |
+| The chat room that chatting with one agent opens | `agentChatRoom` (`packages/web/src/hooks/use-chat.ts`) - the CEO stream, a project agent's DM, or none for the Coach |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |
 | A per-bucket stacked chart, and its axis/tooltip formatting | `StackedSeriesChart` + `chart-format.ts` (`packages/web/src/components/charts/`) |

@@ -1,6 +1,6 @@
 import { HQ_PROJECT_SLUG, INSTANCE_AGENT_SLUGS } from '@hezo/shared';
-import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
+import { AgentCard } from './agent-card';
 
 /**
  * Route params for an agent's page. HQ agents (CEO/Coach) are virtual members of
@@ -19,39 +19,27 @@ export function agentPageParams(
 
 interface AgentLinkProps {
 	projectId: string;
-	/** Agent slug (preferred) or member id — the agent route resolves either. */
+	/** The agent's slug. */
 	agentId: string;
 	className?: string;
-	title?: string;
 	testId?: string;
 	children: ReactNode;
 }
 
 /**
- * Link to an agent's profile page. Centralizes the
- * `/projects/$projectId/agents/$agentId` target so assignee, comment authors,
- * and the agent queue all navigate consistently. HQ agents (CEO/Coach) are
- * virtual members of every project; their canonical page lives in the HQ
- * project, so passing their slug routes there. Everyone else links within the
- * current project.
+ * An agent named only by its slug, as a system note bakes it. Opens the agent
+ * card like every other linked agent name; the card fills in the agent's name,
+ * role and status from the live roster. See `AgentCard`.
  */
-export function AgentLink({
-	projectId,
-	agentId,
-	className,
-	title,
-	testId,
-	children,
-}: AgentLinkProps) {
+export function AgentLink({ projectId, agentId, className, testId, children }: AgentLinkProps) {
 	return (
-		<Link
-			to="/projects/$projectId/agents/$agentId"
-			params={agentPageParams(projectId, agentId)}
+		<AgentCard
+			agent={{ slug: agentId }}
+			projectId={projectId}
 			className={className}
-			title={title}
-			data-testid={testId}
+			testId={testId}
 		>
 			{children}
-		</Link>
+		</AgentCard>
 	);
 }

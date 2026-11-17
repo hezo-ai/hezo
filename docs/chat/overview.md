@@ -26,7 +26,8 @@ conversations that remain readable.
 
 The **CEO monogram in the top bar always opens the CEO**, whatever room you were last
 in. To come back to a specific agent or room, open it from the project menu's chat
-cards.
+cards. To chat with an agent you see named on a page, click its name and choose
+**Chat with** on the card that opens.
 
 An agent's direct message or a group room belongs to its project. When you open another
 project, or a page outside any project, the dock closes. The CEO stays open as you move
@@ -65,8 +66,8 @@ in the chat (or pin the dashboard outright), set **Landing view** under
 ## Talking to a project agent
 
 Every enabled agent on a project's roster can be messaged directly - from the chat
-cards in the project menu, or from the dock's room switcher while you're in the
-project. A DM is one continuous conversation per agent. Agents answer questions,
+cards in the project menu, from the dock's room switcher while you're in the
+project, or from **Chat with** on the card an agent's name opens. A DM is one continuous conversation per agent. Agents answer questions,
 discuss approach and coordinate; anything needing a run becomes a task on the project,
 with the same receipts as above. An unread reply marks the agent's card and shows a
 one-line preview.

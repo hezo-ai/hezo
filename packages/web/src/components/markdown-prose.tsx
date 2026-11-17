@@ -24,7 +24,7 @@ import {
 	type TaskMentionData,
 } from '../lib/remark-mentions';
 import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
-import { AgentIdentityTooltipContent } from './agent-identity-tooltip';
+import { AgentCard } from './agent-card';
 import { CommentRefLink, MENTION_CLASSES, PASSIVE_MENTION_CLASSES } from './comment-ref-link';
 import { MarkdownCodeBlock } from './markdown-code-block';
 import { useOpenPreview } from './task-detail/preview-context';
@@ -455,31 +455,20 @@ export function MarkdownProse({
 				const agentLinkSlug = attrs['data-mention-agent-canonical-slug'] ?? agentSlug;
 				if (agentSlug && agentProjectSlug && agentLinkSlug && mentionsEnabled) {
 					return (
-						<Tooltip
-							content={
-								agentName || agentTitle ? (
-									<AgentIdentityTooltipContent
-										agent={{
-											human_name: agentName,
-											title: agentTitle,
-											role_description: agentRoleDescription,
-										}}
-									/>
-								) : (
-									`@${agentSlug}`
-								)
-							}
+						<AgentCard
+							agent={{
+								slug: agentLinkSlug,
+								human_name: agentName,
+								title: agentTitle,
+								role_description: agentRoleDescription,
+							}}
+							projectId={agentProjectSlug}
+							className={agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES}
+							testId="agent-mention-link"
+							dataAttributes={{ 'data-mention-passive': agentPassive ? 'true' : undefined }}
 						>
-							<Link
-								to="/projects/$projectId/agents/$agentId"
-								params={{ projectId: agentProjectSlug, agentId: agentLinkSlug }}
-								className={agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES}
-								data-testid="agent-mention-link"
-								data-mention-passive={agentPassive ? 'true' : undefined}
-							>
-								{props.children}
-							</Link>
-						</Tooltip>
+							{props.children}
+						</AgentCard>
 					);
 				}
 

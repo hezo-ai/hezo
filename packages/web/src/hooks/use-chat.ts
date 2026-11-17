@@ -1,9 +1,11 @@
 import {
+	CEO_AGENT_SLUG,
 	type ChatChannel,
 	type ChatConversationKind,
 	type ChatMessageRole,
 	ChatMessageStatus,
 	type ChatSystemMessageKind,
+	INSTANCE_AGENT_SLUGS,
 	type WsChatGroupPendingTurn,
 	type WsChatGroupPendingTurnsMessage,
 	type WsChatMessageCompleteMessage,
@@ -51,6 +53,30 @@ export type ChatRoom =
 	  };
 
 export const CEO_ROOM: ChatRoom = { kind: 'ceo' };
+
+/**
+ * The room that chatting with one agent opens, or null when the agent has none.
+ * The CEO's is the pinned CEO stream; a project agent's is its DM in that
+ * project; the Coach reviews rather than chats, so it has no room. A project
+ * agent needs the project's UUID, which is null until the index has loaded.
+ */
+export function agentChatRoom(
+	agent: { slug: string; title?: string | null; is_instance?: boolean },
+	projectSlug: string,
+	projectUuid: string | null | undefined,
+): ChatRoom | null {
+	const instance =
+		agent.is_instance ?? (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agent.slug);
+	if (instance) return agent.slug === CEO_AGENT_SLUG ? CEO_ROOM : null;
+	if (!projectUuid) return null;
+	return {
+		kind: 'agent',
+		projectSlug,
+		projectUuid,
+		agentSlug: agent.slug,
+		title: agent.title ?? agent.slug,
+	};
+}
 
 /**
  * Stable identity key for a room — queue buckets and per-room state. Team rooms

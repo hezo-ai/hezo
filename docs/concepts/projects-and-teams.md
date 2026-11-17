@@ -104,6 +104,20 @@ into another project starts it unnamed there.
 The Captain, the CEO and the Coach are always shown by their role rather than a name,
 because there is one of each.
 
+### The agent card
+
+Rest the pointer on an agent's name, or click it, to open a small card under the name. This
+works wherever the name links to the agent: a comment, a mention, a run in the thread, the
+assignee, the task list, the agent queue and the dashboard. The card shows the agent's
+name, role, what the role does and whether it is working, plus two links:
+
+- **Open agent page** opens the agent's own page.
+- **Chat with** opens the chat dock on your conversation with that agent. The Coach reviews
+  tasks rather than chatting, so its card has no chat link.
+
+On a phone, tap the name to open the card and tap anywhere else to close it. To open the
+agent's page in a new tab without the card, Ctrl-click or Cmd-click the name.
+
 ### Mentioning an agent
 
 An agent always answers to its role (`@engineer`). Once you name it, it answers to the

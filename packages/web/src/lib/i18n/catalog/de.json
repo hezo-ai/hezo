@@ -33,6 +33,7 @@
 	"agent.settings.viewBudgets": "Budgets und Diagramme anzeigen",
 	"agents.card.chatWith": "Mit {name} chatten",
 	"agents.card.globalAgent": "Globaler Agent - arbeitet projektübergreifend",
+	"agents.card.openPage": "Agentenseite öffnen",
 	"agents.hire.action": "Agent einstellen",
 	"agents.hire.addToProject": "Zu {project} hinzufügen",
 	"agents.hire.back": "Anderen Weg zum Einstellen wählen",

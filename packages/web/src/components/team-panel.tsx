@@ -4,7 +4,7 @@ import { Globe, MessageSquare, Plus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import { useLaunchChat } from '../contexts/chat-launch-context';
 import { type Agent, useAgents } from '../hooks/use-agents';
-import { CEO_ROOM } from '../hooks/use-chat';
+import { agentChatRoom } from '../hooks/use-chat';
 import { useOrgChart } from '../hooks/use-org-chart';
 import { useProjectMeta } from '../hooks/use-projects';
 import { useTeam } from '../hooks/use-teams';
@@ -39,17 +39,7 @@ function MemberCard({
 	const { t } = useI18n();
 	const launchChat = useLaunchChat();
 	const isCeo = agent.is_instance && agent.slug === CEO_AGENT_SLUG;
-	const chatRoom = isCeo
-		? CEO_ROOM
-		: agent.is_instance || !projectUuid
-			? null
-			: ({
-					kind: 'agent',
-					projectSlug: projectId,
-					projectUuid,
-					agentSlug: agent.slug,
-					title: agent.title,
-				} as const);
+	const chatRoom = agentChatRoom(agent, projectId, projectUuid);
 
 	return (
 		<Link
