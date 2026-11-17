@@ -5884,6 +5884,14 @@ token request exactly when it was present on the authorization request, which is
 authorization spec requires. An AS that scopes tokens per resource (Typefully's, among
 others) answers a token request that drops it with `invalid_target`, which is how this was
 found: reconnect completed the consent screen and then failed at the exchange, every time.
+For the MCP DCR walk the indicator is the `resource` the server's PRM names, not the
+connector URL (`resourceIndicatorFor` in `prm-discovery.ts`), serialised as a URL the way the
+MCP SDK clients do, and cached on `config.dcr.resource`; a cached registration without it is
+a miss that re-runs discovery. A router whose PRM names its bare origin while serving `/mcp`
+(DigitalOcean's `mcp.digitalocean.com`) issues a token bound to whatever indicator it was
+given and refuses one bound to the endpoint path with a 401. A PRM resource on another origin
+or a path that does not cover the endpoint fails discovery rather than steering the token to
+another audience.
 The callback page reports the AS's own `error`/`error_description` alongside the
 `exchange_failed` code rather than the code alone — escaped into both the paragraph and the
 inline `<script>` literal, since that text is upstream-controlled and `JSON.stringify` alone
