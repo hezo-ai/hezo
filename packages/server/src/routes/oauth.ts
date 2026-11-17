@@ -13,6 +13,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
+import type { SaasConnectorConfig } from '../services/connectors/connections';
 import {
 	type ConnectorRow,
 	fireCredentialProvidedWakeup,
@@ -387,24 +388,7 @@ async function startConnectorAuthCode(
 			status: 400,
 		};
 
-	const config = connector.config as {
-		url?: string;
-		dcr?: {
-			client_id: string;
-			authorization_server_url: string;
-			authorization_endpoint: string;
-			token_endpoint: string;
-			scopes_supported?: string[];
-			/**
-			 * The exact callback URL this client_id was registered against. A public
-			 * OAuth client is bound at registration time to its redirect_uris, so the
-			 * cached client is only reusable while our callback origin is unchanged.
-			 * Absent on registrations cached before this field existed — treated as a
-			 * miss so they self-heal on the next connect.
-			 */
-			redirect_uri?: string;
-		};
-	};
+	const config = connector.config as Partial<SaasConnectorConfig>;
 	if (!config.url)
 		return {
 			kind: 'error',
@@ -426,8 +410,11 @@ async function startConnectorAuthCode(
 	// registered and it rejects the authorize with "redirect_uri does not match
 	// any of the OAuth 2.0 Client's pre-registered redirect urls". Re-register a
 	// fresh client bound to the current origin instead — an instance-address
-	// change now self-heals rather than requiring delete-and-recreate.
-	let dcr = config.dcr?.redirect_uri === redirectUri ? config.dcr : undefined;
+	// change now self-heals rather than requiring delete-and-recreate. A cached
+	// registration without a resolved resource indicator is a miss too, so the
+	// walk below resolves it from the server's metadata.
+	let dcr =
+		config.dcr?.redirect_uri === redirectUri && config.dcr.resource ? config.dcr : undefined;
 	let scopesSupported: string[] = dcr?.scopes_supported ?? [];
 
 	if (!dcr) {
@@ -484,6 +471,7 @@ async function startConnectorAuthCode(
 			token_endpoint: discovery.asMetadata.token_endpoint,
 			scopes_supported: discovery.asMetadata.scopes_supported,
 			redirect_uri: redirectUri,
+			resource: discovery.resource,
 		};
 		scopesSupported = discovery.asMetadata.scopes_supported ?? [];
 		const newConfig = { ...config, dcr };
@@ -513,7 +501,7 @@ async function startConnectorAuthCode(
 			client_id: dcr.client_id,
 			scopes: requestedScopes,
 		},
-		resourceUrl: config.url,
+		resourceUrl: dcr.resource,
 	});
 
 	const authUrl = buildAuthorizationUrl({
@@ -523,7 +511,7 @@ async function startConnectorAuthCode(
 		redirectUri,
 		state,
 		codeChallenge,
-		resource: config.url,
+		resource: dcr.resource,
 	});
 
 	return { kind: 'auth_url', authUrl };

@@ -151,6 +151,10 @@ describe('message catalogs', () => {
 		// Dutch writes "Project" identically, as containers.column.project below
 		// records; every other language differs (Projekt, Proyecto, Projet, ...).
 		'chat.convert.projectLabel': ['nl'],
+		// "Status" is the ordinary word in these five, as their
+		// `activity.task.status.changed` sentences already write it; the others
+		// differ (Estado, Statut, Stato, ...).
+		'tasks.sort.field.status': ['de', 'nl', 'pl', 'pt-BR', 'sv'],
 		// "Dashboard" is the ordinary loanword in these three; the others differ
 		// (Panel, Tableau de bord, Pulpit, Painel, Översikt, ...).
 		'appearance.landing.dashboard': ['de', 'it', 'nl'],

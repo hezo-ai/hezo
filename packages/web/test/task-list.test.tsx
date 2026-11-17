@@ -824,10 +824,10 @@ test('a filter saved before In progress was a choice keeps showing that list', a
 	expect((await findByTestId('task-filter-toggle')).textContent).toContain('Backlog + In progress');
 });
 
-test('to-do search does not filter the in progress section', async () => {
+test('search narrows the in progress section like the rest of the list', async () => {
 	let projectSlug = '';
 
-	const { findByTestId, findByText, queryByText, router, user } = await renderApp({
+	const { findByTestId, findByText, queryByTestId, queryByText, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -857,13 +857,12 @@ test('to-do search does not filter the in progress section', async () => {
 	await waitFor(
 		() => {
 			expect(queryByText('Payment flow')).not.toBeNull();
-			expect(queryByText('Active Alpha')).not.toBeNull();
+			expect(queryByText('Active Alpha')).toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
-
-	const inProgressSection = await findByTestId('task-list-in-progress');
-	expect(inProgressSection.textContent).toContain('Active Alpha');
+	// Nothing in flight matches, so the section is omitted entirely.
+	expect(queryByTestId('task-list-in-progress')).toBeNull();
 });
 
 async function seedSubTask(
@@ -1006,4 +1005,160 @@ test('a full-depth sub-task chain indents every level distinctly', async () => {
 	};
 	const indents = ['Deep level one', 'Deep level two', 'Deep level three'].map(indentOf);
 	expect(new Set(indents).size).toBe(3);
+});
+
+/** The given titles in the order a section's rows show them. */
+function sectionTitles(testId: string, titles: string[]): string[] {
+	const section = document.querySelector(`[data-testid="${testId}"]`);
+	if (!section) return [];
+	return Array.from(section.querySelectorAll('tbody tr'))
+		.map((row) => titles.find((title) => (row.textContent ?? '').includes(title)))
+		.filter((title): title is string => title != null);
+}
+
+test('clicking a column header sorts every section, reverses, then returns to work order', async () => {
+	let projectSlug = '';
+	const backlog = ['Charlie backlog', 'alpha backlog', 'Bravo backlog'];
+	const active = ['Zulu active', 'Yankee active'];
+	const done = ['Xray done', 'Whiskey done'];
+
+	const { findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Header Sort Project' });
+			for (const title of backlog) await seedTask(ws, project, { title });
+			const zulu = await seedTask(ws, project, { title: 'Zulu active' });
+			const yankee = await seedTask(ws, project, { title: 'Yankee active' });
+			const xray = await seedTask(ws, project, { title: 'Xray done' });
+			const whiskey = await seedTask(ws, project, { title: 'Whiskey done' });
+			// Patched so the most recently updated is the alphabetically last one, which
+			// tells the default recent-first order apart from a title sort.
+			await patchStatus(ws, yankee.id, 'in_progress');
+			await patchStatus(ws, zulu.id, 'in_progress');
+			await patchStatus(ws, whiskey.id, 'done');
+			await patchStatus(ws, xray.id, 'done');
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByText('Bravo backlog', undefined, { timeout: 10_000 });
+	await findByText('Whiskey done');
+
+	const expectOrder = (b: string[], a: string[], d: string[]) =>
+		waitFor(
+			() => {
+				expect(sectionTitles('task-list-main', backlog)).toEqual(b);
+				expect(sectionTitles('task-list-in-progress', active)).toEqual(a);
+				expect(sectionTitles('task-list-done', done)).toEqual(d);
+			},
+			{ timeout: 10_000 },
+		);
+	const titleHeaders = () =>
+		Array.from(document.querySelectorAll('[data-testid="data-table-sort-title"]'));
+
+	// Default work order: the backlog by task number, the other two recent first.
+	await expectOrder(
+		['Charlie backlog', 'alpha backlog', 'Bravo backlog'],
+		['Zulu active', 'Yankee active'],
+		['Xray done', 'Whiskey done'],
+	);
+
+	const backlogHeader = () =>
+		document.querySelector(
+			'[data-testid="task-list-main"] [data-testid="data-table-sort-title"]',
+		) as HTMLElement;
+
+	await user.click(backlogHeader());
+	await expectOrder(
+		['alpha backlog', 'Bravo backlog', 'Charlie backlog'],
+		['Yankee active', 'Zulu active'],
+		['Whiskey done', 'Xray done'],
+	);
+	for (const header of titleHeaders()) {
+		expect(header.closest('th')?.getAttribute('aria-sort')).toBe('ascending');
+	}
+	const stored = JSON.parse(localStorage.getItem(`hezo:task-filters:${projectSlug}`) ?? '{}');
+	expect(stored).toMatchObject({ sortField: 'title', sortDir: 'asc' });
+
+	await user.click(backlogHeader());
+	await expectOrder(
+		['Charlie backlog', 'Bravo backlog', 'alpha backlog'],
+		['Zulu active', 'Yankee active'],
+		['Xray done', 'Whiskey done'],
+	);
+	for (const header of titleHeaders()) {
+		expect(header.closest('th')?.getAttribute('aria-sort')).toBe('descending');
+	}
+
+	await user.click(backlogHeader());
+	await expectOrder(
+		['Charlie backlog', 'alpha backlog', 'Bravo backlog'],
+		['Zulu active', 'Yankee active'],
+		['Xray done', 'Whiskey done'],
+	);
+	for (const header of titleHeaders()) {
+		expect(header.closest('th')?.hasAttribute('aria-sort')).toBe(false);
+	}
+});
+
+test('search matches the assignee name and narrows the In progress section too', async () => {
+	let projectSlug = '';
+	let searchName = '';
+
+	const { findByText, findByTestId, queryByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Agent Search Project' });
+			const names = ws.agents.map((a) => a.human_name || a.title);
+			// Two agents whose names do not contain each other, so the search for
+			// one cannot also match the other.
+			let pair: [number, number] | null = null;
+			for (let i = 0; i < names.length && !pair; i++) {
+				for (let j = 0; j < names.length && !pair; j++) {
+					const a = names[i].toLowerCase();
+					const b = names[j].toLowerCase();
+					if (i !== j && !a.includes(b) && !b.includes(a)) pair = [i, j];
+				}
+			}
+			if (!pair) throw new Error('seed has no two distinctly named agents');
+			const [other, target] = pair.map((i) => ws.agents[i]);
+			searchName = names[pair[1]];
+
+			const kilo = await seedTask(ws, project, { title: 'Kilo active', assignee_id: other.id });
+			const lima = await seedTask(ws, project, { title: 'Lima active', assignee_id: target.id });
+			await seedTask(ws, project, { title: 'Mike backlog', assignee_id: target.id });
+			await seedTask(ws, project, { title: 'November backlog', assignee_id: other.id });
+			await patchStatus(ws, kilo.id, 'in_progress');
+			await patchStatus(ws, lima.id, 'in_progress');
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByText('Kilo active', undefined, { timeout: 10_000 });
+	await findByText('November backlog');
+
+	await user.click(await findByTestId('task-filter-toggle'));
+	const searchInput = (await findByTestId('task-filter-search')) as HTMLInputElement;
+	expect(searchInput.placeholder).toBe('Filter by title, ID, agent...');
+	await user.type(searchInput, searchName);
+
+	await waitFor(
+		() => {
+			expect(queryByText('Lima active')).not.toBeNull();
+			expect(queryByText('Mike backlog')).not.toBeNull();
+			expect(queryByText('Kilo active')).toBeNull();
+			expect(queryByText('November backlog')).toBeNull();
+		},
+		{ timeout: 10_000 },
+	);
 });

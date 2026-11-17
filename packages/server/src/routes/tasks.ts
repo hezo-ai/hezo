@@ -165,8 +165,16 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 
 	const search = c.req.query('search');
 	if (search) {
+		// The assignee leg is an EXISTS rather than a join so the count query, which
+		// reads `tasks` alone, applies the same filter.
 		conditions.push(
-			`(i.title ILIKE $${idx} OR i.description ILIKE $${idx} OR i.identifier ILIKE $${idx})`,
+			`(i.title ILIKE $${idx} OR i.description ILIKE $${idx} OR i.identifier ILIKE $${idx}
+        OR EXISTS (
+          SELECT 1 FROM members sm
+          LEFT JOIN member_agents sma ON sma.id = sm.id
+          WHERE sm.id = i.assignee_id
+            AND (${agentDisplayNameSql('sma', 'sm')} ILIKE $${idx} OR sma.slug ILIKE $${idx})
+        ))`,
 		);
 		params.push(`%${search}%`);
 		idx++;
@@ -204,7 +212,14 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 	// tier below active runs. Building it once keeps the two from drifting.
 	const adminActionPending = adminActionPendingSql('i', adminUserIdx);
 
-	const orderBy = buildTaskListOrderBy(sortField, sortDirection, params, idx, adminActionPending);
+	const orderBy = buildTaskListOrderBy(
+		sortField,
+		sortDirection,
+		params,
+		idx,
+		adminActionPending,
+		agentDisplayNameSql('ma', 'm'),
+	);
 	idx = orderBy.nextIdx;
 
 	const dataParams = [...params, perPage, offset];
