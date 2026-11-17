@@ -1,3 +1,4 @@
+import type { SecretMasker } from '../lib/secret-masker';
 import { logger } from '../logger';
 import { CappedLogBuffer } from './log-buffer';
 import { splitLogLines } from './log-format';
@@ -6,6 +7,7 @@ import type { WebSocketManager, WsEvent } from './ws';
 const log = logger.child('log-stream');
 
 export type LogStream = 'stdout' | 'stderr';
+const LOG_STREAMS: readonly LogStream[] = ['stdout', 'stderr'];
 
 export interface LogLine {
 	stream: LogStream;
@@ -35,6 +37,12 @@ export interface LogStreamConfig {
 	 * the call happening.
 	 */
 	onFlush?: (delta: string) => Promise<void>;
+	/**
+	 * Masks secret values out of every chunk before it is buffered, broadcast or
+	 * persisted, so all three derive from the same masked text. The owner keeps
+	 * the reference and registers values as it creates them.
+	 */
+	masker?: SecretMasker;
 	capBytes?: number;
 	debounceMs?: number;
 }
@@ -132,7 +140,11 @@ export class LogStreamBroker {
 	emit(streamId: string, stream: LogStream, text: string): void {
 		const entry = this.streams.get(streamId);
 		if (!entry || entry.ended) return;
+		const masker = entry.config.masker;
+		this.append(entry, stream, masker ? masker.push(stream, text) : text);
+	}
 
+	private append(entry: LogStreamEntry, stream: LogStream, text: string): void {
 		// Collapse carriage-return progress redraws and split into discrete lines
 		// once, so the live broadcast and the persisted snapshot stay identical.
 		const lines = splitLogLines(text);
@@ -224,6 +236,12 @@ export class LogStreamBroker {
 	async end(streamId: string): Promise<void> {
 		const entry = this.streams.get(streamId);
 		if (!entry) return;
+		// A tail the masker held back (it could have been the start of a secret)
+		// is released now that no further chunk can complete it.
+		const masker = entry.config.masker;
+		if (masker && !entry.ended) {
+			for (const stream of LOG_STREAMS) this.append(entry, stream, masker.flush(stream));
+		}
 		entry.ended = true;
 		if (entry.flushTimer) {
 			clearTimeout(entry.flushTimer);

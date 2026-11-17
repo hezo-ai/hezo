@@ -78,7 +78,7 @@ const SHARED_INSTRUCTIONS = `
 ## Working Guidelines
 
 ### Hezo Entities Live in the Database, Not on the Container Filesystem
-- **Project docs, project assets, tasks, comments, and skills are platform records, reached only through their MCP tools** — \`read_project_doc\`/\`write_project_doc\`, \`read_project_asset\`/\`write_project_asset\`, \`get_task\`/\`list_tasks\`, \`list_comments\`/\`create_comment\`, \`get_skill\`/\`create_skill\`. They are **not** files on disk. The container filesystem holds only the git repo (your worktree); nothing else Hezo-manages lives there. So **don't \`Read\`/\`cat\`/\`ls\`/\`grep\` the filesystem hunting for a doc, task, asset, or skill** — there is no \`/workspace/.hezo/\` path and the file tools will never find them. Reach for the entity's tool before touching the shell, and author one through its \`write_*\`/\`create_*\` tool — **never the \`Write\`/\`Edit\` file tools or a shell redirect**. One asymmetry makes this easy to get wrong: \`Edit\` on a path that doesn't exist fails loudly, but \`Write\` to a new path **succeeds**, so a doc you "saved" that way looks written, is read by nobody, and leaves the real record stale. (For a *binary* asset the tool response and task-thread attachment lines carry a signed download URL — fetch it with \`curl -fsSL '<url>' -o /tmp/<filename>\`; no auth header needed, and if it has expired, re-call \`read_project_asset\` for a fresh one.)
+- **Project docs, project assets, tasks, comments, and skills are platform records, reached only through their MCP tools** — \`read_project_doc\`/\`write_project_doc\`, \`read_project_asset\`/\`write_project_asset\`, \`get_task\`/\`list_tasks\`, \`list_comments\`/\`create_comment\`, \`get_skill\`/\`create_skill\`. They are **not** files on disk. The container filesystem holds only the git repos you prepare (your worktrees); nothing else Hezo manages lives there. So **don't \`Read\`/\`cat\`/\`ls\`/\`grep\` the filesystem hunting for a doc, task, asset, or skill** — there is no \`/workspace/.hezo/\` path and the file tools will never find them. Reach for the entity's tool before touching the shell, and author one through its \`write_*\`/\`create_*\` tool — **never the \`Write\`/\`Edit\` file tools or a shell redirect**. One asymmetry makes this easy to get wrong: \`Edit\` on a path that doesn't exist fails loudly, but \`Write\` to a new path **succeeds**, so a doc you "saved" that way looks written, is read by nobody, and leaves the real record stale. (For a *binary* asset the tool response and task-thread attachment lines carry a signed download URL — fetch it with \`curl -fsSL '<url>' -o /tmp/<filename>\`; no auth header needed, and if it has expired, re-call \`read_project_asset\` for a fresh one.)
 - **Address every entity by the user-facing handle, never a filesystem path.** Docs use their bare filename (\`prd.md\`); assets use their full library path — filename plus any folders (\`assets/mockup.html\`, \`assets/launch/hero.png\`); tasks use their project-scoped identifier (\`ABC-12\`); teammates use their slug. These are the same handles shown in the UI and in this prompt's Project State / manifests — read them there up front and pass them straight to the tools, rather than discovering mid-run that an entity you assumed was a file actually lives in the database.
 
 ### How You Write
@@ -259,7 +259,7 @@ const SHARED_INSTRUCTIONS = `
 - **You can hand off a task you are running — do it yourself, don't ask a human to.** \`update_task\` with a new \`assignee_id\` works from inside your own run: it posts the handover to the task thread and wakes the new owner. Say so in a comment and **end your turn — do not keep working the task after giving it away**, since your run keeps write access to it. What you cannot do is take a task away from another agent's live run: comment with an active \`@<agent-slug>\` asking them to hand it over.
 
 ### Shell Commands
-- Shell commands run from your run's working directory (a git worktree when the project has a repo) — you do not need to specify it. To run a command in a different directory, prefix it with \`cd <path> && …\`. Don't pass a separate directory / \`workdir\` / \`cwd\` argument to the shell tool; prefixing with \`cd\` works on every runtime, whereas a directory argument may be rejected.
+- Shell commands run from your run's working directory (the task folder when the project has a repo, holding each worktree \`prepare_repos\` checks out) — you do not need to specify it. To run a command in a different directory, prefix it with \`cd <path> && …\`. Don't pass a separate directory / \`workdir\` / \`cwd\` argument to the shell tool; prefixing with \`cd\` works on every runtime, whereas a directory argument may be rejected.
 
 ### Fetching External URLs
 - To read a web page or hit an HTTP endpoint, use \`curl\` from the shell. The container's proxy and CA trust are preconfigured, so HTTPS to any host works with no extra flags.
@@ -964,26 +964,26 @@ interface RepoContextRow {
 }
 
 /**
- * Names the project's designated repository in-prompt so an agent never has to
- * guess where its code goes. The repo is already cloned and the run's working
- * directory is a worktree checked out from it (so `origin` is preconfigured to
- * it over SSH). Without this, agents that need to push or open a PR have no idea
- * the repo exists and invent a name — then chase a PAT / disable TLS / create a
- * brand-new repo to make their invented name work. Regenerated every run from
- * live DB state; omitted entirely when the project has no linked repo (a
- * code-touching run with no repo is gated upstream by the repo-setup approval).
+ * Names the project's repositories in-prompt so an agent never has to guess
+ * where its code goes. A run starts in its task folder with no repository
+ * checked out; the agent prepares the ones it needs with `prepare_repos`, which
+ * fetches each, checks out its worktree on `hezo/<TASK>` and catches it up.
+ * Without this block, agents that need to push or open a PR have no idea the
+ * repo exists and invent a name, then chase a PAT, disable TLS or create a new
+ * repo to make their invented name work. Regenerated every run from live DB
+ * state; omitted entirely when the project has no linked repo (a code-touching
+ * run with no repo is gated upstream by the repo-setup approval).
  *
- * Every linked repo — not just the designated one — is cloned and checked out to
- * its own per-task worktree (`agent-runner.ts` loops all of them), each with its
- * own SSH `origin` and the same per-commit auto-push hook. The block therefore
- * describes every linked repo as a place the agent may commit and push, naming
- * each one's on-disk path. Two failures come from getting this wrong: an agent
- * that doesn't know a second repo is local reaches for the `github` MCP
- * `get_file_contents` (slower, per-file token cost, and it reads GitHub's default
- * branch rather than this run's ref); and an agent told the designated repo is
- * "the one and only place your code goes" refuses to push a finished change to a
- * second linked repo, inventing a scoping rule Hezo does not have — one
- * account-level SSH key and one account-wide OAuth token serve every linked repo.
+ * Every linked repo, not just the designated one, can be prepared into its own
+ * per-task worktree with its own `origin` (HTTPS through the egress proxy) and
+ * the same per-commit auto-push hook. The block therefore describes every
+ * linked repo as a place the agent may commit and push, naming each one's
+ * on-disk path. Two failures come from getting this wrong: an agent that does
+ * not know a second repo is local reaches for the connector's
+ * `get_file_contents` (slower, per-file token cost, and it reads GitHub's
+ * default branch rather than this run's ref); and an agent told the designated
+ * repo is "the one and only place your code goes" refuses to push a finished
+ * change to a second linked repo, inventing a scoping rule Hezo does not have.
  *
  * When the connected account genuinely cannot write to a repo (`can_push` false,
  * checked against GitHub's `permissions` at link and setup time) the block says
@@ -1033,29 +1033,28 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 	const designated = repos.rows.find((r) => r.is_designated === true) ?? repos.rows[0];
 	const others = repos.rows.filter((r) => r !== designated);
 
-	// Each additional repo's worktree is a sibling of the working directory (the
-	// designated repo's worktree) — `/worktrees/<TICKET>/<name>`. Emit the concrete
-	// path when the ticket identifier resolves; otherwise describe it relative to
-	// the working directory so the guidance still holds.
+	// Where `prepare_repos` checks a repo out: `/worktrees/<TASK>/<name>`. Emit the
+	// concrete path when the task identifier resolves; otherwise describe it
+	// relative to the task folder so the guidance still holds.
 	const localPathOf = (name: string): string =>
 		taskIdentifier
 			? `\`${CONTAINER_WORKTREES_ROOT}/${taskIdentifier}/${name}\``
-			: `a sibling directory named \`${name}\` next to your working directory`;
+			: `a worktree named \`${name}\` in your task folder`;
 
 	// Only a definite `false` is called out. `null` means the check hasn't run
-	// (or was inconclusive) and must not be reported as a restriction — telling an
+	// (or was inconclusive) and must not be reported as a restriction: telling an
 	// agent it cannot push when it can is the failure this block exists to fix.
 	const readOnlyNote = (r: RepoContextRow): string =>
 		r.can_push === false
-			? ` **The connected GitHub account has no write access to this repository**, so a push here will be rejected — do not attempt one, and do not work around it. If the task needs a change here, say so and ask \`@admin\` to grant that account write access.`
+			? ` **The connected GitHub account has no write access to this repository**, so a push here will be rejected. Do not attempt one, and do not work around it. If the task needs a change here, say so and ask \`@admin\` to grant that account write access.`
 			: '';
 
-	// Name the connector rather than a service. `list_connectors` reports exactly
-	// this string, and a connector's tools carry it as their prefix, so this is
-	// the one fact that turns "I cannot find the GitHub tools" into a lookup.
+	// Name the connector rather than a service. `hezo-mcp servers` and
+	// `list_connectors` report exactly this string, so this is the one fact that
+	// turns "I cannot find the GitHub tools" into a lookup.
 	const connectorNote = (r: RepoContextRow): string =>
 		r.connector_name
-			? ` API operations for it run through the \`${r.connector_name}\` connector — its tools are prefixed with that name, so find them under \`${r.connector_name}\` rather than under the service's name.`
+			? ` API operations for it run through the \`${r.connector_name}\` connector. Reach its tools with \`hezo-mcp\`, where \`${r.connector_name}\` is the server name, not the service's name.`
 			: ` **No MCP connector authenticates this repository**, so you have git but no API tools for it. Do not hunt for them: say so in your wrap-up and \`@admin\` it.`;
 
 	// One phrase for the generic bullets below, derived from what this project
@@ -1073,13 +1072,14 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 				? 'the tools of the connector named for that repository above'
 				: 'the GitHub MCP tools, if any connector provides them';
 
+	const designatedName = repoNameFromIdentifier(designated.repo_identifier);
 	const repoLines = [
-		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}) — already cloned; your working directory is its worktree, and it is the default target for this project's work.${connectorNote(designated)}${readOnlyNote(designated)}`,
+		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}). It is the default target for this project's work. \`prepare_repos\` checks it out at ${localPathOf(designatedName)}.${connectorNote(designated)}${readOnlyNote(designated)}`,
 	];
 	for (const o of others) {
 		const name = repoNameFromIdentifier(o.repo_identifier);
 		repoLines.push(
-			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}) — cloned and checked out for this run at ${localPathOf(name)}, on the same \`hezo/<TASK>\` branch, with its own \`origin\` over SSH. You can commit, push, and open a pull request here exactly as you do in the designated repo — \`cd\` to that path first.${connectorNote(o)}${readOnlyNote(o)}`,
+			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}). \`prepare_repos\` checks it out at ${localPathOf(name)}, on the same \`hezo/<TASK>\` branch, with its own \`origin\`. You can commit, push, and open a pull request here exactly as you do in the designated repo.${connectorNote(o)}${readOnlyNote(o)}`,
 		);
 	}
 
@@ -1089,17 +1089,18 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 
 ## Repository
 
-This project's repositories are listed below. Each one is already cloned into your workspace and checked out for this run, and your run's working directory is a git worktree of the **designated** repository — the default target for this project's work. **Never create a new repository, invent a repo name, or repoint \`origin\`** — the repos below already exist and are the target for every push and pull request.
+This project's repositories are listed below. Your run starts in its task folder with no repository checked out. **Never create a new repository, invent a repo name, or repoint \`origin\`.** The repos below already exist and are the target for every push and pull request.
 
 ${repoLines.join('\n')}
 
-- **Every repository listed above is yours to work in, not just the designated one.** Each has its own worktree on the same \`hezo/<TASK>\` branch, its own \`origin\` over SSH, and the same auto-push — so committing there, pushing there, and opening a pull request against it are all normal. Nothing about your run is scoped to a single repository: one project SSH key and one connected GitHub account serve all of them. If a repo above carries no read-only note, treat it as writable and just do the work — never leave a finished change unpushed because you assumed you lacked access to that repo.
-- **Read connected repositories from disk, never through an API.** Every linked repo above is cloned and checked out locally for this run — your working directory is the designated repo's worktree, and any additional repos sit in sibling worktree directories (paths above). Inspect them with \`ls\`/\`Read\`/\`grep\`/\`cat\` directly. Do **not** pull a repo's file contents through ${githubTools} (\`get_file_contents\`) or any other remote fetch just to read code — that is slower, spends tokens per file, and returns GitHub's default branch instead of the exact ref checked out here. Those tools are for GitHub *operations* (pull requests, CI logs, issues), not for reading files that are already on disk.
-- **Commits auto-push to \`origin\`; you don't need a manual push to preserve work.** Every commit you make is pushed to \`origin/<branch>\` (e.g. \`origin/hezo/<TASK>\`) automatically the moment it lands — git authenticates over **SSH** with the project's key — so committed work survives even if the run ends early. This applies in every repo above, each pushing to its own \`origin\`. An explicit \`git push -u origin <branch>\` still works out of the box if you want one. You do **not** need a GitHub Personal Access Token for git, so never call \`request_credential\` for a PAT to push or to create a repo.
-- **If a push is actually rejected, report the error — don't theorise about it.** Run the push, and if it fails, quote the exact git output (e.g. \`Permission to <owner>/<repo>.git denied to <account>\`) in your wrap-up and \`@admin\` it. Never assert a restriction that is not written in this block — there is no per-repository scoping of the SSH key, the connected account, or the connectors above, so claiming one sends the human looking for a problem that does not exist. Leaving a committed fix unpushed and asking a human to apply a patch by hand is never the answer while an untried push remains.
-- **Open and manage pull requests** with ${githubTools} (e.g. \`create_pull_request\`), targeting whichever of the repositories above the change lives in. Use them for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`. If you cannot see a tool you expect, call \`list_connectors\` and match its \`name\` against your tool list before concluding it is missing — the prefix is the connector's name, not the service's.
-- **When CI checks fail, read the logs through ${githubTools}, never by hand.** Use \`get_job_logs\` with \`failed_only: true\` + the \`run_id\` (or a specific \`job_id\`), \`return_content: true\`, and a \`tail_lines\` bound (e.g. 200) so output stays scoped to the failure. Find the run and its jobs with \`list_workflow_runs\` / \`list_workflow_jobs\`, or \`pull_request_read\` (\`method: "get_check_runs"\`) for a PR's checks. Do **not** \`curl\` \`api.github.com/.../actions/jobs/<id>/logs\` or wrestle with zip downloads — the MCP returns ready-to-read text.
-- **GitHub auth is already provisioned by the project's connected account** — git over SSH and the connectors above both authenticate through it, so you almost never need a PAT. A few REST operations have no MCP tool (e.g. editing repo settings — description, homepage, topics, visibility). For those, call \`list_connectors\`, take the active \`github\` connector's \`rest_auth.placeholder\`, and send it as \`Authorization: Bearer <placeholder>\` on a normal request to \`api.github.com\` — the egress proxy substitutes the real token (only for that connection's \`allowed_hosts\`) and you never see it. Only if there is no active \`github\` connection should you \`register_connector\` with \`provider_id: "github"\` to have the human connect one, or — last resort — \`request_credential\` for a **fine-grained** \`github_pat\` scoped to \`api.github.com\`. Never use a broad classic PAT, and never request a credential for work git-over-SSH or those connectors already handle.
+- **Call \`prepare_repos\` before you read, build, test or commit code.** It fetches each repository you name, checks out its worktree on the \`hezo/<TASK>\` branch, and catches that branch up to the default branch. Call it even when the worktree already exists from an earlier run. Name only the repositories you need, then \`cd\` into the path it returns.
+- **Every repository listed above is yours to work in, not just the designated one.** Each prepared repository has its own worktree on the same \`hezo/<TASK>\` branch, its own \`origin\`, and the same auto-push, so committing, pushing and opening a pull request are normal in any of them. Nothing about your run is scoped to a single repository: one connected GitHub account serves all of them. If a repo above carries no read-only note, treat it as writable and do the work. Never leave a finished change unpushed because you assumed you lacked access to that repo.
+- **Read connected repositories from disk, never through an API.** After \`prepare_repos\`, inspect the code with \`ls\`, \`Read\`, \`grep\` and \`cat\`. Do **not** pull a repo's file contents through ${githubTools} (\`get_file_contents\`) or any other remote fetch: that is slower, spends tokens per file, and returns GitHub's default branch instead of the ref checked out here. Use those tools for GitHub operations: pull requests, CI logs, issues.
+- **Commits auto-push to \`origin\`; you do not need a manual push to keep work.** Every commit you make is pushed to \`origin/<branch>\` (e.g. \`origin/hezo/<TASK>\`) the moment it lands, so committed work survives a run that ends early. Git authenticates over **HTTPS** with the project's connected account, through the egress proxy. An explicit \`git push -u origin <branch>\` also works. You do **not** need a GitHub Personal Access Token for git, so never call \`request_credential\` for a PAT to push or to create a repo.
+- **If a push is rejected, report the error. Do not theorise about it.** Run the push, and if it fails, quote the exact git output (e.g. \`Permission to <owner>/<repo>.git denied to <account>\`) in your wrap-up and \`@admin\` it. Never assert a restriction that is not written in this block: there is no per-repository scoping of the connected account or the connectors above. Never leave a committed fix unpushed and ask a human to apply a patch by hand while an untried push remains.
+- **Open and manage pull requests** with ${githubTools} (e.g. \`create_pull_request\`), targeting whichever of the repositories above the change lives in. Use them for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`. If you cannot find a tool you expect, run \`hezo-mcp servers\` and \`hezo-mcp search <term>\` before concluding it is missing: the server name is the connector's name, not the service's.
+- **When CI checks fail, read the logs through ${githubTools}, never by hand.** Use \`get_job_logs\` with \`failed_only: true\` + the \`run_id\` (or a specific \`job_id\`), \`return_content: true\`, and a \`tail_lines\` bound (e.g. 200) so output stays scoped to the failure. Find the run and its jobs with \`list_workflow_runs\` / \`list_workflow_jobs\`, or \`pull_request_read\` (\`method: "get_check_runs"\`) for a PR's checks. Do **not** \`curl\` \`api.github.com/.../actions/jobs/<id>/logs\` or wrestle with zip downloads: the connector returns ready-to-read text.
+- **GitHub auth is already provisioned by the project's connected account.** Git and the connectors above both authenticate through it, so you almost never need a PAT. A few REST operations have no MCP tool (e.g. editing repo settings: description, homepage, topics, visibility). For those, call \`list_connectors\`, take the active \`github\` connector's \`rest_auth.placeholder\`, and send it as \`Authorization: Bearer <placeholder>\` on a normal request to \`api.github.com\`. The egress proxy substitutes the real token (only for that connection's \`allowed_hosts\`) and you never see it. Only if there is no active \`github\` connection, \`register_connector\` with \`provider_id: "github"\` to have the human connect one, or, as a last resort, \`request_credential\` for a **fine-grained** \`github_pat\` scoped to \`api.github.com\`. Never use a broad classic PAT, and never request a credential for work git or those connectors already handle.
 - **Never disable TLS verification** (\`curl -k\`, \`-c http.sslVerify=false\`, \`GIT_SSL_NO_VERIFY\`). Outbound HTTPS is already trusted via the preconfigured CA; a TLS error is a signal to diagnose, not to bypass.
-- If no GitHub connector reached this run, push the branch and say so in your wrap-up — do not fall back to creating a repo or fetching a PAT.`;
+- If no GitHub connector reached this run, push the branch and say so in your wrap-up. Do not fall back to creating a repo or fetching a PAT.`;
 }

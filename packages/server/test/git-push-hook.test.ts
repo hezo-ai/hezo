@@ -75,7 +75,7 @@ async function liveSocket(dir: string): Promise<string> {
 }
 
 // A clone with the hook installed, on a fresh `hezo/<task>` branch, pointed at a bare
-// origin — the shape prepareWorktrees produces for a task run.
+// origin — the shape repo prep (`prepare_repos`) produces for a task run.
 async function setupClone(name: string, branch: string): Promise<{ clone: string; bare: string }> {
 	const bare = join(root, `${name}.git`);
 	const clone = join(root, `${name}-clone`);

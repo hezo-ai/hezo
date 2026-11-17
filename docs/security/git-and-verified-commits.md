@@ -35,20 +35,23 @@ until it's ready; if setup fails (for example the workspace couldn't start), the
 shown on the repository with a **Retry** button.
 
 If you connect a repository that has **no commits yet**, Hezo seeds it with a minimal
-`README.md` on its first run and pushes that as the initial commit - an empty repository
+`README.md` the first time an agent prepares it and pushes that as the initial commit - an empty repository
 has no branch for a task to build on, so this makes it usable immediately. (Repositories
 you create through Hezo already start with an initial commit, so this only applies to
 pre-existing empty repositories you link.)
 
 ### Every linked repository is a working repository
 
-A project can link more than one repository, and agents work in **all** of them - each is
-cloned into the workspace and checked out on the task's own branch, with its own remote.
-One of them is the **designated** repository (the default place a task's work goes, and the
-directory an agent starts in), but that is a default, not a boundary: an agent can commit,
-push, and open a pull request in any repository you have linked. Nothing about a run is
-scoped to a single repository - the same project key and the same connected account serve
-every one of them.
+A project can link more than one repository, and agents work in **all** of them. A run
+starts with no repository checked out. When an agent needs code, it asks Hezo to prepare
+the repositories it needs: each one is cloned into the workspace if it is not there yet,
+fetched, and checked out on the task's own branch, with its own remote. A run that never
+touches code, such as a planning or marketing task, skips this work and starts sooner.
+
+One of the repositories is the **designated** repository (the default place a task's work
+goes), but that is a default, not a boundary: an agent can commit, push, and open a pull
+request in any repository you have linked. Nothing about a run is scoped to a single
+repository - the same project key and the same connected account serve every one of them.
 
 ### Write access is checked, not assumed
 

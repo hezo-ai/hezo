@@ -1796,6 +1796,12 @@ describe('repository block', () => {
 		});
 		expect(result).toContain('## Repository');
 		expect(result).toContain('Designated repository: `acme/widgets` (github)');
+		// A run starts with no repo checked out; the agent prepares the ones it needs.
+		expect(result).toContain('Call `prepare_repos` before you read, build, test or commit code');
+		expect(result).toContain('Call it even when the worktree already exists from an earlier run');
+		// Git rides HTTPS through the egress proxy; SSH is retired.
+		expect(result).toContain('Git authenticates over **HTTPS**');
+		expect(result).not.toContain('over SSH');
 		// The four behaviours the agent got wrong: inventing/creating a repo,
 		// repointing origin, fetching a PAT for git, and disabling TLS.
 		expect(result).toContain('Never create a new repository');
@@ -1810,7 +1816,7 @@ describe('repository block', () => {
 		// nothing, or worse found the CLI's own account tools.
 		expect(result).not.toContain('`github` MCP');
 		expect(result).toContain('list_connectors');
-		expect(result).toContain("the prefix is the connector's name, not the service's");
+		expect(result).toContain("the server name is the connector's name, not the service's");
 		expect(result).toContain('api.github.com');
 		// CI failures: read logs via the github MCP's actions tools, never curl.
 		expect(result).toContain('get_job_logs');
@@ -1833,10 +1839,10 @@ describe('repository block', () => {
 		});
 		expect(result).toContain('Designated repository: `acme/widgets`');
 		expect(result).toContain('Also linked: `acme/docs`');
-		// The additional repo is flagged as cloned/checked out locally, and — with no
-		// resolved ticket here — described relative to the working directory.
-		expect(result).toContain('cloned and checked out for this run at');
-		expect(result).toContain('a sibling directory named `docs` next to your working directory');
+		// The additional repo is named with where `prepare_repos` checks it out, and
+		// — with no resolved task here — described relative to the task folder.
+		expect(result).toContain('`prepare_repos` checks it out at');
+		expect(result).toContain('a worktree named `docs` in your task folder');
 		// Steer reading to disk, not the github MCP file API.
 		expect(result).toContain('Read connected repositories from disk, never through an API');
 		expect(result).toContain('get_file_contents');
@@ -1991,13 +1997,13 @@ describe('repository block', () => {
 		// The generic guidance must name it too, not fall back to a service name.
 		expect(result).toContain("the `marketing-site` connector's tools");
 		expect(result).not.toContain('`github` MCP');
-		// And it must say where the prefix comes from, since the name alone does not
-		// tell an agent that the tools are namespaced by it.
-		expect(result).toContain('prefixed with that name');
+		// And it must say how the name is used, since the name alone does not tell
+		// an agent that `hezo-mcp` addresses the tools by it.
+		expect(result).toContain('is the server name');
 	});
 
 	it('says so plainly when no connector authenticates a repo', async () => {
-		// The silent case from the original incident: git keeps working over SSH, so
+		// The silent case from the original incident: git keeps working, so
 		// nothing looks wrong, and the agent burns the run hunting for API tools that
 		// were never in it.
 		const teamRes = await createTestTeam(db, { name: 'No Connector Co' });

@@ -666,7 +666,7 @@ describe('runAgent — provider/credential resolution failures', () => {
 
 describe('runAgent — abort with a terminal container reason', () => {
 	it('records failed status with error=container_stopped when aborted at the pre-exec checkpoint', async () => {
-		// Abort with a terminal reason during prepareWorktrees-adjacent setup: the
+		// Abort with a terminal reason during the setup before the exec: the
 		// signal is already aborted by the time the post-context cleanup checkpoint
 		// runs, so finalizeAbort maps the reason to a Failed status.
 		const ac = new AbortController();

@@ -106,6 +106,15 @@ ever shared. The same holds for the warning a run's log gets when a connector re
 it names the connector, the HTTP status and whether a credential was sent, never the
 credential.
 
+A run also carries a few values of its own: the model-provider key above, the run's access
+token for Hezo, its password for the egress proxy, and the token for its commit-signing
+bridge. If an agent prints any of them, for example by listing its environment or its
+processes, Hezo replaces each one with `***` before the run's log is saved or shown. The
+error recorded for a failed run is masked the same way. Two gaps remain: a token the
+agent's tool refreshes inside the container is new to Hezo, so it cannot be masked, and
+neither can part of a value that the output itself cut short. Logs saved before this
+masking existed are unchanged, so rotate a model-provider key that appeared in one.
+
 ## Where agents can reach
 
 The egress proxy runs on the machine hosting Hezo, so by default it refuses to carry

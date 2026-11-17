@@ -427,8 +427,8 @@ execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, 
 success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distinguishes a
 normal `task` run from the two **task-less** kinds (`task_id IS NULL`): a `progress_update` run
 (the Captain's goal assessment) and a `retrospective` run (the Coach's pass over one project's
-recent shape). Both reuse the full run lifecycle but skip the task comment, status flip, and code
-worktree, and both launch through `JobManager.launchTaskLessRun`, which holds every gate below the
+recent shape). Both reuse the full run lifecycle but skip the task comment and status flip, and
+cannot prepare a repo (`prepare_repos` needs a task), and both launch through `JobManager.launchTaskLessRun`, which holds every gate below the
 choice of subject — busy, capacity and budget checks, the runtime-status flip, the project-run
 lock, and the release on each exit. **They do not depend on goals**: a run is due on the Captain's
 heartbeat when a goal is due (`getDueGoals`) *or* when the summary has gone stale and a task
@@ -2022,8 +2022,8 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   Disk is measured with `df` rather than `du`: the question is how close a container is to
   filling up, which `df` answers from the superblock in constant time, where `du` would walk
   every `node_modules` in every worktree - exactly the trees that make the number
-  interesting. It runs once per run, **after** the worktree GC, so the figure reflects disk
-  that is actually unavailable rather than what a reclaim was about to free, and it lands in
+  interesting. It runs each time a run prepares repos, **after** the worktree GC, so the
+  figure reflects disk that is actually unavailable rather than what a reclaim was about to free, and it lands in
   `container_pool_members.disk_used_bytes`. `null` (an unreadable measurement) leaves the
   previous figure alone; reporting an unmeasurable container as empty would defeat the
   pool's recycle rung, which had no input at all before this and so could never fire.
@@ -3011,7 +3011,7 @@ container already takes.
 provisioning finishes - the same instant its provisioning log stream opens, and before
 `startContainer`. Both facts about a container that the global Containers page reads (the
 member row and `projects.container_id`) used to be written at the *end*, so for the whole
-expensive stretch - starting, the MTU pin, the CA, the repo sync, the MCP installs - a real
+expensive stretch - starting, the MTU pin, the CA, the MCP installs - a real
 container existed, was streaming its log to a room keyed on its own id, and was listed
 nowhere: on a fresh instance the operator saw "Starting the HQ container..." beside an empty
 list, with no row to reach the log from. `creating` is safe to write early because
@@ -3983,15 +3983,35 @@ knobs (memory budget, per-container RAM cap) live on the global Settings → Con
 page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
 computed default), which also hosts the backend switcher. The project's
 `<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
-to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at
+to `/workspace`, with one subdirectory per linked repo. A task's `git worktree` for a repo lives at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted
 across runs and torn down when the task reaches a terminal status (`done`/`cancelled`). That
 teardown (`removeTaskWorktrees`, a host-side `rmSync`) fires from `triggerStatusAutomations`,
 so it runs for **both** close paths — a human close via `PATCH /tasks` and an agent close via
 the MCP `update_task` tool — leaving no orphaned worktrees behind either way. Committed work
 survives on the pushed `hezo/<task-identifier>` branch ref; the harmless dangling git metadata
-is swept lazily on the next run's worktree prep or by the manual "Prune worktrees" admin action.
-The working dir resolves to the designated repo's worktree (falling back to `/workspace`).
+is swept lazily on the next repo prep or by the manual "Prune worktrees" admin action.
+The working dir is the task root, `/worktrees/<task-identifier>` (`/workspace` for a task-less
+run or a project with no linked repo).
+
+**A run prepares no repo before its agent starts.** The agent calls `prepare_repos` when it
+needs code. The call reaches the run's `RunRepoSession` (`services/run-repos.ts`), found by run
+id in an in-process registry the runner fills before exec and empties in cleanup, and runs the
+prep pipeline under `withProjectGitLock`: clone sync for the named repos only, push hook,
+empty-remote seed, fetch, default fast-forward, recovery-bundle restore, `git worktree add`,
+recovery replay, catch-up merge, then the pre-run head, finished-worktree GC and the disk
+measurement. A repeat call for a prepared repo does no git work; a repo that fails is reported
+to the agent and retried on its next call, and never fails the run. Container provisioning
+clones nothing: a container gets a repo's clone the first time a run on it prepares that repo
+(linking or recloning a repo still clones into a held container). The prep executor carries
+its own `gitop-` scope id, never the run id - the agent CLI is stamped with the run id, so a
+prep op's marker kill on a timeout would otherwise kill the running agent. Finalize awaits any
+prep still in flight, then scans every worktree of the task present in the container, prepared
+this run or left by an earlier one: an agent that works in a leftover worktree without
+preparing it still has its commits scanned and vaulted. For a leftover worktree change
+detection has no pre-run head and reads only a dirty tree, and its push-error log is not
+reported, since this run did not clear it. Each adapter's MCP tool-call timeout (OpenCode's
+600 s is the shortest one set) exceeds a worst-case clone plus fetch.
 
 Because Docker Desktop bind-mount propagation can lag right after a container reprovision (a
 path the host just `mkdirSync`'d briefly stats as missing inside the container), the runner
@@ -4056,7 +4076,7 @@ advertisement succeeds and the transfer is refused.
 way the placeholder in its remote URL ever becomes a credential. Git reads those variables the
 way any HTTP client does, so nothing git-specific carries a clone to the proxy - and nothing
 supplies them implicitly either: `ContainerGitExecutor` takes them through its `baseEnv`, so
-each caller passes them. Run prep gets them from the run's own allocation (`prepareWorktrees`);
+each caller passes them. Run prep gets them from the run's own allocation (`RunRepoSession`);
 provisioning gets them from `withProvisionBridge`. A caller that omits them does not fail
 loudly - the clone connects direct, ships `__HEZO_SECRET_<NAME>__` as its Basic password, and
 the remote reports a bad token, which points at the credential rather than at the routing.
@@ -5475,6 +5495,18 @@ Wherever it would write a secret it writes `__HEZO_SECRET_<NAME>__` (grammar in
 `lib/credential-placeholder.ts`, shared by the proxy, `request_credential`, and the admin
 secrets route so a creatable name is exactly a substitutable name). The threat model
 assumes the agent itself may misbehave; the egress proxy is the choke point.
+
+**A run's own plaintext values are masked out of its log.** The model-provider credential
+(the red-line exception; every string inside it when it is a JSON blob), the run JWT, the
+egress-proxy token with its Basic form, and the signing-bridge token are each registered
+with the run's `SecretMasker` (`lib/secret-masker.ts`) where they are minted. The masker
+rides `LogStreamConfig.masker`, so `LogStreamBroker.emit` replaces every registered value
+with `***` before the text is buffered, broadcast or persisted - stored chunks, live frames
+and the replay snapshot all derive from masked text. A value split across two chunks is
+caught: the masker holds back only a tail that is itself the start of a registered value,
+and `end()` releases it. The invocation line and every run-row `error` go through the same
+masker. It matches exact values only: a token the CLI refreshes inside the container, or a
+fragment the output itself truncated, is not masked. Logs stored before this are unchanged.
 
 **Secrets.** `secrets` rows are AES-256-GCM ciphertext plus `allowed_hosts` (e.g.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.

@@ -160,8 +160,9 @@ Three things happen, in this order, and the order matters:
 3. **New runs provision on the new service.**
 
 Containers cannot be moved between services, which is why the switch destroys rather than
-migrates. A project's repositories are re-cloned from their git remote on the new service,
-so no work that has been pushed is lost.
+migrates. A project's repositories are cloned again from their git remote on the new
+service, the first time an agent there needs each one, so no work that has been pushed is
+lost.
 
 ## Setting the service at startup
 

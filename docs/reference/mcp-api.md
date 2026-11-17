@@ -284,6 +284,22 @@ List projects, by name. With CEO cross-team access (or as superuser) returns eve
 
 **Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
 
+### `prepare_repos`
+
+_Read-only._
+
+Prepare this run's linked repositories so you can read and change their code. Your run starts in its task folder with no repository checked out. Call this before you read, build, test or commit code, even when the worktree already exists from an earlier run: it fetches each repository, checks out its worktree on the task branch and catches that branch up to the default branch. Name only the repositories you need. Each comes back with its worktree path; `cd` into it before you run git. Calling it again for a repository already prepared this run costs nothing.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `repos` | `string[]` | No | Repository names as the Repository section of your prompt lists them (e.g. "website"), or `owner/name`. Omit to prepare every linked repository. |
+
+**Returns:** `{ branch, repos: [{ name, repo, path, designated, ready, error?, notes }] }`: one entry per requested repository, with the task worktree's path on the task branch. `{ error }` outside a task run, when the project has no linked repository, or for a name that is not linked.
+
+**Authorization:** Available only within an agent run on a task (requires a run identity).
+
 ## Tasks
 
 ### `list_tasks`
