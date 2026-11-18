@@ -1,7 +1,7 @@
 import { RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
-import { withRepoStoreLock } from '../lib/git-lock';
+import { withRepoStoreLock, withRepoStoreReclone } from '../lib/git-lock';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
@@ -60,7 +60,8 @@ export interface RepoSetupInput {
 	 * The route refuses while a run is active, but only at request time. The wipe
 	 * runs later, so the binding check is the one here, under the clone-store lock
 	 * a run's repo prep also takes: a run active at that point keeps the clone and
-	 * the row settles `failed`, naming why.
+	 * the row settles `failed`, naming why. A run that starts after that check
+	 * waits for the new clone before its agent starts (`waitForRepoStoreReclone`).
 	 */
 	freshClone?: boolean;
 }
@@ -147,17 +148,8 @@ export async function performRepoSetup(
 				// Under the clone store's git lock, as a run's prep is: both write the
 				// same clone, and a run may be cloning this repo into it right now.
 				const store = await repoStoreFor(db, input.projectId, containerId);
-				const syncRes = await withRepoStoreLock(store, async () => {
-					// A fresh clone deletes the clone and this repo's task worktrees. A run
-					// that started after the reset request may hold one of them: the
-					// route's own check ran before it existed. Counted under the lock, so
-					// a run whose prep got here first is seen, and one that starts later
-					// queues its prep behind the new clone.
-					if (input.freshClone) {
-						const active = await countActiveRunsInProject(db, input.projectId);
-						if (active > 0) return { calledOff: recloneCalledOffError(active) };
-					}
-					return deps.sshAgentServer
+				const sync = () =>
+					deps.sshAgentServer
 						? withProvisionBridge(
 								deps.sshAgentServer,
 								{
@@ -173,6 +165,19 @@ export async function performRepoSetup(
 								({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
 							)
 						: syncRepos(null, mintGitOpScopeId());
+				const syncRes = await withRepoStoreLock(store, () => {
+					if (!input.freshClone) return sync();
+					// A fresh clone deletes the clone and this repo's task worktrees. A run
+					// that started after the reset request may hold one of them: the
+					// route's own check ran before it existed. Counted under the lock, so a
+					// run whose prep got here first is seen. A run that starts after the
+					// count waits for the new clone before its agent starts, which is why
+					// the count sits inside the re-clone.
+					return withRepoStoreReclone(store, async () => {
+						const active = await countActiveRunsInProject(db, input.projectId);
+						if (active > 0) return { calledOff: recloneCalledOffError(active) };
+						return sync();
+					});
 				});
 				if ('calledOff' in syncRes) {
 					setupError = syncRes.calledOff;

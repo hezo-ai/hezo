@@ -2,8 +2,8 @@
  * A re-clone deletes the clone and its task worktrees, but the reset route checks
  * for active runs only when the request arrives. The wipe runs later, in the
  * background, so a run can start in between and prepare its repo first. These
- * cover the check that binds: the one the setup makes under the clone-store lock,
- * right before the wipe.
+ * cover the check that binds - the one the setup makes under the clone-store lock,
+ * right before the wipe - and the wait that holds back a run starting after it.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -21,6 +21,7 @@ import {
 	type RepoSetupOutcome,
 	recloneCalledOffError,
 } from '../src/services/repo-provisioning';
+import { RunRepoSession } from '../src/services/run-repos';
 import { repoStoreFor } from '../src/services/sandbox/repo-store';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { getWorkspacePath, getWorktreesPath } from '../src/services/workspace';
@@ -53,8 +54,14 @@ afterAll(async () => {
 const REPO = 'acme/raced';
 const REPO_NAME = 'raced';
 
-/** A complete stub engine that records every git command it is asked to run. */
-function engine(): { docker: ContainerEngine; gitCommands: string[][] } {
+/**
+ * A complete stub engine that records every git command it is asked to run, and
+ * awaits `onGit` before answering one.
+ */
+function engine(onGit?: (args: string[]) => Promise<void>): {
+	docker: ContainerEngine;
+	gitCommands: string[][];
+} {
 	const gitCommands: string[][] = [];
 	const docker = createStubDocker(
 		{
@@ -69,7 +76,10 @@ function engine(): { docker: ContainerEngine; gitCommands: string[][] } {
 			execCreate: vi.fn(async (_id: string, opts: unknown) => {
 				const cmd = (opts as { Cmd?: string[] }).Cmd ?? [];
 				const git = cmd.indexOf('git');
-				if (git >= 0) gitCommands.push(cmd.slice(git + 1));
+				if (git >= 0) {
+					gitCommands.push(cmd.slice(git + 1));
+					await onGit?.(cmd.slice(git + 1));
+				}
 				return 'exec-x';
 			}),
 		},
@@ -78,12 +88,22 @@ function engine(): { docker: ContainerEngine; gitCommands: string[][] } {
 	return { docker, gitCommands };
 }
 
+/** A promise with its resolver, for holding one side of a race open. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve!: () => void;
+	const promise = new Promise<void>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
 interface Fixture {
 	teamId: string;
 	projectId: string;
 	repoId: string;
 	captainId: string;
 	taskId: string;
+	taskIdentifier: string;
 	containerId: string;
 	clonePath: string;
 	worktreePath: string;
@@ -96,7 +116,7 @@ interface Fixture {
  * A project with a ready repo, a running container, the clone on disk, and the
  * worktree a run's prep builds for its task.
  */
-async function fixture(name: string): Promise<Fixture> {
+async function fixture(name: string, onGit?: (args: string[]) => Promise<void>): Promise<Fixture> {
 	const team = (await (await createTestTeam(db, { name: `${name} Co` })).json()).data;
 	const project = (await (await createTestProject(db, team.id, { name })).json()).data;
 	const repo = await db.query<{ id: string }>(
@@ -115,7 +135,7 @@ async function fixture(name: string): Promise<Fixture> {
 		[project.planning_task_id],
 	);
 
-	const { docker, gitCommands } = engine();
+	const { docker, gitCommands } = engine(onGit);
 	const deps: ContainerDeps = { db, docker, dataDir, masterKeyManager, poolLivenessIntervalMs: 0 };
 	// Up before the reset, so the setup's own hold reuses it and the test knows
 	// which clone store it locks.
@@ -136,6 +156,7 @@ async function fixture(name: string): Promise<Fixture> {
 		repoId: repo.rows[0].id,
 		captainId: captain.rows[0].id,
 		taskId: project.planning_task_id as string,
+		taskIdentifier: task.rows[0].identifier,
 		containerId: hold.containerId,
 		clonePath,
 		worktreePath,
@@ -205,6 +226,69 @@ describe('re-clone and a run that starts after the request', () => {
 				setup_error: recloneCalledOffError(1),
 			});
 		} finally {
+			if (runId) await finalizeAgentRun(db, runId);
+			f.release();
+			await waitForBackground();
+		}
+	});
+
+	it('holds a run that starts after the check until the fresh clone is in place', async () => {
+		const cloneStarted = deferred();
+		const finishClone = deferred();
+		const f = await fixture('Reclone Late Run', async (args) => {
+			if (args[0] !== 'clone') return;
+			cloneStarted.resolve();
+			await finishClone.promise;
+		});
+		const abort = new AbortController();
+		let runId: string | null = null;
+		try {
+			await markPending(f);
+			const setup = reclone(f);
+			// The count found no run and the old copy is gone: the clone is under way.
+			await cloneStarted.promise;
+
+			runId = await createAgentRun(db, f.captainId, f.teamId, f.taskId);
+			const waiting = deferred();
+			let cloneFinished = false;
+			let openedAfterClone: boolean | null = null;
+			const opened = RunRepoSession.open(
+				{ db, docker: f.deps.docker, dataDir, masterKeyManager },
+				{
+					project: {
+						id: f.projectId,
+						team_id: f.teamId,
+						container_id: f.containerId,
+						designated_repo_id: null,
+					},
+					task: { identifier: f.taskIdentifier },
+					repos: [{ id: f.repoId, repo_identifier: REPO }],
+					bridge: null,
+					runUser: { name: 'root', uid: 0, gid: 0 },
+					egress: null,
+					emit: (_stream, text) => {
+						if (text.includes('waiting for a re-clone')) waiting.resolve();
+					},
+					signal: abort.signal,
+					startedAt: new Date(),
+				},
+			).then(() => {
+				openedAfterClone = cloneFinished;
+			});
+
+			// The run says why it waits, and its start cannot finish before the clone.
+			// Raced, so a start that does not wait fails here rather than hanging.
+			await Promise.race([waiting.promise, opened]);
+			expect(openedAfterClone).toBeNull();
+
+			cloneFinished = true;
+			finishClone.resolve();
+			expect((await setup).status).toBe(RepoSetupStatus.Ready);
+			await opened;
+			expect(openedAfterClone).toBe(true);
+		} finally {
+			finishClone.resolve();
+			abort.abort();
 			if (runId) await finalizeAgentRun(db, runId);
 			f.release();
 			await waitForBackground();

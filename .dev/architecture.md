@@ -4449,7 +4449,10 @@ only the early answer: the wipe runs later, so `performRepoSetup` counts active 
 that lock, right before the wipe. A run that started after the request (its prep may already
 hold a worktree, or it may work in one an earlier run left) makes the reclone stop with nothing
 deleted, and the row settles `failed` with a `setup_error` saying the re-clone was called off. A
-run that starts after that check queues its prep behind the new clone.
+run that starts after that check is not counted by it, so the reclone holds a second per-store
+lock (`withRepoStoreReclone`) from just before the count until its clone ends, and
+`RunRepoSession.open` waits on it (`waitForRepoStoreReclone`) before the agent starts. A run start
+waits only on a re-clone, never on another run's prep.
 
 ### Abort, timeout & the success gate
 

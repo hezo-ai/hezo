@@ -163,7 +163,8 @@ reset can't pull the rug out from under a running task.
 
 Re-clone runs in the background after you confirm it. If an agent starts working in the project
 before the old copy is deleted, Hezo calls the re-clone off and keeps the copy, and the repository
-shows "Setup failed" with that reason. Start **Re-clone** again once no agent is running.
+shows "Setup failed" with that reason. Start **Re-clone** again once no agent is running. An agent
+that starts once the old copy is being replaced waits for the fresh copy before it begins.
 
 This is the same posture described in [Container isolation](/docs/security/container-isolation):
 the keys that matter most stay on the host, and a compromised agent can use them only
