@@ -255,13 +255,14 @@ describe('re-clone and a run that starts after the request', () => {
 			const opened = RunRepoSession.open(
 				{ db, docker: f.deps.docker, dataDir, masterKeyManager },
 				{
+					runId,
 					project: {
 						id: f.projectId,
 						team_id: f.teamId,
 						container_id: f.containerId,
 						designated_repo_id: null,
 					},
-					task: { identifier: f.taskIdentifier },
+					task: { id: f.taskId, identifier: f.taskIdentifier },
 					repos: [{ id: f.repoId, repo_identifier: REPO }],
 					bridge: null,
 					runUser: { name: 'root', uid: 0, gid: 0 },

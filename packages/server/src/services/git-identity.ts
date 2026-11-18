@@ -39,9 +39,16 @@ export function deriveGitHubIdentity(
  * file and no writable HOME. Signing config is emitted only when a key exists;
  * the actual signature is produced by `ssh-keygen -Y sign` against the private
  * key reachable through `SSH_AUTH_SOCK`.
+ *
+ * `extra` appends further config entries to the same list: git reads one
+ * `GIT_CONFIG_COUNT`, so a second set of entries in the same env would replace
+ * these rather than add to them.
  */
-export function gitConfigEnv(identity: GitIdentity): string[] {
-	const entries: Array<[string, string]> = [
+export function gitConfigEnv(
+	identity: GitIdentity,
+	extra: ReadonlyArray<readonly [string, string]> = [],
+): string[] {
+	const entries: Array<readonly [string, string]> = [
 		['user.name', identity.name],
 		['user.email', identity.email],
 	];
@@ -52,6 +59,7 @@ export function gitConfigEnv(identity: GitIdentity): string[] {
 			['commit.gpgsign', 'true'],
 		);
 	}
+	entries.push(...extra);
 	const env = [`GIT_CONFIG_COUNT=${entries.length}`];
 	entries.forEach(([key, value], i) => {
 		env.push(`GIT_CONFIG_KEY_${i}=${key}`, `GIT_CONFIG_VALUE_${i}=${value}`);

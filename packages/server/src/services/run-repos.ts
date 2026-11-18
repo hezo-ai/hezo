@@ -15,6 +15,7 @@ import {
 	fastForwardFromRecovery,
 	fastForwardLocalDefault,
 	fetchRepo,
+	GIT_AUTO_GC_OFF,
 	getWorktreeHead,
 	isRecoveryOnBranch,
 	mergeDefaultIntoWorktree,
@@ -24,12 +25,12 @@ import {
 	worktreeHasChanges,
 } from './git';
 import { ContainerGitExecutor, type GitExecutor, mintGitOpScopeId } from './git-executor';
-import { buildGitIdentityEnv } from './git-identity';
+import { type GitIdentity, gitConfigEnv, resolveGitIdentity } from './git-identity';
 import { ensureProjectRepos } from './repo-sync';
 import { createBundleVault } from './sandbox/bundle-vault';
 import { setPoolMemberDiskUsage } from './sandbox/pool-db';
 import { restoreRecoveryBundle } from './sandbox/recovery';
-import { repoStoreFor } from './sandbox/repo-store';
+import { otherRunsSharingStore, repoStoreFor } from './sandbox/repo-store';
 import { collectFinishedWorktrees, removeFinishedTaskFolders } from './sandbox/worktree-gc';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { CONTAINER_WORKSPACE_ROOT, CONTAINER_WORKTREES_ROOT, getWorktreesPath } from './workspace';
@@ -132,8 +133,10 @@ export interface RunRepoView {
 	executor: GitExecutor | null;
 	worktrees: WorktreeRef[];
 	clones: CloneRef[];
-	/** Clones prepared this run, whose push-error log covers only this run. */
+	/** Clones prepared this run: only these touch the recovery-bundle vault. */
 	preparedClones: CloneRef[];
+	/** Worktrees prepared this run, whose push-error record covers only this run. */
+	preparedWorktrees: WorktreeLoc[];
 	branch: string | null;
 	/**
 	 * Clones whose stored bundle this run cannot vouch for: the restore failed, or
@@ -150,6 +153,7 @@ export const EMPTY_RUN_REPO_VIEW: RunRepoView = {
 	worktrees: [],
 	clones: [],
 	preparedClones: [],
+	preparedWorktrees: [],
 	branch: null,
 	recoveryFailed: new Set<string>(),
 	recoveryNotOnBranch: [],
@@ -163,8 +167,10 @@ export interface RunRepoDeps {
 }
 
 export interface RunRepoSessionInit {
+	/** The run's own id, so a check for other active runs leaves it out. */
+	runId: string;
 	project: { id: string; team_id: string; container_id: string; designated_repo_id: string | null };
-	task: { identifier: string };
+	task: { id: string; identifier: string };
 	repos: RepoRow[];
 	bridge: BridgeRunnerArgs | null;
 	runUser: ContainerRunUser;
@@ -206,7 +212,7 @@ export class RunRepoSession {
 	private readonly bundleRestored = new Set<string>();
 	private readonly ready = new Map<string, ReadyRepo>();
 	private readonly inFlight = new Set<Promise<unknown>>();
-	private identityEnv: Promise<string[]> | null = null;
+	private identity: Promise<GitIdentity> | null = null;
 	private closed = false;
 	/** The clone store this container uses, which git work here serializes over. */
 	private store!: RepoStore;
@@ -338,6 +344,7 @@ export class RunRepoSession {
 		const worktrees: WorktreeRef[] = [];
 		const clones: CloneRef[] = [];
 		const preparedClones: CloneRef[] = [];
+		const preparedWorktrees: WorktreeLoc[] = [];
 		const leftovers: Array<{ worktree: WorktreeRef; clone: CloneRef }> = [];
 		for (const repo of this.init.repos) {
 			const ready = this.ready.get(repo.id);
@@ -345,6 +352,7 @@ export class RunRepoSession {
 				worktrees.push(ready.worktree);
 				clones.push(ready.clone);
 				preparedClones.push(ready.clone);
+				preparedWorktrees.push(ready.worktree.loc);
 				continue;
 			}
 			const name = repoNameFromIdentifier(repo.repo_identifier);
@@ -397,6 +405,7 @@ export class RunRepoSession {
 			worktrees,
 			clones,
 			preparedClones,
+			preparedWorktrees,
 			branch: this.branch,
 			recoveryFailed,
 			recoveryNotOnBranch,
@@ -439,16 +448,23 @@ export class RunRepoSession {
 		return { repos: picked };
 	}
 
+	/**
+	 * On a shared store, no git command this executor runs may start git's own
+	 * automatic gc ({@link GIT_AUTO_GC_OFF}). Another run's agent may commit in the
+	 * clone at any moment, including one that starts after a check for it, so this
+	 * is decided by the store's kind, never by which runs are active.
+	 */
 	private async executor(signal: AbortSignal | undefined): Promise<GitExecutor> {
 		const { deps, init } = this;
 		// The team's git identity (and signing) lets the catch-up merge record a
 		// verified merge commit, matching the agent's own in-container commits.
-		this.identityEnv ??= buildGitIdentityEnv(deps.db, deps.masterKeyManager, {
+		this.identity ??= resolveGitIdentity(deps.db, deps.masterKeyManager, {
 			projectId: init.project.id,
 			teamId: init.project.team_id,
 		});
-		const identity = await this.identityEnv;
-		const env = [...identity, ...(init.egress ? buildEgressProxyEnv(init.egress) : [])];
+		const autoGc = this.store.sharedAcrossContainers ? GIT_AUTO_GC_OFF : [];
+		const config = gitConfigEnv(await this.identity, autoGc);
+		const env = [...config, ...(init.egress ? buildEgressProxyEnv(init.egress) : [])];
 		// No bridge runner of its own: prep runs while the agent CLI's runner is
 		// live on the run's socket, and a second runner on that path (socat
 		// `unlink-early`, then its exit trap) would delete the agent's socket and
@@ -504,6 +520,12 @@ export class RunRepoSession {
 			// while this one waited is answered from its result.
 			const todo = picked.filter((r) => !this.ready.has(r.id));
 			if (todo.length > 0 && !init.signal.aborted) {
+				// The lock covers prep only: another run's agent may be committing in
+				// this clone right now. The scheduler runs one run per task, so a run on
+				// this task cannot start mid-prep and one check is enough here.
+				const sameTaskActive = (await otherRunsSharingStore(deps.db, this.store, init.runId)).some(
+					(r) => r.task_id === init.task.id,
+				);
 				const executor = await this.executor(init.signal);
 				emitSystem('stdout', '(syncing repos...)');
 				const syncRes = await ensureProjectRepos(
@@ -528,7 +550,13 @@ export class RunRepoSession {
 				const syncFailures = new Map(syncRes.failed.map((f) => [f.name, f.error]));
 				for (const repo of todo) {
 					if (init.signal.aborted) break;
-					const outcome = await this.prepareOne(executor, repo, emitSystem, syncFailures);
+					const outcome = await this.prepareOne(
+						executor,
+						repo,
+						emitSystem,
+						syncFailures,
+						sameTaskActive,
+					);
 					if ('error' in outcome) {
 						failed.set(repo.id, {
 							...this.describe(repo),
@@ -538,7 +566,19 @@ export class RunRepoSession {
 						});
 					}
 				}
-				if (this.ready.size > 0) await this.housekeep(executor);
+				if (this.ready.size > 0) {
+					// Asked again here, not reused from the start: prep can take a minute,
+					// and a run that started meanwhile may already be committing in a
+					// worktree an earlier run left.
+					const others = await otherRunsSharingStore(deps.db, this.store, init.runId);
+					if (others.length > 0) {
+						log.debug(
+							`Project ${init.project.id}: worktree GC deferred, ${others.length} other run(s) share the clones`,
+						);
+					} else {
+						await this.housekeep(executor);
+					}
+				}
 			}
 
 			return {
@@ -562,6 +602,8 @@ export class RunRepoSession {
 		repo: RepoRow,
 		emitSystem: (stream: 'stdout' | 'stderr', text: string) => void,
 		syncFailures: ReadonlyMap<string, string>,
+		/** Another active run is on this task, so its worktree's push-error record is live. */
+		sameTaskActive: boolean,
 	): Promise<{ ok: true } | { error: string; notes: string[] }> {
 		const { deps, init } = this;
 		const name = repoNameFromIdentifier(repo.repo_identifier);
@@ -585,10 +627,7 @@ export class RunRepoSession {
 		// Install/refresh the auto-push post-commit hook so every commit the agent
 		// makes is pushed to origin immediately — committed work then survives an
 		// aborted or timed-out run instead of dying with the ephemeral worktree.
-		// Clearing the hook's error log here scopes what the run reports at
-		// finalize to this run's own failed pushes.
 		await ensurePushHook(repoLoc);
-		await clearPushErrors(repoLoc);
 
 		// A connected repo with no commits yet: `git worktree add` can't branch off
 		// an unborn HEAD, so seed a minimal initial commit and push it. No-op when
@@ -670,6 +709,12 @@ export class RunRepoSession {
 			return { error: `the task worktree could not be created: ${wt.error ?? 'unknown'}`, notes };
 		}
 		if (wt.created) emitSystem('stdout', `git worktree add ${name} @ ${this.branch}`);
+
+		// Scope what finalize reports to this run's own failed pushes. The record is
+		// this worktree's alone, so no other task's run loses its record here; it is
+		// kept when another run on this same task is still active and may have
+		// written to it.
+		if (!sameTaskActive) await clearPushErrors(executor, wtLoc);
 
 		// Bring any recovered commits onto the task branch itself, so they are the
 		// agent's starting point rather than a ref it would have to know to look for.

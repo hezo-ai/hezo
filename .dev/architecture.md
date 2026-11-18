@@ -4000,7 +4000,8 @@ needs code. The call reaches the run's `RunRepoSession` (`services/run-repos.ts`
 id in an in-process registry the runner fills before exec and empties in cleanup, and runs the
 prep pipeline under `withRepoStoreLock`: clone sync for the named repos only, push hook,
 empty-remote seed, fetch, default fast-forward, recovery-bundle restore, `git worktree add`,
-recovery replay, catch-up merge, then the pre-run head and finished-worktree GC. It returns
+clearing that worktree's push-error record, recovery replay, catch-up merge, then the pre-run
+head and finished-worktree GC (held back while another run shares the clone, below). It returns
 each repo's path, any warning (`notes`, e.g. a catch-up merge that stopped) and the repo's own
 instruction files at its root (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`): a CLI loads those only
 when it starts inside the repo, and the run starts in the task folder. A repeat call for a
@@ -4030,7 +4031,7 @@ container stays pinned; an untouched leftover is skipped, since it was never fet
 and its stale tracking refs would report, and pin for, work an earlier run accounted for. A
 leftover worktree never had the stored recovery bundle restored into it, so its scan may
 neither save a bundle (it could replace a newer one) nor release one (it could drop the only
-copy); only clones prepared this run touch the vault. A leftover's push-error log is not
+copy); only clones prepared this run touch the vault. A leftover's push-error record is not
 reported, since this run did not clear it. The stray-doc check
 also reads doc-named files at the task root, the working directory.
 
@@ -4040,6 +4041,32 @@ whose kind shares one workspace across a project's containers (`sandboxBackendSh
 in `@hezo/shared`, true for `local`) keys it on the project; one where each container has its
 own disk keys it on the container, so fresh containers of one project clone in parallel. A
 slow prep still answers `pending` after 90 s.
+
+**The lock covers prep, never an agent's own git work**, so on a shared store another run's
+agent may be committing in the clone while this run prepares. Two rules follow.
+
+- **On a shared store, Hezo's own git never starts git's automatic gc.** Every git command
+  a run's repo session issues there, prep and the finalize scans alike, carries
+  `GIT_AUTO_GC_OFF` (`gc.auto=0`, `maintenance.auto=false`): `fetch`, `merge` and `commit`
+  otherwise start git's own background gc, which packs refs (contending for the ref locks a
+  commit takes) and prunes objects. It is decided by the store's kind, not by which runs are
+  active, because a run can start after any check for it. Hezo never runs `git gc` itself;
+  the clone is still collected by the agents' own commits and fetches, which start git's
+  automatic gc as usual. Git keeps every object newer than two weeks, which is what keeps
+  that safe for in-progress commits.
+- **The finished-worktree sweep waits while another run shares the clone.** Prep asks right
+  before the sweep, not when it began (a fetch can take a minute), which other runs share
+  the store (`otherRunsSharingStore`, `sandbox/repo-store.ts`): every queued or running run in
+  the project (`runInProjectSql`, task-less runs included), the caller left out. A
+  per-container store answers none without a query: it serves one run at a time, its small
+  disk makes the sweep mandatory, and git's automatic gc stays on there. On a busy local
+  project the sweep waits for a prep with no other run active; the cost is host disk, and
+  task close already deletes the task's folder. A run that starts between that check and the
+  sweep is safe, since the sweep never reclaims a task with an active run.
+
+What prep still does beside another run is safe for it: the `git worktree prune` in its own
+worktree setup drops only registrations whose folder is gone, and `fetch --prune` never
+touches `refs/heads/*`.
 
 **The pool records a task on a container only when the container holds its worktree.** A
 claim records nothing; the run's release names the task when `RunRepoSession.holdsTaskWorktree`
@@ -4267,11 +4294,18 @@ Non-fatal is **not** silent. The hook previously discarded the push to `/dev/nul
 push (no write access on that repo, a protected branch) produced output identical to a clean one
 and the run reported success while its commits never left the container. A failed push now reports
 twice: one line plus the git error on the commit's own stderr, where the agent sees it
-immediately, and the full error appended to `<git-common-dir>/hezo-push-errors.log`
-(`PUSH_ERROR_LOG_NAME`). Worktree prep clears that log per repo (`clearPushErrors`) so it is
-scoped to the run, and the runner reads it back at run completion (`readPushErrors`) and emits it
-into the run log for every prepared clone. The hook still `exit 0`s unconditionally — reporting a
-failure never fails the commit. *Uncommitted*
+immediately, and the full error appended to `hezo-push-errors.log` (`PUSH_ERROR_LOG_NAME`) in
+the committing checkout's own git dir (`--git-dir`). In a task worktree that is its admin entry,
+`<clone>/.git/worktrees/<name>` (`worktreeAdminDir`), so the record belongs to one task branch
+and git deletes it with the worktree. It used to be one file in the common git dir, and on a
+shared store one run's prep then erased the failures of another run still in flight. Worktree
+prep clears the worktree's record (`clearPushErrors`) so it is scoped to the run, except while
+another active run is on the same task (dispatch allows one run per task, so that guard only
+covers a race), and the runner reads it back at run completion (`readPushErrors`) and emits it
+into the run log for every worktree prepared this run. A commit in the clone's own checkout is
+reported on its stderr only: `ensurePushHook` removes the clone-level file at every prep, which
+also clears the one a previous release left. The hook still `exit 0`s unconditionally — reporting
+a failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 

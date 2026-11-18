@@ -1,5 +1,13 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,10 +17,12 @@ import {
 	ensurePushHook,
 	localGitLoc,
 	POST_COMMIT_PUSH_HOOK,
+	PUSH_ERROR_LOG_NAME,
 	PUSHED_MARKER_PREFIX,
 	type RepoLoc,
 	readPushErrors,
 } from '../src/services/git';
+import { HostGitExecutor } from '../src/services/git-executor';
 
 // These tests exercise the REAL `post-commit` auto-push hook end-to-end with local
 // `git` and a bare `origin` — no Docker/SSH. The hook keys off a live `SSH_AUTH_SOCK`
@@ -115,6 +125,19 @@ describe('ensurePushHook (install)', () => {
 		await expect(ensurePushHook(repoLoc(dir))).resolves.toBeUndefined();
 		expect(statSync(join(dir, '.git', 'hooks', 'post-commit')).isFile()).toBe(true);
 	});
+
+	it("removes the clone's own push-error file, which no run reads any more", async () => {
+		// Every failure used to land in this one file, shared by every run on the
+		// clone. Now only a commit in the clone's own checkout writes it, so prep
+		// keeps it from growing - including the copy a previous release left.
+		const dir = join(root, 'install-legacy-log');
+		run(`git init -b main ${dir}`);
+		writeFileSync(join(dir, '.git', PUSH_ERROR_LOG_NAME), '=== auto-push failed: old\n');
+
+		await ensurePushHook(repoLoc(dir));
+
+		expect(existsSync(join(dir, '.git', PUSH_ERROR_LOG_NAME))).toBe(false);
+	});
 });
 
 describe('post-commit auto-push', () => {
@@ -199,64 +222,94 @@ describe('post-commit auto-push failure reporting', () => {
 		expect(markerSha(clone, 'hezo/AUTO-4')).toBeNull();
 	});
 
-	it('records the git error in the push-error log for the runner to surface', async () => {
+	// The production path: the agent commits inside its task's worktree, never the
+	// clone itself. Each worktree keeps its own record, in its own admin entry.
+	const exec = new HostGitExecutor();
+	function addWorktree(clone: string, name: string, branch: string) {
+		const path = join(root, name);
+		run(`git worktree add -b ${branch} ${path}`, clone);
+		configure(path);
+		return localGitLoc(path);
+	}
+	function commitIn(dir: string, sock: string, message = 'doomed') {
+		run(`git commit --allow-empty -m ${message}`, dir, { ...process.env, SSH_AUTH_SOCK: sock });
+	}
+
+	it("records the git error in the worktree's own record for the runner to surface", async () => {
 		const clone = await setupBrokenOrigin('pushlog', 'hezo/AUTO-5');
+		const wt = addWorktree(clone, 'pushlog-wt', 'hezo/AUTO-5W');
 		const sock = await liveSocket(clone);
 
-		expect(await readPushErrors(repoLoc(clone))).toBeNull();
-		run('git commit --allow-empty -m doomed', clone, { ...process.env, SSH_AUTH_SOCK: sock });
+		expect(await readPushErrors(exec, wt)).toBeNull();
+		commitIn(wt.containerPath, sock);
 
-		const errors = await readPushErrors(repoLoc(clone));
+		const errors = await readPushErrors(exec, wt);
 		expect(errors).toContain('auto-push failed');
-		expect(errors).toContain('hezo/AUTO-5');
+		expect(errors).toContain('hezo/AUTO-5W');
 		// The real git output is kept, not just the fact that something failed —
 		// "Permission to <repo> denied to <account>" is the whole diagnosis.
 		expect(errors).toMatch(/does not appear to be a git repository|repository not found/i);
 	});
 
-	it('writes nothing to the log when the push succeeds', async () => {
-		const branch = 'hezo/AUTO-6';
-		const { clone } = await setupClone('pushclean', branch);
+	it('writes nothing to the record when the push succeeds', async () => {
+		const { clone } = await setupClone('pushclean', 'hezo/AUTO-6');
+		const wt = addWorktree(clone, 'pushclean-wt', 'hezo/AUTO-6W');
 		const sock = await liveSocket(join(root, 'pushclean-clone'));
 
-		run('git commit --allow-empty -m fine', clone, { ...process.env, SSH_AUTH_SOCK: sock });
-		expect(await readPushErrors(repoLoc(clone))).toBeNull();
+		commitIn(wt.containerPath, sock, 'fine');
+		expect(await readPushErrors(exec, wt)).toBeNull();
 	});
 
-	it('clearPushErrors scopes the log to the current run', async () => {
+	it('clearPushErrors scopes the record to the current run', async () => {
 		const clone = await setupBrokenOrigin('pushclear', 'hezo/AUTO-7');
+		const wt = addWorktree(clone, 'pushclear-wt', 'hezo/AUTO-7W');
 		const sock = await liveSocket(clone);
 
-		run('git commit --allow-empty -m doomed', clone, { ...process.env, SSH_AUTH_SOCK: sock });
-		expect(await readPushErrors(repoLoc(clone))).not.toBeNull();
+		commitIn(wt.containerPath, sock);
+		expect(await readPushErrors(exec, wt)).not.toBeNull();
 
 		// Run prep clears it, so the next run never reports a previous run's failures.
-		await clearPushErrors(repoLoc(clone));
-		expect(await readPushErrors(repoLoc(clone))).toBeNull();
-		// Clearing an already-absent log is fine.
-		await expect(clearPushErrors(repoLoc(clone))).resolves.toBeUndefined();
+		await clearPushErrors(exec, wt);
+		expect(await readPushErrors(exec, wt)).toBeNull();
+		// Clearing an already-absent record is fine.
+		await expect(clearPushErrors(exec, wt)).resolves.toBeUndefined();
 	});
 
-	// The production path: the agent commits inside a per-task worktree, not the
-	// clone. The hook resolves the shared git dir so the log lands where the runner
-	// reads it — a worktree-relative path would strand the report.
-	it('records a worktree commit failure in the clone’s log, where the runner reads it', async () => {
-		const clone = await setupBrokenOrigin('pushwt', 'hezo/AUTO-8');
-		const worktree = join(root, 'pushwt-worktree');
-		run(`git worktree add -b hezo/AUTO-9 ${worktree}`, clone);
-		configure(worktree);
-		const sock = await liveSocket(join(root, 'pushwt-clone'));
+	it("clearing one task's record leaves another task's record in the same clone alone", async () => {
+		// On a backend that shares one workspace, every run of a project uses the
+		// same clone. Run B's prep clears B's record; run A, still mid-run on
+		// another task, must still find its failed push at its own finalize.
+		const clone = await setupBrokenOrigin('pushtwo', 'hezo/AUTO-8');
+		const taskA = addWorktree(clone, 'pushtwo-a', 'hezo/AUTO-8A');
+		const taskB = addWorktree(clone, 'pushtwo-b', 'hezo/AUTO-8B');
+		const sock = await liveSocket(clone);
 
-		run('git commit --allow-empty -m doomed', worktree, { ...process.env, SSH_AUTH_SOCK: sock });
+		commitIn(taskA.containerPath, sock);
+		commitIn(taskB.containerPath, sock);
+		await clearPushErrors(exec, taskB);
 
-		const errors = await readPushErrors(repoLoc(clone));
-		expect(errors).toContain('auto-push failed');
-		expect(errors).toContain('hezo/AUTO-9');
+		expect(await readPushErrors(exec, taskB)).toBeNull();
+		const errors = await readPushErrors(exec, taskA);
+		expect(errors).toContain('hezo/AUTO-8A');
+		// And never the other task's failure.
+		expect(errors).not.toContain('hezo/AUTO-8B');
 	});
 
-	it('readPushErrors returns null for a clone that has never failed a push', async () => {
+	it("does not report a commit in the clone's own checkout as any task's failure", async () => {
+		const clone = await setupBrokenOrigin('pushmain', 'hezo/AUTO-9');
+		const wt = addWorktree(clone, 'pushmain-wt', 'hezo/AUTO-9W');
+		const sock = await liveSocket(clone);
+
+		commitIn(clone, sock);
+
+		expect(await readPushErrors(exec, wt)).toBeNull();
+	});
+
+	it('readPushErrors returns null for a folder that is not a task worktree', async () => {
 		const dir = join(root, 'never-failed');
 		run(`git init -b main ${dir}`);
-		expect(await readPushErrors(repoLoc(dir))).toBeNull();
+		// A `.git` directory, not a gitfile: there is no worktree record to read.
+		expect(await readPushErrors(exec, localGitLoc(dir))).toBeNull();
+		expect(await readPushErrors(exec, localGitLoc(join(root, 'no-such-dir')))).toBeNull();
 	});
 });

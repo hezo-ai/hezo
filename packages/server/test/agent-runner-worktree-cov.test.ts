@@ -6,9 +6,10 @@
 // filesystem (clone `.git` dirs, worktree dirs) is staged per scenario. The
 // agent's call goes over the MCP endpoint with its run token, as a real one does.
 
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { ContainerStatus, HeartbeatRunStatus, SandboxBackend } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -17,9 +18,10 @@ import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { DEFERRED_WORKING_DIR, type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { resolveContainerRunUser } from '../src/services/container-user';
-import { RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
+import { PUSH_ERROR_LOG_NAME, RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { type PrepareReposResult, RunRepoSession } from '../src/services/run-repos';
+import { setStoredSandboxBackend } from '../src/services/sandbox/backend-store';
 import { createBundleVault } from '../src/services/sandbox/bundle-vault';
 import { recordStrandedWork } from '../src/services/sandbox/pool-db';
 import type { ContainerEngine } from '../src/services/sandbox/types';
@@ -168,7 +170,11 @@ const when =
 function scriptedGitDocker(opts: {
 	rules: GitRule[];
 	onAgentExec?: (config: { Cmd: string[]; Env: string[] }) => Promise<void> | void;
-	onGitExec?: (config: { Cmd: string[]; Env: string[]; WorkingDir?: string }) => void;
+	onGitExec?: (config: {
+		Cmd: string[];
+		Env: string[];
+		WorkingDir?: string;
+	}) => Promise<void> | void;
 	/** Milliseconds a `git <args>` exec takes before it answers. */
 	slowGit?: (argLine: string) => number;
 	agentExitCode?: number;
@@ -181,7 +187,7 @@ function scriptedGitDocker(opts: {
 			const cmd: string[] = config.Cmd ?? [];
 			const id = `exec-wt-${seq++}`;
 			if (cmd[0] === 'git') {
-				opts.onGitExec?.(config);
+				await opts.onGitExec?.(config);
 				const argLine = cmd.slice(1).join(' ');
 				let res: GitResult | null = null;
 				for (const rule of opts.rules) {
@@ -559,6 +565,8 @@ describe('repo prep on demand', () => {
 		identifier: string,
 		repos: Array<{ id: string; repo_identifier: string }>,
 		bridge: { socketPath: string } | null = null,
+		/** The session's own run, and the task row it is on. */
+		ids: { runId?: string; taskId?: string } = {},
 	): Promise<RunRepoSession> {
 		// The stub engine resolves a container's files through the project row that
 		// names it, as a run's acquisition leaves it.
@@ -567,13 +575,14 @@ describe('repo prep on demand', () => {
 		return RunRepoSession.open(
 			{ db, docker, dataDir, masterKeyManager },
 			{
+				runId: ids.runId ?? randomUUID(),
 				project: {
 					id: projectId,
 					team_id: teamId,
 					container_id: containerId,
 					designated_repo_id: null,
 				},
-				task: { identifier },
+				task: { id: ids.taskId ?? taskId, identifier },
 				repos,
 				bridge: bridge
 					? {
@@ -697,6 +706,225 @@ describe('repo prep on demand', () => {
 		} finally {
 			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 		}
+	});
+
+	// On a backend that shares one workspace, every container of a project uses
+	// the same clone, and the repo lock covers prep only: another run's agent may
+	// be committing in that clone while this run prepares.
+	describe('alongside another run in the shared clone', () => {
+		let otherTaskId: string;
+		beforeAll(async () => {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority)
+				 VALUES ($1, $2, 9001, 'WT-ELSEWHERE', 'Another task', 'in_progress'::task_status, 'medium')
+				 RETURNING id`,
+				[teamId, projectId],
+			);
+			otherTaskId = r.rows[0].id;
+		});
+
+		/** Where the post-commit hook records a failed push for a task's worktree. */
+		const pushRecord = (identifier: string): string =>
+			join(
+				getWorkspacePath(dataDir, teamId, projectId),
+				'todos',
+				'.git',
+				'worktrees',
+				identifier,
+				PUSH_ERROR_LOG_NAME,
+			);
+		const stageTask = (identifier: string): void =>
+			stageWorktree(join(getWorktreesPath(dataDir, teamId, projectId), identifier, 'todos'));
+
+		async function startRun(onTaskId: string): Promise<string> {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now()) RETURNING id`,
+				[agentId, teamId, onTaskId],
+			);
+			return r.rows[0].id;
+		}
+		async function finishRun(runId: string): Promise<void> {
+			await db.query(
+				`UPDATE heartbeat_runs SET status = 'succeeded'::heartbeat_run_status, finished_at = now()
+				 WHERE id = $1`,
+				[runId],
+			);
+		}
+
+		/** The `GIT_CONFIG_*` entries a git exec ran with, as key → value. */
+		function gitConfigOf(env: string[]): Map<string, string> {
+			const vars = new Map(
+				env.map((e) => [e.slice(0, e.indexOf('=')), e.slice(e.indexOf('=') + 1)]),
+			);
+			const config = new Map<string, string>();
+			for (let i = 0; i < Number(vars.get('GIT_CONFIG_COUNT') ?? 0); i++) {
+				config.set(vars.get(`GIT_CONFIG_KEY_${i}`) ?? '', vars.get(`GIT_CONFIG_VALUE_${i}`) ?? '');
+			}
+			return config;
+		}
+
+		/** A prep of `todos` for `identifier`, recording every git exec it ran. */
+		async function prepareRecording(
+			identifier: string,
+			repoId: string,
+			ids: { runId?: string; taskId?: string } = {},
+			/** Runs as each git command is issued, before it answers. */
+			onGit?: (args: string) => Promise<void>,
+		): Promise<Array<{ args: string; config: Map<string, string> }>> {
+			const execs: Array<{ args: string; config: Map<string, string> }> = [];
+			const docker = scriptedGitDocker({
+				rules: [
+					when((a) => a === 'remote get-url origin', {
+						stdout: 'https://github.com/acme/todos.git\n',
+					}),
+				],
+				onGitExec: async (config) => {
+					const args = config.Cmd.slice(1).join(' ');
+					execs.push({ args, config: gitConfigOf(config.Env) });
+					await onGit?.(args);
+				},
+			});
+			const session = await openSession(
+				docker,
+				identifier,
+				[{ id: repoId, repo_identifier: 'acme/todos' }],
+				null,
+				ids,
+			);
+			expect(prepared(await session.prepare()).repos[0].ready).toBe(true);
+			return execs;
+		}
+
+		async function withTodosRepo(fn: (repoId: string) => Promise<void>): Promise<void> {
+			const repoId = await insertRepo('acme/todos');
+			mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+				recursive: true,
+			});
+			try {
+				await fn(repoId);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		}
+
+		it("leaves another task's push-error record alone and clears only its own", async () => {
+			// Run A on WT-PUSH-A had a push denied and has not reached its finalize.
+			// Run B's prep on WT-PUSH-B used to clear one record shared by the whole
+			// clone, so A then reported nothing.
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-PUSH-A');
+				stageTask('WT-PUSH-B');
+				writeFileSync(pushRecord('WT-PUSH-A'), '=== auto-push failed: origin (hezo/WT-PUSH-A)\n');
+				writeFileSync(pushRecord('WT-PUSH-B'), '=== auto-push failed: origin (hezo/WT-PUSH-B)\n');
+
+				await prepareRecording('WT-PUSH-B', repoId);
+
+				expect(existsSync(pushRecord('WT-PUSH-A'))).toBe(true);
+				// B's own record is from an earlier run, so B does not report it.
+				expect(existsSync(pushRecord('WT-PUSH-B'))).toBe(false);
+			});
+		});
+
+		it('keeps the record of its own task while another run on that task is still active', async () => {
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-PUSH-SAME');
+				writeFileSync(pushRecord('WT-PUSH-SAME'), '=== auto-push failed: origin\n');
+				const live = await startRun(taskId);
+				try {
+					await prepareRecording('WT-PUSH-SAME', repoId);
+					expect(existsSync(pushRecord('WT-PUSH-SAME'))).toBe(true);
+				} finally {
+					await finishRun(live);
+				}
+			});
+		});
+
+		/** No git command may start git's own background gc in a shared clone. */
+		function expectAutoGcOff(execs: Array<{ config: Map<string, string> }>): void {
+			expect(execs.length).toBeGreaterThan(0);
+			for (const e of execs) {
+				expect(e.config.get('gc.auto')).toBe('0');
+				expect(e.config.get('maintenance.auto')).toBe('false');
+			}
+		}
+
+		it('skips the sweep while another run is active, sweeps once it ends, and never starts gc', async () => {
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-GC');
+				const live = await startRun(otherTaskId);
+				let during: Array<{ args: string; config: Map<string, string> }>;
+				try {
+					during = await prepareRecording('WT-GC', repoId);
+				} finally {
+					await finishRun(live);
+				}
+				// The worktree is reused, so the only worktree listing is the sweep's.
+				expect(during.some((e) => e.args === 'worktree list --porcelain')).toBe(false);
+				expectAutoGcOff(during);
+
+				const after = await prepareRecording('WT-GC', repoId);
+				expect(after.some((e) => e.args === 'worktree list --porcelain')).toBe(true);
+				// A run can start at any moment, so gc stays off on a shared clone
+				// whatever the project is doing.
+				expectAutoGcOff(after);
+			});
+		});
+
+		it('sees a run that starts while prep is under way, and skips the sweep for it', async () => {
+			// A fetch can take a minute, and a run that starts meanwhile may already be
+			// committing in a worktree an earlier run left. A check made only when prep
+			// began would miss it.
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-GC-LATE');
+				const late: { runId?: string } = {};
+				try {
+					const execs = await prepareRecording('WT-GC-LATE', repoId, {}, async (args) => {
+						if (args === 'fetch --prune origin' && !late.runId) {
+							late.runId = await startRun(otherTaskId);
+						}
+					});
+					expect(late.runId).toBeDefined();
+					expect(execs.some((e) => e.args === 'worktree list --porcelain')).toBe(false);
+				} finally {
+					if (late.runId) await finishRun(late.runId);
+				}
+			});
+		});
+
+		it('leaves its own run out of the check', async () => {
+			// A run's own row is active for its whole life; counting it would mean
+			// no prep ever cleaned up.
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-GC-SELF');
+				const self = await startRun(taskId);
+				try {
+					const execs = await prepareRecording('WT-GC-SELF', repoId, { runId: self });
+					expect(execs.some((e) => e.args === 'worktree list --porcelain')).toBe(true);
+				} finally {
+					await finishRun(self);
+				}
+			});
+		});
+
+		it('still cleans up on a store that is not shared, whatever else runs in the project', async () => {
+			// Each container there has its own disk and serves one run at a time, and
+			// its small disk makes the sweep mandatory, so project activity elsewhere
+			// must never hold it back.
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-GC-OWN');
+				const live = await startRun(otherTaskId);
+				await setStoredSandboxBackend(db, SandboxBackend.Daytona);
+				try {
+					const execs = await prepareRecording('WT-GC-OWN', repoId);
+					expect(execs.some((e) => e.args === 'worktree list --porcelain')).toBe(true);
+					for (const e of execs) expect(e.config.has('gc.auto')).toBe(false);
+				} finally {
+					await setStoredSandboxBackend(db, SandboxBackend.Docker);
+					await finishRun(live);
+				}
+			});
+		});
 	});
 
 	it('tells a run on a project with no linked repo that there is nothing to prepare', async () => {

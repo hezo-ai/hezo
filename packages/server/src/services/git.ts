@@ -715,21 +715,33 @@ async function addTaskWorktree(
 }
 
 /**
+ * The admin entry a linked worktree's `.git` gitfile names
+ * (`<clone>/.git/worktrees/<name>`), as an absolute container path, or null when
+ * the folder holds no gitfile (no `.git`, or a separate checkout's directory).
+ * Git creates the entry with the worktree and deletes it when the worktree is
+ * removed or pruned, so anything kept there lives exactly as long as the worktree.
+ */
+export async function worktreeAdminDir(wt: WorktreeLoc): Promise<string | null> {
+	let gitfile: string;
+	try {
+		gitfile = (await wt.files.read('.git')).trim();
+	} catch {
+		return null;
+	}
+	if (!gitfile.startsWith('gitdir:')) return null;
+	const target = gitfile.slice('gitdir:'.length).trim();
+	if (!target) return null;
+	return target.startsWith('/') ? target : posix.join(wt.containerPath, target);
+}
+
+/**
  * Whether a worktree's `.git` file names an admin entry that no longer exists in
  * its clone - the one state in which the tree is safe to discard and rebuild. A
  * `.git` that is not a gitfile (a separate checkout) is never orphaned.
  */
 async function isOrphanedWorktree(executor: GitExecutor, wt: WorktreeLoc): Promise<boolean> {
-	let gitfile: string;
-	try {
-		gitfile = (await wt.files.read('.git')).trim();
-	} catch {
-		return false;
-	}
-	if (!gitfile.startsWith('gitdir:')) return false;
-	const target = gitfile.slice('gitdir:'.length).trim();
-	if (!target) return false;
-	const adminPath = target.startsWith('/') ? target : posix.join(wt.containerPath, target);
+	const adminPath = await worktreeAdminDir(wt);
+	if (!adminPath) return false;
 	return !(await executor.files(adminPath).exists('HEAD'));
 }
 
@@ -1146,10 +1158,25 @@ export async function resetCloneToOrigin(
 }
 
 /**
- * Filename, inside a clone's git dir, that {@link POST_COMMIT_PUSH_HOOK} appends failed
- * auto-pushes to. Read back by {@link readPushErrors} at run end.
+ * Filename that {@link POST_COMMIT_PUSH_HOOK} appends failed auto-pushes to, inside the
+ * git dir of the checkout the commit was made in. For a task worktree that is its own
+ * admin entry ({@link worktreeAdminDir}), so each task branch keeps its own record and
+ * one run's prep never touches another's. Read back by {@link readPushErrors} at run end.
  */
 export const PUSH_ERROR_LOG_NAME = 'hezo-push-errors.log';
+
+/**
+ * Config overrides that stop a git command from starting git's own automatic gc
+ * (`gc --auto`, or `maintenance run --auto` since git 2.29). `fetch`, `merge` and
+ * `commit` start it on their own, in the background, after they finish. Passed on
+ * every git command a run's repo session issues in a clone the project's containers
+ * share: another run's agent may be committing there at any moment, and gc packs refs
+ * and prunes objects that commit is using.
+ */
+export const GIT_AUTO_GC_OFF: ReadonlyArray<readonly [string, string]> = [
+	['gc.auto', '0'],
+	['maintenance.auto', 'false'],
+];
 
 /**
  * Ref namespace recording, per branch, the tip `origin` last accepted from this clone.
@@ -1181,7 +1208,11 @@ export const PUSHED_MARKER_PREFIX = 'refs/hezo/pushed/';
  * same output as a clean push and was left to guess why its work never landed. The
  * failure is now reported twice: one line on the commit's own stderr, where the agent
  * sees it immediately, and the full git error appended to {@link PUSH_ERROR_LOG_NAME}
- * in the git dir, which the runner surfaces into the run log at run end for the human.
+ * in the checkout's own git dir (`--git-dir`, not `--git-common-dir`), which the runner
+ * surfaces into the run log at run end for the human. In a task worktree that dir is the
+ * worktree's admin entry, so the record belongs to that task branch alone: a clone is
+ * shared by every run of a project on a backend that shares one workspace, and a
+ * clone-wide record let one run's prep erase another run's failures.
  *
  * The rest of the shape:
  * - `[ -S "$SSH_AUTH_SOCK" ]` — only push when a live SSH agent socket exists. That
@@ -1221,7 +1252,7 @@ if hezo_push_out=$(git push --no-verify origin HEAD 2>&1); then
 fi
 
 hezo_remote=$(git remote get-url origin 2>/dev/null || echo origin)
-hezo_log="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/${PUSH_ERROR_LOG_NAME}"
+hezo_log="$(git rev-parse --git-dir 2>/dev/null || echo .git)/${PUSH_ERROR_LOG_NAME}"
 {
   echo "=== auto-push failed: $hezo_remote ($hezo_branch)"
   echo "$hezo_push_out"
@@ -1240,6 +1271,10 @@ exit 0
  * {@link RepoLoc} (whose `.git` is a real directory), never a worktree loc. Best-effort:
  * a filesystem failure is swallowed so it never blocks run prep — the agent's own
  * end-of-run push still lands the work; only the per-commit safeguard is skipped.
+ *
+ * Also removes the clone's own `<clone>/.git/` {@link PUSH_ERROR_LOG_NAME}. Before the
+ * record moved into each worktree, every failure landed there; now only a commit in
+ * the clone's own checkout does, which no run reads, so it is kept from growing.
  */
 export async function ensurePushHook(clone: RepoLoc): Promise<void> {
 	try {
@@ -1250,36 +1285,48 @@ export async function ensurePushHook(clone: RepoLoc): Promise<void> {
 	} catch {
 		// Non-fatal — see the docstring. Swallowed so run prep never fails on a hook write.
 	}
+	try {
+		await clone.files.remove(`.git/${PUSH_ERROR_LOG_NAME}`);
+	} catch {
+		// Non-fatal — the file is read by nothing.
+	}
 }
 
 const PUSH_HOOK_REL_PATH = '.git/hooks/post-commit';
-const pushErrorLogRelPath = `.git/${PUSH_ERROR_LOG_NAME}`;
 
 /**
- * Clear a clone's auto-push error log at run prep, so what {@link readPushErrors}
- * reports at run end belongs to this run and not a previous one. Best-effort.
+ * Clear a task worktree's auto-push error record at run prep, so what
+ * {@link readPushErrors} reports at run end belongs to this run and not a previous
+ * one. Touches only that worktree's own record. Best-effort.
  */
-export async function clearPushErrors(clone: RepoLoc): Promise<void> {
+export async function clearPushErrors(executor: GitExecutor, wt: WorktreeLoc): Promise<void> {
 	try {
-		await clone.files.remove(pushErrorLogRelPath);
+		const admin = await worktreeAdminDir(wt);
+		if (admin) await executor.files(admin).remove(PUSH_ERROR_LOG_NAME);
 	} catch {
 		// Non-fatal — a stale log is worth less than a failed run prep.
 	}
 }
 
 /**
- * Read back the auto-pushes that failed during this run, so the runner can put them
- * in the run log. Without this a denied push is visible only on the agent's own
- * stderr — which nobody reads once the run is over — and a repo the connected
- * account cannot write to looks indistinguishable from one it can.
+ * Read back the auto-pushes that failed in a task worktree during this run, so the
+ * runner can put them in the run log. Without this a denied push is visible only on
+ * the agent's own stderr — which nobody reads once the run is over — and a repo the
+ * connected account cannot write to looks indistinguishable from one it can.
  *
  * Returns the trailing `maxLines` lines, or null when nothing failed. Best-effort:
  * an unreadable log reports nothing rather than throwing at run finalize.
  */
-export async function readPushErrors(clone: RepoLoc, maxLines = 40): Promise<string | null> {
+export async function readPushErrors(
+	executor: GitExecutor,
+	wt: WorktreeLoc,
+	maxLines = 40,
+): Promise<string | null> {
 	try {
+		const admin = await worktreeAdminDir(wt);
+		if (!admin) return null;
 		// A missing log rejects, which is the same "nothing failed" answer.
-		const text = (await clone.files.read(pushErrorLogRelPath)).trim();
+		const text = (await executor.files(admin).read(PUSH_ERROR_LOG_NAME)).trim();
 		if (!text) return null;
 		const lines = text.split('\n');
 		return lines.length > maxLines ? lines.slice(-maxLines).join('\n') : text;

@@ -2844,6 +2844,7 @@ export async function runAgent(
 				: [];
 			if (task && linkedRepos.length > 0) {
 				repoSession = await RunRepoSession.open(deps, {
+					runId: heartbeatRunId,
 					project: runningProject,
 					task,
 					repos: linkedRepos,
@@ -3040,16 +3041,20 @@ export async function runAgent(
 			// Report auto-pushes that were denied during the run. The post-commit hook
 			// is deliberately non-fatal, so without this the human sees a run that
 			// "succeeded" while its commits never left the container — the exact shape
-			// of a repo the connected GitHub account can read but not write.
-			for (const clone of prep.preparedClones) {
-				const pushErrors = await readPushErrors(clone);
-				if (!pushErrors) continue;
-				emit(
-					'stderr',
-					`[system] auto-push failed during this run in ${clone.containerPath} — ` +
-						`commits are local only. Check the connected GitHub account's write access ` +
-						`to this repository.\n${pushErrors}\n`,
-				);
+			// of a repo the connected GitHub account can read but not write. Each
+			// worktree keeps its own record, so this reads only this task's failures.
+			const prepExecutor = prep.executor;
+			if (prepExecutor) {
+				for (const worktree of prep.preparedWorktrees) {
+					const pushErrors = await readPushErrors(prepExecutor, worktree);
+					if (!pushErrors) continue;
+					emit(
+						'stderr',
+						`[system] auto-push failed during this run in ${worktree.containerPath} — ` +
+							`commits are local only. Check the connected GitHub account's write access ` +
+							`to this repository.\n${pushErrors}\n`,
+					);
+				}
 			}
 
 			// Before the scan: a branch `origin` accepted and no longer advertises is
