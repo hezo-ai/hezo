@@ -161,12 +161,6 @@ describe('worktree GC', () => {
 		expect(registered()).toEqual(['GC-2']);
 	});
 
-	it('caps automatic passes by default and leaves the admin action unbounded', () => {
-		// The default exists so the run-prep sweep is bounded; the admin action passes
-		// undefined because a human asked for it and is waiting on the result.
-		expect(MAX_WORKTREE_REMOVALS_PER_PASS).toBeGreaterThan(0);
-	});
-
 	it('never reclaims the worktree of the run doing the reclaiming', async () => {
 		// Runs on terminal tasks are routine, not exotic: the explicit-task_id
 		// wakeup path (mentions, comments, coach triggers) applies no status
@@ -207,6 +201,105 @@ describe('worktree GC', () => {
 
 		expect(result.removed).toContain('GC-OTHER');
 		expect(registered()).toContain('GC-SELF');
+	});
+});
+
+describe('worktree GC per-pass cap', () => {
+	let db: PgliteDb;
+	let teamId: string;
+	let projectId: string;
+	let taskNumber = 0;
+
+	/**
+	 * A clone of its own, holding `count` worktrees of finished tasks - more than one
+	 * pass's cap. Each test gets its own, so neither sees the other's leftovers.
+	 */
+	async function finishedBacklog(name: string, count: number) {
+		const clonePath = join(root, `${name}-repo`);
+		const worktreesRoot = join(root, `${name}-worktrees`);
+		run(`git init -b main ${clonePath}`);
+		run('git config user.name tester', clonePath);
+		run('git config user.email tester@test.com', clonePath);
+		run('git config commit.gpgsign false', clonePath);
+		run('git commit --allow-empty -m initial', clonePath);
+		const clone = localGitLoc(clonePath);
+
+		const ids: string[] = [];
+		for (let i = 1; i <= count; i++) {
+			taskNumber += 1;
+			const identifier = `${name.toUpperCase()}-${i}`;
+			await db.query(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority)
+				 VALUES ($1, $2, $3, $4, $4, $5::task_status, 'medium')`,
+				[teamId, projectId, taskNumber, identifier, TaskStatus.Done],
+			);
+			mkdirSync(join(worktreesRoot, identifier), { recursive: true });
+			run(
+				`git worktree add -b hezo/${identifier} ${join(worktreesRoot, identifier, 'repo')}`,
+				clonePath,
+			);
+			ids.push(identifier);
+		}
+
+		const registered = (): string[] =>
+			run('git worktree list --porcelain', clonePath)
+				.split('\n')
+				.filter((l) => l.startsWith('worktree ') && l.includes(`${worktreesRoot}/`));
+		return { clone, worktreesRoot, ids, registered };
+	}
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Cap Co', 'cap-co') RETURNING id`,
+		);
+		teamId = team.rows[0].id;
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Cap', 'cap', 'CAP') RETURNING id`,
+			[teamId],
+		);
+		projectId = project.rows[0].id;
+	});
+
+	afterAll(() => db.close());
+
+	it('lets the admin prune clear a backlog larger than the cap in one pass', async () => {
+		const backlog = await finishedBacklog('admin', MAX_WORKTREE_REMOVALS_PER_PASS + 3);
+
+		// `null` is what the admin reset action passes: a human asked for the sweep
+		// and is waiting on it, so nothing is left for a later pass.
+		const result = await collectFinishedWorktrees(
+			db,
+			exec,
+			projectId,
+			[backlog.clone],
+			null,
+			backlog.worktreesRoot,
+		);
+
+		expect(result.removed.sort()).toEqual(backlog.ids.sort());
+		expect(result.deferred).toBe(false);
+		expect(backlog.registered()).toEqual([]);
+	});
+
+	it('stops the automatic sweep at the cap and reports that more remain', async () => {
+		const backlog = await finishedBacklog('auto', MAX_WORKTREE_REMOVALS_PER_PASS + 3);
+
+		// The run-prep sweep's argument shape: `undefined` for the limit falls back
+		// to the per-pass cap.
+		const result = await collectFinishedWorktrees(
+			db,
+			exec,
+			projectId,
+			[backlog.clone],
+			undefined,
+			backlog.worktreesRoot,
+		);
+
+		expect(result.removed).toHaveLength(MAX_WORKTREE_REMOVALS_PER_PASS);
+		expect(result.deferred).toBe(true);
+		expect(backlog.registered()).toHaveLength(3);
 	});
 });
 

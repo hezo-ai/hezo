@@ -512,7 +512,8 @@ type ResetAction = (typeof RESET_ACTIONS)[number];
  * Admin-only recovery for a wedged repository. Actions:
  * - `discard_local`: `git reset --hard` + `clean -fd` on the clone (best-effort
  *   fetch first) — unsticks the "local changes would be overwritten" sync failure.
- * - `prune_worktrees`: `git worktree prune` — clears stale worktrees from crashed runs.
+ * - `prune_worktrees`: force-removes every worktree of a finished or orphaned task,
+ *   with no per-pass cap, then `git worktree prune` clears dangling metadata.
  * - `reclone`: wipe the on-disk clone and re-run the standard provisioning path.
  *
  * All are blocked (409) while any agent run is active on the project — reset
@@ -640,9 +641,9 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 					// `hezo/<identifier>` branch refs. The sweep also runs the plain
 					// `git worktree prune` afterward to clear any dangling metadata.
 					//
-					// Same policy as the automatic per-run sweep, and unbounded here: a human
-					// asked for this and is waiting on the result, so it clears everything
-					// rather than leaving a remainder for later.
+					// Same policy as the automatic per-run sweep, and unbounded here (`null`):
+					// a human asked for this and is waiting on the result, so it clears
+					// everything rather than leaving a remainder for later.
 					const { removed } = await collectFinishedWorktrees(
 						db,
 						executor,
@@ -653,7 +654,7 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 								files: executor.files(repo.repoContainerPath),
 							},
 						],
-						undefined,
+						null,
 					);
 					return { success: true, removed };
 				}
