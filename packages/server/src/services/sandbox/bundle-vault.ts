@@ -11,8 +11,8 @@
  * existing test caught it.
  *
  * Three things answer that, and this is the third. The run is failed
- * (`findUnpushedWork`), the container is pinned against suspend and destroy
- * (`setPoolMemberUnpushedFlag`), and the commits are copied out of it to here - so
+ * (`findUnpushedWork`), the container is pinned against destroy for that clone and
+ * branch (`recordStrandedWork`), and the commits are copied out of it to here - so
  * the pin can be released and a *different* container can pick the work up.
  *
  * ## Why a bundle, and why on the instance

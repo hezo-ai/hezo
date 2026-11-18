@@ -41,6 +41,12 @@ export interface PoolMember {
 	 * else, and nothing else would notice it had gone.
 	 */
 	hasUnpushedCommits: boolean;
+	/**
+	 * The tasks whose stranded commits pin this container. A run of one of them is
+	 * the only run that can push or copy that work out and so release the pin,
+	 * which is why the ladder sends it back here first.
+	 */
+	strandedTaskIds: readonly string[];
 	/** True when the container is at its disk ceiling and should be recycled rather than reused. */
 	atDiskCeiling: boolean;
 	/**
@@ -117,6 +123,12 @@ export interface PoolCapacity {
  *
  * Then the ladder, first match wins:
  *
+ * 0. **A container pinned by this task's own stranded commits**, idle or, within
+ *    the budget, suspended. Only a run of that task can push or copy those
+ *    commits out, and so only it can release the pin; landing anywhere else
+ *    leaves the container pinned and the task working without them. A suspended
+ *    one that does not fit the budget falls through to the rungs below, the same
+ *    outcome as before this rung existed.
  * 1. **A warm idle container holding this task's worktree.** Nothing to start,
  *    and the task's worktree and `node_modules` are already built: a run records
  *    the task on its container only when it left that worktree there. This is the
@@ -169,6 +181,14 @@ export function selectPoolMember(
 	const available = members.filter((m) => usable(m) && !outdated(m));
 
 	if (taskId !== null) {
+		const holding = available.filter((m) => m.strandedTaskIds.includes(taskId));
+		const holdingIdle = holding.find((m) => m.state === 'idle');
+		if (holdingIdle) return { kind: 'reuse', member: holdingIdle };
+		const holdingSuspended = holding.find((m) => m.state === 'suspended');
+		if (holdingSuspended && fitsBudget(capacity)) {
+			return { kind: 'resume', member: holdingSuspended };
+		}
+
 		const affine = available.find((m) => m.state === 'idle' && m.lastTaskId === taskId);
 		if (affine) return { kind: 'reuse', member: affine };
 	}
@@ -254,9 +274,9 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
 	// writable layer (that is the entire premise of suspend-versus-destroy here),
 	// so the commits survive it untouched, while leaving the container running
 	// holds its full RAM cap out of the global budget indefinitely - the flag is
-	// only ever cleared by a later run on that same container, which for a stuck
-	// project never comes. A handful of such projects would consume the whole
-	// budget and queue every run on the instance forever.
+	// only ever cleared by a later run of the stranding task on that same
+	// container, which for a stuck project never comes. A handful of such projects
+	// would consume the whole budget and queue every run on the instance forever.
 	//
 	// So **every** pinned member is suspended, not just one. The single-suspend
 	// rule below is a storage-economy bound on containers kept purely for warmth,
