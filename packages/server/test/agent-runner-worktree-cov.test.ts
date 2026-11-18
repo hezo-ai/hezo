@@ -169,7 +169,11 @@ const when =
 function scriptedGitDocker(opts: {
 	rules: GitRule[];
 	onAgentExec?: (config: { Cmd: string[]; Env: string[] }) => Promise<void> | void;
-	onGitExec?: (config: { Cmd: string[]; Env: string[]; WorkingDir?: string }) => void;
+	onGitExec?: (config: {
+		Cmd: string[];
+		Env: string[];
+		WorkingDir?: string;
+	}) => Promise<void> | void;
 	/** Milliseconds a `git <args>` exec takes before it answers. */
 	slowGit?: (argLine: string) => number;
 	agentExitCode?: number;
@@ -182,7 +186,7 @@ function scriptedGitDocker(opts: {
 			const cmd: string[] = config.Cmd ?? [];
 			const id = `exec-wt-${seq++}`;
 			if (cmd[0] === 'git') {
-				opts.onGitExec?.(config);
+				await opts.onGitExec?.(config);
 				const argLine = cmd.slice(1).join(' ');
 				let res: GitResult | null = null;
 				for (const rule of opts.rules) {
@@ -764,6 +768,8 @@ describe('repo prep on demand', () => {
 			identifier: string,
 			repoId: string,
 			ids: { runId?: string; taskId?: string } = {},
+			/** Runs as each git command is issued, before it answers. */
+			onGit?: (args: string) => Promise<void>,
 		): Promise<Array<{ args: string; config: Map<string, string> }>> {
 			const execs: Array<{ args: string; config: Map<string, string> }> = [];
 			const docker = scriptedGitDocker({
@@ -772,8 +778,10 @@ describe('repo prep on demand', () => {
 						stdout: 'https://github.com/acme/todos.git\n',
 					}),
 				],
-				onGitExec: (config) => {
-					execs.push({ args: config.Cmd.slice(1).join(' '), config: gitConfigOf(config.Env) });
+				onGitExec: async (config) => {
+					const args = config.Cmd.slice(1).join(' ');
+					execs.push({ args, config: gitConfigOf(config.Env) });
+					await onGit?.(args);
 				},
 			});
 			const session = await openSession(
@@ -831,7 +839,16 @@ describe('repo prep on demand', () => {
 			});
 		});
 
-		it('starts no cleanup on the clone while another run is active, and resumes once it ends', async () => {
+		/** No git command may start git's own background gc in a shared clone. */
+		function expectAutoGcOff(execs: Array<{ config: Map<string, string> }>): void {
+			expect(execs.length).toBeGreaterThan(0);
+			for (const e of execs) {
+				expect(e.config.get('gc.auto')).toBe('0');
+				expect(e.config.get('maintenance.auto')).toBe('false');
+			}
+		}
+
+		it('skips the sweep while another run is active, sweeps once it ends, and never starts gc', async () => {
 			await withTodosRepo(async (repoId) => {
 				stageTask('WT-GC');
 				const live = await startRun(otherTaskId);
@@ -843,18 +860,33 @@ describe('repo prep on demand', () => {
 				}
 				// The worktree is reused, so the only worktree listing is the sweep's.
 				expect(during.some((e) => e.args === 'worktree list --porcelain')).toBe(false);
-				// And no prep command may start git's own background gc.
-				expect(during.length).toBeGreaterThan(0);
-				for (const e of during) {
-					expect(e.config.get('gc.auto')).toBe('0');
-					expect(e.config.get('maintenance.auto')).toBe('false');
-				}
+				expectAutoGcOff(during);
 
 				const after = await prepareRecording('WT-GC', repoId);
 				expect(after.some((e) => e.args === 'worktree list --porcelain')).toBe(true);
-				for (const e of after) {
-					expect(e.config.has('gc.auto')).toBe(false);
-					expect(e.config.has('maintenance.auto')).toBe(false);
+				// A run can start at any moment, so gc stays off on a shared clone
+				// whatever the project is doing.
+				expectAutoGcOff(after);
+			});
+		});
+
+		it('sees a run that starts while prep is under way, and skips the sweep for it', async () => {
+			// A fetch can take a minute, and a run that starts meanwhile may already be
+			// committing in a worktree an earlier run left. A check made only when prep
+			// began would miss it.
+			await withTodosRepo(async (repoId) => {
+				stageTask('WT-GC-LATE');
+				const late: { runId?: string } = {};
+				try {
+					const execs = await prepareRecording('WT-GC-LATE', repoId, {}, async (args) => {
+						if (args === 'fetch --prune origin' && !late.runId) {
+							late.runId = await startRun(otherTaskId);
+						}
+					});
+					expect(late.runId).toBeDefined();
+					expect(execs.some((e) => e.args === 'worktree list --porcelain')).toBe(false);
+				} finally {
+					if (late.runId) await finishRun(late.runId);
 				}
 			});
 		});

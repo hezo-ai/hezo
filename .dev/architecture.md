@@ -4043,21 +4043,30 @@ own disk keys it on the container, so fresh containers of one project clone in p
 slow prep still answers `pending` after 90 s.
 
 **The lock covers prep, never an agent's own git work**, so on a shared store another run's
-agent may be committing in the clone while this run prepares. Prep asks once, under the lock,
-which other runs share the store (`otherRunsSharingStore`, `sandbox/repo-store.ts`): every
-queued or running run in the project (`runInProjectSql`, task-less runs included), the caller
-left out. A per-container store answers none without a query: it serves one run at a time,
-and its small disk makes the sweep mandatory. While any other run shares the clone, prep
-starts no cleanup on it. It skips the finished-worktree sweep, and it runs its own git with
-`GIT_AUTO_GC_OFF` (`gc.auto=0`, `maintenance.auto=false`), because `fetch`, `merge` and
-`commit` otherwise start git's own background gc, which packs refs (contending for the ref
-locks a commit takes) and prunes objects. Hezo never runs `git gc` itself. An agent's own
-commit or fetch can still start git's automatic gc in a shared clone; git keeps every object
-newer than two weeks, which is what keeps that safe for in-progress commits. On a busy local
-project the sweep waits for a prep with no other run active; the cost is host disk, and task
-close already deletes the task's folder. What prep still does beside another run is safe for
-it: the `git worktree prune` in its own worktree setup drops only registrations whose folder
-is gone, and `fetch --prune` never touches `refs/heads/*`.
+agent may be committing in the clone while this run prepares. Two rules follow.
+
+- **On a shared store, Hezo's own git never starts git's automatic gc.** Every git command
+  a run's repo session issues there, prep and the finalize scans alike, carries
+  `GIT_AUTO_GC_OFF` (`gc.auto=0`, `maintenance.auto=false`): `fetch`, `merge` and `commit`
+  otherwise start git's own background gc, which packs refs (contending for the ref locks a
+  commit takes) and prunes objects. It is decided by the store's kind, not by which runs are
+  active, because a run can start after any check for it. Hezo never runs `git gc` itself;
+  the clone is still collected by the agents' own commits and fetches, which start git's
+  automatic gc as usual. Git keeps every object newer than two weeks, which is what keeps
+  that safe for in-progress commits.
+- **The finished-worktree sweep waits while another run shares the clone.** Prep asks right
+  before the sweep, not when it began (a fetch can take a minute), which other runs share
+  the store (`otherRunsSharingStore`, `sandbox/repo-store.ts`): every queued or running run in
+  the project (`runInProjectSql`, task-less runs included), the caller left out. A
+  per-container store answers none without a query: it serves one run at a time, its small
+  disk makes the sweep mandatory, and git's automatic gc stays on there. On a busy local
+  project the sweep waits for a prep with no other run active; the cost is host disk, and
+  task close already deletes the task's folder. A run that starts between that check and the
+  sweep is safe, since the sweep never reclaims a task with an active run.
+
+What prep still does beside another run is safe for it: the `git worktree prune` in its own
+worktree setup drops only registrations whose folder is gone, and `fetch --prune` never
+touches `refs/heads/*`.
 
 **The pool records a task on a container only when the container holds its worktree.** A
 claim records nothing; the run's release names the task when `RunRepoSession.holdsTaskWorktree`

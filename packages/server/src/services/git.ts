@@ -1168,8 +1168,9 @@ export const PUSH_ERROR_LOG_NAME = 'hezo-push-errors.log';
  * Config overrides that stop a git command from starting git's own automatic gc
  * (`gc --auto`, or `maintenance run --auto` since git 2.29). `fetch`, `merge` and
  * `commit` start it on their own, in the background, after they finish. Passed on
- * prep's git commands while another run works in the same shared clone: gc packs refs
- * and prunes objects that run's commits are using.
+ * every git command a run's repo session issues in a clone the project's containers
+ * share: another run's agent may be committing there at any moment, and gc packs refs
+ * and prunes objects that commit is using.
  */
 export const GIT_AUTO_GC_OFF: ReadonlyArray<readonly [string, string]> = [
 	['gc.auto', '0'],

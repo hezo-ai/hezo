@@ -408,11 +408,12 @@ export class RunRepoSession {
 	}
 
 	/**
-	 * `autoGcOff` stops every git command this executor runs from starting git's own
-	 * automatic gc ({@link GIT_AUTO_GC_OFF}): set while another run works in the
-	 * same shared clone.
+	 * On a shared store, no git command this executor runs may start git's own
+	 * automatic gc ({@link GIT_AUTO_GC_OFF}). Another run's agent may commit in the
+	 * clone at any moment, including one that starts after a check for it, so this
+	 * is decided by the store's kind, never by which runs are active.
 	 */
-	private async executor(signal: AbortSignal | undefined, autoGcOff = false): Promise<GitExecutor> {
+	private async executor(signal: AbortSignal | undefined): Promise<GitExecutor> {
 		const { deps, init } = this;
 		// The team's git identity (and signing) lets the catch-up merge record a
 		// verified merge commit, matching the agent's own in-container commits.
@@ -420,7 +421,8 @@ export class RunRepoSession {
 			projectId: init.project.id,
 			teamId: init.project.team_id,
 		});
-		const config = gitConfigEnv(await this.identity, autoGcOff ? GIT_AUTO_GC_OFF : []);
+		const autoGc = this.store.sharedAcrossContainers ? GIT_AUTO_GC_OFF : [];
+		const config = gitConfigEnv(await this.identity, autoGc);
 		const env = [...config, ...(init.egress ? buildEgressProxyEnv(init.egress) : [])];
 		// No bridge runner of its own: prep runs while the agent CLI's runner is
 		// live on the run's socket, and a second runner on that path (socat
@@ -478,13 +480,12 @@ export class RunRepoSession {
 			const todo = picked.filter((r) => !this.ready.has(r.id));
 			if (todo.length > 0 && !init.signal.aborted) {
 				// The lock covers prep only: another run's agent may be committing in
-				// this clone right now. While one is, prep starts no cleanup on it -
-				// neither git's own automatic gc (which packs refs and prunes objects
-				// that run is using) nor the finished-worktree sweep.
-				const others = await otherRunsSharingStore(deps.db, this.store, init.runId);
-				const othersActive = others.length > 0;
-				const sameTaskActive = others.some((r) => r.task_id === init.task.id);
-				const executor = await this.executor(init.signal, othersActive);
+				// this clone right now. The scheduler runs one run per task, so a run on
+				// this task cannot start mid-prep and one check is enough here.
+				const sameTaskActive = (await otherRunsSharingStore(deps.db, this.store, init.runId)).some(
+					(r) => r.task_id === init.task.id,
+				);
+				const executor = await this.executor(init.signal);
 				emitSystem('stdout', '(syncing repos...)');
 				const syncRes = await ensureProjectRepos(
 					deps.db,
@@ -525,7 +526,11 @@ export class RunRepoSession {
 					}
 				}
 				if (this.ready.size > 0) {
-					if (othersActive) {
+					// Asked again here, not reused from the start: prep can take a minute,
+					// and a run that started meanwhile may already be committing in a
+					// worktree an earlier run left.
+					const others = await otherRunsSharingStore(deps.db, this.store, init.runId);
+					if (others.length > 0) {
 						log.debug(
 							`Project ${init.project.id}: worktree GC deferred, ${others.length} other run(s) share the clones`,
 						);
