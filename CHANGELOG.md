@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.84.1 - 2026-11-18
+
+### Bug Fixes
+
+- **runs:** keep each task's push-failure record, and pause cleanup while a clone is shared ([#1228](https://github.com/hezo-ai/hezo/pull/1228))
+- **containers:** keep a container pinned while any task's stranded commits remain ([#1229](https://github.com/hezo-ai/hezo/pull/1229))
+- **repos:** call off a re-clone when a run started after the request ([#1226](https://github.com/hezo-ai/hezo/pull/1226))
+- **runs:** keep a recovery bundle whose commits never reached the task branch ([#1227](https://github.com/hezo-ai/hezo/pull/1227))
+- **repos:** let the admin worktree prune clear every finished task ([#1225](https://github.com/hezo-ai/hezo/pull/1225))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.84.0...0.84.1
+
 ## 0.84.0 - 2026-11-17
 
 ### Features
