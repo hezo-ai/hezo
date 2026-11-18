@@ -4379,6 +4379,17 @@ store, and `sandbox/recovery.ts` is the seam between them.
   delta's prerequisites are the remote tips. Refs land under `refs/remotes/hezo-recovery/*` — so the
   commits are *present* and nothing can be lost by destroying the source container — and
   `fastForwardFromRecovery` then brings them onto the task branch, fast-forward only.
+- **A restored tip must end the run on the task branch.** A refused fast-forward (the branch
+  diverged) leaves the commits only under the recovery ref, where the branch scan cannot see them,
+  so a clean scan there says nothing about them. Prep records each clone it restored a bundle into
+  this run; `RunRepoSession.view` then asks `isRecoveryOnBranch` (`merge-base --is-ancestor` of the
+  recovery ref against `refs/heads/<branch>`) for each. Asked at finalize, not taken from the prep
+  replay, so an agent that merges the ref during the run is not failed. `false` keeps the bundle
+  (the clone joins `recoveryFailed`) and fails the run (`describeUnreplayedRecovery`, ranked just
+  below the unpushed-work error); no pin, since the vault holds the copy. `null` (could not tell)
+  keeps the bundle and does not fail the run. A recovery ref an older run left, with no bundle
+  restored this run, is not checked: there is no stored copy behind it to keep. Still open: a
+  clone in this state that also has new unpushed work saves a bundle over the stored one.
 - **`RECOVERY_REMOTE` is deliberately not in `DURABLE_REMOTES`.** A recovered ref means Hezo holds a
   copy, not that the user's git host does.
 
@@ -4394,7 +4405,9 @@ releases a pin an earlier run set — clearing a pin on an unanswerable check wo
 the container the pin exists to protect.
 
 The vault's invalidation rule is success: a stored bundle is dropped once a later run finds that
-branch carries no unpushed commits, i.e. the work reached `origin` after all. That is the only
+branch carries no unpushed commits **and** the restored commits are on that branch, i.e. the work
+reached `origin` after all. A clone whose restore failed, or whose restored tip is not provably on
+the branch, never drops it. That is the only
 condition under which it discards anything, and it is why container teardown deliberately does
 **not** clear it — teardown wipes the local clones, so from that point the bundle may be the only
 copy. Only deleting the project (`DELETE /api/projects/:projectId` → `removeProject`) clears it.

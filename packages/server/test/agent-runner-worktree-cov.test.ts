@@ -1602,6 +1602,119 @@ describe('repo prep on demand', () => {
 			}
 		});
 
+		/**
+		 * A run whose prep restores a stored bundle. The stub writes the bundle file
+		 * and answers the bundle fetch with exit 0, so the restore succeeds and the
+		 * commits land under the recovery ref.
+		 */
+		async function runWithRestoredBundle(
+			identifier: string,
+			extra: GitRule[],
+		): Promise<{
+			kept: boolean;
+			success: boolean;
+			error: string | null;
+			log: string;
+			pinned: boolean | null;
+		}> {
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun(identifier);
+			try {
+				const vault = createBundleVault(dataDir);
+				const bundleKey = { projectId, repoName: 'todos', branch: `hezo/${identifier}` };
+				await vault.put(bundleKey, new TextEncoder().encode('commits from another container'));
+
+				const docker = scriptedGitDocker({
+					onAgentExec: agentPrepares,
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						...extra,
+						// The task branch itself carries nothing unpushed.
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					]),
+				});
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask(identifier),
+					makeProject(),
+				);
+				const row = await db.query<{ error: string | null }>(
+					'SELECT error FROM heartbeat_runs WHERE id = $1',
+					[result.heartbeatRunId],
+				);
+				return {
+					kept: await vault.has(bundleKey),
+					success: result.success,
+					error: row.rows[0]?.error ?? null,
+					log: await runLog(result.heartbeatRunId!),
+					pinned: await memberFlag(),
+				};
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		}
+
+		const replayRefused = when((a) => a.startsWith('merge --ff-only refs/remotes/hezo-recovery/'), {
+			exitCode: 128,
+			stderr: 'fatal: Not possible to fast-forward, aborting.',
+		});
+		const recoveredTipCheck = (res: GitResult) =>
+			when((a) => a.startsWith('merge-base --is-ancestor refs/remotes/hezo-recovery/'), res);
+
+		it('keeps the stored bundle and fails the run when the recovered commits never reached the branch', async () => {
+			// The restore worked, so the commits are in this clone - but only under
+			// the recovery ref. The branch scan is clean because the commits are not on
+			// the branch, and reading that as "the work reached origin" would drop the
+			// only copy outside a container nothing pins.
+			const out = await runWithRestoredBundle('WT-NOREPLAY', [
+				replayRefused,
+				recoveredTipCheck({ exitCode: 1 }),
+			]);
+
+			expect(out.kept).toBe(true);
+			expect(out.success).toBe(false);
+			expect(out.error).toContain('refs/remotes/hezo-recovery/hezo/WT-NOREPLAY');
+			// Hezo still holds the stored copy, so this container is not the only
+			// place the commits exist.
+			expect(out.pinned).toBe(false);
+		});
+
+		it('drops the stored bundle once its commits are replayed onto a branch with nothing unpushed', async () => {
+			const out = await runWithRestoredBundle('WT-REPLAYED', []);
+
+			expect(out.kept).toBe(false);
+			expect(out.success).toBe(true);
+		});
+
+		it('judges the replay at the end of the run, so an agent that merged the commits in is not failed', async () => {
+			// The fast-forward failed at prep, and the agent then merged the recovery
+			// ref into the branch itself and pushed it.
+			const out = await runWithRestoredBundle('WT-AGENTMERGED', [
+				replayRefused,
+				recoveredTipCheck({ exitCode: 0 }),
+			]);
+
+			expect(out.kept).toBe(false);
+			expect(out.success).toBe(true);
+		});
+
+		it('keeps the stored bundle without failing the run when the end-of-run check cannot answer', async () => {
+			const out = await runWithRestoredBundle('WT-REPLAYUNKNOWN', [
+				replayRefused,
+				recoveredTipCheck({ exitCode: 128, stderr: 'fatal: Not a valid object name' }),
+			]);
+
+			expect(out.kept).toBe(true);
+			expect(out.success).toBe(true);
+			expect(out.log).toContain('could not check whether the recovered commits are on');
+		});
+
 		it('records the task on the container only when the run left its worktree there', async () => {
 			const lastTask = async (): Promise<string | null> => {
 				const r = await db.query<{ last_task_id: string | null }>(

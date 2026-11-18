@@ -113,6 +113,7 @@ import { buildEgressProxyEnv, type EgressProxy, egressProxyTokenForms } from './
 import {
 	countBranchDelivery,
 	describeUnpushedWork,
+	describeUnreplayedRecovery,
 	findUnpushedWork,
 	readPushErrors,
 	readPushedMarker,
@@ -3091,6 +3092,13 @@ export async function runAgent(
 			);
 			const unpushedError =
 				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
+			// Restored commits that never reached the task branch are on no remote
+			// either, so `origin` fails the run for them too. The vault kept their
+			// bundle, so they pin nothing.
+			const unreplayedError =
+				prep.branch && prep.recoveryNotOnBranch.length > 0
+					? describeUnreplayedRecovery(prep.recoveryNotOnBranch, prep.branch)
+					: undefined;
 
 			// Codex, Grok and Kimi Code stream no usage, or none until their end;
 			// recover it from the file each writes into the per-run home mount, then
@@ -3452,7 +3460,8 @@ export async function runAgent(
 				exitedClean &&
 				(producedOutput || reportedNoWork) &&
 				!backgroundWorkTerminated &&
-				!unpushedError;
+				!unpushedError &&
+				!unreplayedError;
 			const backgroundError = backgroundWorkTerminated
 				? 'run ended with background tasks still running — the runtime terminated the unfinished work before it completed, so the run abandoned incomplete work'
 				: undefined;
@@ -3560,6 +3569,7 @@ export async function runAgent(
 			// that a run that committed and was then killed reports the stranded
 			// commits and leaves the signal to the exit-code column.
 			if (unpushedError) emit('stderr', `\n[runner] ${unpushedError}\n`);
+			else if (unreplayedError) emit('stderr', `\n[runner] ${unreplayedError}\n`);
 			else if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
 			else if (signalError) emit('stderr', `\n[runner] ${signalError}\n`);
 			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
@@ -3582,6 +3592,7 @@ export async function runAgent(
 				durationMs,
 				error:
 					unpushedError ??
+					unreplayedError ??
 					backgroundError ??
 					signalError ??
 					terminalError ??
@@ -4043,12 +4054,14 @@ async function vaultUnpushedWork(
 		for (const clone of prep.preparedClones) {
 			if (withWork.has(clone.containerPath)) continue;
 			// "This clone has nothing unpushed" only implies "the work reached
-			// origin" when this clone actually *has* the work. If a stored bundle
+			// origin" when the branch actually *has* the work. If a stored bundle
 			// could not be applied, the commits live solely in that bundle and the
 			// scan is trivially clean here - dropping it then destroys the only
 			// remaining copy, which is the precise failure the vault exists to
-			// prevent. Keep it and let a later run, on a container where the restore
-			// works, be the one that clears it.
+			// prevent. The same holds when the bundle applied but its commits never
+			// reached the branch (a refused fast-forward): they sit only under the
+			// recovery ref, in a container nothing pins. Keep it and let a later run,
+			// whose branch does carry the commits, be the one that clears it.
 			if (prep.recoveryFailed.has(clone.containerPath)) continue;
 			await releaseRecoveryBundle(vault, {
 				projectId: project.id,

@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { repoNameFromIdentifier } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
@@ -16,6 +16,7 @@ import {
 	fastForwardLocalDefault,
 	fetchRepo,
 	getWorktreeHead,
+	isRecoveryOnBranch,
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
 	seedInitialCommitIfEmpty,
@@ -134,7 +135,14 @@ export interface RunRepoView {
 	/** Clones prepared this run, whose push-error log covers only this run. */
 	preparedClones: CloneRef[];
 	branch: string | null;
+	/**
+	 * Clones whose stored bundle this run cannot vouch for: the restore failed, or
+	 * the restored commits are not provably on the task branch. Finalize keeps
+	 * their bundle whatever the branch scan says.
+	 */
 	recoveryFailed: Set<string>;
+	/** Prepared clones whose restored commits are, by git's answer, not on the branch. */
+	recoveryNotOnBranch: CloneRef[];
 }
 
 export const EMPTY_RUN_REPO_VIEW: RunRepoView = {
@@ -144,6 +152,7 @@ export const EMPTY_RUN_REPO_VIEW: RunRepoView = {
 	preparedClones: [],
 	branch: null,
 	recoveryFailed: new Set<string>(),
+	recoveryNotOnBranch: [],
 };
 
 export interface RunRepoDeps {
@@ -193,6 +202,8 @@ export class RunRepoSession {
 	/** The run's working directory: each prepared repo becomes a folder in it. */
 	readonly taskRoot: string;
 	readonly recoveryFailed = new Set<string>();
+	/** Clones a stored bundle was restored into this run; finalize checks each replay. */
+	private readonly bundleRestored = new Set<string>();
 	private readonly ready = new Map<string, ReadyRepo>();
 	private readonly inFlight = new Set<Promise<unknown>>();
 	private identityEnv: Promise<string[]> | null = null;
@@ -352,13 +363,35 @@ export class RunRepoSession {
 			clones.push(clone);
 		}
 		if (worktrees.length === 0) return { ...EMPTY_RUN_REPO_VIEW, branch: this.branch };
+
+		// A clean branch scan vouches for a restored bundle only when its commits are
+		// on the branch. Asked now rather than taken from the prep replay, so an agent
+		// that merged the recovery ref in during the run counts.
+		const recoveryFailed = new Set(this.recoveryFailed);
+		const recoveryNotOnBranch: CloneRef[] = [];
+		for (const clone of preparedClones) {
+			if (!this.bundleRestored.has(clone.containerPath)) continue;
+			const onBranch = await isRecoveryOnBranch(executor, clone, this.branch);
+			if (onBranch) continue;
+			recoveryFailed.add(clone.containerPath);
+			if (onBranch === false) {
+				recoveryNotOnBranch.push(clone);
+			} else {
+				this.init.emit(
+					'stderr',
+					`[system] ${basename(clone.containerPath)}: could not check whether the recovered ` +
+						`commits are on ${this.branch}; the stored copy is kept.\n`,
+				);
+			}
+		}
 		return {
 			executor,
 			worktrees,
 			clones,
 			preparedClones,
 			branch: this.branch,
-			recoveryFailed: this.recoveryFailed,
+			recoveryFailed,
+			recoveryNotOnBranch,
 		};
 	}
 
@@ -591,6 +624,9 @@ export class RunRepoSession {
 			this.recoveryFailed.add(repoLoc.containerPath);
 			warn(recovered.reason);
 		} else if (recovered.bytes !== null) {
+			// Only a bundle restored this run is checked at finalize: a recovery ref an
+			// older run left has no stored copy behind it to keep.
+			this.bundleRestored.add(repoLoc.containerPath);
 			emitSystem(
 				'stdout',
 				`${name}: recovered commits an earlier run could not push (${recovered.bytes} bytes)`,

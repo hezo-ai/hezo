@@ -1512,6 +1512,20 @@ export function describeUnpushedWork(work: UnpushedWork[]): string {
 }
 
 /**
+ * The run error for clones whose restored bundle never reached the task branch.
+ * Hezo still holds the stored copy, so unlike {@link describeUnpushedWork} the
+ * commits are not only in this container; they are on no remote either.
+ */
+export function describeUnreplayedRecovery(clones: RepoLoc[], branch: string): string {
+	const paths = clones.map((c) => c.containerPath).join('; ');
+	return (
+		`run ended with recovered commits that are not on ${branch} (${paths}): an earlier ` +
+		`run's commits were restored as refs/remotes/${RECOVERY_REMOTE}/${branch} but never ` +
+		`reached the branch. Merge that ref into ${branch} and push it.`
+	);
+}
+
+/**
  * Filename, inside a clone's git dir, of the recovery bundle a run builds when its
  * commits reached no remote - and that a later run on a *different* container
  * restores from.
@@ -1652,8 +1666,40 @@ export async function fastForwardFromRecovery(
 			merged: false,
 			warning:
 				`recovered commits for ${branch} could not be fast-forwarded into the worktree ` +
-				`(${formatGitError(res.stderr) || 'merge failed'}) — they are present as ${ref}`,
+				`(${formatGitError(res.stderr) || 'merge failed'}). They are present as ${ref}. ` +
+				`Merge that ref into ${branch} and push it, or the run fails.`,
 		};
 	}
 	return { merged: !res.stdout.includes('Already up to date') };
+}
+
+/**
+ * Whether a clone's task branch now contains the commits a stored bundle restored.
+ *
+ * The question finalize asks before it may release a bundle. A clean branch scan
+ * says the branch is on `origin`, which covers the restored commits only when they
+ * are on the branch: a refused {@link fastForwardFromRecovery} leaves them solely
+ * under the recovery ref. Asked at the end of the run, not taken from the prep
+ * result, so an agent that merged the ref in during the run counts.
+ *
+ * `null` means git could not answer (a missing ref, a transport failure), which
+ * may neither release the bundle nor fail the run.
+ */
+export async function isRecoveryOnBranch(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+): Promise<boolean | null> {
+	const res = await executor.exec(
+		[
+			'merge-base',
+			'--is-ancestor',
+			`refs/remotes/${RECOVERY_REMOTE}/${branch}`,
+			`refs/heads/${branch}`,
+		],
+		{ cwd: repo.containerPath, timeout: 10_000 },
+	);
+	if (res.exitCode === 0) return true;
+	if (res.exitCode === 1) return false;
+	return null;
 }
