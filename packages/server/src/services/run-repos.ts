@@ -3,7 +3,7 @@ import { basename, join } from 'node:path';
 import { repoNameFromIdentifier } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { type RepoStore, withRepoStoreLock } from '../lib/git-lock';
+import { type RepoStore, waitForRepoStoreReclone, withRepoStoreLock } from '../lib/git-lock';
 import { logger } from '../logger';
 import { type ContainerRunUser, chownToRunUser, ensureContainerDirReady } from './container-user';
 import type { ContainerEngine } from './docker';
@@ -224,11 +224,19 @@ export class RunRepoSession {
 	/**
 	 * Create the task root the run starts in. No git: the directory only has to
 	 * exist and belong to the run user before the agent CLI is started in it.
+	 *
+	 * First waits out a re-clone under way in this container's clone store. Its
+	 * active-run check ran before this run existed, so it is deleting the clone
+	 * and this repo's worktrees without knowing about this run; the agent must not
+	 * start in a leftover worktree that is about to go.
 	 */
 	static async open(deps: RunRepoDeps, init: RunRepoSessionInit): Promise<RunRepoSession> {
 		const session = new RunRepoSession(deps, init);
 		const { project } = init;
 		session.store = await repoStoreFor(deps.db, project.id, project.container_id);
+		await waitForRepoStoreReclone(session.store, init.signal, () =>
+			init.emit('stdout', '[system] (waiting for a re-clone of a linked repository to finish)\n'),
+		);
 		mkdirSync(
 			join(getWorktreesPath(deps.dataDir, project.team_id, project.id), init.task.identifier),
 			{ recursive: true },

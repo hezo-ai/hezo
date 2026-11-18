@@ -520,6 +520,11 @@ type ResetAction = (typeof RESET_ACTIONS)[number];
  * mutates the shared `.git` a live run's worktree prep also touches, and reclone
  * deletes worktrees a run may hold. `discard_local`/`prune_worktrees` additionally
  * require a running container; `reclone` starts one as part of provisioning.
+ *
+ * For `reclone` this 409 is only the early answer: its wipe runs later, in the
+ * background, so `performRepoSetup` counts active runs again under the clone-store
+ * lock right before it. A run that started in between keeps the clone, and the row
+ * settles `failed` saying the re-clone was called off.
  */
 reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	const denied = requireSuperuser(c);
@@ -567,6 +572,9 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 		// the same bytes - on a managed backend it emptied nothing, the sync
 		// adopted the clone it was asked to replace, and the action reported
 		// success having done nothing.
+		//
+		// The active-run check above ran before this setup is queued; the setup
+		// repeats it under the clone-store lock right before the wipe.
 		const updated = await db.query<Record<string, unknown>>(
 			`UPDATE repos r SET setup_status = $1::repo_setup_status, setup_error = NULL
 			 WHERE r.id = $2 AND r.project_id = $3

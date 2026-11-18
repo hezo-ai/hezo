@@ -4449,14 +4449,23 @@ so gitignored build artifacts survive — after a best-effort fetch; the escape 
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
 `prune_worktrees` (force-removes the on-disk worktrees of closed/terminal and orphaned tasks —
 `removeWorktreesWhere`, keeping open tasks' worktrees — then `git worktree prune` to clear
-dangling metadata; the branch refs survive), and `reclone` (wipe the clone via
-`removeRepoFromWorkspace` then re-run `performRepoSetup`, reusing its
-`pending`→`ready`/`failed` lifecycle). Reset is
-**blocked (409) while any agent run is active on the project** (`getProjectConcurrency`) — it
+dangling metadata; the branch refs survive), and `reclone` (sets the row `pending` and re-runs
+`performRepoSetup` in the background with `freshClone`, reusing its `pending`→`ready`/`failed`
+lifecycle; `ensureProjectRepos` deletes the clone and this repo's task worktrees inside the
+container, then clones). Reset is
+**blocked (409) while any agent run is active on the project** (`countActiveRunsInProject`) — it
 mutates the shared `.git` a live worktree prep also touches, and reclone deletes worktrees a run
 may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every
 read and reset runs under the same clone-store git lock (`withRepoStoreLock`, `lib/git-lock.ts`)
-as run-time worktree prep, so they never interleave on a shared `.git`.
+as run-time worktree prep, so they never interleave on a shared `.git`. For `reclone` the 409 is
+only the early answer: the wipe runs later, so `performRepoSetup` counts active runs again under
+that lock, right before the wipe. A run that started after the request (its prep may already
+hold a worktree, or it may work in one an earlier run left) makes the reclone stop with nothing
+deleted, and the row settles `failed` with a `setup_error` saying the re-clone was called off. A
+run that starts after that check is not counted by it, so the reclone holds a second per-store
+lock (`withRepoStoreReclone`) from just before the count until its clone ends, and
+`RunRepoSession.open` waits on it (`waitForRepoStoreReclone`) before the agent starts. A run start
+waits only on a re-clone, never on another run's prep.
 
 ### Abort, timeout & the success gate
 
