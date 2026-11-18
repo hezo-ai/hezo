@@ -13,6 +13,7 @@ import {
 	poolDiskCeilingBytes,
 } from '@hezo/shared';
 import type { Db } from '../../db/database';
+import { withTransaction } from '../../lib/sql';
 import { currentAgentImageVersion } from '../image-registry';
 import {
 	type PoolCapacity,
@@ -242,31 +243,78 @@ export async function beginPoolMemberStop(db: Db, containerId: string): Promise<
 }
 
 /**
- * Record whether a container is holding committed work that reached no durable
- * remote, which pins it against both suspend and destroy (`planIdleShutdown`
- * excludes it) until a later run gets the commits out.
+ * What one task run found about its own branch in one container, by repository.
  *
- * Pass `null` for "the check could not run" - the flag is then left exactly as it
- * was. That distinction is load-bearing in the clearing direction: treating an
- * unanswerable check as an all-clear would release a container that an earlier run
- * pinned for real, which is the failure the pin exists to prevent.
- *
- * `IS DISTINCT FROM` guards the write. Under MVCC a no-op UPDATE still leaves a
- * dead tuple, and this runs at the end of every run.
+ * Repositories are named the way the recovery vault keys them (the clone's folder
+ * name). A repository in neither list is one this run did not answer for, and its
+ * row - if it has one - is left exactly as it was.
  */
-export async function setPoolMemberUnpushedFlag(
+export interface StrandedWorkChange {
+	/** The task whose run scanned the branch; the pool routes that task back here. */
+	taskId: string | null;
+	branch: string;
+	/** Clones whose commits on `branch` now exist only in this container. */
+	stranded: readonly string[];
+	/** Clones whose commits on `branch` reached a durable remote or the vault. */
+	released: readonly string[];
+}
+
+/**
+ * Record which of a container's branches hold the only copy of committed work,
+ * and pin the container while any of them does.
+ *
+ * The pin is `has_unpushed_commits`, which keeps the container off every destroy
+ * path (`planIdleShutdown` and the passes beside it) until the work gets out. It
+ * is derived here from `container_stranded_work`, one row per clone and branch,
+ * and recomputed in the same transaction as the rows. A run therefore releases
+ * only the branches it scanned: task B's clean scan cannot release the container
+ * task A's stranded commits pinned, and one repository's clean scan cannot
+ * release another's. A row of unknown cause (NULL branch, carried over from
+ * before the table existed) matches no release, so no run clears it.
+ *
+ * A container with no member row yet gets no row and no pin; the insert reads the
+ * member, so a run on such a container does not fail at finalize.
+ *
+ * Nothing is written when both lists are empty, and `IS DISTINCT FROM` guards the
+ * flag: under MVCC a no-op UPDATE still leaves a dead tuple, and this runs at the
+ * end of every task run.
+ */
+export async function recordStrandedWork(
 	db: Db,
 	containerId: string,
-	hasUnpushedCommits: boolean | null,
+	change: StrandedWorkChange,
 ): Promise<void> {
-	if (hasUnpushedCommits === null) return;
-	await db.query(
-		`UPDATE container_pool_members
-		    SET has_unpushed_commits = $2, updated_at = now()
-		  WHERE container_id = $1
-		    AND has_unpushed_commits IS DISTINCT FROM $2`,
-		[containerId, hasUnpushedCommits],
-	);
+	if (change.stranded.length === 0 && change.released.length === 0) return;
+	await withTransaction(db, async () => {
+		if (change.stranded.length > 0) {
+			await db.query(
+				`INSERT INTO container_stranded_work (container_id, task_id, repo_name, branch)
+				 SELECT m.container_id, $2::uuid, r.repo_name, $3
+				   FROM container_pool_members m
+				  CROSS JOIN unnest($4::text[]) AS r(repo_name)
+				  WHERE m.container_id = $1
+				 ON CONFLICT (container_id, repo_name, branch) DO NOTHING`,
+				[containerId, change.taskId, change.branch, [...change.stranded]],
+			);
+		}
+		if (change.released.length > 0) {
+			await db.query(
+				`DELETE FROM container_stranded_work
+				  WHERE container_id = $1 AND branch = $2 AND repo_name = ANY($3::text[])`,
+				[containerId, change.branch, [...change.released]],
+			);
+		}
+		await db.query(
+			`UPDATE container_pool_members m
+			    SET has_unpushed_commits = s.pinned, updated_at = now()
+			   FROM (SELECT EXISTS (
+			           SELECT 1 FROM container_stranded_work WHERE container_id = $1
+			         ) AS pinned) s
+			  WHERE m.container_id = $1
+			    AND m.has_unpushed_commits IS DISTINCT FROM s.pinned`,
+			[containerId],
+		);
+	});
 }
 
 /**
@@ -286,12 +334,19 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 		memory_bytes: string | number | null;
 		image_version: string | null;
 		has_unpushed_commits: boolean;
+		stranded_task_ids: string[];
 	}>(
-		`SELECT container_id, state::text AS state, last_task_id, disk_used_bytes,
-		        disk_ceiling_bytes, memory_bytes, image_version, has_unpushed_commits
-		   FROM container_pool_members
-		  WHERE project_id = $1
-		  ORDER BY created_at ASC`,
+		`SELECT m.container_id, m.state::text AS state, m.last_task_id, m.disk_used_bytes,
+		        m.disk_ceiling_bytes, m.memory_bytes, m.image_version, m.has_unpushed_commits,
+		        -- One index probe per member on the branch-unique key, which leads
+		        -- with container_id; a project holds a handful of members.
+		        ARRAY(
+		          SELECT DISTINCT s.task_id::text FROM container_stranded_work s
+		           WHERE s.container_id = m.container_id AND s.task_id IS NOT NULL
+		        ) AS stranded_task_ids
+		   FROM container_pool_members m
+		  WHERE m.project_id = $1
+		  ORDER BY m.created_at ASC`,
 		[projectId],
 	);
 	const members: PoolMember[] = [];
@@ -305,6 +360,7 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 			state: row.state,
 			lastTaskId: row.last_task_id,
 			hasUnpushedCommits: row.has_unpushed_commits,
+			strandedTaskIds: row.stranded_task_ids,
 			// Against the ceiling recorded for *this* container, not a global one:
 			// members can carry different allocations (a project override, or a
 			// default that changed after some were provisioned).

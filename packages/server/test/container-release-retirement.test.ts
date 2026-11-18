@@ -31,8 +31,8 @@ import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import {
 	beginPoolMemberStop,
+	recordStrandedWork,
 	setPoolMemberState,
-	setPoolMemberUnpushedFlag,
 	settleReapedContainerUptime,
 	upsertPoolMember,
 } from '../src/services/sandbox/pool-db';
@@ -348,8 +348,9 @@ describe('release-time retirement', () => {
 		const jm = manager(e.docker);
 		const a = await acquireRunContainer(deps(e.docker), projectId, taskId);
 		const b = await acquireRunContainer(deps(e.docker), projectId, taskId);
-		await setPoolMemberUnpushedFlag(db, a.containerId, true);
-		await setPoolMemberUnpushedFlag(db, b.containerId, true);
+		const strand = { taskId, branch: 'hezo/REL-1', stranded: ['app'], released: [] };
+		await recordStrandedWork(db, a.containerId, strand);
+		await recordStrandedWork(db, b.containerId, strand);
 		await a.release();
 		await b.release();
 		runEnded(jm, projectId);

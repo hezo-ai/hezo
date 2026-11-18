@@ -113,9 +113,12 @@ import { buildEgressProxyEnv, type EgressProxy, egressProxyTokenForms } from './
 import {
 	countBranchDelivery,
 	describeUnpushedWork,
+	describeUnreplayedRecovery,
 	findUnpushedWork,
+	type RepoLoc,
 	readPushErrors,
 	readPushedMarker,
+	type UnpushedWork,
 	type UnpushedWorkScan,
 	voidPushedMarker,
 	worktreeChangedPaths,
@@ -217,7 +220,7 @@ import { createBundleVault } from './sandbox/bundle-vault';
 import { PREFLIGHT_TUNNEL_ENDPOINTS, type RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
-import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
+import { recordStrandedWork } from './sandbox/pool-db';
 import { releaseRecoveryBundle, saveRecoveryBundle } from './sandbox/recovery';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
@@ -3086,16 +3089,28 @@ export async function runAgent(
 			// the only place the work exists, so it may be released - but the work still
 			// has not reached the human's git host, so the run must still fail and say
 			// so. Conflating them would let a vaulted run read as a success.
+			//
+			// The pin is recorded per clone and per branch, and this run answers only
+			// for its own branch in the clones it scanned: another task's stranded
+			// commits in this container, or this task's in a repository it did not
+			// scan, keep the container pinned whatever this scan found.
 			const stranded = await vaultUnpushedWork(deps, project, containerId, unpushed, prep, emit);
-			await setPoolMemberUnpushedFlag(
-				deps.db,
-				containerId,
-				// `complete: false` means the check could not answer, so it may neither
-				// fail the run nor release a pin an earlier run set.
-				stranded ? true : unpushed.work.length > 0 ? false : unpushed.complete ? false : null,
-			);
+			if (prep.branch) {
+				await recordStrandedWork(deps.db, containerId, {
+					taskId: task?.id ?? null,
+					branch: prep.branch,
+					...strandedWorkChange(unpushed, stranded, prep.clones),
+				});
+			}
 			const unpushedError =
 				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
+			// Restored commits that never reached the task branch are on no remote
+			// either, so `origin` fails the run for them too. The vault kept their
+			// bundle, so they pin nothing.
+			const unreplayedError =
+				prep.branch && prep.recoveryNotOnBranch.length > 0
+					? describeUnreplayedRecovery(prep.recoveryNotOnBranch, prep.branch)
+					: undefined;
 
 			// Codex, Grok and Kimi Code stream no usage, or none until their end;
 			// recover it from the file each writes into the per-run home mount, then
@@ -3457,7 +3472,8 @@ export async function runAgent(
 				exitedClean &&
 				(producedOutput || reportedNoWork) &&
 				!backgroundWorkTerminated &&
-				!unpushedError;
+				!unpushedError &&
+				!unreplayedError;
 			const backgroundError = backgroundWorkTerminated
 				? 'run ended with background tasks still running — the runtime terminated the unfinished work before it completed, so the run abandoned incomplete work'
 				: undefined;
@@ -3565,6 +3581,7 @@ export async function runAgent(
 			// that a run that committed and was then killed reports the stranded
 			// commits and leaves the signal to the exit-code column.
 			if (unpushedError) emit('stderr', `\n[runner] ${unpushedError}\n`);
+			else if (unreplayedError) emit('stderr', `\n[runner] ${unreplayedError}\n`);
 			else if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
 			else if (signalError) emit('stderr', `\n[runner] ${signalError}\n`);
 			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
@@ -3587,6 +3604,7 @@ export async function runAgent(
 				durationMs,
 				error:
 					unpushedError ??
+					unreplayedError ??
 					backgroundError ??
 					signalError ??
 					terminalError ??
@@ -3962,14 +3980,51 @@ async function reviewRetractedWork(
 }
 
 /**
+ * The name a clone's work is keyed under, in the recovery vault and in the
+ * container pin alike: its folder name in the container.
+ */
+function cloneRepoName(repo: RepoLoc): string {
+	return basename(repo.containerPath);
+}
+
+/**
+ * Which of the scanned clones this run pins its container for, and which it
+ * releases, on its own branch.
+ *
+ * - **Pinned:** the clones whose commits are still only here (`stranded`).
+ * - **Released:** the clones whose work was copied to the vault, plus - only when
+ *   every clone answered - the clones that answered "nothing unpushed". A scan
+ *   that could not answer for some clone releases no clean-looking one: "could
+ *   not tell" must not clear a pin an earlier run set.
+ *
+ * A clone this run did not scan is in neither list, so its pin, if any, stands.
+ */
+export function strandedWorkChange(
+	scan: UnpushedWorkScan,
+	stranded: readonly UnpushedWork[],
+	scanned: readonly RepoLoc[],
+): { stranded: string[]; released: string[] } {
+	const strandedPaths = new Set(stranded.map((w) => w.repo.containerPath));
+	const withWork = new Set(scan.work.map((w) => w.repo.containerPath));
+	const released = scan.work
+		.filter((w) => !strandedPaths.has(w.repo.containerPath))
+		.map((w) => w.repo);
+	if (scan.complete) released.push(...scanned.filter((c) => !withWork.has(c.containerPath)));
+	return {
+		stranded: [...new Set(stranded.map((w) => cloneRepoName(w.repo)))],
+		released: [...new Set(released.map(cloneRepoName))],
+	};
+}
+
+/**
  * Copy a run's undelivered commits into the bundle vault, and drop stored bundles
  * whose work has since reached the remote.
  *
- * Returns whether any clone is **still** the only place its commits exist - which
- * is exactly the condition the container pin encodes. A clone whose work was
- * vaulted is not stranded (Hezo holds a copy); a clone whose bundle could not be
- * built, was too large, or could not be moved is, and the pin keeps its container
- * alive until a later run gets the work out.
+ * Returns the work that is **still** only in this container - which is exactly
+ * what the container pin records. A clone whose work was vaulted is not stranded
+ * (Hezo holds a copy); a clone whose bundle could not be built, was too large, or
+ * could not be moved is, and the pin keeps its container alive until a later run
+ * gets the work out.
  *
  * Both halves report into the run log rather than throwing: this runs at finalize,
  * where the run is already being failed for the unpushed work itself, and a
@@ -3988,12 +4043,12 @@ async function vaultUnpushedWork(
 		recoveryFailed: Set<string>;
 	},
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
-): Promise<boolean> {
+): Promise<UnpushedWork[]> {
 	// No executor means no worktree was found, so the scan found nothing and there
 	// is nothing to copy - but an unanswerable scan still may not clear a pin.
-	if (!prep.executor || !prep.branch) return unpushed.work.length > 0;
+	if (!prep.executor || !prep.branch) return unpushed.work;
 	const vault = createBundleVault(deps.dataDir);
-	let stranded = false;
+	const stranded: UnpushedWork[] = [];
 	// Both halves of the vault assume the stored bundle was restored into the clone
 	// first, which only prep does. A worktree an earlier run left, scanned here
 	// without being prepared, never saw the bundle: its commits may be older than
@@ -4003,9 +4058,9 @@ async function vaultUnpushedWork(
 	const prepared = new Set(prep.preparedClones.map((c) => c.containerPath));
 
 	for (const item of unpushed.work) {
-		const repoName = basename(item.repo.containerPath);
+		const repoName = cloneRepoName(item.repo);
 		if (!prepared.has(item.repo.containerPath)) {
-			stranded = true;
+			stranded.push(item);
 			emit(
 				'stderr',
 				`[system] ${repoName}: ${item.commits} unpushed commit(s) on ${item.branch} in a worktree ` +
@@ -4030,7 +4085,7 @@ async function vaultUnpushedWork(
 					`still not on the remote.\n`,
 			);
 		} else {
-			stranded = true;
+			stranded.push(item);
 			emit(
 				'stderr',
 				`[system] ${repoName}: could not keep a recovery copy (${saved.reason}) — this ` +
@@ -4048,16 +4103,18 @@ async function vaultUnpushedWork(
 		for (const clone of prep.preparedClones) {
 			if (withWork.has(clone.containerPath)) continue;
 			// "This clone has nothing unpushed" only implies "the work reached
-			// origin" when this clone actually *has* the work. If a stored bundle
+			// origin" when the branch actually *has* the work. If a stored bundle
 			// could not be applied, the commits live solely in that bundle and the
 			// scan is trivially clean here - dropping it then destroys the only
 			// remaining copy, which is the precise failure the vault exists to
-			// prevent. Keep it and let a later run, on a container where the restore
-			// works, be the one that clears it.
+			// prevent. The same holds when the bundle applied but its commits never
+			// reached the branch (a refused fast-forward): they sit only under the
+			// recovery ref, in a container nothing pins. Keep it and let a later run,
+			// whose branch does carry the commits, be the one that clears it.
 			if (prep.recoveryFailed.has(clone.containerPath)) continue;
 			await releaseRecoveryBundle(vault, {
 				projectId: project.id,
-				repoName: basename(clone.containerPath),
+				repoName: cloneRepoName(clone),
 				branch: prep.branch,
 			});
 		}

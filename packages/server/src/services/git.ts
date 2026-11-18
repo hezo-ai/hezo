@@ -875,23 +875,24 @@ export async function removeWorktree(
  * main worktree (the clone under `/workspace`) never sits under the worktrees root, so it
  * is inherently skipped.
  *
- * `limit` bounds one pass. The admin action leaves it unset and sweeps everything; the
- * automatic per-run sweep caps it, so a container carrying a long backlog of stale
- * worktrees pays a bounded cost per run instead of stalling one run to clear all of them.
- * Callers that care whether more remain compare `removed.length` against the cap.
+ * `limit` bounds one pass; `null` sweeps everything. It is required, so no default can
+ * stand in for "no limit". The admin action passes `null`; the automatic per-run sweep
+ * passes a cap, so a container carrying a long backlog of stale worktrees pays a bounded
+ * cost per run instead of stalling one run to clear all of them. Callers that care
+ * whether more remain compare `removed.length` against the cap.
  */
 export async function removeWorktreesWhere(
 	executor: GitExecutor,
 	repo: RepoLoc,
 	worktreesRootContainer: string,
 	shouldRemove: (taskIdentifier: string) => boolean,
-	limit?: number,
+	limit: number | null,
 ): Promise<string[]> {
 	const prefix = `${worktreesRootContainer}/`;
 	const entries = await listWorktrees(executor, repo);
 	const removed: string[] = [];
 	for (const entry of entries) {
-		if (limit !== undefined && removed.length >= limit) break;
+		if (limit !== null && removed.length >= limit) break;
 		if (!entry.path.startsWith(prefix)) continue;
 		const taskIdentifier = entry.path.slice(prefix.length).split('/')[0];
 		if (!taskIdentifier || !shouldRemove(taskIdentifier)) continue;
@@ -1558,6 +1559,20 @@ export function describeUnpushedWork(work: UnpushedWork[]): string {
 }
 
 /**
+ * The run error for clones whose restored bundle never reached the task branch.
+ * Hezo still holds the stored copy, so unlike {@link describeUnpushedWork} the
+ * commits are not only in this container; they are on no remote either.
+ */
+export function describeUnreplayedRecovery(clones: RepoLoc[], branch: string): string {
+	const paths = clones.map((c) => c.containerPath).join('; ');
+	return (
+		`run ended with recovered commits that are not on ${branch} (${paths}): an earlier ` +
+		`run's commits were restored as refs/remotes/${RECOVERY_REMOTE}/${branch} but never ` +
+		`reached the branch. Merge that ref into ${branch} and push it.`
+	);
+}
+
+/**
  * Filename, inside a clone's git dir, of the recovery bundle a run builds when its
  * commits reached no remote - and that a later run on a *different* container
  * restores from.
@@ -1698,8 +1713,40 @@ export async function fastForwardFromRecovery(
 			merged: false,
 			warning:
 				`recovered commits for ${branch} could not be fast-forwarded into the worktree ` +
-				`(${formatGitError(res.stderr) || 'merge failed'}) — they are present as ${ref}`,
+				`(${formatGitError(res.stderr) || 'merge failed'}). They are present as ${ref}. ` +
+				`Merge that ref into ${branch} and push it, or the run fails.`,
 		};
 	}
 	return { merged: !res.stdout.includes('Already up to date') };
+}
+
+/**
+ * Whether a clone's task branch now contains the commits a stored bundle restored.
+ *
+ * The question finalize asks before it may release a bundle. A clean branch scan
+ * says the branch is on `origin`, which covers the restored commits only when they
+ * are on the branch: a refused {@link fastForwardFromRecovery} leaves them solely
+ * under the recovery ref. Asked at the end of the run, not taken from the prep
+ * result, so an agent that merged the ref in during the run counts.
+ *
+ * `null` means git could not answer (a missing ref, a transport failure), which
+ * may neither release the bundle nor fail the run.
+ */
+export async function isRecoveryOnBranch(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+): Promise<boolean | null> {
+	const res = await executor.exec(
+		[
+			'merge-base',
+			'--is-ancestor',
+			`refs/remotes/${RECOVERY_REMOTE}/${branch}`,
+			`refs/heads/${branch}`,
+		],
+		{ cwd: repo.containerPath, timeout: 10_000 },
+	);
+	if (res.exitCode === 0) return true;
+	if (res.exitCode === 1) return false;
+	return null;
 }

@@ -29,6 +29,7 @@ function member(id: string, over: Partial<PoolMember> = {}): PoolMember {
 		state: 'idle',
 		lastTaskId: null,
 		hasUnpushedCommits: false,
+		strandedTaskIds: [],
 		atDiskCeiling: false,
 		memoryBytes: CAP,
 		imageVersion: IMAGE,
@@ -71,6 +72,80 @@ describe('selectPoolMember ladder', () => {
 	it('falls back to any warm container', () => {
 		const decision = selectPoolMember('task-1', [member('warm')], ROOM, CAP, IMAGE);
 		expect(decision.kind).toBe('reuse');
+	});
+
+	describe('a container holding this task stranded commits', () => {
+		// Only a run of the task that stranded the commits can push or copy them
+		// out, so only it can release the pin. Sent anywhere else, the container
+		// stays pinned and the task works without its own commits.
+		const pinnedFor = (id: string, taskId: string, over: Partial<PoolMember> = {}) =>
+			member(id, { hasUnpushedCommits: true, strandedTaskIds: [taskId], ...over });
+
+		it('resumes it ahead of a warm container and the affine one', () => {
+			const decision = selectPoolMember(
+				'task-1',
+				[
+					member('warm'),
+					member('affine', { lastTaskId: 'task-1' }),
+					pinnedFor('holding', 'task-1', { state: 'suspended' }),
+				],
+				ROOM,
+				CAP,
+				IMAGE,
+			);
+			expect(decision).toEqual({
+				kind: 'resume',
+				member: expect.objectContaining({ id: 'holding' }),
+			});
+		});
+
+		it('reuses it when it is already warm', () => {
+			const decision = selectPoolMember(
+				'task-1',
+				[member('affine', { lastTaskId: 'task-1' }), pinnedFor('holding', 'task-1')],
+				ROOM,
+				CAP,
+				IMAGE,
+			);
+			expect(decision).toEqual({
+				kind: 'reuse',
+				member: expect.objectContaining({ id: 'holding' }),
+			});
+		});
+
+		it('falls through to the usual rungs when resuming it would pass the budget', () => {
+			const decision = selectPoolMember(
+				'task-1',
+				[member('warm'), pinnedFor('holding', 'task-1', { state: 'suspended' })],
+				FULL,
+				CAP,
+				IMAGE,
+			);
+			expect(decision).toEqual({ kind: 'reuse', member: expect.objectContaining({ id: 'warm' }) });
+		});
+
+		it('gives no priority to a container another task stranded commits in', () => {
+			const decision = selectPoolMember(
+				'task-1',
+				[pinnedFor('other-task', 'task-2', { state: 'suspended' }), member('warm')],
+				ROOM,
+				CAP,
+				IMAGE,
+			);
+			expect(decision).toEqual({ kind: 'reuse', member: expect.objectContaining({ id: 'warm' }) });
+		});
+
+		it('never hands it to the task when it was built from another image', () => {
+			// It holds the only copy, so it is not recycled either: it waits.
+			const decision = selectPoolMember(
+				'task-1',
+				[pinnedFor('holding', 'task-1', { imageVersion: '0.1.0' }), member('warm')],
+				ROOM,
+				CAP,
+				IMAGE,
+			);
+			expect(decision).toEqual({ kind: 'reuse', member: expect.objectContaining({ id: 'warm' }) });
+		});
 	});
 
 	it('resumes a suspended container when none is warm', () => {

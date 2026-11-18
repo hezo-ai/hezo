@@ -126,13 +126,21 @@ three things.
   automatically - even if it runs in a different container, and even if the original one is
   long gone. The copy is
   dropped once the commits do reach GitHub, and is otherwise kept until you delete the
-  project.
+  project. If the task's branch moved on in the meantime, so the recovered commits cannot
+  simply be added to the end of it, the agent is told where they are and asked to merge them
+  in. Until they are on the branch, each run that prepares the repository is marked failed
+  and the copy is kept.
 - **The container is held open** if the copy could not be made, so the machine holding the
-  only version of your work is never recycled while it is the only version.
+  only version of your work is never recycled while it is the only version. Hezo tracks this
+  for each task and repository separately, so other tasks that finish cleanly in the same
+  container do not release it. The task's next run goes back to that container, where it can
+  push the commits or keep a recovery copy.
 
 The project's Containers page shows when a project is in this state. The fix is almost always
-the connected GitHub account's write access to that repository - once a later run pushes
-successfully, everything clears on its own.
+the connected GitHub account's write access to that repository - once the task's next run
+pushes successfully, everything clears on its own. A container that was already held open
+before Hezo tracked this per task, or one whose work you recovered some other way, stays held
+until you remove it from the Containers page.
 
 ## Recovering a stuck repository
 
@@ -160,6 +168,11 @@ against it. From there, three recovery actions are available:
 These actions only ever affect the local working copy on your instance, never the repository on
 GitHub, and they're deliberately **blocked while any agent is actively working** in the project so a
 reset can't pull the rug out from under a running task.
+
+Re-clone runs in the background after you confirm it. If an agent starts working in the project
+before the old copy is deleted, Hezo calls the re-clone off and keeps the copy, and the repository
+shows "Setup failed" with that reason. Start **Re-clone** again once no agent is running. An agent
+that starts once the old copy is being replaced waits for the fresh copy before it begins.
 
 This is the same posture described in [Container isolation](/docs/security/container-isolation):
 the keys that matter most stay on the host, and a compromised agent can use them only

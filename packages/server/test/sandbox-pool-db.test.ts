@@ -5,24 +5,27 @@ import {
 	claimPoolMember,
 	failInterruptedProvisions,
 	INTERRUPTED_PROVISION_ERROR,
+	loadPoolMembers,
 	projectHasStrandedCommits,
+	recordStrandedWork,
 	releaseClaimIfRunGone,
-	setPoolMemberUnpushedFlag,
 } from '../src/services/sandbox/pool-db';
 import { createTestDbWithMigrations } from './helpers/db';
 
 /**
- * The unpushed-commit pin, written at every run end.
+ * The unpushed-commit pin, written at every task run end.
  *
- * The flag is what keeps `planIdleShutdown` off a container holding the only copy
- * of committed work, so the interesting behaviour is not that it can be set - it is
- * that an *unanswerable* check leaves it exactly as it was. Clearing a pin on "we
- * could not tell" would destroy the container the pin exists to protect.
+ * The pin is what keeps the idle passes from destroying a container that holds the
+ * only copy of committed work. It is recorded per clone and branch, so the
+ * interesting behaviour is what a run may *not* release: a branch it never
+ * scanned, another repository's branch, or a pin whose cause is unknown.
  */
-describe('setPoolMemberUnpushedFlag', () => {
+describe('recordStrandedWork', () => {
 	let db: PgliteDb;
 	let projectId: string;
 	let otherProjectId: string;
+	let taskA: string;
+	let taskB: string;
 
 	const flagOf = async (containerId: string): Promise<boolean> => {
 		const r = await db.query<{ has_unpushed_commits: boolean }>(
@@ -32,7 +35,32 @@ describe('setPoolMemberUnpushedFlag', () => {
 		return r.rows[0].has_unpushed_commits;
 	};
 
-	const seedProject = async (slug: string): Promise<string> => {
+	const rowsOf = async (
+		containerId: string,
+	): Promise<
+		Array<{ repo_name: string | null; branch: string | null; task_id: string | null }>
+	> => {
+		const r = await db.query<{
+			repo_name: string | null;
+			branch: string | null;
+			task_id: string | null;
+		}>(
+			`SELECT repo_name, branch, task_id FROM container_stranded_work
+			  WHERE container_id = $1 ORDER BY branch NULLS FIRST, repo_name`,
+			[containerId],
+		);
+		return r.rows;
+	};
+
+	const reset = async (containerId: string): Promise<void> => {
+		await db.query('DELETE FROM container_stranded_work WHERE container_id = $1', [containerId]);
+		await db.query(
+			'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+			[containerId],
+		);
+	};
+
+	const seedProject = async (slug: string): Promise<{ projectId: string; teamId: string }> => {
 		// A team backs exactly one project (UNIQUE(projects.team_id)).
 		const team = await db.query<{ id: string }>(
 			'INSERT INTO teams (name, slug) VALUES ($1, $1) RETURNING id',
@@ -42,13 +70,38 @@ describe('setPoolMemberUnpushedFlag', () => {
 			`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, $2, $2, $3) RETURNING id`,
 			[team.rows[0].id, slug, slug.slice(0, 3).toUpperCase()],
 		);
-		return project.rows[0].id;
+		return { projectId: project.rows[0].id, teamId: team.rows[0].id };
 	};
+
+	const seedTask = async (teamId: string, number: number): Promise<string> => {
+		const task = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+			 VALUES ($1, $2, $3, $4, $4) RETURNING id`,
+			[teamId, projectId, number, `POO-${number}`],
+		);
+		return task.rows[0].id;
+	};
+
+	const strand = (taskId: string, branch: string, repos: string[]) => ({
+		taskId,
+		branch,
+		stranded: repos,
+		released: [],
+	});
+	const release = (taskId: string, branch: string, repos: string[]) => ({
+		taskId,
+		branch,
+		stranded: [],
+		released: repos,
+	});
 
 	beforeAll(async () => {
 		db = await createTestDbWithMigrations();
-		projectId = await seedProject('pool');
-		otherProjectId = await seedProject('other');
+		const pool = await seedProject('pool');
+		projectId = pool.projectId;
+		otherProjectId = (await seedProject('other')).projectId;
+		taskA = await seedTask(pool.teamId, 1);
+		taskB = await seedTask(pool.teamId, 2);
 		await db.query(
 			`INSERT INTO container_pool_members (project_id, container_id, state)
 			 VALUES ($1, 'ctr-a', 'idle'), ($1, 'ctr-b', 'idle'), ($2, 'ctr-c', 'idle')`,
@@ -58,50 +111,104 @@ describe('setPoolMemberUnpushedFlag', () => {
 	afterAll(() => db.close());
 
 	it('pins a container that is holding stranded commits', async () => {
-		await setPoolMemberUnpushedFlag(db, 'ctr-a', true);
+		await recordStrandedWork(db, 'ctr-a', strand(taskA, 'hezo/POO-1', ['app']));
 		expect(await flagOf('ctr-a')).toBe(true);
+		expect(await rowsOf('ctr-a')).toEqual([
+			{ repo_name: 'app', branch: 'hezo/POO-1', task_id: taskA },
+		]);
 	});
 
-	it('leaves the pin alone when the check could not answer', async () => {
-		// Null is not false. A git failure or a missing clone proves nothing, and
-		// treating it as an all-clear would release a container that an earlier run
-		// pinned for real.
-		await setPoolMemberUnpushedFlag(db, 'ctr-a', null);
+	it("keeps the pin when another task's run finds its own branch clean", async () => {
+		// The bug this table exists for: task B's clean scan said nothing about
+		// task A's branch, and used to release the container holding A's commits.
+		await recordStrandedWork(db, 'ctr-a', release(taskB, 'hezo/POO-2', ['app']));
 		expect(await flagOf('ctr-a')).toBe(true);
+		expect(await rowsOf('ctr-a')).toHaveLength(1);
 	});
 
-	it('releases the pin on a definite all-clear', async () => {
-		// The next run on the same container gets the commits out, so the pin must
-		// clear - otherwise a single denied push pins a container forever.
-		await setPoolMemberUnpushedFlag(db, 'ctr-a', false);
+	it('keeps the pin while another repository on the same branch is stranded', async () => {
+		await reset('ctr-a');
+		await recordStrandedWork(db, 'ctr-a', strand(taskA, 'hezo/POO-1', ['app', 'api']));
+		await recordStrandedWork(db, 'ctr-a', release(taskA, 'hezo/POO-1', ['api']));
+		expect(await flagOf('ctr-a')).toBe(true);
+		expect(await rowsOf('ctr-a')).toEqual([
+			{ repo_name: 'app', branch: 'hezo/POO-1', task_id: taskA },
+		]);
+	});
+
+	it("releases the pin once the stranding task's work is out", async () => {
+		await recordStrandedWork(db, 'ctr-a', release(taskA, 'hezo/POO-1', ['app']));
 		expect(await flagOf('ctr-a')).toBe(false);
+		expect(await rowsOf('ctr-a')).toEqual([]);
+	});
+
+	it('records one change of both kinds in one call', async () => {
+		await recordStrandedWork(db, 'ctr-a', strand(taskA, 'hezo/POO-1', ['app']));
+		await recordStrandedWork(db, 'ctr-a', {
+			taskId: taskA,
+			branch: 'hezo/POO-1',
+			stranded: ['api'],
+			released: ['app'],
+		});
+		expect(await flagOf('ctr-a')).toBe(true);
+		expect(await rowsOf('ctr-a')).toEqual([
+			{ repo_name: 'api', branch: 'hezo/POO-1', task_id: taskA },
+		]);
+		await reset('ctr-a');
+	});
+
+	it('never releases a pin whose cause is unknown', async () => {
+		// A container pinned before branches were recorded: no run can answer for
+		// a branch nobody knows, so only removing the container clears it.
+		await db.query(`INSERT INTO container_stranded_work (container_id) VALUES ('ctr-a')`);
+		await recordStrandedWork(db, 'ctr-a', strand(taskA, 'hezo/POO-1', ['app']));
+		await recordStrandedWork(db, 'ctr-a', release(taskA, 'hezo/POO-1', ['app']));
+		expect(await flagOf('ctr-a')).toBe(true);
+		expect(await rowsOf('ctr-a')).toEqual([{ repo_name: null, branch: null, task_id: null }]);
+		await reset('ctr-a');
 	});
 
 	it('touches only the named container', async () => {
-		await setPoolMemberUnpushedFlag(db, 'ctr-b', true);
+		await recordStrandedWork(db, 'ctr-b', strand(taskA, 'hezo/POO-1', ['app']));
 		expect(await flagOf('ctr-a')).toBe(false);
 		expect(await flagOf('ctr-c')).toBe(false);
 	});
 
-	it('writes nothing when the flag already holds that value', async () => {
+	it('writes nothing when the pin already holds that value', async () => {
 		// Under MVCC a no-op UPDATE still leaves a dead tuple, and this runs at the
 		// end of every run; the embedded backend has no autovacuum to reclaim it.
-		const before = await db.query<{ updated_at: Date }>(
-			'SELECT updated_at FROM container_pool_members WHERE container_id = $1',
-			['ctr-b'],
-		);
-		await setPoolMemberUnpushedFlag(db, 'ctr-b', true);
-		const after = await db.query<{ updated_at: Date }>(
-			'SELECT updated_at FROM container_pool_members WHERE container_id = $1',
-			['ctr-b'],
-		);
-		expect(after.rows[0].updated_at).toEqual(before.rows[0].updated_at);
+		const updatedAt = async () =>
+			(
+				await db.query<{ updated_at: Date }>(
+					'SELECT updated_at FROM container_pool_members WHERE container_id = $1',
+					['ctr-b'],
+				)
+			).rows[0].updated_at;
+		const before = await updatedAt();
+		await recordStrandedWork(db, 'ctr-b', strand(taskA, 'hezo/POO-1', ['app']));
+		await recordStrandedWork(db, 'ctr-b', release(taskB, 'hezo/POO-2', ['app']));
+		await recordStrandedWork(db, 'ctr-b', {
+			taskId: taskA,
+			branch: 'hezo/POO-1',
+			stranded: [],
+			released: [],
+		});
+		expect(await updatedAt()).toEqual(before);
 	});
 
 	it('is a no-op for a container with no pool member yet', async () => {
-		// The pool table is populated as call sites move over; a run on a container
-		// that has no member row must not throw at finalize.
-		await expect(setPoolMemberUnpushedFlag(db, 'ctr-unknown', true)).resolves.toBeUndefined();
+		// A run on a container that has no member row must not fail at finalize.
+		await expect(
+			recordStrandedWork(db, 'ctr-unknown', strand(taskA, 'hezo/POO-1', ['app'])),
+		).resolves.toBeUndefined();
+		expect(await rowsOf('ctr-unknown')).toEqual([]);
+	});
+
+	it('names the stranding task on the member, for routing', async () => {
+		const members = await loadPoolMembers(db, projectId);
+		const byId = new Map(members.map((m) => [m.id, m]));
+		expect(byId.get('ctr-b')?.strandedTaskIds).toEqual([taskA]);
+		expect(byId.get('ctr-a')?.strandedTaskIds).toEqual([]);
 	});
 
 	it('reports a project whose commits are stranded', async () => {
@@ -109,9 +216,32 @@ describe('setPoolMemberUnpushedFlag', () => {
 		expect(await projectHasStrandedCommits(db, otherProjectId)).toBe(false);
 	});
 
+	it('keeps the pin when the stranding task is deleted, losing only the routing', async () => {
+		const doomed = await db.query<{ team_id: string }>(
+			'SELECT team_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		const taskC = await seedTask(doomed.rows[0].team_id, 3);
+		await recordStrandedWork(db, 'ctr-b', strand(taskC, 'hezo/POO-3', ['app']));
+		await db.query('DELETE FROM tasks WHERE id = $1', [taskC]);
+		expect(await flagOf('ctr-b')).toBe(true);
+		expect(await rowsOf('ctr-b')).toContainEqual({
+			repo_name: 'app',
+			branch: 'hezo/POO-3',
+			task_id: null,
+		});
+		await recordStrandedWork(db, 'ctr-b', release(taskA, 'hezo/POO-3', ['app']));
+	});
+
 	it('stops reporting a project once its last pin clears', async () => {
-		await setPoolMemberUnpushedFlag(db, 'ctr-b', false);
+		await recordStrandedWork(db, 'ctr-b', release(taskA, 'hezo/POO-1', ['app']));
 		expect(await projectHasStrandedCommits(db, projectId)).toBe(false);
+	});
+
+	it("drops a container's rows with its member", async () => {
+		await recordStrandedWork(db, 'ctr-c', strand(taskA, 'hezo/POO-1', ['app']));
+		await db.query(`DELETE FROM container_pool_members WHERE container_id = 'ctr-c'`);
+		expect(await rowsOf('ctr-c')).toEqual([]);
 	});
 });
 

@@ -4413,22 +4413,59 @@ store, and `sandbox/recovery.ts` is the seam between them.
   delta's prerequisites are the remote tips. Refs land under `refs/remotes/hezo-recovery/*` — so the
   commits are *present* and nothing can be lost by destroying the source container — and
   `fastForwardFromRecovery` then brings them onto the task branch, fast-forward only.
+- **A restored tip must end the run on the task branch.** A refused fast-forward (the branch
+  diverged) leaves the commits only under the recovery ref, where the branch scan cannot see them,
+  so a clean scan there says nothing about them. Prep records each clone it restored a bundle into
+  this run; `RunRepoSession.view` then asks `isRecoveryOnBranch` (`merge-base --is-ancestor` of the
+  recovery ref against `refs/heads/<branch>`) for each. Asked at finalize, not taken from the prep
+  replay, so an agent that merges the ref during the run is not failed. `false` keeps the bundle
+  (the clone joins `recoveryFailed`) and fails the run (`describeUnreplayedRecovery`, ranked just
+  below the unpushed-work error); no pin, since the vault holds the copy. `null` (could not tell)
+  keeps the bundle and does not fail the run. A recovery ref an older run left, with no bundle
+  restored this run, is not checked: there is no stored copy behind it to keep. Still open: a
+  clone in this state that also has new unpushed work saves a bundle over the stored one.
 - **`RECOVERY_REMOTE` is deliberately not in `DURABLE_REMOTES`.** A recovered ref means Hezo holds a
   copy, not that the user's git host does.
 
 **The pin and the run failure are decided by different things**, which is the point of the vault.
-`setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
-`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from destroy and
-*prefers* for suspend (suspending keeps the writable layer, so the pin costs no memory) — but it is now set from whether the copy-out **failed**, not from whether the work
-reached `origin`. A vaulted run releases its container (the work exists in two places) and still
-fails (it never reached the remote); a run whose bundle could not be built, was oversized, or could
-not be moved keeps the pin, failing closed. The scan still distinguishes "no unpushed work" from
-"could not tell": a git failure or a missing clone yields `null`, which neither fails the run nor
-releases a pin an earlier run set — clearing a pin on an unanswerable check would destroy exactly
-the container the pin exists to protect.
+The pin is `container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from
+destroy and *prefers* for suspend (suspending keeps the writable layer, so the pin costs no
+memory). It is set from whether the copy-out **failed**, not from whether the work reached
+`origin`: a vaulted run releases its container (the work exists in two places) and still fails (it
+never reached the remote); a run whose bundle could not be built, was oversized, or could not be
+moved keeps the pin, failing closed.
+
+**The pin is recorded per clone and branch, never per container.** The flag is derived from
+`container_stranded_work` (migration 087), one row per container, repository and branch whose
+commits exist only there, plus the task that left them. `recordStrandedWork`
+(`services/sandbox/pool-db.ts`) is its one writer: in one transaction it adds the rows this run
+stranded, deletes the rows this run cleared, and recomputes the flag as "any row left". A run
+scans only its own task branch, so it can only answer for that branch in the clones it scanned
+(`strandedWorkChange` in `services/agent-runner.ts` decides which). A single flag written from
+that scan let task B's clean run release the container holding task A's only copy, and let a
+clean scan of one repository release the pin another repository's commits had set.
+
+- **Released** are the clones whose work was vaulted and, only when every clone answered, the
+  clones that answered "nothing unpushed". A git failure or a missing clone makes the scan
+  incomplete, which neither fails the run nor releases a clean-looking clone - clearing a pin on
+  an unanswerable check would destroy exactly the container the pin exists to protect.
+- **Unknown cause.** A container already pinned when 087 ran became one row with NULL
+  repository and branch, because nothing recorded which branch pinned it. No run can answer for
+  that, so none clears it; it goes when an operator removes the container or the project is
+  deleted. Attributing it to `last_task_id` was rejected: that is often a later task, whose next
+  clean run would release the wrong pin.
+- **A deleted task** leaves its rows with a NULL `task_id`: the pin stands, only routing is lost.
+- **Routing.** The pool's first rung (`selectPoolMember`, from `strandedTaskIds` on each member)
+  sends a task's next run to the container its own stranded commits pin - idle, or suspended
+  within the budget - because only that run can push or copy them out and release the pin.
+  Landing anywhere else leaves the container pinned and the task working without its commits. An
+  outdated pinned member is still never handed to a run.
+- Removing a member row (operator removal, project deletion) cascades its rows.
 
 The vault's invalidation rule is success: a stored bundle is dropped once a later run finds that
-branch carries no unpushed commits, i.e. the work reached `origin` after all. That is the only
+branch carries no unpushed commits **and** the restored commits are on that branch, i.e. the work
+reached `origin` after all. A clone whose restore failed, or whose restored tip is not provably on
+the branch, never drops it. That is the only
 condition under which it discards anything, and it is why container teardown deliberately does
 **not** clear it — teardown wipes the local clones, so from that point the bundle may be the only
 copy. Only deleting the project (`DELETE /api/projects/:projectId` → `removeProject`) clears it.
@@ -4470,14 +4507,23 @@ so gitignored build artifacts survive — after a best-effort fetch; the escape 
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
 `prune_worktrees` (force-removes the on-disk worktrees of closed/terminal and orphaned tasks —
 `removeWorktreesWhere`, keeping open tasks' worktrees — then `git worktree prune` to clear
-dangling metadata; the branch refs survive), and `reclone` (wipe the clone via
-`removeRepoFromWorkspace` then re-run `performRepoSetup`, reusing its
-`pending`→`ready`/`failed` lifecycle). Reset is
-**blocked (409) while any agent run is active on the project** (`getProjectConcurrency`) — it
+dangling metadata; the branch refs survive), and `reclone` (sets the row `pending` and re-runs
+`performRepoSetup` in the background with `freshClone`, reusing its `pending`→`ready`/`failed`
+lifecycle; `ensureProjectRepos` deletes the clone and this repo's task worktrees inside the
+container, then clones). Reset is
+**blocked (409) while any agent run is active on the project** (`countActiveRunsInProject`) — it
 mutates the shared `.git` a live worktree prep also touches, and reclone deletes worktrees a run
 may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every
 read and reset runs under the same clone-store git lock (`withRepoStoreLock`, `lib/git-lock.ts`)
-as run-time worktree prep, so they never interleave on a shared `.git`.
+as run-time worktree prep, so they never interleave on a shared `.git`. For `reclone` the 409 is
+only the early answer: the wipe runs later, so `performRepoSetup` counts active runs again under
+that lock, right before the wipe. A run that started after the request (its prep may already
+hold a worktree, or it may work in one an earlier run left) makes the reclone stop with nothing
+deleted, and the row settles `failed` with a `setup_error` saying the re-clone was called off. A
+run that starts after that check is not counted by it, so the reclone holds a second per-store
+lock (`withRepoStoreReclone`) from just before the count until its clone ends, and
+`RunRepoSession.open` waits on it (`waitForRepoStoreReclone`) before the agent starts. A run start
+waits only on a re-clone, never on another run's prep.
 
 ### Abort, timeout & the success gate
 

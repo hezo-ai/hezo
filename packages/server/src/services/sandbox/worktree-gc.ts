@@ -29,7 +29,8 @@ import type { SandboxFiles } from './files';
  * Removals per repo per automatic pass. Bounded so a container carrying a long
  * backlog of finished tasks pays a predictable cost on each run rather than
  * stalling one run to clear all of them; what is left is picked up next time.
- * The admin action is unbounded - a human asked for it and is waiting on it.
+ * The admin action passes `null` and is unbounded - a human asked for it and is
+ * waiting on it.
  */
 export const MAX_WORKTREE_REMOVALS_PER_PASS = 10;
 
@@ -91,7 +92,12 @@ export async function collectFinishedWorktrees(
 	executor: GitExecutor,
 	projectId: string,
 	clones: RepoLoc[],
-	limit: number | undefined = MAX_WORKTREE_REMOVALS_PER_PASS,
+	/**
+	 * Removals per repo. `null` removes every reclaimable worktree. Omitted or
+	 * `undefined` falls back to the per-pass cap: a default replaces an explicit
+	 * `undefined`, so only `null` can mean "no limit".
+	 */
+	limit: number | null = MAX_WORKTREE_REMOVALS_PER_PASS,
 	worktreesRoot: string = CONTAINER_WORKTREES_ROOT,
 	/**
 	 * The task the calling run is *for*, never reclaimed however terminal it is.
@@ -114,7 +120,7 @@ export async function collectFinishedWorktrees(
 		const swept = await removeWorktreesWhere(executor, repo, worktreesRoot, isReclaimable, limit);
 		removed.push(...swept);
 		// The cap is per repo, so a repo that filled it may well have more.
-		if (limit !== undefined && swept.length >= limit) deferred = true;
+		if (limit !== null && swept.length >= limit) deferred = true;
 	}
 	return { removed: Array.from(new Set(removed)), deferred };
 }
