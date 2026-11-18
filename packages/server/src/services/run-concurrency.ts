@@ -1,4 +1,5 @@
 import {
+	ACTIVE_HEARTBEAT_RUN_STATUSES,
 	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
@@ -474,6 +475,28 @@ export async function countActiveRunsInProject(db: Db, projectId: string): Promi
 		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
 	);
 	return row.rows[0]?.active ?? 0;
+}
+
+/**
+ * The other active (queued/running) runs in a project, with the task each is on
+ * (null for a task-less run). `excludeRunId` is the caller's own run. Read by repo
+ * prep on a clone the project's containers share, which holds back cleanup that
+ * would touch another run's git work. Served by the run-status index, and the
+ * active runs are few.
+ */
+export async function otherActiveRunsInProject(
+	db: Db,
+	projectId: string,
+	excludeRunId: string,
+): Promise<Array<{ task_id: string | null }>> {
+	const res = await db.query<{ task_id: string | null }>(
+		`SELECT hr.task_id FROM heartbeat_runs hr
+		 WHERE ${runInProjectSql('$1')}
+		   AND hr.status = ANY($2::heartbeat_run_status[])
+		   AND hr.id <> $3`,
+		[projectId, ACTIVE_HEARTBEAT_RUN_STATUSES, excludeRunId],
+	);
+	return res.rows;
 }
 
 /**
