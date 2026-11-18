@@ -8,6 +8,7 @@ import {
 	createRecoveryBundle,
 	fastForwardFromRecovery,
 	fetchRecoveryBundle,
+	isRecoveryOnBranch,
 	localGitLoc,
 	PUSHED_MARKER_PREFIX,
 	RECOVERY_BUNDLE_REL_PATH,
@@ -148,6 +149,8 @@ describe('recovery bundle round trip', () => {
 		// The file is on disk in the worktree, which is the thing that actually
 		// matters to the agent about to run there.
 		expect(readFileSync(join(wt, 'work.txt'), 'utf8')).toBe('recovered content');
+		// What finalize asks before it may drop the stored bundle.
+		expect(await isRecoveryOnBranch(exec, repoLoc(other), BRANCH)).toBe(true);
 	});
 
 	it('refuses to fast-forward a diverged branch rather than inventing a merge', async () => {
@@ -173,6 +176,15 @@ describe('recovery bundle round trip', () => {
 		expect(run(`git log --oneline refs/remotes/${RECOVERY_REMOTE}/${BRANCH}`, other)).toContain(
 			'container A work',
 		);
+		// ...but not on the branch, so a clean branch scan says nothing about them.
+		expect(await isRecoveryOnBranch(exec, repoLoc(other), BRANCH)).toBe(false);
+	});
+
+	it('cannot say whether recovered commits are on the branch when none were restored', async () => {
+		const { bare } = setup('no-recovery-ref');
+		const other = secondClone(bare, 'no-recovery-ref');
+		run(`git branch ${BRANCH}`, other);
+		expect(await isRecoveryOnBranch(exec, repoLoc(other), BRANCH)).toBeNull();
 	});
 
 	it('is a no-op when nothing is stored', async () => {

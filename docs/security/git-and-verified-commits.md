@@ -126,7 +126,10 @@ three things.
   automatically - even if it runs in a different container, and even if the original one is
   long gone. The copy is
   dropped once the commits do reach GitHub, and is otherwise kept until you delete the
-  project.
+  project. If the task's branch moved on in the meantime, so the recovered commits cannot
+  simply be added to the end of it, the agent is told where they are and asked to merge them
+  in. Until they are on the branch, each run that prepares the repository is marked failed
+  and the copy is kept.
 - **The container is held open** if the copy could not be made, so the machine holding the
   only version of your work is never recycled while it is the only version.
 
