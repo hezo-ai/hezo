@@ -1155,7 +1155,7 @@ ALTER TABLE projects DROP COLUMN max_concurrent_runs;
 and the column is **gone from source entirely**. Concurrency is bounded
 instance-wide by a container memory *budget* — the arithmetic lives in
 `services/run-concurrency.ts`, and one-run-per-container is enforced by a
-compare-and-swap (`services/sandbox/pool-db.ts:258-279`), not by convention. So:
+compare-and-swap (`claimPoolMember` in `services/sandbox/pool-db.ts`), not by convention. So:
 
 ```
 concurrent runs  ≤  concurrent containers  =  (budget − chat reservation) ÷ cap

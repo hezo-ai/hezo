@@ -21,6 +21,7 @@ import { RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { type PrepareReposResult, RunRepoSession } from '../src/services/run-repos';
 import { createBundleVault } from '../src/services/sandbox/bundle-vault';
+import { recordStrandedWork } from '../src/services/sandbox/pool-db';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { getWorkspacePath, getWorktreesPath } from '../src/services/workspace';
 import { safeClose } from './helpers';
@@ -1213,12 +1214,53 @@ describe('repo prep on demand', () => {
 			return r.rows[0]?.has_unpushed_commits ?? null;
 		};
 
+		/** The branches pinning the container, as the pool records them. */
+		const pinRows = async (): Promise<
+			Array<{ repo_name: string | null; branch: string | null; task_id: string | null }>
+		> => {
+			const r = await db.query<{
+				repo_name: string | null;
+				branch: string | null;
+				task_id: string | null;
+			}>(
+				`SELECT repo_name, branch, task_id FROM container_stranded_work
+				  WHERE container_id = $1 ORDER BY branch, repo_name`,
+				[POOL_CONTAINER_ID],
+			);
+			return r.rows;
+		};
+
+		/** Start a test with nothing pinning the container. */
+		const resetPin = async (): Promise<void> => {
+			await db.query('DELETE FROM container_stranded_work WHERE container_id = $1', [
+				POOL_CONTAINER_ID,
+			]);
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+		};
+
+		/** A second task in the same project, sharing the container with the first. */
+		let otherTaskId: string;
+
 		beforeAll(async () => {
 			await db.query(
 				`INSERT INTO container_pool_members (project_id, container_id, state)
 				 VALUES ($1, $2, 'busy') ON CONFLICT (container_id) DO NOTHING`,
 				[projectId, POOL_CONTAINER_ID],
 			);
+			const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title: 'Second Worktree Task',
+					description: 'Shares the container with the first.',
+					assignee_id: agentId,
+				}),
+			});
+			otherTaskId = (await res.json()).data.id;
 		});
 
 		it('fails a clean run that leaves commits reaching no remote, and pins the container', async () => {
@@ -1300,10 +1342,7 @@ describe('repo prep on demand', () => {
 			// Never fetched this run, so its tracking refs may be stale. Work an
 			// earlier run left there was that run's to report; this run must not fail
 			// or pin the container over it.
-			await db.query(
-				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
-				[POOL_CONTAINER_ID],
-			);
+			await resetPin();
 			const { repoId } = await stageRun('WT-UNTOUCHED');
 			try {
 				const docker = scriptedGitDocker({
@@ -1400,10 +1439,7 @@ describe('repo prep on demand', () => {
 		it('never replaces a stored bundle with commits from an unprepared leftover worktree', async () => {
 			// A newer bundle from another container must not be overwritten by the
 			// older commits a stale leftover worktree still holds.
-			await db.query(
-				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
-				[POOL_CONTAINER_ID],
-			);
+			await resetPin();
 			const { repoId } = await stageRun('WT-LEFTSTALE');
 			try {
 				const vault = createBundleVault(dataDir);
@@ -1448,6 +1484,14 @@ describe('repo prep on demand', () => {
 		});
 
 		it('succeeds and releases the pin once the commits are on the remote', async () => {
+			await resetPin();
+			// An earlier run of this task left its commits here and could not copy them out.
+			await recordStrandedWork(db, POOL_CONTAINER_ID, {
+				taskId,
+				branch: 'hezo/WT-PUSHED',
+				stranded: ['todos'],
+				released: [],
+			});
 			const { repoId } = await stageRun('WT-PUSHED');
 			try {
 				const docker = scriptedGitDocker({
@@ -1470,16 +1514,20 @@ describe('repo prep on demand', () => {
 				// A later run getting the commits out is what releases the pin;
 				// leaving it set would strand the container forever on one denied push.
 				expect(await memberFlag()).toBe(false);
+				expect(await pinRows()).toEqual([]);
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}
 		});
 
 		it('leaves the pin alone when the check could not answer', async () => {
-			await db.query(
-				'UPDATE container_pool_members SET has_unpushed_commits = true WHERE container_id = $1',
-				[POOL_CONTAINER_ID],
-			);
+			await resetPin();
+			await recordStrandedWork(db, POOL_CONTAINER_ID, {
+				taskId,
+				branch: 'hezo/WT-UNKNOWN',
+				stranded: ['todos'],
+				released: [],
+			});
 			const { repoId } = await stageRun('WT-UNKNOWN');
 			try {
 				const docker = scriptedGitDocker({
@@ -1506,16 +1554,16 @@ describe('repo prep on demand', () => {
 				// releasing it would destroy the container the pin exists to protect.
 				expect(result.success).toBe(true);
 				expect(await memberFlag()).toBe(true);
+				expect(await pinRows()).toEqual([
+					{ repo_name: 'todos', branch: 'hezo/WT-UNKNOWN', task_id: taskId },
+				]);
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}
 		});
 
 		it('releases the pin once the commits are copied out, but still fails the run', async () => {
-			await db.query(
-				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
-				[POOL_CONTAINER_ID],
-			);
+			await resetPin();
 			const { repoId } = await stageRun('WT-VAULTED');
 			try {
 				const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
@@ -1767,10 +1815,7 @@ describe('repo prep on demand', () => {
 		});
 
 		it('keeps the container pinned when the commits could not be copied out', async () => {
-			await db.query(
-				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
-				[POOL_CONTAINER_ID],
-			);
+			await resetPin();
 			const { repoId } = await stageRun('WT-VAULTFAIL');
 			try {
 				const docker = scriptedGitDocker({
@@ -1800,6 +1845,94 @@ describe('repo prep on demand', () => {
 				expect(result.success).toBe(false);
 				expect(await memberFlag()).toBe(true);
 				expect(await runLog(result.heartbeatRunId!)).toContain('could not keep a recovery copy');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		/** Rules for a prepared repo whose task branch holds `count` commits on no remote. */
+		const unpushedCommits = (count: number, extra: GitRule[] = []): GitRule[] =>
+			preparedRepo([
+				when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+					exitCode: 0,
+				}),
+				when((a) => a.startsWith('rev-list --count'), { stdout: `${count}\n` }),
+				...extra,
+			]);
+
+		/** A bundle that cannot be built, so the commits stay only in the container. */
+		const bundleFails = when((a) => a.startsWith('bundle create'), {
+			exitCode: 128,
+			stderr: 'fatal: Refusing to create empty bundle.',
+		});
+
+		const runTask = (identifier: string, rules: GitRule[], id: string = taskId) =>
+			runAgent(
+				baseDeps(scriptedGitDocker({ onAgentExec: agentPrepares, rules })),
+				makeAgent(),
+				makeTask(identifier, { id }),
+				makeProject(),
+			);
+
+		it("keeps task A's pin through task B's clean run on the same container, until A's work reaches the remote", async () => {
+			await resetPin();
+			const { repoId } = await stageRun('WT-PINA');
+			// Each run sweeps the folders of tasks it reads as finished, and these
+			// identifiers name no open task, so a folder is staged just before its run.
+			const stage = (identifier: string) =>
+				stageWorktree(join(getWorktreesPath(dataDir, teamId, projectId), identifier, 'todos'));
+			const pinA = { repo_name: 'todos', branch: 'hezo/WT-PINA', task_id: taskId };
+			try {
+				// Task A: its push was denied and its commits could not be copied out.
+				const stranded = await runTask('WT-PINA', unpushedCommits(2, [bundleFails]));
+				expect(stranded.success).toBe(false);
+				expect(await memberFlag()).toBe(true);
+				expect(await pinRows()).toEqual([pinA]);
+
+				// Task B, same container, nothing unpushed on its own branch. Its scan
+				// says nothing about task A's branch, so it must not release the pin.
+				stage('WT-PINB');
+				const clean = await runTask('WT-PINB', unpushedCommits(0), otherTaskId);
+				expect(clean.success).toBe(true);
+				expect(await memberFlag()).toBe(true);
+				expect(await pinRows()).toEqual([pinA]);
+
+				// Task A again: its commits are on the remote now, so the pin goes.
+				stage('WT-PINA');
+				const pushed = await runTask('WT-PINA', unpushedCommits(0));
+				expect(pushed.success).toBe(true);
+				expect(await memberFlag()).toBe(false);
+				expect(await pinRows()).toEqual([]);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it("releases task A's pin once a later run of A copies its commits out", async () => {
+			await resetPin();
+			const { repoId } = await stageRun('WT-PINVAULT');
+			const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
+			try {
+				await runTask('WT-PINVAULT', unpushedCommits(2, [bundleFails]));
+				expect(await memberFlag()).toBe(true);
+
+				const vaulted = await runTask(
+					'WT-PINVAULT',
+					unpushedCommits(2, [
+						when(
+							(a) => a.startsWith('bundle create'),
+							() => {
+								writeFileSync(join(clone, RECOVERY_BUNDLE_REL_PATH), 'PACK-ish bytes');
+								return { exitCode: 0 };
+							},
+						),
+					]),
+				);
+				// Hezo holds a copy now, so the container may go; the work is still
+				// not on the remote, so the run still fails.
+				expect(vaulted.success).toBe(false);
+				expect(await memberFlag()).toBe(false);
+				expect(await pinRows()).toEqual([]);
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}

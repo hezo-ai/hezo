@@ -131,11 +131,16 @@ three things.
   in. Until they are on the branch, each run that prepares the repository is marked failed
   and the copy is kept.
 - **The container is held open** if the copy could not be made, so the machine holding the
-  only version of your work is never recycled while it is the only version.
+  only version of your work is never recycled while it is the only version. Hezo tracks this
+  for each task and repository separately, so other tasks that finish cleanly in the same
+  container do not release it. The task's next run goes back to that container, where it can
+  push the commits or keep a recovery copy.
 
 The project's Containers page shows when a project is in this state. The fix is almost always
-the connected GitHub account's write access to that repository - once a later run pushes
-successfully, everything clears on its own.
+the connected GitHub account's write access to that repository - once the task's next run
+pushes successfully, everything clears on its own. A container that was already held open
+before Hezo tracked this per task, or one whose work you recovered some other way, stays held
+until you remove it from the Containers page.
 
 ## Recovering a stuck repository
 

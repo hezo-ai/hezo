@@ -4394,15 +4394,39 @@ store, and `sandbox/recovery.ts` is the seam between them.
   copy, not that the user's git host does.
 
 **The pin and the run failure are decided by different things**, which is the point of the vault.
-`setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
-`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from destroy and
-*prefers* for suspend (suspending keeps the writable layer, so the pin costs no memory) — but it is now set from whether the copy-out **failed**, not from whether the work
-reached `origin`. A vaulted run releases its container (the work exists in two places) and still
-fails (it never reached the remote); a run whose bundle could not be built, was oversized, or could
-not be moved keeps the pin, failing closed. The scan still distinguishes "no unpushed work" from
-"could not tell": a git failure or a missing clone yields `null`, which neither fails the run nor
-releases a pin an earlier run set — clearing a pin on an unanswerable check would destroy exactly
-the container the pin exists to protect.
+The pin is `container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from
+destroy and *prefers* for suspend (suspending keeps the writable layer, so the pin costs no
+memory). It is set from whether the copy-out **failed**, not from whether the work reached
+`origin`: a vaulted run releases its container (the work exists in two places) and still fails (it
+never reached the remote); a run whose bundle could not be built, was oversized, or could not be
+moved keeps the pin, failing closed.
+
+**The pin is recorded per clone and branch, never per container.** The flag is derived from
+`container_stranded_work` (migration 087), one row per container, repository and branch whose
+commits exist only there, plus the task that left them. `recordStrandedWork`
+(`services/sandbox/pool-db.ts`) is its one writer: in one transaction it adds the rows this run
+stranded, deletes the rows this run cleared, and recomputes the flag as "any row left". A run
+scans only its own task branch, so it can only answer for that branch in the clones it scanned
+(`strandedWorkChange` in `services/agent-runner.ts` decides which). A single flag written from
+that scan let task B's clean run release the container holding task A's only copy, and let a
+clean scan of one repository release the pin another repository's commits had set.
+
+- **Released** are the clones whose work was vaulted and, only when every clone answered, the
+  clones that answered "nothing unpushed". A git failure or a missing clone makes the scan
+  incomplete, which neither fails the run nor releases a clean-looking clone - clearing a pin on
+  an unanswerable check would destroy exactly the container the pin exists to protect.
+- **Unknown cause.** A container already pinned when 087 ran became one row with NULL
+  repository and branch, because nothing recorded which branch pinned it. No run can answer for
+  that, so none clears it; it goes when an operator removes the container or the project is
+  deleted. Attributing it to `last_task_id` was rejected: that is often a later task, whose next
+  clean run would release the wrong pin.
+- **A deleted task** leaves its rows with a NULL `task_id`: the pin stands, only routing is lost.
+- **Routing.** The pool's first rung (`selectPoolMember`, from `strandedTaskIds` on each member)
+  sends a task's next run to the container its own stranded commits pin - idle, or suspended
+  within the budget - because only that run can push or copy them out and release the pin.
+  Landing anywhere else leaves the container pinned and the task working without its commits. An
+  outdated pinned member is still never handed to a run.
+- Removing a member row (operator removal, project deletion) cascades its rows.
 
 The vault's invalidation rule is success: a stored bundle is dropped once a later run finds that
 branch carries no unpushed commits **and** the restored commits are on that branch, i.e. the work
