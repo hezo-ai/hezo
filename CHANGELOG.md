@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.84.2 - 2026-11-19
+
+### Bug Fixes
+
+- **containers:** make a spent container-hours allowance a hard stop ([#1231](https://github.com/hezo-ai/hezo/pull/1231))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.84.1...0.84.2
+
 ## 0.84.1 - 2026-11-18
 
 ### Bug Fixes
