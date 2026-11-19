@@ -404,6 +404,20 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// path*, which a managed backend has none of - its filesystem is the
 	// sandbox's own. Running it there would boot a throwaway container on a paid
 	const events = new DomainEventBus();
+	const chatSessionManager = new ChatSessionManager({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: config.port,
+		dataDir: config.dataDir,
+		wsManager,
+		events,
+		logs,
+		sshAgentServer,
+		egressProxy,
+		egressCAPath: egressCA.certPath,
+		containerLogStreamer,
+	});
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -420,20 +434,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
 		autoInstallUpdates: config.updates.autoInstall,
-	});
-	const chatSessionManager = new ChatSessionManager({
-		db,
-		docker,
-		masterKeyManager,
-		serverPort: config.port,
-		dataDir: config.dataDir,
-		wsManager,
-		events,
-		logs,
-		sshAgentServer,
-		egressProxy,
-		egressCAPath: egressCA.certPath,
-		containerLogStreamer,
+		chatTurns: chatSessionManager,
 	});
 
 	// External chat channel adapters (Telegram + Slack now, Discord later). The

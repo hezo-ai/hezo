@@ -582,9 +582,9 @@ export function ChatSurface({
 								className="mb-2 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[12px] text-warning-soft-fg"
 							>
 								<TriangleAlert aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-								{/* Says what will happen, not "chat is off": a turn that lands on
-								    a container already warm still runs, so the composer stays
-								    open and this warns instead of locking it. The allowance is
+								{/* Warns rather than locking the composer: a message sent now is
+								    kept, and sending again once hours are back carries the
+								    conversation on from it. The allowance is
 								    instance-wide and only HQ can raise it, so the link is the
 								    superuser's alone - the rest are told who to ask. Where the
 								    deployment fixed it, HQ cannot move it either, and the link

@@ -22,7 +22,11 @@ import {
 	WORKER_SESSION_JWT_TTL_SECONDS,
 } from '../src/middleware/auth';
 import { acquireCredentialLock } from '../src/services/agent-runner';
-import { type CeoSessionDeps, ChatSessionManager } from '../src/services/chat-session-manager';
+import {
+	type CeoSessionDeps,
+	CHAT_HOURS_SPENT_MID_TURN_NOTICE,
+	ChatSessionManager,
+} from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { getWorkspacePath } from '../src/services/workspace';
@@ -744,6 +748,38 @@ describe('ChatSessionManager', () => {
 			);
 			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
+
+		await manager.stop();
+	});
+
+	test('a spent allowance stops the reply in flight and says why in its thread', async () => {
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		chat.scenario.mode = 'block';
+		const { manager } = makeManager(ctx, chat.docker);
+
+		expect(await manager.stopTurnsForSpentHours()).toBe(0);
+		const turn = await manager.sendTurn({ text: 'Long question' });
+		await poll(async () => chat.scenario.entered);
+
+		expect(await manager.stopTurnsForSpentHours()).toBe(1);
+
+		const reply = await ctx.db.query<{ status: string; conversation_id: string }>(
+			'SELECT status, conversation_id FROM chat_messages WHERE id = $1',
+			[turn.assistantMessageId],
+		);
+		expect(reply.rows[0].status).toBe(ChatMessageStatus.Interrupted);
+		const notices = await ctx.db.query<{ content: string; system_kind: string }>(
+			`SELECT content, system_kind FROM chat_messages
+			  WHERE conversation_id = $1 AND role = 'system' AND created_at >= (
+			    SELECT created_at FROM chat_messages WHERE id = $2)`,
+			[reply.rows[0].conversation_id, turn.assistantMessageId],
+		);
+		expect(notices.rows).toEqual([
+			{
+				content: CHAT_HOURS_SPENT_MID_TURN_NOTICE,
+				system_kind: ChatSystemMessageKind.BudgetExceeded,
+			},
+		]);
 
 		await manager.stop();
 	});

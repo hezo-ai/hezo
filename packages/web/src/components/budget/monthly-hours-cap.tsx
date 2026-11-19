@@ -9,12 +9,11 @@ import { SectionHeader } from '../ui/section-header';
 /**
  * The instance-wide monthly container-hours allowance.
  *
- * **Gates container starts, not runs.** At the allowance no new container is
- * provisioned, while runs that land on a container already up proceed - they
- * spend no new hours, and idling a container the instance is paying for either
- * way would help nobody. It clears when the calendar month turns, not when
- * something frees up, which is why a run parked on it says so in its own words
- * rather than borrowing the at-capacity wording.
+ * **A hard stop.** At the allowance no run or chat reply takes a container, new
+ * or warm, work in flight is handed back to the queue, and every container is
+ * retired. It clears when the window turns, not when something frees up, which
+ * is why a run parked on it says so in its own words rather than borrowing the
+ * at-capacity wording.
  *
  * Invalidate-and-refetch rather than optimistic, like every other control that
  * gates real work: the stored figure is what admission reads, so it must not

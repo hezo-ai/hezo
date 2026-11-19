@@ -149,11 +149,12 @@ record of what the fleet is doing rather than something to budget against.
 Where container hours do cost money, you can set an **hours allowance** from HQ's
 Hours tab (under **Team & Budget**). Once it is spent:
 
-- No new container starts, until more hours are added or the month turns - chat
-  replies included, so an exhausted allowance pauses chat too.
-- Runs that land on a container **already up** carry on - they spend no new hours, and
-  stopping them would idle a container you are paying for anyway.
-- Runs that need a new container queue, and say so.
+- No run or chat reply starts, until more hours are added or the month turns.
+  That includes work that would use a container already running.
+- Within about a minute, runs in flight go back to the queue, a chat reply being
+  written stops and says why, and every container is stopped so none keeps
+  counting hours. A run that went back starts again once there are hours.
+- Queued runs wait, and say so.
 
 It is unset by default, which means no limit.
 

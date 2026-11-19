@@ -843,17 +843,22 @@ describe('the hours allowance in the acquire ladder', () => {
 		);
 	});
 
-	it('still reuses a warm idle container, whose hours are already being spent', async () => {
-		// Matching the dispatch gate: a warm container starts nothing, so blocking
-		// it would idle a container the instance is paying for regardless.
+	it('refuses a warm idle container too, for every workload', async () => {
+		// Handing work to a warm member is what keeps it up past its retirement, so
+		// a busy project would otherwise run on past the allowance.
 		const project = await freshProject('Hours Warm');
 		const docker = provisioningDocker();
 		const first = await acquireRunContainer(deps(docker), project, randomUUID());
 		await first.release();
 		await exhaustAllowance();
-		const again = await acquireRunContainer(deps(docker), project, randomUUID());
-		expect(again.containerId).toBe(first.containerId);
-		await again.release();
+		await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
+			PoolHoursExhaustedError,
+		);
+		await expect(acquireRunContainer(deps(docker), project, null, 'chat-turn')).rejects.toThrow(
+			PoolHoursExhaustedError,
+		);
+		const members = (await listAllContainers(db)).filter((m) => m.project_id === project);
+		expect(members.map((m) => [m.container_id, m.state])).toEqual([[first.containerId, 'idle']]);
 	});
 
 	it('refuses to resume a suspended container for a chat turn', async () => {

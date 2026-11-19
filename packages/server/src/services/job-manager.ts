@@ -40,6 +40,7 @@ import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import { exitToApplyUpdate } from '../runtime-control';
 import {
+	HOURS_SPENT_ABORT,
 	type ProgressUpdateContext,
 	type RunnerDeps,
 	type RunResult,
@@ -65,12 +66,15 @@ import {
 	failProjectRuns,
 	findDormantSuspendedMembers,
 	findIdleContainerCandidates,
+	findIdleMembersInProject,
+	findProjectsWithIdleMembers,
 	findStaleIdleMembers,
 	findStaleIdleMembersInProject,
 	isProjectIdleForContainerStop,
 	PoolCapacityError,
 	provisionContainer,
 	reconcilePoolMembers,
+	type StaleIdleMember,
 	syncAllContainerStatuses,
 	teardownContainer,
 	verifyContainerWorkspace,
@@ -117,6 +121,7 @@ import { buildRetrospectiveSignals } from './project-retrospective';
 import { ensureRepoSetupAction } from './repo-setup';
 import {
 	getActiveContainers,
+	hoursQuotaExhausted,
 	isTaskBusyInDb,
 	projectContainerMemoryGb,
 	reclaimableForOthers,
@@ -420,6 +425,11 @@ export interface JobManagerDeps {
 	 * {@link CONTAINER_RELEASE_GRACE_SEC}.
 	 */
 	releaseGraceMs?: number;
+	/**
+	 * The chat turns in flight, so the spent-hours pass can stop them with the
+	 * runs. Omitted where no chat runs beside the job manager.
+	 */
+	chatTurns?: { stopTurnsForSpentHours(): Promise<number> };
 }
 
 /**
@@ -1823,9 +1833,10 @@ export class JobManager {
 
 	/**
 	 * Would running in `projectId` need a container start that exceeds the
-	 * instance's active-container cap? A project with a container genuinely free
-	 * to take the run — or one already being lazy-started by a concurrent
-	 * dispatch — is never blocked, because its run consumes no new slot. Note
+	 * instance's active-container cap? A spent hours allowance blocks every run.
+	 * Otherwise a project with a container genuinely free to take the run — or one
+	 * already being lazy-started by a concurrent dispatch — is never blocked,
+	 * because its run consumes no new slot. Note
 	 * "free", not merely "running": with a pool, a project whose containers are
 	 * all busy needs a *new* container and is gated like any other start.
 	 * Task-less callers pass null and are gated on the total alone (activateAgent
@@ -1846,24 +1857,19 @@ export class JobManager {
 		// container while holding no pending-start slot, and two of them could fit
 		// themselves into the same headroom. One query, one answer, used by both.
 		const hasSpareContainer = projectId !== null && projectsWithSpareContainer.has(projectId);
-		// A container genuinely free to take the run spends nothing new - not memory,
-		// and not hours either, since the container it will use is already up and
-		// already billing for every minute it stays that way.
-		if (hasSpareContainer) return { blocked: false, hasSpareContainer };
-		// **Hours next, and ahead of the pending-start exemption below.** The two
-		// used to share one short-circuit, which let a start already in flight carry
-		// further dispatches past this cap: each admitted dispatch takes its own
-		// pending slot and brings up its own container, so what was waved through as
-		// "no new container" was a new container, and the hours it spends are hours
-		// the allowance does not have. That was the one route past a cap an operator
-		// had deliberately set.
+		// **Hours first, ahead of every exemption below.** A spent allowance admits
+		// nothing: not a run onto a warm container, whose idle minutes end at its
+		// retirement unless work keeps arriving to extend them, and not a run behind
+		// a start already in flight, which brings up a container of its own. Either
+		// exemption let a busy project run past a cap an operator had set.
 		//
-		// Ahead of the memory arithmetic as before, because no amount of reclaiming
-		// buys an hour back - there is nothing for the acquire path's reclaim rung
-		// to do about this one, so parking the run behind it would never clear.
+		// Ahead of the memory arithmetic too, because no amount of reclaiming buys
+		// an hour back - parking the run behind the reclaim rung would never clear.
 		if (active.hoursExhausted) {
 			return { blocked: true, hasSpareContainer, hoursExhausted: true };
 		}
+		// A container genuinely free to take the run needs no new memory.
+		if (hasSpareContainer) return { blocked: false, hasSpareContainer };
 		// Memory only. A start in flight for this project has not reached the DB, and
 		// a second dispatch behind it is charged through `pendingGb` below rather
 		// than being made to wait on a row that does not exist yet.
@@ -4290,7 +4296,9 @@ export class JobManager {
 					if (this.releaseRetirements.get(projectId)?.timer === timer) {
 						this.releaseRetirements.delete(projectId);
 					}
-					this.retireIdleMembersOfProject(projectId, graceMs / 1000)
+					this.retireIdleMembersOfProject(projectId, (db, id) =>
+						findStaleIdleMembersInProject(db, id, graceMs / 1000),
+					)
 						.catch((err) =>
 							log.error(`Release-time retirement failed for project ${ref('', projectId)}:`, err),
 						)
@@ -4321,6 +4329,8 @@ export class JobManager {
 			return;
 		}
 
+		await this.enforceSpentHours();
+
 		const candidates = await findIdleContainerCandidates(db, graceSec, IDLE_STOP_BATCH_LIMIT);
 		let stopped = 0;
 		for (const candidate of candidates) {
@@ -4347,6 +4357,58 @@ export class JobManager {
 		// entirely quiet should be retired as a unit, keeping one member suspended
 		// for a warm restart, rather than having its members picked off first.
 		await this.retireSurplusIdleContainers();
+	}
+
+	/**
+	 * Once the container-hours allowance is spent, stop everything that keeps a
+	 * container up: hand every run in flight back to the queue, stop every chat
+	 * turn, and retire every idle container at once.
+	 *
+	 * **The gates alone do not hold a cap.** They refuse new work, but a run in
+	 * flight keeps its container up for as long as it takes, and an idle one
+	 * stays up through its grace. Without this pass a busy instance ran hours
+	 * past its allowance.
+	 *
+	 * **Handed back, never failed.** The work is still owed, so each run returns
+	 * to the queue the way a shutdown hands it back, and waits there on the hours
+	 * gate. A container a run releases is retired on the next tick, and the gates
+	 * keep any new work off it until then.
+	 */
+	private async enforceSpentHours(): Promise<void> {
+		const { db } = this.deps;
+		if (!(await hoursQuotaExhausted(db))) return;
+
+		const runs = [...this.runningTasks.values()];
+		for (const task of runs) {
+			clearTimeout(task.timeoutId);
+			task.abortController.abort(HOURS_SPENT_ABORT);
+		}
+		const turns = (await this.deps.chatTurns?.stopTurnsForSpentHours()) ?? 0;
+
+		// Every project with an idle member, a page at a time: the instance holds a
+		// handful of projects, and one whose members cannot be retired this tick
+		// must not keep the pass from the rest.
+		let retired = 0;
+		let after: string | null = null;
+		for (;;) {
+			const page: string[] = await findProjectsWithIdleMembers(db, after, IDLE_STOP_BATCH_LIMIT);
+			for (const projectId of page) {
+				retired += await this.retireIdleMembersOfProject(projectId, findIdleMembersInProject).catch(
+					(err) => {
+						log.error(`Spent-hours retirement failed for project ${ref('', projectId)}:`, err);
+						return 0;
+					},
+				);
+			}
+			if (page.length < IDLE_STOP_BATCH_LIMIT) break;
+			after = page[page.length - 1] ?? null;
+		}
+		if (runs.length + turns + retired > 0) {
+			log.info(
+				`Container-hours allowance spent: handed back ${runs.length} run(s), ` +
+					`stopped ${turns} chat turn(s), retired ${retired} idle container(s)`,
+			);
+		}
 	}
 
 	/**
@@ -4417,9 +4479,8 @@ export class JobManager {
 		);
 		let retired = 0;
 		for (const projectId of new Set(stale.map((row) => row.project_id))) {
-			retired += await this.retireIdleMembersOfProject(
-				projectId,
-				CONTAINER_RELEASE_GRACE_SEC,
+			retired += await this.retireIdleMembersOfProject(projectId, (db, id) =>
+				findStaleIdleMembersInProject(db, id, CONTAINER_RELEASE_GRACE_SEC),
 			).catch((err) => {
 				log.error(`Surplus idle retirement failed for project ${ref('', projectId)}:`, err);
 				return 0;
@@ -4432,8 +4493,8 @@ export class JobManager {
 	}
 
 	/**
-	 * Retire one project's idle members that have sat past `graceSec` with
-	 * nothing about to use them, keeping its warm-start floor.
+	 * Retire one project's idle members that `findRetirable` names, keeping its
+	 * warm-start floor - suspended, never left running.
 	 *
 	 * The one body behind both release-time retirement and the sweep. Runs under
 	 * the project's lifecycle lock and re-reads everything there: a member claimed
@@ -4444,7 +4505,10 @@ export class JobManager {
 	 *
 	 * Returns how many containers it retired.
 	 */
-	private async retireIdleMembersOfProject(projectId: string, graceSec: number): Promise<number> {
+	private async retireIdleMembersOfProject(
+		projectId: string,
+		findRetirable: (db: Db, projectId: string) => Promise<StaleIdleMember[]>,
+	): Promise<number> {
 		const { db } = this.deps;
 		const { planSurplusIdleRetirement } = await import('./sandbox/pool');
 		const { loadPoolMembers } = await import('./sandbox/pool-db');
@@ -4461,7 +4525,7 @@ export class JobManager {
 				(r) => r.containerId !== null,
 			).length;
 			if ((this.activeProjectRuns.get(projectId) ?? 0) > holding) return 0;
-			const fresh = await findStaleIdleMembersInProject(db, projectId, graceSec);
+			const fresh = await findRetirable(db, projectId);
 			if (fresh.length === 0) return 0;
 			const staleIds = new Set(fresh.map((r) => r.container_id));
 

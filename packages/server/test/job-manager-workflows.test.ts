@@ -244,13 +244,9 @@ describe('JobManager workflow methods', () => {
 		});
 
 		it('does not let a start already in flight carry a run past the hours cap', async () => {
-			// The one route past a cap an operator deliberately set. `hasSpareContainer`
-			// and "a start is already pending for this project" used to share one
-			// short-circuit that returned before the hours check - but they are not the
-			// same case. A spare container is already running and already billing, so
-			// exempting it is right; a pending start is a *new* container coming up,
-			// and each admitted dispatch takes its own pending slot and brings up its
-			// own. So the exemption was granted to exactly the case that spends hours.
+			// A pending start is a *new* container coming up, and each admitted
+			// dispatch takes its own pending slot and brings up its own, so exempting
+			// it from the hours check lets a run past the cap.
 			//
 			// Asserted against the verdict rather than through a dispatch, so the
 			// answer cannot be the memory arm agreeing by accident.
@@ -276,6 +272,39 @@ describe('JobManager workflow methods', () => {
 				const verdict = await gate.isContainerCapacityBlocked(projectId);
 				expect(verdict.blocked).toBe(true);
 				expect(verdict.hoursExhausted).toBe(true);
+			} finally {
+				await setMonthlyContainerHours(db, 0);
+				await db.query('DELETE FROM container_uptime_entries');
+				await clearContainerCapacityForTest(db);
+			}
+		});
+
+		it('does not let a warm container carry a run past the hours cap', async () => {
+			// A warm container stays up for as long as work keeps reaching it, so a
+			// busy project serving every run on one ran hours past its allowance.
+			const manager = createJobManager();
+			const gate = manager as unknown as {
+				isContainerCapacityBlocked(
+					id: string | null,
+				): Promise<{ blocked: boolean; hasSpareContainer: boolean; hoursExhausted?: boolean }>;
+			};
+			await startProjectContainers(db, projectId);
+			await setContainerCapacityForTest(db, 10);
+
+			try {
+				expect(await gate.isContainerCapacityBlocked(projectId)).toEqual({
+					blocked: false,
+					hasSpareContainer: true,
+				});
+
+				await setMonthlyContainerHours(db, 1);
+				await seedMonthToDateSeconds(db, 2 * 3600);
+
+				expect(await gate.isContainerCapacityBlocked(projectId)).toEqual({
+					blocked: true,
+					hasSpareContainer: true,
+					hoursExhausted: true,
+				});
 			} finally {
 				await setMonthlyContainerHours(db, 0);
 				await db.query('DELETE FROM container_uptime_entries');

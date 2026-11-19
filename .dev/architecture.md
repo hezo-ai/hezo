@@ -957,13 +957,19 @@ is load-bearing on a LEFT JOIN** - without it `COALESCE(ended_at, now())` reads 
 row as still running and `GREATEST` swallows the NULL start, so a bucket in which nothing
 ran bills a full bucket of uptime. Enforcement is an hours allowance
 (`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
-`hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
-memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
-project with a spare container is exempt from both. The same answer gates the acquire
-ladder itself for every workload, chat included (`PoolHoursExhaustedError` on a create,
-resume or reclaim decision). The cap
-read short-circuits before the ledger is scanned, so an instance with no cap pays nothing
-on the dispatch path.
+`hoursQuotaExhausted` in `run-concurrency.ts`. **A spent allowance is a hard stop, in two
+halves.** The gates refuse every run, ahead of the memory check since reclaiming a
+neighbour's idle container frees GB and never hours, and ahead of the spare-container
+exemption: a warm container stays up for as long as work keeps reaching it, so serving
+runs on one carried a busy project hours past its cap. The same answer gates the acquire
+ladder itself for every workload, chat included (`PoolHoursExhaustedError` on any
+decision, reuse of a warm member too). The gates alone still leave work in flight and
+idle containers in their grace, so the idle-stop tick's spent-hours pass
+(`JobManager.enforceSpentHours`) aborts every run in flight with `hours_exhausted`, which
+hands the work back like a shutdown (`RUN_ABORT_HANDBACK` in `agent-runner.ts`), stops
+every chat turn through `ChatSessionManager.stopTurnsForSpentHours`, and retires every
+idle member at once whatever kept it warm. The cap read short-circuits before the ledger
+is scanned, so an instance with no cap pays nothing on the dispatch path.
 
 **The allowance is measured over a window, which is the calendar month only by
 default.** `policy.pinned.containerHoursAnchorDay` moves it to the day a control plane
@@ -2655,15 +2661,13 @@ nothing to reclaim, failed on `PoolCapacityError`, parked and requeued under the
 at-capacity label an operator was already staring at. Two formulas answering one question is
 the bug; the floors belong in one place.
 
-**A pending start exempts memory, never hours.** `JobManager.isContainerCapacityBlocked`
-short-circuits on two conditions that look alike and are not. A project with a spare
-container is exempt from both arms, correctly: the container it will use is already up and
-already billing. A start already *in flight* is a new container coming up, and each admitted
-dispatch takes its own pending slot and brings up its own - so sharing one short-circuit
-gave the exemption to precisely the case that spends hours, and an operator's monthly cap
-had a way past it. The hours check now sits between the two, ahead of the pending exemption
-and still ahead of the memory arithmetic (no amount of reclaiming buys an hour back, so a
-run parked on hours would never clear).
+**A spare container or a pending start exempts memory, never hours.**
+`JobManager.isContainerCapacityBlocked` checks hours first, ahead of both exemptions and
+the memory arithmetic. A start already *in flight* is a new container coming up, since
+each admitted dispatch takes its own pending slot. A spare container is already up, but
+it stays up only for as long as work keeps reaching it. Either exemption gave an
+operator's monthly cap a way past it, and no amount of reclaiming buys an hour back, so a
+run parked on hours would never clear.
 
 **The stale-tunnel sweep asks before it executes.** A tunnel client is a process, so a
 container that is not running has none. Sweeping by label alone meant an exec against every
@@ -2810,9 +2814,8 @@ total is, returning both figures (`budgetGb`, `totalBudgetGb`). The default flat
 2 GB containers - up to five task runs, with the sixth container's worth floating as
 the chat lane. The **hours** allowance is enforced in the acquire ladder for every
 workload alike (`PoolHoursExhaustedError`, a `PoolCapacityError` subclass so
-capacity-parking callers behave unmodified): any decision that would open new uptime -
-create, resume, reclaim - is refused when the month's allowance is spent; reuse of a
-warm member stays allowed, matching the dispatch gate.
+capacity-parking callers behave unmodified): every decision is refused when the month's
+allowance is spent, reuse of a warm member included, matching the dispatch gate.
 
 **Every chat turn takes its container through the same ladder a run does**, with
 `acquireRunContainer(..., 'chat-turn')` - CEO and worker alike. The workload changes
@@ -3629,7 +3632,10 @@ up and the 5 s cron dispatches it when Hezo is next running. The boot pass still
 crash and the drain-deadline overrun, which are the cases that genuinely leave a row
 non-terminal. `RUN_LOST_TO_SHUTDOWN_ERROR` is a clause rather than a sentence for this
 reason: `finalizeRequeue` adds what became of the work and `recordHandbackOutcome` adds
-where to find it, so no writer asserts an outcome it has not yet attempted.
+where to find it, so no writer asserts an outcome it has not yet attempted. A spent
+container-hours allowance hands back the same way: the spent-hours pass aborts with
+`hours_exhausted`, and `RUN_ABORT_HANDBACK` maps each handback reason to its row message
+and its `WakeupSkipReason`, so the wakeup waits on the hours gate rather than being ready.
 
 The handback itself is one seam, `settleWakeupForRun` (`services/wakeup.ts`), shared with
 `JobManager.onAgentComplete`: the two answered the same question separately, which is how

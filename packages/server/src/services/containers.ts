@@ -1132,8 +1132,8 @@ export class PoolCapacityError extends Error {
 }
 
 /**
- * Thrown when starting a container would spend hours the monthly allowance no
- * longer covers. A subclass of {@link PoolCapacityError} so every caller that
+ * Thrown when a container is asked for after the monthly allowance is spent,
+ * whether the ladder would start one or hand over a warm one. A subclass of {@link PoolCapacityError} so every caller that
  * parks or requeues on capacity does the right thing unmodified - the run stays
  * owed, and the dispatcher's own hours gate names the reason on its next pass -
  * while the chat path can tell the two apart: memory clears when a container is
@@ -1509,6 +1509,12 @@ export async function acquireRunContainer(
 				getActiveContainers(db, deps.docker),
 				projectContainerMemoryGb(db, projectId),
 			]);
+			// Hours before memory, for every workload alike (the chat is metered, not
+			// exempt), and before any rung is chosen. Reusing a warm member is refused
+			// too: an idle member is about to be retired, and handing it work is what
+			// keeps it up - a busy project would otherwise run past the allowance for
+			// as long as its queue lasted.
+			if (active.hoursExhausted) throw new PoolHoursExhaustedError(projectId);
 			const decision = await decidePoolAcquisition(
 				db,
 				projectId,
@@ -1529,17 +1535,6 @@ export async function acquireRunContainer(
 			);
 
 			if (decision.kind === 'queue') throw new PoolCapacityError(projectId);
-			// Hours before memory, for every workload alike (the chat is metered, not
-			// exempt): a decision that would open new uptime - a create, a resume, or
-			// a reclaim on its way to a create - is refused when the monthly allowance
-			// is spent. Reuse of a warm member stays allowed, matching the dispatch
-			// gate: the hours it is about to spend are already being spent.
-			if (
-				active.hoursExhausted &&
-				(decision.kind === 'create' || decision.kind === 'resume' || decision.kind === 'reclaim')
-			) {
-				throw new PoolHoursExhaustedError(projectId);
-			}
 			// Handled by the caller, outside this lock. See `attemptAcquire`.
 			if (decision.kind === 'reclaim') return { kind: 'reclaim' as const, needGb: decision.needGb };
 
@@ -2269,6 +2264,47 @@ export async function findStaleIdleMembersInProject(
 	const res = await db.query<StaleIdleMember>(
 		STALE_MEMBER_SQL('idle', 'AND m.project_id = $2', ''),
 		[graceSec, projectId],
+	);
+	return res.rows;
+}
+
+/**
+ * A page of the projects holding an idle member, for the pass that runs once
+ * the container-hours allowance is spent.
+ *
+ * **Whatever keeps the member warm.** No grace, no chat hold and no ready job
+ * exempts one here: none of them can be used until hours come back, and every
+ * minute an idle member stays up is a minute the allowance does not have.
+ *
+ * Keyset on the project id rather than oldest-first, so a member that cannot be
+ * retired this tick never keeps the pass from reaching the rest.
+ */
+export async function findProjectsWithIdleMembers(
+	db: Db,
+	after: string | null,
+	limit: number,
+): Promise<string[]> {
+	const res = await db.query<{ project_id: string }>(
+		`SELECT DISTINCT project_id FROM container_pool_members
+		  WHERE state = 'idle' AND ($1::uuid IS NULL OR project_id > $1::uuid)
+		  ORDER BY project_id
+		  LIMIT $2`,
+		[after, limit],
+	);
+	return res.rows.map((r) => r.project_id);
+}
+
+/** One project's idle members, re-read under its lifecycle lock before retiring them. */
+export async function findIdleMembersInProject(
+	db: Db,
+	projectId: string,
+): Promise<StaleIdleMember[]> {
+	const res = await db.query<StaleIdleMember>(
+		`SELECT m.container_id, m.project_id, p.slug, p.team_id
+		   FROM container_pool_members m
+		   JOIN projects p ON p.id = m.project_id
+		  WHERE m.state = 'idle' AND m.project_id = $1`,
+		[projectId],
 	);
 	return res.rows;
 }
