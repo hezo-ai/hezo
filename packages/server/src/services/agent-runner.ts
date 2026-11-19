@@ -1358,8 +1358,9 @@ async function buildRunContext(
 
 /**
  * Reasons the runner tags on a run's AbortSignal. A bare abort — a user cancel via
- * `cancelTask`, or the stale-dispatch reaper — carries none. Shutdown is tagged, and
- * is the one reason that hands the work back rather than ending the run.
+ * `cancelTask`, or the stale-dispatch reaper — carries none. Shutdown and a spent
+ * hours allowance are tagged, and are the reasons that hand the work back rather
+ * than ending the run (see {@link RUN_ABORT_HANDBACK}).
  *
  * `tunnel_lost` is the runner's own: the container reaches Hezo only through the
  * run tunnel, so a tunnel that dies mid-run leaves the agent unable to read a
@@ -1371,7 +1372,11 @@ export type RunAbortReason =
 	| 'run_timeout'
 	| RunSizeStopReason
 	| 'tunnel_lost'
-	| 'server_shutdown';
+	| 'server_shutdown'
+	| 'hours_exhausted';
+
+/** The abort reason the spent-hours pass stops a run or a chat turn with. */
+export const HOURS_SPENT_ABORT = 'hours_exhausted' satisfies RunAbortReason;
 
 /**
  * Every abort reason, and whether a run ended for it spends a strike of the
@@ -1387,6 +1392,7 @@ const RUN_ABORT_SPENDS_LOST_RUN_STRIKE: Record<RunAbortReason, boolean> = {
 	token_ceiling: false,
 	tunnel_lost: false,
 	server_shutdown: false,
+	hours_exhausted: false,
 };
 
 const RUN_ABORT_REASONS: readonly string[] = Object.keys(RUN_ABORT_SPENDS_LOST_RUN_STRIKE);
@@ -1404,6 +1410,36 @@ const RUN_ABORT_REASONS: readonly string[] = Object.keys(RUN_ABORT_SPENDS_LOST_R
  */
 export const RUN_LOST_TO_SHUTDOWN_ERROR = 'Server shut down while this run was in flight';
 
+/** What a run stopped by the spent-hours pass records, a clause for the same reason. */
+export const RUN_LOST_TO_SPENT_HOURS_ERROR =
+	'The instance spent its container-hours allowance while this run was in flight';
+
+/**
+ * The abort reasons that hand the work back, with what the row records and why
+ * the wakeup goes back to the queue. Neither is a verdict on the run: the work is
+ * still owed, and the wakeup dispatches again once the process is up or the hours
+ * are back. Every other reason ends the run.
+ */
+const RUN_ABORT_HANDBACK: Partial<Record<RunAbortReason, { error: string; cause: HandbackCause }>> =
+	{
+		server_shutdown: {
+			error: RUN_LOST_TO_SHUTDOWN_ERROR,
+			cause: { reason: WakeupSkipReason.ServerShutdown },
+		},
+		hours_exhausted: {
+			error: RUN_LOST_TO_SPENT_HOURS_ERROR,
+			cause: { reason: WakeupSkipReason.HoursExhausted },
+		},
+	};
+
+/** The handback an aborted run owes, or nothing when its abort ends it. */
+function runAbortHandback(
+	signal?: AbortSignal,
+): { error: string; cause: HandbackCause } | undefined {
+	const reason = runAbortReason(signal);
+	return reason ? RUN_ABORT_HANDBACK[reason] : undefined;
+}
+
 function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 	const reason = signal?.reason as unknown;
 	if (typeof reason === 'string' && RUN_ABORT_REASONS.includes(reason))
@@ -1420,8 +1456,8 @@ function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
  * The ceiling is deliberately `Failed` rather than `TimedOut`: `TimedOut` queues a
  * continuation, which would resume the very run shape the ceiling exists to stop.
  *
- * `server_shutdown` never reaches here: it is handed back before any caller asks for
- * a status, and a handback finalizes `Cancelled` with `handed_back` on the row.
+ * A handback reason never reaches here: it is handed back before any caller asks
+ * for a status, and a handback finalizes `Cancelled` with `handed_back` on the row.
  */
 function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 	if (reason === 'run_timeout') return HeartbeatRunStatus.TimedOut;
@@ -1551,7 +1587,8 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 			`run used more than ${englishCount(RUN_TOKEN_CEILING)} tokens - ` +
 			'a single run that long is spending most of its allowance re-reading its own context'
 		);
-	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
+	const handback = reason ? RUN_ABORT_HANDBACK[reason] : undefined;
+	if (handback) return handback.error;
 	if (reason === 'tunnel_lost')
 		return (
 			'the run tunnel to the container closed mid-run, so the agent lost its Hezo tools, ' +
@@ -1647,18 +1684,15 @@ export async function runAgent(
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
-	// A shutdown landing before the run row even exists still owes the work, and
+	// A handback landing before the run row even exists still owes the work, and
 	// there is no row to hand it back through - so here the handback is the flag
 	// alone. `settleWakeupForRun` returns the wakeup to the queue on it, and
 	// `recordHandbackOutcome` is skipped downstream for want of a run id, which is
 	// the right answer: no run happened, so there is nothing to annotate.
 	if (signal?.aborted) {
-		const preRunReason = runAbortReason(signal);
-		return preRunReason === 'server_shutdown'
-			? {
-					...abortedResult(startTime),
-					requeue: { reason: WakeupSkipReason.ServerShutdown },
-				}
+		const preRunHandback = runAbortHandback(signal);
+		return preRunHandback
+			? { ...abortedResult(startTime), requeue: preRunHandback.cause }
 			: abortedResult(startTime);
 	}
 
@@ -2021,17 +2055,14 @@ export async function runAgent(
 
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const abortReason = runAbortReason(runAbort.signal);
-		// A shutdown is not a verdict on this run, and the work is still owed. Hand
+		// A handback is not a verdict on this run, and the work is still owed. Hand
 		// it back here, while the process is still up, because boot recovery cannot
 		// do it afterwards: it scans for runs left `running` or `queued`, and an
 		// orderly drain leaves neither - it finalizes the row and settles the wakeup
 		// before exiting. The better the shutdown behaved, the more certainly the
 		// work was dropped.
-		if (abortReason === 'server_shutdown') {
-			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, {
-				reason: WakeupSkipReason.ServerShutdown,
-			});
-		}
+		const handback = runAbortHandback(runAbort.signal);
+		if (handback) return finalizeRequeue(handback.error, handback.cause);
 		releaseCredentialLock?.();
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
@@ -3719,24 +3750,18 @@ export async function runAgent(
 				}
 			}
 
-			// The drain's own path: aborting the exec rejects here, and until now that
-			// wrote a terminal `failed` row and settled the wakeup `failed` too, so
-			// boot recovery could match neither. Handing back instead re-queues the
-			// wakeup while the process is still up, which is what the message on the
-			// row has always promised. The kill above has already torn the tree down,
-			// and no lost-run strike is spent: a shutdown is not the run failing.
-			if (reason === 'server_shutdown') {
+			// The handback path: aborting the exec rejects here, and handing back
+			// re-queues the wakeup while the process is still up, which is what the
+			// message on the row promises. The kill above has already torn the tree
+			// down, and no lost-run strike is spent: a shutdown or a spent allowance is
+			// not the run failing.
+			const handback = runAbortHandback(runAbort.signal);
+			if (handback) {
 				// Recovered before the cleanup, which removes the usage file with the
 				// run's home: a Codex, Grok or Kimi run has nothing on its stream.
 				const drainedUsage = (await recoverUsageOnce()) ?? parser.getUsage();
 				await cleanupRunArtifacts();
-				return finalizeRequeue(
-					RUN_LOST_TO_SHUTDOWN_ERROR,
-					{ reason: WakeupSkipReason.ServerShutdown },
-					{
-						usage: drainedUsage,
-					},
-				);
+				return finalizeRequeue(handback.error, handback.cause, { usage: drainedUsage });
 			}
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
@@ -3814,13 +3839,10 @@ export async function runAgent(
 		// exec block and is not in scope. The `finally` below is what releases the
 		// tunnel, both host ports and the container claim on this path, which is the
 		// job it was written for.
-		// A shutdown landing inside the setup window strands the same work as one
+		// A handback landing inside the setup window strands the same work as one
 		// landing mid-exec, and has the same answer.
-		if (runAbortReason(runAbort.signal) === 'server_shutdown') {
-			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, {
-				reason: WakeupSkipReason.ServerShutdown,
-			});
-		}
+		const setupHandback = runAbortHandback(runAbort.signal);
+		if (setupHandback) return finalizeRequeue(setupHandback.error, setupHandback.cause);
 		const verdict = throwVerdict(error);
 		const durationMs = Date.now() - startTime;
 		log.error(`Run ${heartbeatRunId} failed before the agent could start:`, error);

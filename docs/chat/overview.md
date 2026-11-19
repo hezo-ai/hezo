@@ -178,10 +178,10 @@ hours budget and the container-hours allowance - the CEO's included. If a budget
 hours allowance runs out, the conversation says so in place; send again once there is
 room and it carries on from where you left off.
 
-When the container-hours allowance is spent, the composer says so before you type: a
-reply that needs a new container will not start until the month turns or the allowance
-is raised. The composer stays open, because a reply that lands on a container already
-running still goes through. Admins get a link straight to the Hours tab, where the
+When the container-hours allowance is spent, the composer says so before you type: no
+reply starts until the month turns or the allowance is raised, and a reply being
+written when the hours run out stops. The composer stays open, because a message you
+send is kept and carries on once there are hours again. Admins get a link straight to the Hours tab, where the
 allowance is set. Where whoever runs your instance fixed the allowance, the link is
 **Buy more hours** instead and opens the page where more are bought.
 See [Budgets & cost control](/docs/concepts/budgets-and-costs).

@@ -45,6 +45,7 @@ import {
 	type EgressEnvDescriptor,
 	getContainerPromptPath,
 	getPromptRelPath,
+	HOURS_SPENT_ABORT,
 	type RunnerDeps,
 	recoverOffStreamRunUsage,
 	type SubscriptionMount,
@@ -154,6 +155,11 @@ const CHAT_BUDGET_TAB: Record<OverBudgetBlock['resource'], string> = {
 export const CHAT_HOURS_EXHAUSTED_NOTICE =
 	'This chat cannot start a container: the instance has spent its monthly container-hours ' +
 	"allowance. It resumes when the month turns, or when the allowance is raised on HQ's Hours tab.";
+
+/** The reply in flight was stopped because the allowance ran out under it. */
+export const CHAT_HOURS_SPENT_MID_TURN_NOTICE =
+	'This reply was stopped: the instance spent its monthly container-hours allowance while ' +
+	"it was being written. Send again when the month turns, or when the allowance is raised on HQ's Hours tab.";
 
 /** The turn is parked on the instance memory budget; said in the thread at once. */
 export const CHAT_CAPACITY_WAIT_NOTICE =
@@ -1893,6 +1899,18 @@ export class ChatSessionManager {
 		await this.closeOpenSessionRows(ChatSessionStatus.Stopped);
 	}
 
+	/**
+	 * Stop every turn in flight because the container-hours allowance is spent,
+	 * so no chat keeps a container up past it. Each stopped reply says why in its
+	 * thread. Returns how many conversations had a turn to stop.
+	 */
+	async stopTurnsForSpentHours(): Promise<number> {
+		const live = [...this.convos.values()].filter((c) => c.current).length;
+		if (live === 0) return 0;
+		await this.abortAllCurrent(HOURS_SPENT_ABORT);
+		return live;
+	}
+
 	/** Abort every in-flight turn, upkeep exec and group chain across all
 	 * conversations and await them, so no exec outlives a restart/shutdown. */
 	private async abortAllCurrent(reason: string): Promise<void> {
@@ -2647,6 +2665,13 @@ export class ChatSessionManager {
 				// side effect still removes the credential-bearing log.
 				await recoverUsage();
 				await finalize(ChatMessageStatus.Interrupted, null);
+				if (abort.signal.reason === HOURS_SPENT_ABORT) {
+					await this.postSystemMessage(
+						ctx,
+						ChatSystemMessageKind.BudgetExceeded,
+						CHAT_HOURS_SPENT_MID_TURN_NOTICE,
+					);
+				}
 				return ChatMessageStatus.Interrupted;
 			}
 			// A credential still held elsewhere is the instance being busy, not

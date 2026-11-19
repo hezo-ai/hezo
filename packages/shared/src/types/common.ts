@@ -1056,12 +1056,11 @@ export const WakeupSkipReason = {
 	 */
 	ServerShutdown: 'server_shutdown',
 	/**
-	 * The instance has burned its monthly container-hours allowance, so no new
-	 * container may start. Distinct from `InstanceAtCapacity` because nothing the
-	 * instance does will clear it: retiring a container frees memory but not
-	 * hours, and this lifts only when the calendar month turns or the operator
-	 * raises the cap. A run that lands on a container already running is not
-	 * skipped for this - the hours are being spent either way.
+	 * The instance has burned its monthly container-hours allowance, so no run may
+	 * take a container, warm or new, and a run in flight when it ran out was handed
+	 * back. Distinct from `InstanceAtCapacity` because nothing the instance does
+	 * will clear it: retiring a container frees memory but not hours, and this
+	 * lifts only when the window turns or the operator raises the cap.
 	 */
 	HoursExhausted: 'hours_exhausted',
 	/**

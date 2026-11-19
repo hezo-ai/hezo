@@ -15,6 +15,7 @@ import {
 } from '../src/lib/system-meta';
 import { currentAgentImageVersion } from '../src/services/image-registry';
 import {
+	containerCapacityVerdictInDb,
 	countActiveRunsInProject,
 	getActiveContainers,
 	getBusyAgentIdsInProject,
@@ -355,15 +356,18 @@ describe('container capacity', () => {
 			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(true);
 		});
 
-		it('lets a project with a container already free serve the run anyway', async () => {
-			// A warm container starts nothing, so it spends no *new* hours - the ones
-			// it is spending are already on the meter either way. Blocking here would
-			// idle a container the instance is paying for regardless.
+		it('blocks a project with a container already free, and says it is the hours', async () => {
+			// A warm container stays up for as long as work keeps reaching it, so
+			// serving the run here is what carried a busy project past its cap.
 			const project = await seedProject();
 			await addMember(project, 'ctr-warm');
+			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(false);
 			await setMonthlyContainerHours(db, 10);
 			await seedSpentHours(10);
-			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(false);
+			expect(await containerCapacityVerdictInDb(db, engine, project)).toEqual({
+				blocked: true,
+				hoursExhausted: true,
+			});
 		});
 
 		it('ignores hours spent in a previous month', async () => {

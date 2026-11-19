@@ -426,14 +426,14 @@ export async function containerCapacityVerdictInDb(
 	projectId: string,
 ): Promise<{ blocked: boolean; hoursExhausted: boolean }> {
 	const active = await getActiveContainers(db, engine);
-	// A project with a container free to take the run starts nothing, so neither
-	// gate applies to it - the hours it is about to spend are already being spent.
+	// Hours before everything: a spent allowance admits no run, not even onto a
+	// warm container, and reclaiming a neighbour's idle container cannot buy any
+	// back.
+	if (active.hoursExhausted) return { blocked: true, hoursExhausted: true };
+	// A project with a container free to take the run needs no new memory.
 	if (active.projectsWithSpareContainer.has(projectId)) {
 		return { blocked: false, hoursExhausted: false };
 	}
-	// Hours before memory: the allowance is spent whatever the memory picture is,
-	// and reclaiming a neighbour's idle container cannot buy any back.
-	if (active.hoursExhausted) return { blocked: true, hoursExhausted: true };
 	const headroomGb = active.budgetGb + reclaimableForOthers(active, projectId);
 	const blocked =
 		active.usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > headroomGb;

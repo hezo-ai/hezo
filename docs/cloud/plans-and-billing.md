@@ -88,8 +88,8 @@ start a run, in the tip on a disabled **Run now** button, and in the chat's
 warning.
 
 Nothing is charged above your plan without you asking for it. If you run out of
-hours and have no packs, no new container starts until the month rolls over or
-you buy more - work in flight is not interrupted mid-run.
+hours and have no packs, work stops until the month rolls over or you buy more.
+Runs in flight go back to the queue and start again once there are hours.
 
 ## Changing plan
 

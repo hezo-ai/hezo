@@ -11,11 +11,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { CHAT_IDLE_TIMEOUT_MIN, ContainerUptimeEndReason } from '@hezo/shared';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
-import { setMaxContainerMemoryGb } from '../src/lib/system-meta';
+import { setMaxContainerMemoryGb, setMonthlyContainerHours } from '../src/lib/system-meta';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import {
 	acquireRunContainer,
@@ -39,6 +39,7 @@ import {
 import type { ContainerEngine, ContainerInfo } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { createStubDocker, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { seedMonthToDateSeconds } from './helpers/uptime';
 
 let db: Db;
 let dataDir: string;
@@ -135,7 +136,11 @@ function deps(docker: ContainerEngine): ContainerDeps {
 	return { db, docker, dataDir, poolLivenessIntervalMs: 0 };
 }
 
-function manager(docker: ContainerEngine, graceMs = TEST_GRACE_MS): JobManager {
+function manager(
+	docker: ContainerEngine,
+	graceMs = TEST_GRACE_MS,
+	extra: Partial<JobManagerDeps> = {},
+): JobManager {
 	return new JobManager({
 		db,
 		docker,
@@ -146,6 +151,7 @@ function manager(docker: ContainerEngine, graceMs = TEST_GRACE_MS): JobManager {
 		logs: new LogStreamBroker(),
 		containerLogStreamer: new ContainerLogStreamer(),
 		releaseGraceMs: graceMs,
+		...extra,
 	});
 }
 
@@ -1013,5 +1019,82 @@ describe('the liveness reconcile reaches every member in turn', () => {
 		for (let i = 0; i < passes; i++) await reconcilePoolMembers(deps(docker));
 
 		expect((await intervals('zzz-unconfirmed'))[0].ended_at).not.toBeNull();
+	});
+});
+
+/**
+ * Once the allowance is spent nothing may keep a container up: not a run in
+ * flight, not a chat turn, and not a warm container a queued job or a chat would
+ * otherwise keep through its grace.
+ */
+describe('the spent-hours pass', () => {
+	/** A run that waits until it is aborted, reporting the reason it was given. */
+	function launchWaitingRun(jm: JobManager, key: string): { reason: () => unknown } {
+		let seen: unknown;
+		jm.launchTask(
+			key,
+			(signal) =>
+				new Promise<void>((resolve) => {
+					signal.addEventListener('abort', () => {
+						seen = signal.reason;
+						resolve();
+					});
+				}),
+			60_000,
+		);
+		return { reason: () => seen };
+	}
+
+	async function warmContainer(name: string): Promise<{ containerId: string; e: Engine }> {
+		const { projectId, taskId, teamId } = await freshProject(name);
+		const e = engine();
+		const acquired = await acquireRunContainer(deps(e.docker), projectId, taskId);
+		await acquired.release();
+		// A job ready to dispatch keeps a released container warm past its grace.
+		await queueWakeup(teamId, taskId);
+		return { containerId: acquired.containerId, e };
+	}
+
+	afterEach(async () => {
+		await setMonthlyContainerHours(db, 0);
+		await db.query(`DELETE FROM container_uptime_entries WHERE container_id LIKE 'ctr-%'`);
+	});
+
+	it('leaves runs, chat turns and warm containers alone while hours remain', async () => {
+		const { containerId, e } = await warmContainer('Hours Remain');
+		const stopTurns = vi.fn(async () => 0);
+		const jm = manager(e.docker, 60_000, { chatTurns: { stopTurnsForSpentHours: stopTurns } });
+		await setMonthlyContainerHours(db, 10);
+		await seedMonthToDateSeconds(db, 9 * 3600);
+		const run = launchWaitingRun(jm, 'hours-remain-run');
+
+		// Not `sweep`: it waits on background work, and the run is part of it.
+		await (jm as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+
+		expect(run.reason()).toBeUndefined();
+		expect(stopTurns).not.toHaveBeenCalled();
+		expect(await memberState(containerId)).toBe('idle');
+		await jm.drainRunningRuns(5_000);
+		jm.shutdown();
+	});
+
+	it('hands back every run, stops chat turns and retires warm containers at once', async () => {
+		const { containerId, e } = await warmContainer('Hours Spent');
+		const stopTurns = vi.fn(async () => 1);
+		const jm = manager(e.docker, 60_000, { chatTurns: { stopTurnsForSpentHours: stopTurns } });
+		await setMonthlyContainerHours(db, 10);
+		await seedMonthToDateSeconds(db, 10 * 3600);
+		const run = launchWaitingRun(jm, 'hours-spent-run');
+
+		await sweep(jm);
+
+		expect(run.reason()).toBe('hours_exhausted');
+		expect(stopTurns).toHaveBeenCalledTimes(1);
+		// Retired inside its grace and despite the job waiting for it, and its billed
+		// stretch closed, so the meter stops counting it.
+		expect(await memberState(containerId)).toBe('suspended');
+		expect(e.running.has(containerId)).toBe(false);
+		expect((await intervals(containerId)).every((i) => i.ended_at !== null)).toBe(true);
+		jm.shutdown();
 	});
 });

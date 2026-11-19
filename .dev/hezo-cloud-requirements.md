@@ -62,6 +62,7 @@ together from H24 on.
 | ~~H45~~ | ~~A pinned per-container RAM cap or disk size is a ceiling on project overrides~~ | every container the size the plan prices, whatever a project sets | **done** |
 | ~~H46~~ | ~~`MultiSelect` searches what the caller supplies, and shows the chosen as tags~~ | the operator's one-off email picking people out of every account | **done** |
 | ~~H47~~ | ~~`policy.pinned.purchasedContainerHours`: the bought share of the pinned allowance~~ | a Budget page that does not call bought hours a per-period allowance | **done** |
+| **H49** | A spent hours allowance is a hard stop: no run onto a warm container, work in flight handed back, every container retired | a pinned allowance a busy instance cannot run hours past | **done**, changes self-hosted behaviour |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -1136,6 +1137,24 @@ reaches a box once, at first boot, so it cannot carry a plan change.
 **The plane also turns the key off at the router** while it is withheld, so a
 box on an older release, which ignores nothing and refuses the unknown key, is
 never sent it: the plane writes the key only to a release that reads it.
+
+## H49 — a spent hours allowance is a hard stop *(done)*
+
+The plane pins `monthlyContainerHours` and bills against the same ledger, so
+hours past the pin are compute nobody paid for. The gates refused only a *new*
+container: a run onto a warm one was admitted, which kept that container up for
+as long as work kept arriving, and a run in flight ran to its end. A busy
+Starter instance ran six hours past a 30-hour pin in one afternoon.
+
+- **Every gate checks hours first**, ahead of the spare-container exemption:
+  the dispatcher, the stateless verdict, and the acquire ladder for every
+  workload, reuse of a warm member included.
+- **The idle-stop tick's spent-hours pass** aborts every run in flight with
+  `hours_exhausted`, which hands the work back like a shutdown, stops every chat
+  turn with a notice in its thread, and retires every idle member at once,
+  whatever kept it warm.
+- **What the plane can rely on:** at most about a minute of uptime past the pin,
+  plus the stop itself, rather than the length of the tenant's queue.
 
 ## Already satisfied upstream — do not build these
 

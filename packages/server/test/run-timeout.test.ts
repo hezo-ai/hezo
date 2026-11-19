@@ -16,7 +16,13 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
-import { RUN_TOKEN_CEILING, type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import {
+	HOURS_SPENT_ABORT,
+	RUN_LOST_TO_SPENT_HOURS_ERROR,
+	RUN_TOKEN_CEILING,
+	type RunnerDeps,
+	runAgent,
+} from '../src/services/agent-runner';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
@@ -697,8 +703,8 @@ describe('timeout continuation (JobManager)', () => {
 });
 
 /**
- * Shutdown is the one abort reason that hands the work back instead of ending the
- * run, and it has to, because nothing downstream can do it afterwards.
+ * Shutdown hands the work back instead of ending the run, and it has to, because
+ * nothing downstream can do it afterwards.
  *
  * The drain finalizes the run row and settles its wakeup before the process
  * exits, and every recovery predicate in the codebase - `reconcileDatabaseOnStartup`,
@@ -708,6 +714,58 @@ describe('timeout continuation (JobManager)', () => {
  * certainly the task stopped. The row's own message promised a re-queue that no
  * code delivered.
  */
+/**
+ * A spent container-hours allowance stops a run the way a shutdown does: the work
+ * is owed, so it goes back to the queue and waits there on the hours gate rather
+ * than ending as a failure nobody retries.
+ */
+describe('spent-hours handback', () => {
+	it('finalizes a run stopped mid-exec as cancelled and asks for a re-queue on the hours', async () => {
+		const ac = new AbortController();
+		const deps = makeDeps({
+			execStart: async () => {
+				ac.abort(HOURS_SPENT_ABORT);
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.HoursExhausted);
+		const run = await db.query<{ status: string; error: string }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
+		expect(run.rows[0].error).toContain(RUN_LOST_TO_SPENT_HOURS_ERROR);
+		expect(run.rows[0].error).toContain('returning this run to the queue');
+	});
+
+	it('hands back a run stopped before it had a row at all', async () => {
+		const ac = new AbortController();
+		ac.abort(HOURS_SPENT_ABORT);
+
+		const result = await runAgent(
+			makeDeps(),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeue?.reason).toBe(WakeupSkipReason.HoursExhausted);
+		expect(result.heartbeatRunId).toBeUndefined();
+	});
+});
+
 describe('shutdown handback (runAgent + JobManager)', () => {
 	it('finalizes a shutdown-aborted run as cancelled and asks for a re-queue', async () => {
 		const ac = new AbortController();

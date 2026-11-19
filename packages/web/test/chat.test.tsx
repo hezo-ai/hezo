@@ -70,7 +70,7 @@ test('a spent hours allowance warns in the composer, without locking it', async 
 	// The refusal itself is the server's (decision 14 keeps chat metered). What
 	// this pins is that the operator learns it *before* typing a message that
 	// cannot start a container - and that the composer stays usable, because a
-	// turn landing on a container already warm still runs.
+	// message sent now is kept and carries on once hours are back.
 	const { db } = getTestContext();
 	await setMonthlyContainerHours(db, 10);
 	await seedMonthToDateSeconds(db, 10 * 3600);
@@ -79,7 +79,7 @@ test('a spent hours allowance warns in the composer, without locking it', async 
 		(await findByTestId('app-header-chat')).click();
 
 		const banner = await findByTestId('chat-hours-banner');
-		expect(banner.textContent).toContain('Container hours are spent');
+		expect(banner.textContent).toContain('Container hours are spent, so no reply will start.');
 		// The admin sees where to raise it; the composer is not locked either way.
 		expect(banner.querySelector('a')?.getAttribute('href')).toContain('/budget/hours');
 		expect((getByTestId('chat-input') as HTMLTextAreaElement).disabled).toBe(false);
