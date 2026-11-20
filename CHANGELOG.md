@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.84.3 - 2026-11-20
+
+### Documentation
+
+- **cloud:** ask that a new Daytona container be running before use ([#1234](https://github.com/hezo-ai/hezo/pull/1234))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.84.2...0.84.3
+
 ## 0.84.2 - 2026-11-19
 
 ### Bug Fixes
