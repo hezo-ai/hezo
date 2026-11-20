@@ -13,6 +13,9 @@ interface SubTasksSectionProps {
 	/** Parent's display identifier (e.g. "OPS-12"), shown in the create dialog title. */
 	parentIdentifier: string;
 	taskProjectSlug: string;
+	/** Whether the card is open: the task's saved state (see `useTaskSections`). */
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -20,12 +23,15 @@ interface SubTasksSectionProps {
  * badges plus an "Add" button that opens the tailored create-task dialog
  * (parent fixed, assignee required). Paginated client-side by the team's
  * `subtask_page_size` setting so very busy parents don't blow up the layout.
+ * Whether it is open is saved on the task, so it is controlled by the caller.
  */
 export function SubTasksSection({
 	projectId,
 	parentTaskId,
 	parentIdentifier,
 	taskProjectSlug,
+	open: subTasksOpen,
+	onOpenChange,
 }: SubTasksSectionProps) {
 	const { data: team } = useTeam(projectId);
 	const subTaskPageSize = Math.max(
@@ -38,7 +44,6 @@ export function SubTasksSection({
 		{ enabled: !!parentTaskId },
 	);
 	const [createOpen, setCreateOpen] = useState(false);
-	const [subTasksOpen, setSubTasksOpen] = useState(true);
 	const [subTasksShownState, setSubTasksShownState] = useState<{
 		taskId: string;
 		count: number;
@@ -56,7 +61,7 @@ export function SubTasksSection({
 			<div className="flex items-center px-3 py-2 bg-surface-3">
 				<button
 					type="button"
-					onClick={() => setSubTasksOpen((o) => !o)}
+					onClick={() => onOpenChange(!subTasksOpen)}
 					className="flex items-center gap-2 flex-1 text-left cursor-pointer"
 					data-testid="sub-tasks-toggle"
 					aria-expanded={subTasksOpen}
@@ -74,7 +79,7 @@ export function SubTasksSection({
 				<button
 					type="button"
 					onClick={() => {
-						setSubTasksOpen(true);
+						onOpenChange(true);
 						setCreateOpen(true);
 					}}
 					className="text-[11px] text-text-3 hover:text-text-1 flex items-center gap-1 cursor-pointer"

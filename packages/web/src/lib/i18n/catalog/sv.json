@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo har gjort slut på månadens containertimmar",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo har nått sin gräns för aktiva containrar",
 	"tasks.runNow.blocked.taskBusy": "Den här uppgiften har redan en körning igång",
+	"tasks.sections.saveFailed": "Kunde inte spara om det här avsnittet är ihopfällt",
 	"tasks.sort.field.assignee": "Ansvarig",
 	"tasks.sort.field.createdAt": "Skapad",
 	"tasks.sort.field.number": "Uppgifts-ID",

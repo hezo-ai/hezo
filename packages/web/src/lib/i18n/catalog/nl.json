@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo heeft zijn containeruren voor deze maand opgebruikt",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo zit aan zijn limiet voor actieve containers",
 	"tasks.runNow.blocked.taskBusy": "Op deze taak loopt al een run",
+	"tasks.sections.saveFailed": "Kon niet opslaan of deze sectie is ingevouwen",
 	"tasks.sort.field.assignee": "Toegewezen aan",
 	"tasks.sort.field.createdAt": "Aangemaakt",
 	"tasks.sort.field.number": "Taak-ID",

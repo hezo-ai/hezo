@@ -1,3 +1,4 @@
+import { TaskSection } from '@hezo/shared';
 import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
@@ -12,6 +13,9 @@ interface TaskSummaryProps {
 	projectId: string;
 	taskProjectSlug: string;
 	updateTask: UpdateTaskMutation;
+	/** The task's saved open/folded state for each card (see `useTaskSections`). */
+	sectionsOpen: Record<TaskSection, boolean>;
+	onSectionOpenChange: (section: TaskSection, open: boolean) => void;
 }
 
 interface CollapsibleSummaryCardProps {
@@ -26,6 +30,8 @@ interface CollapsibleSummaryCardProps {
 	className: string;
 	projectId: string;
 	taskProjectSlug: string;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
 	/** Omit to render the card read-only: no Edit affordance and no editor. */
 	edit?: {
 		ariaLabel: string;
@@ -35,11 +41,11 @@ interface CollapsibleSummaryCardProps {
 }
 
 /**
- * One collapsible progress-summary/rules card. Collapsed by default — the
- * header (chevron toggle, label, info icon, and Edit where the card is
- * editable) stays visible while the body hides. Clicking Edit auto-expands and
- * enters edit mode, and the card stays expanded after saving so the
- * freshly-saved content is visible.
+ * One collapsible progress-summary/rules card. Whether it is open is the task's
+ * saved state, owned by the caller; the header (chevron toggle, label, info
+ * icon, and Edit where the card is editable) stays visible while the body
+ * hides. Clicking Edit opens the card (saving that) and enters edit mode, and
+ * the card stays open after saving so the freshly-saved content is visible.
  */
 function CollapsibleSummaryCard({
 	testId,
@@ -53,9 +59,10 @@ function CollapsibleSummaryCard({
 	className,
 	projectId,
 	taskProjectSlug,
+	open,
+	onOpenChange,
 	edit,
 }: CollapsibleSummaryCardProps) {
-	const [open, setOpen] = useState(false);
 	const [editing, setEditing] = useState(false);
 
 	return (
@@ -64,7 +71,7 @@ function CollapsibleSummaryCard({
 				<div className="flex items-center gap-1">
 					<button
 						type="button"
-						onClick={() => setOpen((o) => !o)}
+						onClick={() => onOpenChange(!open)}
 						className="flex items-center gap-1 text-left cursor-pointer"
 						data-testid={toggleTestId}
 						aria-expanded={open}
@@ -83,7 +90,7 @@ function CollapsibleSummaryCard({
 						type="button"
 						onClick={() => {
 							setEditing(true);
-							setOpen(true);
+							onOpenChange(true);
 						}}
 						className="text-[11px] text-text-3 hover:text-text-1"
 					>
@@ -118,11 +125,19 @@ function CollapsibleSummaryCard({
 
 /**
  * Renders the progress-summary and rules cards just below the task header.
- * Both are collapsible (collapsed by default). Rules edits inline against
- * `useUpdateTask`; the progress summary is read-only here — agents own it and
- * write it from inside a run, and the REST route rejects a human write.
+ * Both are collapsible, and whether each is open is saved on the task. Rules
+ * edits inline against `useUpdateTask`; the progress summary is read-only here
+ * — agents own it and write it from inside a run, and the REST route rejects a
+ * human write.
  */
-export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: TaskSummaryProps) {
+export function TaskSummary({
+	task,
+	projectId,
+	taskProjectSlug,
+	updateTask,
+	sectionsOpen,
+	onSectionOpenChange,
+}: TaskSummaryProps) {
 	return (
 		<>
 			<CollapsibleSummaryCard
@@ -137,6 +152,8 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				className="bg-surface-2 rounded-md p-3 mb-3 text-[13px] text-text-2 leading-relaxed"
 				projectId={projectId}
 				taskProjectSlug={taskProjectSlug}
+				open={sectionsOpen[TaskSection.ProgressSummary]}
+				onOpenChange={(open) => onSectionOpenChange(TaskSection.ProgressSummary, open)}
 			/>
 
 			<CollapsibleSummaryCard
@@ -151,6 +168,8 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				className="bg-surface-2 rounded-md p-3 mb-5 text-[13px] text-text-2 leading-relaxed border-l-2 border-info"
 				projectId={projectId}
 				taskProjectSlug={taskProjectSlug}
+				open={sectionsOpen[TaskSection.Rules]}
+				onOpenChange={(open) => onSectionOpenChange(TaskSection.Rules, open)}
 				edit={{
 					ariaLabel: 'Rules',
 					placeholder: 'e.g., Consult the architect before making changes...',

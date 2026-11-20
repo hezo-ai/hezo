@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo zużyło limit godzin kontenerów na ten miesiąc",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo osiągnęło limit aktywnych kontenerów",
 	"tasks.runNow.blocked.taskBusy": "W tym zadaniu już trwa uruchomienie",
+	"tasks.sections.saveFailed": "Nie udało się zapisać, czy ta sekcja jest zwinięta",
 	"tasks.sort.field.assignee": "Osoba odpowiedzialna",
 	"tasks.sort.field.createdAt": "Utworzenie",
 	"tasks.sort.field.number": "ID zadania",

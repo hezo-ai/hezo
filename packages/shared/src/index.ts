@@ -27,6 +27,7 @@ export * from './support-chat.js';
 export * from './system-prompt-vars.js';
 export * from './task-list-sort.js';
 export * from './task-progress.js';
+export * from './task-sections.js';
 export * from './task-suggestions.js';
 export * from './task-thread.js';
 export * from './token-buckets.js';

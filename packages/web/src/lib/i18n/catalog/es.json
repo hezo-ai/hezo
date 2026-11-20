@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo ha agotado sus horas de contenedor de este mes",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo ha llegado a su límite de contenedores activos",
 	"tasks.runNow.blocked.taskBusy": "Esta tarea ya tiene una ejecución en marcha",
+	"tasks.sections.saveFailed": "No se pudo guardar si esta sección está plegada",
 	"tasks.sort.field.assignee": "Responsable",
 	"tasks.sort.field.createdAt": "Creación",
 	"tasks.sort.field.number": "ID de tarea",

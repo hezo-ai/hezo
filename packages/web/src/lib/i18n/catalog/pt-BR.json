@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "O Hezo esgotou as horas de contêiner deste mês",
 	"tasks.runNow.blocked.instanceAtCapacity": "O Hezo atingiu o limite de contêineres ativos",
 	"tasks.runNow.blocked.taskBusy": "Esta tarefa já tem uma execução em andamento",
+	"tasks.sections.saveFailed": "Não foi possível salvar se esta seção está recolhida",
 	"tasks.sort.field.assignee": "Responsável",
 	"tasks.sort.field.createdAt": "Criação",
 	"tasks.sort.field.number": "ID da tarefa",

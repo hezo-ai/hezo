@@ -561,3 +561,46 @@ test('project menu closes with a chat card per roster agent', async () => {
 	const cards = await findByTestId('project-sidebar-chat', undefined, { timeout: 15_000 });
 	await waitFor(() => expect(cards.textContent ?? '').toContain('Captain'), { timeout: 15_000 });
 });
+
+test('opening the rules card with Edit is saved, so it is still open on the next visit', async () => {
+	const seeded = { projectSlug: '', taskId: '', otherTaskId: '' };
+	const { findByTestId, findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Rules Fold Project' });
+			const task = await seedTask(ws, project, { title: 'Rules Fold Task' });
+			const other = await seedTask(ws, project, { title: 'Rules Fold Other' });
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.otherTaskId = other.identifier.toLowerCase();
+		},
+	});
+
+	const openTask = (taskId: string) =>
+		router.navigate({
+			to: '/projects/$projectId/tasks/$taskId',
+			params: { projectId: seeded.projectSlug, taskId },
+		});
+
+	await openTask(seeded.taskId);
+	const rulesSection = await findByTestId('pinned-rules');
+	const rulesEditBtn = Array.from(rulesSection.querySelectorAll('button')).find(
+		(b) => b.textContent === 'Edit',
+	)!;
+	await user.click(rulesEditBtn);
+	const rulesTextarea = rulesSection.querySelector('textarea') as HTMLTextAreaElement;
+	await user.type(rulesTextarea, 'Keep this card open');
+	await user.click(
+		Array.from(rulesSection.querySelectorAll('button')).find((b) => b.textContent === 'Save')!,
+	);
+	await findByText('Keep this card open');
+
+	await openTask(seeded.otherTaskId);
+	await findByText('Rules Fold Other');
+	await openTask(seeded.taskId);
+	await waitFor(async () => {
+		expect((await findByTestId('rules-toggle')).getAttribute('aria-expanded')).toBe('true');
+	});
+	await findByText('Keep this card open');
+});

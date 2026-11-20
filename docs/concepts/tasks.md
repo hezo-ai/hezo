@@ -36,6 +36,12 @@ Description card to write or rewrite its body; every one of those edits is recor
 task's comment thread, so it is always clear what changed and who changed it. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
 for how this fits the wider memory model.
 
+On the task view, you can open or fold the Progress summary, Rules and Sub-tasks cards.
+Hezo saves the choice on the task, so anyone who opens that task later sees the cards the
+same way. A task nobody has changed shows Sub-tasks open and the other two folded. Folding
+a card is not a change to the task: nothing is added to the thread, and the task keeps its
+place in your lists.
+
 ## Comments and mentions
 
 Tasks have a comment thread for discussion and coordination. Mention an agent (or a

@@ -352,3 +352,101 @@ test('Progress Summary and Rules cards are collapsed by default and toggle open'
 		'No progress summary yet.',
 	);
 });
+
+test('opening Progress Summary and Rules is saved on that task only', async () => {
+	let projectSlug = '';
+	let taskIdentifier = '';
+	let otherIdentifier = '';
+	let headers: Record<string, string> = {};
+
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			headers = ws.headers;
+			const project = await seedProject(ws, { name: 'Saved Cards Project' });
+			const task = await seedTask(ws, project, { title: 'Saved Cards Task' });
+			const other = await seedTask(ws, project, { title: 'Untouched Task' });
+			projectSlug = project.slug;
+			taskIdentifier = task.identifier;
+			otherIdentifier = other.identifier;
+		},
+	});
+
+	const openTask = (identifier: string) =>
+		router.navigate({
+			to: '/projects/$projectId/tasks/$taskId',
+			params: { projectId: projectSlug, taskId: identifier.toLowerCase() },
+		});
+
+	await openTask(taskIdentifier);
+	await user.click(await findByTestId('progress-summary-toggle', undefined, { timeout: 10_000 }));
+	await user.click(await findByTestId('rules-toggle'));
+	expect((await findByTestId('rules-toggle')).getAttribute('aria-expanded')).toBe('true');
+
+	const { apiBase } = getTestContext();
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${projectSlug}/tasks/${taskIdentifier}`, {
+			headers,
+		});
+		expect((await res.json()).data.sections_open).toEqual({
+			progress_summary: true,
+			rules: true,
+		});
+	});
+
+	// The other task keeps the defaults.
+	await openTask(otherIdentifier);
+	await waitFor(async () => {
+		expect((await findByTestId('pinned-rules')).textContent).not.toContain('No rules set.');
+	});
+	expect((await findByTestId('rules-toggle')).getAttribute('aria-expanded')).toBe('false');
+	expect((await findByTestId('progress-summary-toggle')).getAttribute('aria-expanded')).toBe(
+		'false',
+	);
+
+	// Back on the first task, both cards are still open.
+	await openTask(taskIdentifier);
+	await waitFor(async () => {
+		expect((await findByTestId('pinned-rules')).textContent).toContain('No rules set.');
+	});
+	expect((await findByTestId('pinned-progress-summary')).textContent).toContain(
+		'No progress summary yet.',
+	);
+});
+
+test('cards open in the state saved on the task when the page first loads', async () => {
+	let projectSlug = '';
+	let taskIdentifier = '';
+
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase }) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Preloaded Cards Project' });
+			const task = await seedTask(ws, project, { title: 'Preloaded Cards Task' });
+			projectSlug = project.slug;
+			taskIdentifier = task.identifier;
+			const res = await apiBase(`/api/projects/${project.slug}/tasks/${task.id}/view-settings`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({ sections_open: { sub_tasks: false, rules: true } }),
+			});
+			if (!res.ok) throw new Error(`view-settings save failed: ${res.status}`);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: projectSlug, taskId: taskIdentifier.toLowerCase() },
+	});
+
+	const rulesToggle = await findByTestId('rules-toggle', undefined, { timeout: 10_000 });
+	expect(rulesToggle.getAttribute('aria-expanded')).toBe('true');
+	expect((await findByTestId('pinned-rules')).textContent).toContain('No rules set.');
+	expect((await findByTestId('progress-summary-toggle')).getAttribute('aria-expanded')).toBe(
+		'false',
+	);
+	expect((await findByTestId('sub-tasks-toggle')).getAttribute('aria-expanded')).toBe('false');
+	expect(queryByTestId('sub-tasks-list')).toBeNull();
+});
