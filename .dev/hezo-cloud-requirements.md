@@ -63,6 +63,7 @@ together from H24 on.
 | ~~H46~~ | ~~`MultiSelect` searches what the caller supplies, and shows the chosen as tags~~ | the operator's one-off email picking people out of every account | **done** |
 | ~~H47~~ | ~~`policy.pinned.purchasedContainerHours`: the bought share of the pinned allowance~~ | a Budget page that does not call bought hours a per-period allowance | **done** |
 | **H49** | A spent hours allowance is a hard stop: no run onto a warm container, work in flight handed back, every container retired | a pinned allowance a busy instance cannot run hours past | **done**, changes self-hosted behaviour |
+| **H50** | A new Daytona container is running before anything runs in it | a run whose failure names the sandbox's state, not a toolbox 404 | open; changes self-hosted behaviour on Daytona |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -1155,6 +1156,49 @@ Starter instance ran six hours past a 30-hour pin in one afternoon.
   whatever kept it warm.
 - **What the plane can rely on:** at most about a minute of uptime past the pin,
   plus the stop itself, rather than the length of the tenant's queue.
+
+## H50 — a new Daytona container is running before anything runs in it
+
+**Two runs on a hosted instance failed on a sandbox Daytona was still
+building.** On 2026-11-20 two runs in one project, queued at 00:00:01 and
+00:00:02 UTC, failed at 00:03:05 and 00:06:06 with `Daytona execute failed (404)
+... SANDBOX_NOT_FOUND`, each for a sandbox nothing had used before. The two
+failures are exactly the create wait (`SETTLE_TIMEOUT_MS`, 180 s) apart, because
+the second create queued on the project's lifecycle lock behind the first. The
+next create, at 00:06:06.7, came up and ran.
+
+What `services/sandbox/daytona/engine.ts` does today:
+
+- **`createContainer` waits for a *resting* state, not for `started`.** `settle`
+  returns on `error` and `build_failed` as well, and when its bound runs out it
+  logs a warning and proceeds. Either way the first command, the `mkdir` in
+  `createMountTargets`, goes to a sandbox that is not running, and the toolbox
+  answers 404 `SANDBOX_NOT_FOUND`. The run's error names that 404 instead of
+  the sandbox's state or its `errorReason`.
+- **`startContainer` already does this right** (#1214): it waits for `started`
+  and fails naming the state. The create path did not get the same check.
+- **The failed create removes the sandbox** (`settleFailedCreate`), so neither
+  the instance nor Daytona's API keeps a record to explain it afterwards.
+
+**The ask:**
+
+1. **A create resolves only once the sandbox is `started`.** A failed state, or
+   a wait that runs out, fails the create with the sandbox id, its last state
+   and Daytona's `errorReason`, and runs no command in it. That is the error the
+   run shows.
+2. **The create wait fits a slow build.** 180 s was outlasted twice in a row.
+   Either a longer bound while the sandbox is still in a build state, or a bound
+   chosen from measured builds, stated beside the constant.
+
+**AC:** a sandbox held in a build state past the bound fails its create naming
+that state; a sandbox that reaches `error` or `build_failed` fails its create
+naming the reason; the engine and conformance tests cover both.
+
+**Why it shows now:** the create path is unchanged since `0.40.0`. Since #1206 a
+container is retired ten seconds after its run, so far more runs create a
+container than reuse one, and each create is exposed to a slow build. Why
+Daytona built slowly is not known: the agent image had not changed since
+2026-11-13.
 
 ## Already satisfied upstream — do not build these
 
