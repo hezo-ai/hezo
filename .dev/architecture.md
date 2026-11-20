@@ -8059,6 +8059,28 @@ agent egress proxy — and fails soft (warn + swallow) so it never disrupts a ru
 (a Cloudflare Pages Function backed by D1 in the website repo) stamps the receipt date and
 upserts one row per `(instance_id, UTC day)`; aggregates are shown at `hezo.ai/stats`.
 
+**Native OTLP export.** `services/otlp/` pushes run telemetry to an operator's OpenTelemetry
+collector over OTLP/HTTP JSON, enabled by `otlp.enabled` and otherwise off. Four pieces.
+`events/otlp-observer.ts` subscribes to the domain event bus the way `audit-observer` does:
+`agent_run.started` records a small receipt (run id, ids, trigger source, arrival time) in a
+bounded map keyed by run id, and `agent_run.completed` reads the finished `heartbeat_runs`
+row by primary key and builds a `RunFinishRecord`. The completion attributes come from that
+row, not from a widened event, because the row is already committed before the emit and the
+read is one lookup. The observer's async work is `trackBackground`, so `waitForBackground`
+during shutdown waits for it. `services/otlp/mapping.ts` is the pure translator: one
+`hezo.agent_run` span plus the seven metrics, every attribute from a fixed table, with names
+and error text only when the matching opt-in is on. `services/otlp/exporter.ts` owns the
+allowlist gate, a bounded in-memory queue (dropping the oldest and counting `queue_full`,
+dropping records older than five minutes as `stale`), the single-consumer HTTP pump with
+full-jitter backoff, and the cumulative metric accumulators. `services/otlp/active-gauge.ts`
+samples running runs and ended container-uptime rows on an interval and feeds the exporter.
+The span is emitted at completion rather than at start because the completion row carries
+the final status, timestamps, tokens and model, and because one closed span is the whole
+phase-1 trace. Best effort throughout: no path throws into the bus or the gauge timer, and
+the only loud failures are configuration errors at startup. The header secret is resolved
+through the same `loadAllSecrets` the egress proxy uses, and the endpoint host is checked
+against its `allowed_hosts` before anything is sent.
+
 ---
 
 ## 13. MCP transport & tool registry

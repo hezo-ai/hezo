@@ -48,6 +48,10 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--auto-install-updates` | `false` | Install staged updates automatically: gracefully restart onto a downloaded-and-verified newer release without the web UI's "Install & restart", deferring while agent runs are in flight. Only effective where in-app auto-update is available (self-managed binary, not in a container); the instance comes back unlocked - the unlock key is handed to the relaunched process in memory, never written to disk (config: `updates.autoInstall`) |
 | `--disable-telemetry` | telemetry on | Turn off the anonymous daily usage report (aggregate counts only - no names, content, or costs). On by default (config: `telemetry.enabled`) |
 | `--telemetry-endpoint <url>` | `https://hezo.ai/api/telemetry` | Where the daily usage report is sent; point at your own collector to keep data in-house (config: `telemetry.endpoint`) |
+| `--otlp-enabled` | `false` | Export run telemetry to an OpenTelemetry collector over OTLP/HTTP JSON. Off by default; negate with `--no-otlp-enabled`. Restart-only (config: `otlp.enabled`) |
+| `--otlp-endpoint <url>` | - | Collector base URL. The exporter appends `/v1/traces` and `/v1/metrics`; plain `http` is allowed only on a loopback host (config: `otlp.endpoint`) |
+| `--otlp-headers-secret <name>` | - | Vault secret whose value is sent verbatim as the `Authorization` header; the secret must allow the endpoint host. Never the value itself (config: `otlp.headersSecret`) |
+| `--otlp-projects <list>` | none | Comma-separated project UUIDs to export, or `'*'` for all. An allowlist: empty exports nothing (config: `otlp.projects`) |
 | `--version` | - | Print the Hezo version and exit (also `hezo version`) |
 | `config validate --config <path>` | - | Load and validate a CommonJS config without starting Hezo |
 

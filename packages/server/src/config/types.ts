@@ -480,6 +480,33 @@ export interface SeedConfig {
 	};
 }
 
+/**
+ * Native OpenTelemetry export (phase 1): one span per completed run and a
+ * bounded metric set, pushed over OTLP/HTTP with JSON encoding to a collector
+ * the operator runs. Opt-in and restart-only.
+ *
+ * `projects` is an explicit allowlist and is never defaulted to "all"; the
+ * wildcard is the single entry `'*'`. Validation refuses `enabled: true` with
+ * an empty list, so there is no code path that treats "nothing listed" as
+ * "everything".
+ */
+export interface OtlpConfig {
+	enabled: boolean;
+	/** Base URL, without `/v1/traces` or `/v1/metrics`; the exporter appends them. */
+	endpoint: string;
+	/** Name of a secret whose decrypted value is sent verbatim as `Authorization`. */
+	headersSecret?: string;
+	protocol: 'http/json';
+	sampleRatio: number;
+	timeoutMs: number;
+	batchSize: number;
+	maxQueueBytes: number;
+	/** Explicit project allowlist. Never defaulted to "all"; `['*']` is the wildcard. */
+	projects: string[];
+	includeNames: boolean;
+	includeErrorText: boolean;
+}
+
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
@@ -498,6 +525,7 @@ export interface HezoConfig {
 	runs: RunsConfig;
 	egress: EgressConfig;
 	telemetry: TelemetryConfig;
+	otlp: OtlpConfig;
 	updates: UpdatesConfig;
 	marketplace: MarketplaceConfig;
 	github: GithubConfig;
@@ -603,6 +631,18 @@ export const DEFAULT_CONFIG: HezoConfig = {
 	},
 	egress: { proxyAuth: true, allowPrivateTargets: false, debug: false },
 	telemetry: { enabled: true, endpoint: DEFAULT_TELEMETRY_ENDPOINT },
+	otlp: {
+		enabled: false,
+		endpoint: '',
+		protocol: 'http/json',
+		sampleRatio: 1.0,
+		timeoutMs: 5000,
+		batchSize: 256,
+		maxQueueBytes: 8388608,
+		projects: [],
+		includeNames: false,
+		includeErrorText: false,
+	},
 	updates: { disabled: false, autoInstall: false },
 	marketplace: { ref: 'main', baseUrl: 'https://raw.githubusercontent.com' },
 	github: { oauthClientId: DEFAULT_GITHUB_OAUTH_CLIENT_ID },

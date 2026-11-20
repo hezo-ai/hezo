@@ -57,6 +57,10 @@ hezo --no-egress-proxy-auth      # drop per-run egress-proxy auth (escape hatch;
 hezo --egress-allow-private-targets  # let agent egress, and fetches Hezo makes for agents, reach loopback/private addresses (blocked by default)
 hezo --auto-install-updates      # restart onto downloaded updates automatically (waits for idle; comes back unlocked)
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
+hezo --otlp-enabled              # export run telemetry over OTLP (off by default; restart-only; negate with --no-otlp-enabled)
+hezo --otlp-endpoint https://collector.example.com:4318  # collector base URL; the exporter appends /v1/traces and /v1/metrics
+hezo --otlp-headers-secret OTLP_AUTHORIZATION   # send that vault secret's value as the OTLP Authorization header
+hezo --otlp-projects '*'         # projects to export: a comma-separated UUID allowlist, or '*' for all
 ```
 
 By default the database is embedded and lives under the data directory. With

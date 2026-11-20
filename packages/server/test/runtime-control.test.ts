@@ -15,6 +15,8 @@ function fakeRuntime() {
 	const assetStore = { close: vi.fn(async () => {}) };
 	const db = { close: vi.fn(async () => {}) };
 	const policyWatcher = { close: vi.fn() };
+	const otlpGauge = { stop: vi.fn() };
+	const otlp = { flush: vi.fn(async () => {}), stop: vi.fn(async () => {}) };
 	const result = {
 		jobManager,
 		chatSessionManager,
@@ -23,6 +25,8 @@ function fakeRuntime() {
 		assetStore,
 		db,
 		policyWatcher,
+		otlpGauge,
+		otlp,
 	} as unknown as StartupResult;
 	return {
 		result,
@@ -33,6 +37,8 @@ function fakeRuntime() {
 		assetStore,
 		db,
 		policyWatcher,
+		otlpGauge,
+		otlp,
 	};
 }
 
@@ -56,6 +62,8 @@ describe('shutdownRuntime', () => {
 			assetStore,
 			db,
 			policyWatcher,
+			otlpGauge,
+			otlp,
 		} = fakeRuntime();
 
 		await shutdownRuntime(result);
@@ -82,6 +90,21 @@ describe('shutdownRuntime', () => {
 		expect(chatSessionManager.stop).toHaveBeenCalledTimes(1);
 		expect(egressProxy.releaseAll).toHaveBeenCalledTimes(1);
 		expect(sshAgentServer.releaseAll).toHaveBeenCalledTimes(1);
+		// Export finishes before the database closes: a run that completed during
+		// the drain emitted its event inside that await, and the shutdown flush
+		// waits for the observer's tracked row read.
+		expect(otlpGauge.stop).toHaveBeenCalledTimes(1);
+		expect(otlp.flush).toHaveBeenCalledWith(2000);
+		expect(otlp.stop).toHaveBeenCalledTimes(1);
+		const exportOrder = [
+			jobManager.drainRunningRuns.mock.invocationCallOrder[0],
+			otlpGauge.stop.mock.invocationCallOrder[0],
+			otlp.flush.mock.invocationCallOrder[0],
+			otlp.stop.mock.invocationCallOrder[0],
+			assetStore.close.mock.invocationCallOrder[0],
+			db.close.mock.invocationCallOrder[0],
+		];
+		expect(exportOrder).toEqual([...exportOrder].sort((a, b) => a - b));
 		// A file watch left armed keeps the process alive past shutdown.
 		expect(policyWatcher.close).toHaveBeenCalledTimes(1);
 		expect(assetStore.close).toHaveBeenCalledTimes(1);

@@ -20,6 +20,7 @@ import { openDatabase } from './db/open';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
+import { registerOtlpObserver } from './events/otlp-observer';
 import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
@@ -107,6 +108,8 @@ import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
+import { type ActiveRunGauge, startActiveRunGauge } from './services/otlp/active-gauge';
+import { createOtlpExporter, type OtlpExporter } from './services/otlp/exporter';
 import { adminPasswordIsSet } from './services/password';
 import {
 	completeSandboxBackendOnUnlock,
@@ -172,6 +175,10 @@ export interface StartupResult {
 	egressProxy: EgressProxy;
 	/** Live reload of the deployer's pinned settings; closed on shutdown. */
 	policyWatcher: { close: () => void };
+	/** Native OTLP export; shutdown flushes and stops it. */
+	otlp: OtlpExporter;
+	/** The 30-second running-run sample; shutdown stops it before flushing. */
+	otlpGauge: ActiveRunGauge;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -404,6 +411,18 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// path*, which a managed backend has none of - its filesystem is the
 	// sandbox's own. Running it there would boot a throwaway container on a paid
 	const events = new DomainEventBus();
+	// OTLP export is restart-only config, resolved once here. A disabled exporter
+	// returns immediately with no vault read, timer or subscription; a named
+	// header secret that cannot be resolved is a startup error, deliberately.
+	const otlp = await createOtlpExporter({
+		config: config.otlp,
+		masterKeyManager,
+		db,
+		dataDir: config.dataDir,
+	});
+	const otlpEnabled = otlp.status().state !== 'disabled';
+	if (otlpEnabled) registerOtlpObserver(events, db, otlp, config.otlp);
+	const otlpGauge = otlpEnabled ? startActiveRunGauge(db, otlp, 30_000) : { stop: () => {} };
 	const chatSessionManager = new ChatSessionManager({
 		db,
 		docker,
@@ -677,6 +696,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 				stopFollowingManagedModel();
 			},
 		},
+		otlp,
+		otlpGauge,
 	};
 }
 
