@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo は今月のコンテナ時間を使い切りました",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo はアクティブなコンテナの上限に達しています",
 	"tasks.runNow.blocked.taskBusy": "このタスクではすでに実行が進行中です",
+	"tasks.sections.saveFailed": "このセクションの折りたたみ状態を保存できませんでした",
 	"tasks.sort.field.assignee": "担当者",
 	"tasks.sort.field.createdAt": "作成日時",
 	"tasks.sort.field.number": "タスク ID",

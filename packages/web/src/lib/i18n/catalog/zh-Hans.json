@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo 已用完本月的容器小时数",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo 已达到活动容器上限",
 	"tasks.runNow.blocked.taskBusy": "此任务已有运行在进行中",
+	"tasks.sections.saveFailed": "无法保存此部分的折叠状态",
 	"tasks.sort.field.assignee": "负责人",
 	"tasks.sort.field.createdAt": "创建时间",
 	"tasks.sort.field.number": "任务 ID",

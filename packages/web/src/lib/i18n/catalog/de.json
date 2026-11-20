@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo hat seine Container-Stunden für diesen Monat aufgebraucht",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo hat sein Limit an aktiven Containern erreicht",
 	"tasks.runNow.blocked.taskBusy": "Für diese Aufgabe läuft bereits ein Lauf",
+	"tasks.sections.saveFailed": "Es konnte nicht gespeichert werden, ob dieser Abschnitt eingeklappt ist",
 	"tasks.sort.field.assignee": "Zuständig",
 	"tasks.sort.field.createdAt": "Erstellt",
 	"tasks.sort.field.number": "Aufgaben-ID",

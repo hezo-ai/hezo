@@ -283,3 +283,65 @@ test('Add opens the tailored sub-task dialog; creating one (with assignee) navig
 	// The server accepts it (assignee present) and we land on the new sub-task.
 	expect(await findByRole('heading', { name: 'Dialog Child' })).toBeTruthy();
 });
+
+test('folding sub-tasks is saved on that task, and other tasks keep their own state', async () => {
+	let teamSlug = '';
+	let parentIdentifier = '';
+	let otherIdentifier = '';
+	let headers: Record<string, string> = {};
+
+	const { findByTestId, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase }) => {
+			const ws = await seedWorkspace();
+			headers = ws.headers;
+			const engineer = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Saved Fold Project' });
+			teamSlug = project.slug;
+			const parent = await seedTask(ws, project, { title: 'Fold Parent' });
+			parentIdentifier = parent.identifier;
+			const other = await seedTask(ws, project, { title: 'Other Task' });
+			otherIdentifier = other.identifier;
+			const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${parent.id}/sub-tasks`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({ title: 'Saved Fold Child', assignee_id: engineer.id }),
+			});
+			if (!res.ok) throw new Error(`sub-task create failed: ${res.status}`);
+		},
+	});
+
+	const openTask = (identifier: string) =>
+		router.navigate({
+			to: '/projects/$projectId/tasks/$taskId',
+			params: { projectId: teamSlug, taskId: identifier.toLowerCase() },
+		});
+
+	await openTask(parentIdentifier);
+	const toggle = await findByTestId('sub-tasks-toggle');
+	expect(toggle.getAttribute('aria-expanded')).toBe('true');
+	await user.click(toggle);
+	await waitFor(() => expect(queryByTestId('sub-tasks-list')).toBeNull());
+
+	// The fold reached the server, on this task.
+	const { apiBase } = getTestContext();
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${teamSlug}/tasks/${parentIdentifier.toLowerCase()}`, {
+			headers,
+		});
+		expect((await res.json()).data.sections_open).toEqual({ sub_tasks: false });
+	});
+
+	// Another task still starts with the card open.
+	await openTask(otherIdentifier);
+	await waitFor(async () => {
+		expect((await findByTestId('sub-tasks-toggle')).getAttribute('aria-expanded')).toBe('true');
+	});
+
+	// Coming back remounts the page; the card is still folded.
+	await openTask(parentIdentifier);
+	await waitFor(async () => {
+		expect((await findByTestId('sub-tasks-toggle')).getAttribute('aria-expanded')).toBe('false');
+	});
+	expect(queryByTestId('sub-tasks-list')).toBeNull();
+});

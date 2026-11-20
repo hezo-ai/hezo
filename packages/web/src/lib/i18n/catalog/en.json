@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo has used this month's container-hours allowance",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo is at its active-container limit",
 	"tasks.runNow.blocked.taskBusy": "This task already has a run in progress",
+	"tasks.sections.saveFailed": "Could not save whether this section is collapsed",
 	"tasks.sort.field.assignee": "Assignee",
 	"tasks.sort.field.createdAt": "Created",
 	"tasks.sort.field.number": "Task ID",

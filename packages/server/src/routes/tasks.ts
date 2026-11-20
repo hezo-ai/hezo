@@ -1,5 +1,7 @@
 import {
 	AuthType,
+	parseTaskSectionsOpenPatch,
+	type TaskSectionsOpen,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	taskStatusError,
@@ -366,10 +368,12 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
               'blocker_task_id', qw.last_skipped_blocker_task_id,
               'blocker_identifier', qw.blocker_identifier,
               'blocker_project_slug', qw.blocker_project_slug
-            ) ELSE NULL END AS queued_wakeup
+            ) ELSE NULL END AS queued_wakeup,
+            COALESCE(tvs.sections_open, '{}'::jsonb) AS sections_open
      FROM tasks i
      JOIN projects p ON p.id = i.project_id
      JOIN teams co ON co.id = i.team_id
+     LEFT JOIN task_view_settings tvs ON tvs.task_id = i.id
      LEFT JOIN members m ON m.id = i.assignee_id
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
      LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
@@ -434,6 +438,52 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
 	}
 
 	return ok(c, result.rows[0]);
+});
+
+/**
+ * Save which of the task page's folding cards are open on this task. The state
+ * is the task's own, shared by everyone who opens it, and lives beside `tasks`
+ * so a toggle never stamps `tasks.updated_at` (see migration 088). It is display
+ * state for people: no audit entry, no broadcast, no tool twin.
+ */
+tasksRoutes.patch('/projects/:projectId/tasks/:taskId/view-settings', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const ref = await resolveTaskId(db, teamId, c.req.param('taskId'));
+	// `resolveTaskId` passes a UUID through unchecked, so confirm the task is
+	// this team's before writing anything keyed on it.
+	const owned = ref
+		? await db.query<{ id: string }>('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+				ref,
+				teamId,
+			])
+		: null;
+	const taskId = owned?.rows[0]?.id;
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
+
+	const body = await c.req.json<{ sections_open?: unknown }>();
+	const parsed = parseTaskSectionsOpenPatch(body?.sections_open);
+	if (!parsed.ok) return err(c, 'INVALID_REQUEST', parsed.error, 400);
+
+	// The WHERE skips the write when the merge changes nothing, so a repeated
+	// toggle leaves the row alone; RETURNING is then empty and we read it back.
+	const written = await db.query<{ sections_open: TaskSectionsOpen }>(
+		`INSERT INTO task_view_settings (task_id, sections_open) VALUES ($1, $2::jsonb)
+		 ON CONFLICT (task_id) DO UPDATE
+		   SET sections_open = task_view_settings.sections_open || EXCLUDED.sections_open,
+		       updated_at = now()
+		   WHERE task_view_settings.sections_open || EXCLUDED.sections_open
+		         IS DISTINCT FROM task_view_settings.sections_open
+		 RETURNING sections_open`,
+		[taskId, JSON.stringify(parsed.value)],
+	);
+	if (written.rows.length > 0) return ok(c, { sections_open: written.rows[0].sections_open });
+
+	const current = await db.query<{ sections_open: TaskSectionsOpen }>(
+		'SELECT sections_open FROM task_view_settings WHERE task_id = $1',
+		[taskId],
+	);
+	return ok(c, { sections_open: current.rows[0]?.sections_open ?? {} });
 });
 
 tasksRoutes.post('/projects/:projectId/tasks/resolve', async (c) => {

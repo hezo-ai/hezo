@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo가 이번 달 컨테이너 시간을 다 썼어요",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo가 활성 컨테이너 한도에 도달했어요",
 	"tasks.runNow.blocked.taskBusy": "이 작업에서 이미 실행이 진행 중이에요",
+	"tasks.sections.saveFailed": "이 섹션의 접힘 상태를 저장하지 못했어요",
 	"tasks.sort.field.assignee": "담당자",
 	"tasks.sort.field.createdAt": "생성일",
 	"tasks.sort.field.number": "작업 ID",

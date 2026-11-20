@@ -1169,6 +1169,7 @@
 	"tasks.runNow.blocked.hoursExhausted": "Hezo ha esaurito il monte ore di container di questo mese",
 	"tasks.runNow.blocked.instanceAtCapacity": "Hezo ha raggiunto il limite di container attivi",
 	"tasks.runNow.blocked.taskBusy": "Su questa attività è già in corso un'esecuzione",
+	"tasks.sections.saveFailed": "Impossibile salvare se questa sezione è compressa",
 	"tasks.sort.field.assignee": "Assegnatario",
 	"tasks.sort.field.createdAt": "Creazione",
 	"tasks.sort.field.number": "ID attività",

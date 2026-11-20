@@ -237,6 +237,14 @@ and the web task view renders that card read-only. It is the agent's own account
 work, handed back to the next run in full, so a human rewrite would silently change what
 that run believes it did; humans redirect through a comment or `rules` instead.
 Numbering is atomic via `project_task_counters`.
+`task_view_settings` (one row per task, `ON DELETE CASCADE`) holds which task-page cards are
+open, shared by everyone who opens the task: `sections_open` JSONB keyed by `TASK_SECTIONS`,
+with a missing row or key meaning `TASK_SECTION_DEFAULT_OPEN`. It is a separate table because
+`trg_tasks_updated` stamps `tasks.updated_at` on any update of the row, and `updated_at` is read
+as activity (list order, the Captain progress due check, the Coach missed-review sweep, the
+open-task list in agent prompts). The single-task GET joins it; `PATCH
+…/tasks/:taskId/view-settings` merges into it and skips the write when nothing changes. People
+only: no audit entry, no broadcast, no MCP twin.
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
 `system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),

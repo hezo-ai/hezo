@@ -1,10 +1,16 @@
-import type { HeartbeatRunStatus } from '@hezo/shared';
+import {
+	type HeartbeatRunStatus,
+	resolveTaskSectionsOpen,
+	type TaskSection,
+	type TaskSectionsOpen,
+} from '@hezo/shared';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { api } from '../lib/api';
+import { useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
-import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
+import { useOptimisticMutation, useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { toast } from './use-toast';
 
 export interface QueuedWakeup {
@@ -90,6 +96,13 @@ export interface Task {
 	labels: string[];
 	progress_summary: string | null;
 	rules: string | null;
+	/**
+	 * Which of the task page's folding cards are open on this task, shared by
+	 * everyone who opens it. Holds only the cards someone has toggled; read it
+	 * through `useTaskSections`, which fills in the defaults. Only the
+	 * single-task endpoint returns it, hence optional.
+	 */
+	sections_open?: TaskSectionsOpen;
 	project_name: string | null;
 	project_slug: string | null;
 	comment_count: number;
@@ -254,6 +267,54 @@ export function useUpdateTask(projectId: string, taskId: string) {
 			errorMessage: 'Failed to update task',
 		},
 	);
+}
+
+/**
+ * The open/folded state of the task page's folding cards, saved on the task.
+ * `open` is the saved state over the defaults; `setOpen` flips one card at once
+ * and saves it, rolling back with a toast if the server refuses. A call that
+ * would not change the card sends nothing.
+ */
+export function useTaskSections(
+	projectId: string,
+	taskId: string,
+	stored: TaskSectionsOpen | undefined,
+): {
+	open: Record<TaskSection, boolean>;
+	setOpen: (section: TaskSection, open: boolean) => void;
+} {
+	const { t } = useI18n();
+	const open = useMemo(() => resolveTaskSectionsOpen(stored), [stored]);
+	const mutation = useOptimisticMutation<
+		TaskSectionsOpen,
+		{ sections_open: TaskSectionsOpen },
+		Task
+	>({
+		mutationFn: (patch) =>
+			api.patch<{ sections_open: TaskSectionsOpen }>(
+				`/api/projects/${projectId}/tasks/${taskId}/view-settings`,
+				{ sections_open: patch },
+			),
+		queryKey: queryKeys.projects.task(projectId, taskId),
+		applyOptimistic: (current, patch) =>
+			current ? { ...current, sections_open: { ...current.sections_open, ...patch } } : current,
+		// Merge rather than replace: a second card toggled while this save was in
+		// flight is already in the cache and may not be in this response yet.
+		mergeResponse: (current, response) =>
+			current
+				? { ...current, sections_open: { ...current.sections_open, ...response.sections_open } }
+				: current,
+		errorMessage: t('tasks.sections.saveFailed'),
+	});
+	const { mutate } = mutation;
+	const setOpen = useCallback(
+		(section: TaskSection, next: boolean) => {
+			if (open[section] === next) return;
+			mutate({ [section]: next });
+		},
+		[open, mutate],
+	);
+	return { open, setOpen };
 }
 
 export interface TaskAncestor {

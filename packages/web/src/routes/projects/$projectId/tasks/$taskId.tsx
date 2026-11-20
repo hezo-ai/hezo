@@ -1,4 +1,4 @@
-import { type AgentEffort, DEFAULT_TASK_VIEW, type TaskView } from '@hezo/shared';
+import { type AgentEffort, DEFAULT_TASK_VIEW, TaskSection, type TaskView } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -27,7 +27,7 @@ import {
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
 import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useScrollToBottom } from '../../../../hooks/use-scroll-to-bottom';
-import { useTask, useUpdateTask } from '../../../../hooks/use-tasks';
+import { useTask, useTaskSections, useUpdateTask } from '../../../../hooks/use-tasks';
 import { PANEL_MOTION_TRANSITION } from '../../../../lib/panel-motion';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -84,6 +84,9 @@ function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: stri
 	const { data: agents } = useAgents(projectId);
 	const { data: lock } = useExecutionLock(projectId, taskId);
 	const updateTask = useUpdateTask(projectId, taskId);
+	// Which folding cards are open is saved on the task, so it survives the
+	// per-visit remount above and is the same for everyone who opens the task.
+	const sections = useTaskSections(projectId, taskId, task?.sections_open);
 	const createComment = useCreateComment(projectId, taskId);
 	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
 	// leave effort unset on submit and let the server resolve the agent default.
@@ -206,6 +209,8 @@ function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: stri
 						projectId={projectId}
 						taskProjectSlug={taskProjectSlug}
 						updateTask={updateTask}
+						sectionsOpen={sections.open}
+						onSectionOpenChange={sections.setOpen}
 					/>
 
 					<SubTasksSection
@@ -213,6 +218,8 @@ function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: stri
 						parentTaskId={task.id}
 						parentIdentifier={task.identifier}
 						taskProjectSlug={taskProjectSlug}
+						open={sections.open[TaskSection.SubTasks]}
+						onOpenChange={(open) => sections.setOpen(TaskSection.SubTasks, open)}
 					/>
 
 					<DependenciesSection projectId={projectId} taskId={taskId} />
