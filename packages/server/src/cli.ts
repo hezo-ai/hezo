@@ -13,7 +13,7 @@ import {
 	formatRemovedEnvFatal,
 	type ResolvedDataLocation,
 } from './config/removed-env';
-import type { ConfigFile } from './config/schema';
+import { type ConfigFile, validateOtlpConfig } from './config/schema';
 import { DEFAULT_CONFIG, type HezoConfig, resolveDataDir } from './config/types';
 import { createStreamProgressReporter, formatBytes } from './lib/progress';
 import { HEZO_VERSION } from './version';
@@ -781,6 +781,26 @@ export function resolveConfig(
 			'--telemetry-endpoint <url>',
 			`Override the telemetry collection endpoint (default ${DEFAULT_CONFIG.telemetry.endpoint}).`,
 		)
+		.option(
+			'--otlp-endpoint <url>',
+			'Base URL of an OpenTelemetry collector to export runs to (the exporter appends /v1/traces and /v1/metrics). Setting it does not enable export: also pass --otlp-enabled or set otlp.enabled in the config file. Restart-only.',
+		)
+		.option(
+			'--otlp-headers-secret <name>',
+			'Name of the secret whose value is sent verbatim as the OTLP Authorization header. The secret must allow the endpoint host. Never the secret value itself.',
+		)
+		.option(
+			'--otlp-projects <list>',
+			"Comma-separated project UUIDs to export, or '*' for every project. This is an allowlist: no value means no project, never 'all'.",
+		)
+		.option(
+			'--otlp-enabled',
+			'Enable native OTLP export (negatable with --no-otlp-enabled). Off by default; restart-only.',
+		)
+		.option(
+			'--no-otlp-enabled',
+			'Disable native OTLP export, overriding a config file that enables it.',
+		)
 		.parse(argv);
 
 	const cli = program.opts();
@@ -899,6 +919,22 @@ export function resolveConfig(
 				d.telemetry.enabled,
 			endpoint: str('telemetryEndpoint') ?? file.telemetry?.endpoint ?? d.telemetry.endpoint,
 		},
+		otlp: {
+			// A flag that sets only the endpoint does not enable export: `enabled`
+			// comes from --otlp-enabled or the file, never inferred.
+			enabled: negatable('otlpEnabled') ?? file.otlp?.enabled ?? d.otlp.enabled,
+			endpoint: str('otlpEndpoint') ?? file.otlp?.endpoint ?? d.otlp.endpoint,
+			headersSecret: str('otlpHeadersSecret') ?? file.otlp?.headersSecret,
+			// The seven remaining keys are config-file only in phase 1.
+			protocol: file.otlp?.protocol ?? d.otlp.protocol,
+			sampleRatio: file.otlp?.sampleRatio ?? d.otlp.sampleRatio,
+			timeoutMs: file.otlp?.timeoutMs ?? d.otlp.timeoutMs,
+			batchSize: file.otlp?.batchSize ?? d.otlp.batchSize,
+			maxQueueBytes: file.otlp?.maxQueueBytes ?? d.otlp.maxQueueBytes,
+			projects: resolveOtlpProjects(str('otlpProjects'), file.otlp?.projects, d.otlp.projects),
+			includeNames: file.otlp?.includeNames ?? d.otlp.includeNames,
+			includeErrorText: file.otlp?.includeErrorText ?? d.otlp.includeErrorText,
+		},
 		updates: {
 			disabled: file.updates?.disabled ?? d.updates.disabled,
 			autoInstall: bool('autoInstallUpdates') ?? file.updates?.autoInstall ?? d.updates.autoInstall,
@@ -938,11 +974,30 @@ export function resolveConfig(
 		configPath,
 	};
 
+	// A flag-derived `otlp` value obeys the same rules as the file: one schema,
+	// run again after the merge, so `--otlp-projects '*'` with a UUID or
+	// `--otlp-enabled` with no endpoint refuses to start instead of running a
+	// half-configured exporter.
+	validateOtlpConfig(config.otlp);
+
 	// Configuration env vars are no longer read. Refuse to start when an ignored
 	// one would have put the data somewhere other than where we are about to look:
 	// coming up on an empty database looks like a fresh install, not a fault.
 	assertNoRemovedDataLocationEnv(env, config);
 	return config;
+}
+
+/** `--otlp-projects a,b , c` -> three trimmed entries; empty entries are dropped. */
+function resolveOtlpProjects(
+	flag: string | undefined,
+	fromFile: string[] | undefined,
+	fallback: string[],
+): string[] {
+	if (flag === undefined) return fromFile ?? fallback;
+	return flag
+		.split(',')
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
 }
 
 /**

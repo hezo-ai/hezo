@@ -67,6 +67,9 @@ data loss. Uploaded files have no separate backup.
 roll your own instance back to Tuesday, run Hezo yourself. See
 [Ways to run Hezo](/docs/ways-to-run).
 
+**OTLP export is configured by config file and flags**, so it is unavailable on
+Hezo Cloud in phase 1.
+
 ## Where agent containers run
 
 On a self-hosted instance you choose between your own container runtime and a

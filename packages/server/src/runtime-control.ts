@@ -64,6 +64,12 @@ export async function shutdownRuntime(result: StartupResult): Promise<void> {
 				stranded.map((r) => `${r.runId}${r.taskId ? ` (task ${r.taskId})` : ''}`).join(', '),
 		);
 	}
+	// Runs that completed during the drain emitted their completion event inside
+	// that await; the observer's row read is tracked background work, so flush
+	// waits for it while the database is still open.
+	result.otlpGauge.stop();
+	await result.otlp.flush(2000);
+	await result.otlp.stop();
 	result.policyWatcher.close();
 	result.jobManager.shutdown();
 	await result.chatSessionManager.stop();

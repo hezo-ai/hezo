@@ -113,6 +113,63 @@ Nested keys are written in dot form below: `database.url` means
 | `egress.proxyAuth` | `--no-egress-proxy-auth` | on | Per-run egress-proxy authentication. On by default: each run's `HTTP(S)_PROXY` URL carries a random token the proxy verifies before substituting any secret, so a process that reaches the proxy address can't drive substitution for another run. Only disable to unblock a runtime whose HTTP client can't send proxy credentials - the secret red line still holds either way (an unauthenticated caller only ships unsubstituted placeholders, which fail upstream). |
 | `egress.debug` | - | off | Per-connection proxy lifecycle tracing. Diagnostic only, and very noisy. |
 
+### OTLP export
+
+Native OpenTelemetry export: Hezo pushes run telemetry to an OpenTelemetry collector
+over OTLP/HTTP with JSON encoding. Export is off by default. Every `otlp` key is read once
+at startup and never re-read, so changing one needs a restart.
+
+One span is emitted per completed run, named `hezo.agent_run`, alongside seven metrics:
+`hezo.runs.started`, `hezo.runs.completed`, `hezo.run.duration`, `hezo.tokens`,
+`hezo.runs.active`, `hezo.container.uptime` and `hezo.otlp.dropped`. The counters are
+cumulative for the life of the process and reset when it restarts.
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `otlp.enabled` | `--otlp-enabled` / `--no-otlp-enabled` | off | Turn native OTLP export on. Setting an endpoint alone does not enable it. Restart-only. |
+| `otlp.endpoint` | `--otlp-endpoint <url>` | - | Base URL of the collector. The exporter appends `/v1/traces` and `/v1/metrics`, so paste the base URL, not a signal path. Plain `http` is accepted only for a loopback host (`127.0.0.0/8`, `::1` or `localhost`); any other endpoint must be `https`. |
+| `otlp.headersSecret` | `--otlp-headers-secret <name>` | - | Name of a vault secret whose value is sent verbatim as the `Authorization` header. The secret must list the endpoint's host in its `allowed_hosts`, or nothing is sent. Never the secret's value. |
+| `otlp.projects` | `--otlp-projects <list>` | none | Comma-separated project UUIDs to export, or `'*'` for every project. This is an allowlist: an empty list exports nothing, and `'*'` must stand alone. |
+| `otlp.protocol` | - | `http/json` | The only accepted value in phase 1. |
+| `otlp.sampleRatio` | - | `1.0` | Fraction of run spans to send, greater than 0 and at most 1. Counters and gauges are always sent in full. |
+| `otlp.timeoutMs` | - | `5000` | Ceiling on a single export request, in milliseconds. |
+| `otlp.batchSize` | - | `256` | Most records in one request. |
+| `otlp.maxQueueBytes` | - | `8388608` | Bound on the in-memory export queue (8 MiB). Past it the oldest records are dropped and counted. |
+| `otlp.includeNames` | - | off | Add project, team and agent display names to the span, each capped at 256 characters. |
+| `otlp.includeErrorText` | - | off | Add the first line of a failed run's error to the span, capped at 512 characters, with secret placeholders scrubbed. |
+
+The allowlist is the only gate: a project that is not on `otlp.projects` produces no spans
+and no metrics. `['*']` means every project. A run whose project cannot be resolved is
+dropped and counted, never exported against a placeholder project.
+
+**What is exported.** Run ids, project, team and agent ids, task id, run status and
+failure class, token counts, model and provider, tool-call totals, duration, container
+uptime and active-run counts. **What never leaves**, whatever the settings: prompts and
+messages, task titles and descriptions, comment text, document and asset contents,
+repository and branch names, file paths, the working directory, invocation commands, run
+log text, secret names and values, and any monetary figure. `includeNames` adds display
+names; `includeErrorText` adds the error line. Both are off by default, and a field not on
+the exported list never leaves.
+
+A collector outage never affects runs, requests or the server. Delivery retries transient
+failures with a bounded backoff, drops what it cannot send, and records the reason in
+`hezo.otlp.dropped`. A graceful shutdown flushes what it can within two seconds. **On a
+crash, unflushed spans are lost by design.**
+
+When an endpoint is set but `otlp.enabled` is false, startup prints the exact line
+`disabled (endpoint set, exporter not enabled)`.
+
+```js
+module.exports = {
+  otlp: {
+    enabled: true,
+    endpoint: 'https://collector.example.com:4318',
+    headersSecret: 'OTLP_AUTHORIZATION',
+    projects: ['*'],
+  },
+};
+```
+
 ### Telemetry and updates
 
 | Setting | Flag | Default | Description |

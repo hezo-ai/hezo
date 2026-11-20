@@ -84,6 +84,120 @@ const telemetrySchema = z
 	.object({ enabled: z.boolean().optional(), endpoint: z.url().optional() })
 	.strict();
 
+/** The UUID shape `projects` admits for a single allowlist entry. */
+const OTLP_PROJECT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `new URL().hostname` returns IPv6 literals bracketed; the checks want the bare host. */
+function stripIpv6Brackets(host: string): string {
+	return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+}
+
+/**
+ * A plaintext collector endpoint is allowed only on the machine itself, so run
+ * ids, project and agent ids and token counts cannot cross a network
+ * unencrypted. `127.0.0.0/8`, `::1` and `localhost` are the local collector's
+ * addresses; everything else must be `https`.
+ */
+function isLoopbackHost(host: string): boolean {
+	const bare = stripIpv6Brackets(host).toLowerCase();
+	return bare === 'localhost' || bare === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare);
+}
+
+/**
+ * Native OTLP export. The block is validated as a whole so the cross-key rules
+ * (`enabled` needs an endpoint and a project) cannot be satisfied piecemeal, and
+ * `.strict()` refuses a misspelled key rather than running with a silent default.
+ *
+ * The endpoint is a **base URL**: the exporter appends `/v1/traces` and
+ * `/v1/metrics`.
+ */
+export const otlpSchema = z
+	.object({
+		enabled: z.boolean().optional(),
+		endpoint: z.string().optional(),
+		headersSecret: z
+			.string()
+			.regex(/^[A-Z][A-Z0-9_]{0,63}$/, {
+				message: 'must be a secret name matching [A-Z][A-Z0-9_]{0,63}',
+			})
+			.optional(),
+		protocol: z.literal('http/json').optional(),
+		sampleRatio: z.number().gt(0).lte(1).optional(),
+		timeoutMs: z.int().positive().optional(),
+		batchSize: z.int().positive().optional(),
+		maxQueueBytes: z.int().positive().optional(),
+		projects: z
+			.array(z.string())
+			.optional()
+			.superRefine((projects, ctx) => {
+				if (projects === undefined) return;
+				for (const entry of projects) {
+					if (entry === '*') continue;
+					if (OTLP_PROJECT_UUID.test(entry)) continue;
+					ctx.addIssue({
+						code: 'custom',
+						message: `"${entry}" is neither '*' nor a project UUID`,
+					});
+				}
+				if (projects.includes('*') && projects.length > 1) {
+					ctx.addIssue({
+						code: 'custom',
+						message: "the wildcard '*' must stand alone",
+					});
+				}
+			}),
+		includeNames: z.boolean().optional(),
+		includeErrorText: z.boolean().optional(),
+	})
+	.strict()
+	.superRefine((otlp, ctx) => {
+		const endpoint = otlp.endpoint ?? '';
+		if (endpoint !== '') {
+			let url: URL;
+			try {
+				url = new URL(endpoint);
+			} catch {
+				ctx.addIssue({ code: 'custom', path: ['endpoint'], message: 'must be a URL' });
+				return;
+			}
+			if (url.protocol === 'http:') {
+				const host = stripIpv6Brackets(url.hostname);
+				if (!isLoopbackHost(host)) {
+					ctx.addIssue({
+						code: 'custom',
+						path: ['endpoint'],
+						message:
+							`must use https for "${host}". Run ids, project and agent ids, token counts and ` +
+							'optional names must not cross the network unencrypted; plain http is allowed ' +
+							'only for a local collector on 127.0.0.0/8, ::1 or localhost.',
+					});
+				}
+			} else if (url.protocol !== 'https:') {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['endpoint'],
+					message: 'must be an https: URL (or http: on a loopback host)',
+				});
+			}
+		}
+		if (otlp.enabled === true) {
+			if (endpoint === '') {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['endpoint'],
+					message: 'is required when otlp.enabled is true',
+				});
+			}
+			if ((otlp.projects ?? []).length === 0) {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['projects'],
+					message: "must name at least one project UUID, or '*'",
+				});
+			}
+		}
+	});
+
 const updatesSchema = z
 	.object({ disabled: z.boolean().optional(), autoInstall: z.boolean().optional() })
 	.strict();
@@ -444,6 +558,7 @@ export const configFileSchema = z
 		runs: runsSchema.optional(),
 		egress: egressSchema.optional(),
 		telemetry: telemetrySchema.optional(),
+		otlp: otlpSchema.optional(),
 		updates: updatesSchema.optional(),
 		marketplace: marketplaceSchema.optional(),
 		github: githubSchema.optional(),
@@ -544,6 +659,23 @@ function formatIssues(path: string, issues: z.core.$ZodIssue[]): string {
  * Validate the object a config file exported. Throws {@link ConfigFileError}
  * with every problem listed, rather than the first one.
  */
+/**
+ * Validate a resolved `otlp` block. The config file is checked by
+ * {@link configFileSchema}; this is the same schema applied again after CLI
+ * flags have been merged, so a flag-derived value obeys every rule the file
+ * does and a bad one refuses to start.
+ */
+export function validateOtlpConfig(otlp: unknown): void {
+	const parsed = otlpSchema.safeParse(otlp);
+	if (!parsed.success) {
+		const lines = parsed.error.issues.map(
+			(issue) =>
+				`  otlp${issue.path.length > 0 ? `.${issue.path.join('.')}` : ''}: ${issue.message}`,
+		);
+		throw new ConfigFileError(`otlp configuration is not valid:\n${lines.join('\n')}`);
+	}
+}
+
 export function validateConfigFile(path: string, exported: unknown): ConfigFile {
 	if (exported === null || typeof exported !== 'object' || Array.isArray(exported)) {
 		throw new ConfigFileError(

@@ -152,6 +152,65 @@ describe('resolveConfig', () => {
 		).toBe('https://file.test/t');
 	});
 
+	describe('otlp flags', () => {
+		const a = '11111111-1111-4111-8111-111111111111';
+		const b = '22222222-2222-4222-8222-222222222222';
+		const c = '33333333-3333-4333-8333-333333333333';
+
+		it('splits --otlp-projects on commas and trims each entry', () => {
+			const config = resolveConfig(
+				argv(
+					'--otlp-enabled',
+					'--otlp-endpoint',
+					'http://127.0.0.1:4318',
+					'--otlp-projects',
+					`${a},${b} , ${c}`,
+				),
+				EMPTY_ENV,
+			);
+			expect(config.otlp.projects).toEqual([a, b, c]);
+			expect(config.otlp.enabled).toBe(true);
+		});
+
+		it('leaves export disabled when only --otlp-endpoint is set', () => {
+			const config = resolveConfig(argv('--otlp-endpoint', 'http://127.0.0.1:4318'), EMPTY_ENV);
+			expect(config.otlp.enabled).toBe(false);
+			expect(config.otlp.endpoint).toBe('http://127.0.0.1:4318');
+		});
+
+		it('lets --no-otlp-enabled win over a config file that enables it', () => {
+			const config = resolveConfig(
+				withConfig(
+					{
+						otlp: {
+							enabled: true,
+							endpoint: 'https://collector.example',
+							projects: ['*'],
+						},
+					},
+					'--no-otlp-enabled',
+				),
+				EMPTY_ENV,
+			);
+			expect(config.otlp.enabled).toBe(false);
+		});
+
+		it('refuses a flag-derived project that is neither a UUID nor the wildcard', () => {
+			expect(() =>
+				resolveConfig(
+					argv(
+						'--otlp-enabled',
+						'--otlp-endpoint',
+						'http://127.0.0.1:4318',
+						'--otlp-projects',
+						'a,b',
+					),
+					EMPTY_ENV,
+				),
+			).toThrow(/neither '\*' nor a project UUID/);
+		});
+	});
+
 	it('parses --port', () => {
 		const config = resolveConfig(argv('--port', '8080'), EMPTY_ENV);
 		expect(config.port).toBe(8080);

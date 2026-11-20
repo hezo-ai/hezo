@@ -2,8 +2,13 @@ import type { AuditActorType, HeartbeatRunStatus } from '@hezo/shared';
 
 /**
  * Domain events emitted by business logic and consumed by observers (today:
- * the audit observer). Each event is self-contained — it carries every value an
- * observer needs to persist a row, so observers never re-query the database.
+ * the audit and OTLP observers).
+ *
+ * An event carries what a consumer needs to act on it, not a full record. The
+ * audit observer can write its row from the payload alone, but a consumer that
+ * needs the run's stored record — `agent_run.completed` leaves out timestamps,
+ * tokens, model and provider — reads the finished row by id instead. That row
+ * is current at emit time because the finalizer commits before it emits.
  *
  * `teamId` is nullable for instance-level actions (e.g. an Admin managing an
  * instance secret / connector / skill). `projectId` is set only for
